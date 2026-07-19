@@ -1,0 +1,21 @@
+[package]
+name = "astreon-testing"
+description = "Deterministic UI and command testing helpers for Astreon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astreon-app = { workspace = true }
+astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-ui-core = { workspace = true }
+
+[dev-dependencies]
+astrelis-text = { workspace = true }
+
+[lints]
+workspace = true

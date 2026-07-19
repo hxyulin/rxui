@@ -1,0 +1,19 @@
+[package]
+name = "astreon-widgets"
+description = "Application-oriented retained widgets for Astreon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astreon-app = { workspace = true }
+astrelis-ui = { workspace = true }
+astrelis-ui-core = { workspace = true }
+astrelis-ui-widgets = { workspace = true }
+astrelis-platform = { workspace = true }
+
+[lints]
+workspace = true

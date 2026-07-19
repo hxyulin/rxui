@@ -1,0 +1,31 @@
+# Astreon roadmap
+
+## Product boundary
+
+Astreon is an idiomatic Rust, retained-mode, custom-rendered framework for
+desktop tools and editors. It does not emulate Qt's object model or wrap native
+OS controls. Web, mobile, game-first HUD tooling, and a declarative reconciler
+are outside the first stable release.
+
+Astrelis owns retained tree mechanics and engine primitives. General-purpose
+missing hooks are contributed to Astrelis; application and editor policy stays
+here.
+
+## Release gates
+
+- **0.1 — Foundation:** workspace, reproducible dependency workflow, native
+  window host, typed commands, façade crates, testing helpers, and examples.
+- **0.2 — Design system:** stable theme vocabulary, icons, baseline forms and
+  input controls, keyboard behavior, and a widget gallery.
+- **0.3 — Application shell:** menus, toolbars, dialogs, notifications,
+  validation, undo/redo conventions, and persisted window state.
+- **0.4 — Editor-ready alpha:** coherent docking workspace, tree/table/property
+  views, render views, command palette, saved layouts, and a reference editor.
+- **0.5 — Hardening:** inspector, snapshots, native smoke tests, profiling,
+  tutorials, and migration documentation.
+- **1.0 — Stable desktop:** reviewed API and semver policy, Windows/macOS/Linux
+  validation, and native screen-reader adapters backed by semantic trees.
+
+Every interactive feature must ship with keyboard behavior, focus handling,
+semantic coverage, deterministic tests, and correct idle invalidation.
+

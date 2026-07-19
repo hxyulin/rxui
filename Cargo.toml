@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/astreon",
+  "crates/astreon-app",
+  "crates/astreon-editor",
+  "crates/astreon-testing",
+  "crates/astreon-widgets",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["hxyulin <hxyulin@proton.me>"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/hxyulin/astreon"
+rust-version = "1.88"
+
+[workspace.dependencies]
+astreon-app = { path = "crates/astreon-app", version = "0.1.0" }
+astreon-editor = { path = "crates/astreon-editor", version = "0.1.0" }
+astreon-testing = { path = "crates/astreon-testing", version = "0.1.0" }
+astreon-widgets = { path = "crates/astreon-widgets", version = "0.1.0" }
+
+# Astrelis is pinned so clean clones and CI consume one reviewed engine state.
+# Developers working in the sibling repository can copy
+# `.cargo/config.toml.example` to `.cargo/config.toml` to use local paths.
+astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+pollster = "0.4"
+serde = { version = "1", features = ["derive"] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

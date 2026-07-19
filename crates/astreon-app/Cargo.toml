@@ -1,0 +1,26 @@
+[package]
+name = "astreon-app"
+description = "Desktop application hosting and commands for Astreon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astrelis-app = { workspace = true }
+astrelis-core = { workspace = true }
+astrelis-gpu = { workspace = true }
+astrelis-gpu-wgpu = { workspace = true }
+astrelis-paint-gpu = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-ui-core = { workspace = true }
+pollster = { workspace = true }
+
+[dev-dependencies]
+astrelis-text = { workspace = true }
+
+[lints]
+workspace = true
+
