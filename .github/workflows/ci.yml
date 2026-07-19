@@ -22,6 +22,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-features --all-targets
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - name: Native smoke (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo run -p astreon --example native_smoke
+        timeout-minutes: 2
+      - name: Native smoke (macOS and Windows)
+        if: runner.os != 'Linux'
+        run: cargo run -p astreon --example native_smoke
+        timeout-minutes: 2
 
   hygiene:
     runs-on: ubuntu-latest
@@ -38,3 +46,11 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --release -p astreon --example reference_editor_perf -- --check

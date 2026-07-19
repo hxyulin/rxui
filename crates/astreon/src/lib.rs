@@ -6,6 +6,9 @@
 pub use astrelis_ui as ui;
 /// Application hosting and shared commands.
 pub use astreon_app as app;
+#[cfg(feature = "devtools")]
+/// Optional in-application developer tools.
+pub use astreon_devtools as devtools;
 #[cfg(feature = "editor")]
 /// Editor workspace components.
 pub use astreon_editor as editor;
@@ -26,6 +29,8 @@ pub mod prelude {
         WindowHostOptions, WindowPlacement, WindowPlacementTracker, redo_command_id,
         sync_undo_commands, undo_command_id,
     };
+    #[cfg(feature = "devtools")]
+    pub use astreon_devtools::{InspectorAction, InspectorOptions, UiInspector};
     #[cfg(feature = "editor")]
     pub use astreon_editor::{
         PropertyAction, PropertyField, PropertyGrid, PropertySection, PropertyValue, SavedLayout,

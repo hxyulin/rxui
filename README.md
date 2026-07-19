@@ -10,7 +10,7 @@ composition.
 
 ## Status
 
-Astreon `0.4` provides:
+Astreon `0.5` provides:
 
 - an idle-efficient native UI window host;
 - typed commands, shortcut routing, and application menu models;
@@ -28,7 +28,11 @@ Astreon `0.4` provides:
 - texture-backed render views and an interactive reference 2D scene editor;
 - façade crates for the Astrelis widget and docking foundations;
 - deterministic semantic-action and model-level testing helpers;
-- pinned Git dependencies with an optional sibling-repository override.
+- pinned Git dependencies with an optional sibling-repository override;
+- an opt-in, read-only retained UI inspector with pointer picking;
+- normalized semantic, layout, interaction, and display-list snapshots;
+- native desktop smoke coverage and release-mode editor performance budgets;
+- guided application, shell, and editor tutorials with migration notes.
 
 See [ROADMAP.md](ROADMAP.md) for release gates and scope.
 
@@ -68,6 +72,18 @@ The reference editor synchronizes selection across its hierarchy, entity table,
 rendered 2D scene, and property inspector. Drag or resize docked panels, pan and
 zoom the scene, invoke commands from the palette, edit undoable properties, and
 save or restore the named workspace layout.
+
+Inspect a live retained tree (press F12, Command-Option-I, or use the launcher):
+
+```sh
+cargo run -p astreon --example devtools_inspector --features devtools
+```
+
+The inspector is read-only and excluded from default production builds.
+
+The guided documentation starts at [Your first Astreon app](docs/tutorials/first-app.md),
+then covers the [application shell](docs/tutorials/application-shell.md) and
+[editor workspace](docs/tutorials/editor-workspace.md).
 
 On macOS or Windows, run the native File/Edit/View/Window menu example:
 

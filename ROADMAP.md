@@ -23,8 +23,9 @@ here.
   and persisted window state.
 - **0.4 — Editor-ready alpha (complete):** coherent docking workspace, tree/table/property
   views, render views, command palette, saved layouts, and a reference editor.
-- **0.5 — Hardening:** inspector, snapshots, native smoke tests, profiling,
-  tutorials, and migration documentation.
+- **0.5 — Hardening (complete):** opt-in retained UI inspector, deterministic
+  structural snapshots, native smoke tests, performance budgets, tutorials,
+  and migration documentation.
 - **1.0 — Stable desktop:** reviewed API and semver policy, Windows/macOS/Linux
   validation, and native screen-reader adapters backed by semantic trees.
 

@@ -1,0 +1,11 @@
+0: FillRect { rect: Rect { origin: Point { x: 0.000, y: 0.000, _space: PhantomData<astrelis_core::geometry::Logical> }, size: Size { width: 800.000, height: 600.000, _space: PhantomData<astrelis_core::geometry::Logical> } }, brush: Solid(Color { r: 0.007, g: 0.007, b: 0.008, a: 1.000 }) }
+1: Save
+2: Save
+3: FillRoundedRect { rect: RoundedRect { rect: Rect { origin: Point { x: 0.000, y: 0.000, _space: PhantomData<astrelis_core::geometry::Logical> }, size: Size { width: 800.000, height: 29.706, _space: PhantomData<astrelis_core::geometry::Logical> } }, radii: CornerRadii { top_left: 5.000, top_right: 5.000, bottom_right: 5.000, bottom_left: 5.000 } }, brush: Solid(Color { r: 0.017, g: 0.017, b: 0.021, a: 1.000 }) }
+4: StrokeRoundedRect { rect: RoundedRect { rect: Rect { origin: Point { x: 0.000, y: 0.000, _space: PhantomData<astrelis_core::geometry::Logical> }, size: Size { width: 800.000, height: 29.706, _space: PhantomData<astrelis_core::geometry::Logical> } }, radii: CornerRadii { top_left: 5.000, top_right: 5.000, bottom_right: 5.000, bottom_left: 5.000 } }, style: StrokeStyle { width: 1.000, cap: Butt, join: Miter, miter_limit: 4.000 }, brush: Solid(Color { r: 0.023, g: 0.023, b: 0.030, a: 1.000 }) }
+5: Save
+6: ClipRect(Rect { origin: Point { x: 0.000, y: 0.000, _space: PhantomData<astrelis_core::geometry::Logical> }, size: Size { width: 800.000, height: 29.706, _space: PhantomData<astrelis_core::geometry::Logical> } })
+7: DrawText text="Save" origin=10.000,6.000 opacity=1.000 size=28.366x17.706
+8: Restore
+9: Restore
+10: Restore

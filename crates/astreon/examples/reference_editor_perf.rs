@@ -14,6 +14,8 @@ use astreon::editor::docking::{
 use astreon::prelude::*;
 
 const ITERATIONS: usize = 500;
+const WARMUP_ITERATIONS: usize = 50;
+const BUDGET_MS: f64 = 8.0;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -57,6 +59,7 @@ fn layout() -> DockLayout {
 }
 
 fn main() -> Result<(), io::Error> {
+    let check = std::env::args().any(|argument| argument == "--check");
     astrelis_profiling::init();
     let mut ui = Ui::new(FontDatabase::default(), Theme::dark());
     ui.set_viewport(Size::new(1_200.0, 760.0), 1.0);
@@ -203,6 +206,17 @@ fn main() -> Result<(), io::Error> {
 
     ui.display_list().map_err(io::Error::other)?;
     let separator = find_first_separator(&mut ui)?;
+    for index in 0..WARMUP_ITERATIONS {
+        let ratio = if index % 2 == 0 { 0.35 } else { 0.65 };
+        ui.perform_semantic_action(separator, SemanticAction::SetValue(ratio))
+            .map_err(io::Error::other)?;
+        for message in ui.drain_messages().collect::<Vec<_>>() {
+            if let Message::Dock(action) = message {
+                workspace.apply(&mut ui, action).map_err(io::Error::other)?;
+            }
+        }
+        ui.display_list().map_err(io::Error::other)?;
+    }
     astrelis_profiling::new_frame();
     let started = Instant::now();
     for index in 0..ITERATIONS {
@@ -224,7 +238,17 @@ fn main() -> Result<(), io::Error> {
         elapsed.as_secs_f64() * 1_000.0 / ITERATIONS as f64,
         elapsed.as_secs_f64() * 1_000.0,
     );
+    check_budget("headless split", elapsed, check)?;
 
+    for index in 0..WARMUP_ITERATIONS {
+        let selected = if index % 2 == 0 { 1 } else { 2 };
+        tree.sync(&mut ui, &nodes, Some(&selected))
+            .map_err(io::Error::other)?;
+        table
+            .sync(&mut ui, &columns, &rows, None, Some(&selected))
+            .map_err(io::Error::other)?;
+        ui.display_list().map_err(io::Error::other)?;
+    }
     let started = Instant::now();
     for index in 0..ITERATIONS {
         let selected = if index % 2 == 0 { 1 } else { 2 };
@@ -261,7 +285,15 @@ fn main() -> Result<(), io::Error> {
         elapsed.as_secs_f64() * 1_000.0 / ITERATIONS as f64,
         elapsed.as_secs_f64() * 1_000.0,
     );
+    check_budget("headless selection", elapsed, check)?;
 
+    for index in 0..WARMUP_ITERATIONS {
+        columns[0].width = if index % 2 == 0 { 160.0 } else { 220.0 };
+        table
+            .sync(&mut ui, &columns, &rows, None, Some(&2))
+            .map_err(io::Error::other)?;
+        ui.display_list().map_err(io::Error::other)?;
+    }
     let started = Instant::now();
     for index in 0..ITERATIONS {
         columns[0].width = if index % 2 == 0 { 160.0 } else { 220.0 };
@@ -276,9 +308,20 @@ fn main() -> Result<(), io::Error> {
         elapsed.as_secs_f64() * 1_000.0 / ITERATIONS as f64,
         elapsed.as_secs_f64() * 1_000.0,
     );
+    check_budget("headless table resize", elapsed, check)?;
 
     astrelis_profiling::new_frame();
     print_profile_summary();
+    Ok(())
+}
+
+fn check_budget(label: &str, elapsed: std::time::Duration, check: bool) -> Result<(), io::Error> {
+    let average_ms = elapsed.as_secs_f64() * 1_000.0 / ITERATIONS as f64;
+    if check && average_ms > BUDGET_MS {
+        return Err(io::Error::other(format!(
+            "{label} averaged {average_ms:.3} ms, exceeding the {BUDGET_MS:.3} ms budget"
+        )));
+    }
     Ok(())
 }
 

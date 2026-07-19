@@ -10,11 +10,13 @@ rust-version.workspace = true
 
 [features]
 default = ["editor"]
+devtools = ["dep:astreon-devtools"]
 editor = ["dep:astreon-editor"]
 testing = ["dep:astreon-testing"]
 
 [dependencies]
 astreon-app = { workspace = true }
+astreon-devtools = { workspace = true, optional = true }
 astreon-editor = { workspace = true, optional = true }
 astreon-native-menu = { workspace = true }
 astreon-testing = { workspace = true, optional = true }
@@ -33,3 +35,7 @@ serde = { workspace = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "devtools_inspector"
+required-features = ["devtools"]
