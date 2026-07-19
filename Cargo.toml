@@ -27,20 +27,20 @@ astreon-widgets = { path = "crates/astreon-widgets", version = "0.3.0" }
 # Astrelis is pinned so clean clones and CI consume one reviewed engine state.
 # Developers working in the sibling repository can copy
 # `.cargo/config.toml.example` to `.cargo/config.toml` to use local paths.
-astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
-astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
+astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "b1b970f21b749bf8165c1f1c9a9d72b50f80e629" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
