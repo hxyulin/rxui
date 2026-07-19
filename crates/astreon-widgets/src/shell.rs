@@ -66,13 +66,22 @@ enum ToolbarSlot {
     Flexible,
 }
 
+/// Estimated width of a labeled toolbar command before its per-character text.
+const LABELED_COMMAND_BASE_WIDTH: f32 = 36.0;
+/// Estimated width contributed by each label character.
+const LABELED_COMMAND_CHAR_WIDTH: f32 = 7.0;
+/// Estimated width of an icon-only toolbar command.
+const ICON_COMMAND_WIDTH: f32 = 32.0;
+/// Width reserved for the "More" overflow button when commands overflow.
+const OVERFLOW_RESERVE_WIDTH: f32 = 44.0;
+
 struct ToolbarSeparator;
 
 impl<Message: 'static> Widget<Message> for ToolbarSeparator {
     widget_any!();
 
     fn intrinsic_size(&self, _theme: &Theme) -> LogicalSize {
-        Size::new(1.0, 24.0)
+        Size::new(1.0, 20.0)
     }
 
     fn container_style(&self, _theme: &Theme) -> WidgetContainerStyle {
@@ -141,6 +150,16 @@ impl<Message: Clone + 'static> Toolbar<Message> {
                     ui.set_enabled(button, command.enabled)?;
                     if let Some(label) = ui.widget(button)?.label_handle() {
                         ui.set_enabled(label, command.enabled)?;
+                        let checked_foreground = (command.checked == Some(true)
+                            && command.enabled)
+                            .then(|| ui.theme().accent_foreground);
+                        ui.set_widget_style(
+                            label,
+                            WidgetStyle {
+                                foreground: checked_foreground,
+                                ..Default::default()
+                            },
+                        )?;
                     }
                     let tip = command.shortcut.as_ref().map_or_else(
                         || command.label.clone(),
@@ -150,9 +169,10 @@ impl<Message: Clone + 'static> Toolbar<Message> {
                         Tooltip::new(ui, button, tip)?;
                     }
                     let estimated = if options.show_labels {
-                        44.0 + command.label.chars().count() as f32 * 8.0
+                        LABELED_COMMAND_BASE_WIDTH
+                            + command.label.chars().count() as f32 * LABELED_COMMAND_CHAR_WIDTH
                     } else {
-                        40.0
+                        ICON_COMMAND_WIDTH
                     };
                     buttons.push((id, button, estimated));
                     slots.push(ToolbarSlot::Command(buttons.len() - 1));
@@ -262,6 +282,15 @@ impl<Message: Clone + 'static> Toolbar<Message> {
                 if let Some(label) = ui.widget(*button)?.label_handle() {
                     ui.set_label_text(label, &command.label)?;
                     ui.set_enabled(label, command.enabled)?;
+                    let checked_foreground = (command.checked == Some(true) && command.enabled)
+                        .then(|| ui.theme().accent_foreground);
+                    ui.set_widget_style(
+                        label,
+                        WidgetStyle {
+                            foreground: checked_foreground,
+                            ..Default::default()
+                        },
+                    )?;
                 }
                 ui.set_enabled(*button, command.enabled)?;
                 ui.set_button_text(self.overflow.items()[index], toolbar_label(command))?;
@@ -280,7 +309,7 @@ impl<Message: Clone + 'static> Toolbar<Message> {
         let mut remaining = required;
         let mut overflowed = vec![false; self.buttons.len()];
         for index in (0..self.buttons.len()).rev() {
-            if remaining + 52.0 <= available_width {
+            if remaining + OVERFLOW_RESERVE_WIDTH <= available_width {
                 break;
             }
             overflowed[index] = true;
@@ -497,15 +526,31 @@ impl DialogHost {
         ui.set_layout(
             overlay,
             LayoutStyle {
-                min_width: Length::Px(360.0),
-                max_width: Length::Px(640.0),
+                min_width: Length::Px(320.0),
+                max_width: Length::Px(560.0),
                 ..Default::default()
             },
         )?;
-        let column = ui.add_column(overlay)?;
-        ui.add_label(column, options.title)?;
+        let padding = ui.add_padding(overlay, Insets::all(ui.theme().spacing.lg))?;
+        let column = ui.add_column(padding)?;
+        let title = ui.add_label(column, options.title)?;
+        ui.set_widget_style(
+            title,
+            WidgetStyle {
+                font_size: Some(ui.theme().type_scale.heading),
+                font_weight: Some(ui.theme().type_scale.heading_weight),
+                ..Default::default()
+            },
+        )?;
         if let Some(description) = options.description {
-            ui.add_label(column, description)?;
+            let description = ui.add_label(column, description)?;
+            ui.set_widget_style(
+                description,
+                WidgetStyle {
+                    foreground: Some(ui.theme().muted_foreground),
+                    ..Default::default()
+                },
+            )?;
         }
         let content = ui.add_column(column)?;
         build(ui, content)?;
@@ -746,7 +791,7 @@ impl ToastHost {
             },
         )?;
         ui.set_visibility(overlay, Visibility::Collapsed)?;
-        let padding = ui.add_padding(overlay, Insets::all(14.0))?;
+        let padding = ui.add_padding(overlay, Insets::all(12.0))?;
         let content = ui.add_column(padding)?;
         Ok(Self {
             overlay,
@@ -796,8 +841,29 @@ impl ToastHost {
                     SemanticLive::Polite
                 },
             )?;
-            ui.add_label(row, &entry.toast.title)?;
-            ui.add_label(row, &entry.toast.body)?;
+            let title = ui.add_label(row, &entry.toast.title)?;
+            ui.set_widget_style(
+                title,
+                WidgetStyle {
+                    foreground: Some(match entry.toast.level {
+                        ToastLevel::Info => ui.theme().accent,
+                        ToastLevel::Success => ui.theme().success,
+                        ToastLevel::Warning => ui.theme().warning,
+                        ToastLevel::Error => ui.theme().danger,
+                    }),
+                    font_weight: Some(ui.theme().type_scale.heading_weight),
+                    ..Default::default()
+                },
+            )?;
+            let body = ui.add_label(row, &entry.toast.body)?;
+            ui.set_widget_style(
+                body,
+                WidgetStyle {
+                    foreground: Some(ui.theme().muted_foreground),
+                    font_size: Some(ui.theme().type_scale.caption),
+                    ..Default::default()
+                },
+            )?;
             if let Some(action) = &entry.toast.action {
                 let button = ui.add_button(row, &action.label)?;
                 let message = action.message.clone();
@@ -901,8 +967,8 @@ mod tests {
         ui.semantic_tree().unwrap();
         let surface = ui.layout_bounds(host.overlay).unwrap();
         let row = ui.layout_bounds(host.rows[0]).unwrap();
-        assert!(row.origin.x >= surface.origin.x + 13.9);
-        assert!(row.origin.y >= surface.origin.y + 13.9);
+        assert!(row.origin.x >= surface.origin.x + 11.9);
+        assert!(row.origin.y >= surface.origin.y + 11.9);
     }
 
     #[test]
@@ -940,14 +1006,18 @@ mod tests {
         let root = ui.root();
         let toolbar =
             Toolbar::new(&mut ui, root, items, &commands, ToolbarOptions::default()).unwrap();
-        toolbar.update_overflow(&mut ui, 130.0).unwrap();
+        // Wide enough for the first labeled command ("Alpha") plus the
+        // overflow reserve, so the trailing two commands must overflow.
+        let available =
+            LABELED_COMMAND_BASE_WIDTH + 5.0 * LABELED_COMMAND_CHAR_WIDTH + OVERFLOW_RESERVE_WIDTH;
+        toolbar.update_overflow(&mut ui, available).unwrap();
         ui.set_viewport(Size::new(640.0, 200.0), 1.0);
         let tree = ui.semantic_tree().unwrap();
         let first = toolbar.buttons[0].1;
         let label = ui.widget(first).unwrap().label_handle().unwrap();
         let button_bounds = ui.layout_bounds(first).unwrap();
         let label_bounds = ui.layout_bounds(label).unwrap();
-        assert!(label_bounds.origin.x >= button_bounds.origin.x + 30.0);
+        assert!(label_bounds.origin.x >= button_bounds.origin.x + 24.0);
         assert!(find_semantic(&tree, SemanticRole::Toolbar, "").is_some());
         assert!(find_semantic(&tree, SemanticRole::Button, "More").is_some());
     }

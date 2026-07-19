@@ -15,6 +15,9 @@ use astrelis_ui_core::{
     SemanticRole, Theme, UiError, Widget, WidgetContainerStyle,
 };
 
+/// Logical glyph size icons are painted at inside buttons.
+const ICON_SIZE: f32 = 16.0;
+
 /// Validated monochrome vector icon.
 #[derive(Clone, Debug)]
 pub struct Icon {
@@ -250,21 +253,26 @@ impl<Message: Clone + 'static> Widget<Message> for CommandButton<Message> {
     fn intrinsic_size(&self, _theme: &Theme) -> LogicalSize {
         Size::new(
             if self.show_label {
-                if self.icon.is_some() { 44.0 } else { 20.0 }
+                if self.icon.is_some() { 40.0 } else { 20.0 }
             } else {
-                36.0
+                28.0
             },
-            36.0,
+            28.0,
         )
     }
 
-    fn container_style(&self, _theme: &Theme) -> WidgetContainerStyle {
+    fn container_style(&self, theme: &Theme) -> WidgetContainerStyle {
+        let padding = theme.control_padding;
         WidgetContainerStyle {
             padding: astrelis_ui_core::Insets {
-                left: if self.icon.is_some() { 34.0 } else { 10.0 },
-                top: 8.0,
-                right: 10.0,
-                bottom: 8.0,
+                left: if self.icon.is_some() {
+                    padding.left + ICON_SIZE + theme.spacing.xs
+                } else {
+                    padding.left
+                },
+                top: padding.top,
+                right: padding.right,
+                bottom: padding.bottom,
             },
             gap: 0.0,
         }
@@ -338,7 +346,8 @@ impl<Message: Clone + 'static> Widget<Message> for CommandButton<Message> {
         bounds: LogicalRect,
         theme: &Theme,
     ) -> Result<(), UiError> {
-        let background = if self.checked && self.enabled && !self.hovered && !self.pressed {
+        let checked_accent = self.checked && self.enabled;
+        let background = if checked_accent {
             theme.accent
         } else {
             theme.button.resolve(astrelis_ui_core::ControlState {
@@ -353,9 +362,10 @@ impl<Message: Clone + 'static> Widget<Message> for CommandButton<Message> {
             .fill_rounded_rect(rounded, Brush::Solid(background))
             .map_err(ui_error)?;
         if let Some(icon) = &self.icon {
-            let size = 16.0_f32.min(bounds.size.height - 8.0);
+            let padding = theme.control_padding;
+            let size = ICON_SIZE.min(bounds.size.height - padding.top - padding.bottom);
             let icon_bounds = LogicalRect::from_xywh(
-                bounds.origin.x + 10.0,
+                bounds.origin.x + padding.left,
                 bounds.origin.y + (bounds.size.height - size) * 0.5,
                 size,
                 size,
@@ -364,7 +374,9 @@ impl<Message: Clone + 'static> Widget<Message> for CommandButton<Message> {
                 painter,
                 icon,
                 icon_bounds,
-                if self.enabled {
+                if checked_accent {
+                    theme.accent_foreground
+                } else if self.enabled {
                     theme.foreground
                 } else {
                     theme.disabled_foreground
@@ -459,19 +471,24 @@ impl<Message: Clone + 'static> Widget<Message> for IconButton<Message> {
 
     fn intrinsic_size(&self, _theme: &Theme) -> LogicalSize {
         if self.icon_only {
-            Size::new(36.0, 36.0)
+            Size::new(28.0, 28.0)
         } else {
-            Size::new(44.0, 36.0)
+            Size::new(40.0, 28.0)
         }
     }
 
     fn container_style(&self, theme: &Theme) -> WidgetContainerStyle {
+        let padding = theme.control_padding;
         WidgetContainerStyle {
             padding: astrelis_ui_core::Insets {
-                left: if self.icon_only { 10.0 } else { 34.0 },
-                top: 8.0,
-                right: 10.0,
-                bottom: 8.0,
+                left: if self.icon_only {
+                    padding.left
+                } else {
+                    padding.left + ICON_SIZE + theme.spacing.xs
+                },
+                top: padding.top,
+                right: padding.right,
+                bottom: padding.bottom,
             },
             gap: theme.spacing.sm,
         }
@@ -551,9 +568,10 @@ impl<Message: Clone + 'static> Widget<Message> for IconButton<Message> {
         painter
             .fill_rounded_rect(rounded, Brush::Solid(background))
             .map_err(ui_error)?;
-        let size = 16.0_f32.min(bounds.size.height - 8.0);
+        let padding = theme.control_padding;
+        let size = ICON_SIZE.min(bounds.size.height - padding.top - padding.bottom);
         let icon_bounds = LogicalRect::from_xywh(
-            bounds.origin.x + 10.0,
+            bounds.origin.x + padding.left,
             bounds.origin.y + (bounds.size.height - size) * 0.5,
             size,
             size,

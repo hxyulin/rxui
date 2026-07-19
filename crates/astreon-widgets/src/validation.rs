@@ -188,6 +188,7 @@ impl<T> FieldValidation<T> {
             self.message,
             WidgetStyle {
                 foreground,
+                font_size: Some(ui.theme().type_scale.caption),
                 ..Default::default()
             },
         )?;
