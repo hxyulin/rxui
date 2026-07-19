@@ -36,6 +36,7 @@ astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "8b533
 astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
 astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
 astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
+astrelis-profiling = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
 astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
 astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
 astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "8b5331cd505344e72f3228e1e94b0bee194af6ac" }
@@ -53,3 +54,23 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# Retained layout runs on every interactive splitter movement. Keep Astreon
+# crates debuggable while avoiding the large unoptimized Taffy/UI penalty in
+# normal `cargo run` editor builds. `Ui<Message>` is generic, so its Taffy
+# solve is monomorphized into downstream Astreon crates and needs the workspace
+# dev level as well as dependency overrides.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package.astrelis-ui-core]
+opt-level = 2
+
+[profile.dev.package.astrelis-ui-widgets]
+opt-level = 2
+
+[profile.dev.package.astrelis-ui-docking]
+opt-level = 2
+
+[profile.dev.package.taffy]
+opt-level = 2

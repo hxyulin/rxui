@@ -1,6 +1,11 @@
 //! Astreon 0.4 reference 2D scene editor.
 
-use std::{any::Any, collections::BTreeSet, io, time::Duration};
+use std::{
+    any::Any,
+    collections::{BTreeMap, BTreeSet},
+    io,
+    time::{Duration, Instant},
+};
 
 use astrelis_app::{App, AppContext, Runtime, RuntimeConfig, TimerId};
 use astrelis_core::geometry::{LogicalPoint, Physical, Size};
@@ -132,7 +137,54 @@ struct PersistedEditor {
 }
 
 struct SceneTexture {
-    _texture: Texture,
+    texture: Texture,
+    background: Vec<u8>,
+    background_pan: LogicalPoint,
+    background_zoom: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ViewOutcome {
+    selection_changed: bool,
+    entities_changed: bool,
+    scene_changed: bool,
+    commands_changed: bool,
+}
+
+struct PerfProfiler {
+    enabled: bool,
+    samples: BTreeMap<&'static str, (u64, Duration, Duration)>,
+    last_report: Instant,
+}
+
+impl PerfProfiler {
+    fn from_env() -> Self {
+        Self {
+            enabled: std::env::var_os("ASTREON_PERF").is_some(),
+            samples: BTreeMap::new(),
+            last_report: Instant::now(),
+        }
+    }
+
+    fn record(&mut self, label: &'static str, elapsed: Duration) {
+        if !self.enabled {
+            return;
+        }
+        let sample = self.samples.entry(label).or_default();
+        sample.0 += 1;
+        sample.1 += elapsed;
+        sample.2 = sample.2.max(elapsed);
+        if self.last_report.elapsed() >= Duration::from_secs(1) {
+            for (label, (count, total, max)) in std::mem::take(&mut self.samples) {
+                eprintln!(
+                    "[perf] {label}: count={count} avg={:.3}ms max={:.3}ms",
+                    total.as_secs_f64() * 1000.0 / count as f64,
+                    max.as_secs_f64() * 1000.0,
+                );
+            }
+            self.last_report = Instant::now();
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -179,6 +231,7 @@ struct ReferenceEditor {
     saved_window: Option<WindowPlacement>,
     store: Option<JsonStateStore>,
     save_timer: Option<TimerId>,
+    profiler: PerfProfiler,
 }
 
 impl ReferenceEditor {
@@ -314,11 +367,21 @@ impl ReferenceEditor {
             saved_window,
             store,
             save_timer: None,
+            profiler: PerfProfiler::from_env(),
         }
     }
 
-    fn sync_views(&mut self) -> Result<(), io::Error> {
+    fn sync_tree(&mut self) -> Result<(), io::Error> {
         let tree_nodes = build_tree(&self.entities, None, &self.expanded);
+        let host = self.host.as_mut().expect("host exists");
+        self.tree
+            .as_mut()
+            .expect("tree")
+            .sync(host.ui_mut(), &tree_nodes, self.selected.as_ref())
+            .map_err(io::Error::other)
+    }
+
+    fn sync_table(&mut self) -> Result<(), io::Error> {
         let mut rows = self
             .entities
             .iter()
@@ -349,17 +412,7 @@ impl ReferenceEditor {
                 order.reverse()
             }
         });
-        let sections = self
-            .selected
-            .and_then(|id| self.entities.iter().find(|entity| entity.id == id))
-            .map(|entity| property_sections(entity, &self.expanded_properties))
-            .unwrap_or_default();
         let host = self.host.as_mut().expect("host exists");
-        self.tree
-            .as_mut()
-            .expect("tree")
-            .sync(host.ui_mut(), &tree_nodes, self.selected.as_ref())
-            .map_err(io::Error::other)?;
         self.table
             .as_mut()
             .expect("table")
@@ -370,18 +423,35 @@ impl ReferenceEditor {
                 Some(&self.sort),
                 self.selected.as_ref(),
             )
-            .map_err(io::Error::other)?;
+            .map_err(io::Error::other)
+    }
+
+    fn sync_properties(&mut self) -> Result<(), io::Error> {
+        let sections = self
+            .selected
+            .and_then(|id| self.entities.iter().find(|entity| entity.id == id))
+            .map(|entity| property_sections(entity, &self.expanded_properties))
+            .unwrap_or_default();
+        let host = self.host.as_mut().expect("host exists");
         self.properties
             .as_mut()
             .expect("properties")
             .sync(host.ui_mut(), &sections)
-            .map_err(io::Error::other)?;
+            .map_err(io::Error::other)
+    }
+
+    fn sync_palette(&mut self) -> Result<(), io::Error> {
+        let host = self.host.as_mut().expect("host exists");
         self.palette
             .as_mut()
             .expect("palette")
             .sync(host.ui_mut(), &self.commands, &self.palette_state)
-            .map_err(io::Error::other)?;
+            .map_err(io::Error::other)
+    }
+
+    fn sync_commands(&mut self) -> Result<(), io::Error> {
         sync_undo_commands(&mut self.commands, &self.undo);
+        let host = self.host.as_mut().expect("host exists");
         self.toolbar
             .as_ref()
             .expect("toolbar")
@@ -389,25 +459,30 @@ impl ReferenceEditor {
             .map_err(io::Error::other)
     }
 
+    fn sync_views(&mut self) -> Result<(), io::Error> {
+        self.sync_tree()?;
+        self.sync_table()?;
+        self.sync_properties()?;
+        self.sync_palette()?;
+        self.sync_commands()
+    }
+
     fn upload_scene(&mut self) -> Result<(), io::Error> {
         let Some(host) = &self.host else {
             return Ok(());
         };
-        let Some(scene) = &self.scene_texture else {
+        let Some(scene) = &mut self.scene_texture else {
             return Ok(());
         };
-        let mut pixels = vec![0_u8; (SCENE_WIDTH * SCENE_HEIGHT * 4) as usize];
-        for y in 0..SCENE_HEIGHT {
-            for x in 0..SCENE_WIDTH {
-                let index = ((y * SCENE_WIDTH + x) * 4) as usize;
-                let world_x = (x as f32 - SCENE_WIDTH as f32 * 0.5) / self.zoom + self.pan.x;
-                let world_y = (y as f32 - SCENE_HEIGHT as f32 * 0.5) / self.zoom + self.pan.y;
-                let grid = (world_x.round() as i32).rem_euclid(32) <= 1
-                    || (world_y.round() as i32).rem_euclid(32) <= 1;
-                let base = if grid { 40 } else { 27 };
-                pixels[index..index + 4].copy_from_slice(&[base, base + 5, base + 12, 255]);
-            }
+        if scene.background.is_empty()
+            || scene.background_pan != self.pan
+            || scene.background_zoom != self.zoom
+        {
+            scene.background = render_scene_background(self.pan, self.zoom);
+            scene.background_pan = self.pan;
+            scene.background_zoom = self.zoom;
         }
+        let mut pixels = scene.background.clone();
         for entity in self.entities.iter().filter(|entity| entity.visible) {
             let sx = ((entity.x as f32 - self.pan.x) * self.zoom + SCENE_WIDTH as f32 * 0.5) as i32;
             let sy =
@@ -441,7 +516,7 @@ impl ReferenceEditor {
         host.queue()
             .write_texture(
                 &TextureCopy {
-                    texture: scene._texture.clone(),
+                    texture: scene.texture.clone(),
                     mip_level: 0,
                     origin: Default::default(),
                 },
@@ -462,6 +537,11 @@ impl ReferenceEditor {
         message: Message,
     ) -> Result<(), io::Error> {
         let mut scene_changed = false;
+        let mut sync_tree = false;
+        let mut sync_table = false;
+        let mut sync_properties = false;
+        let mut sync_palette = false;
+        let mut sync_commands = false;
         match message {
             Message::Dock(action) => {
                 let outcome = self
@@ -477,8 +557,13 @@ impl ReferenceEditor {
             }
             Message::Tree(action) => match action {
                 TreeAction::Select(id) | TreeAction::Activate(id) => {
-                    self.selected = Some(id);
-                    scene_changed = true;
+                    if self.selected != Some(id) {
+                        self.selected = Some(id);
+                        sync_tree = true;
+                        sync_table = true;
+                        sync_properties = true;
+                        scene_changed = true;
+                    }
                 }
                 TreeAction::SetExpanded { id, expanded } => {
                     if expanded {
@@ -486,17 +571,27 @@ impl ReferenceEditor {
                     } else {
                         self.expanded.remove(&id);
                     }
+                    sync_tree = true;
                 }
             },
             Message::Table(action) => match action {
                 TableAction::Select(id) | TableAction::Activate(id) => {
-                    self.selected = Some(id);
-                    scene_changed = true;
+                    if self.selected != Some(id) {
+                        self.selected = Some(id);
+                        sync_tree = true;
+                        sync_table = true;
+                        sync_properties = true;
+                        scene_changed = true;
+                    }
                 }
-                TableAction::SetSort(sort) => self.sort = sort,
+                TableAction::SetSort(sort) => {
+                    self.sort = sort;
+                    sync_table = true;
+                }
                 TableAction::ResizeColumn { column, width } => {
                     if let Some(value) = self.columns.iter_mut().find(|value| value.id == column) {
                         value.width = width;
+                        sync_table = true;
                     }
                 }
             },
@@ -519,6 +614,10 @@ impl ReferenceEditor {
                             },
                             &mut self.entities,
                         )?;
+                        sync_tree = true;
+                        sync_table = true;
+                        sync_properties = true;
+                        sync_commands = true;
                         scene_changed = true;
                     }
                 }
@@ -528,13 +627,21 @@ impl ReferenceEditor {
                     } else {
                         self.expanded_properties.remove(&id);
                     }
+                    sync_properties = true;
                 }
             },
             Message::View(event) => {
-                self.handle_view(event)?;
-                scene_changed = true;
+                let outcome = self.handle_view(event)?;
+                sync_tree |= outcome.selection_changed || outcome.entities_changed;
+                sync_table |= outcome.selection_changed || outcome.entities_changed;
+                sync_properties |= outcome.selection_changed || outcome.entities_changed;
+                sync_commands |= outcome.commands_changed;
+                scene_changed |= outcome.scene_changed;
             }
-            Message::Palette(event) => self.handle_palette(context, event)?,
+            Message::Palette(event) => {
+                self.handle_palette(context, event)?;
+                sync_palette = true;
+            }
             Message::NewEntity => {
                 let id = self.next_id;
                 self.next_id += 1;
@@ -548,27 +655,42 @@ impl ReferenceEditor {
                     visible: true,
                 });
                 self.selected = Some(id);
+                sync_tree = true;
+                sync_table = true;
+                sync_properties = true;
                 scene_changed = true;
             }
             Message::DeleteEntity => {
                 if let Some(id) = self.selected.take() {
                     self.entities
                         .retain(|entity| entity.id != id && entity.parent != Some(id));
+                    sync_tree = true;
+                    sync_table = true;
+                    sync_properties = true;
                     scene_changed = true;
                 }
             }
             Message::Undo => {
                 self.undo.undo(&mut self.entities)?;
+                sync_tree = true;
+                sync_table = true;
+                sync_properties = true;
+                sync_commands = true;
                 scene_changed = true;
             }
             Message::Redo => {
                 self.undo.redo(&mut self.entities)?;
+                sync_tree = true;
+                sync_table = true;
+                sync_properties = true;
+                sync_commands = true;
                 scene_changed = true;
             }
             Message::OpenPalette => {
                 self.palette_state.open = true;
                 self.palette_state.query.clear();
                 self.palette_state.selected = 0;
+                sync_palette = true;
             }
             Message::SaveLayout => {
                 self.workspace_state.layout = self.workspace.as_ref().unwrap().layout().clone();
@@ -610,7 +732,21 @@ impl ReferenceEditor {
                 self.save_state();
             }
         }
-        self.sync_views()?;
+        if sync_tree {
+            self.sync_tree()?;
+        }
+        if sync_table {
+            self.sync_table()?;
+        }
+        if sync_properties {
+            self.sync_properties()?;
+        }
+        if sync_palette {
+            self.sync_palette()?;
+        }
+        if sync_commands {
+            self.sync_commands()?;
+        }
         if scene_changed {
             self.upload_scene()?;
         }
@@ -655,7 +791,8 @@ impl ReferenceEditor {
         Ok(())
     }
 
-    fn handle_view(&mut self, event: RenderViewEvent) -> Result<(), io::Error> {
+    fn handle_view(&mut self, event: RenderViewEvent) -> Result<ViewOutcome, io::Error> {
+        let mut outcome = ViewOutcome::default();
         match event {
             RenderViewEvent::PointerButton {
                 position,
@@ -663,6 +800,7 @@ impl ReferenceEditor {
                 state: ElementState::Pressed,
                 ..
             } => {
+                let previous_selection = self.selected;
                 let entity = hit_entity(&self.entities, self.pan, self.zoom, position.normalized)
                     .and_then(|id| {
                         self.selected = Some(id);
@@ -679,6 +817,8 @@ impl ReferenceEditor {
                     distance: 0.0,
                     target,
                 });
+                outcome.selection_changed = self.selected != previous_selection;
+                outcome.scene_changed = outcome.selection_changed;
             }
             RenderViewEvent::PointerMoved { position, .. } => {
                 if let Some(mut drag) = self.drag.clone() {
@@ -696,6 +836,7 @@ impl ReferenceEditor {
                             SceneDragTarget::View { start_pan } => {
                                 self.pan =
                                     LogicalPoint::new(start_pan.x - delta.x, start_pan.y - delta.y);
+                                outcome.scene_changed = true;
                             }
                             SceneDragTarget::Entity(before) => {
                                 if let Some(entity) = self
@@ -705,6 +846,7 @@ impl ReferenceEditor {
                                 {
                                     entity.x = before.x + f64::from(delta.x);
                                     entity.y = before.y + f64::from(delta.y);
+                                    outcome.scene_changed = true;
                                 }
                             }
                         }
@@ -720,7 +862,9 @@ impl ReferenceEditor {
                 if let Some(drag) = self.drag.take() {
                     match drag.target {
                         SceneDragTarget::View { .. } if drag.distance < 4.0 => {
+                            outcome.selection_changed = self.selected.is_some();
                             self.selected = None;
+                            outcome.scene_changed = outcome.selection_changed;
                         }
                         SceneDragTarget::Entity(before) if drag.distance > 4.0 => {
                             if let Some(after) = self
@@ -738,6 +882,8 @@ impl ReferenceEditor {
                                     },
                                     &mut self.entities,
                                 )?;
+                                outcome.entities_changed = true;
+                                outcome.commands_changed = true;
                             }
                         }
                         _ => {}
@@ -751,14 +897,18 @@ impl ReferenceEditor {
                 }) = self.drag.take()
                 {
                     replace_entity(&mut self.entities, before.id, before)?;
+                    outcome.entities_changed = true;
+                    outcome.scene_changed = true;
                 }
             }
             RenderViewEvent::Scroll { delta, .. } => {
-                self.zoom = (self.zoom * (1.0 - delta.y * 0.05)).clamp(0.25, 4.0)
+                let zoom = (self.zoom * (1.0 - delta.y * 0.05)).clamp(0.25, 4.0);
+                outcome.scene_changed = zoom != self.zoom;
+                self.zoom = zoom;
             }
             _ => {}
         }
-        Ok(())
+        Ok(outcome)
     }
 
     fn save_state(&self) {
@@ -774,8 +924,8 @@ impl ReferenceEditor {
     }
 
     fn schedule_save(&mut self, context: &mut AppContext<'_, '_, Self>) {
-        if let Some(timer) = self.save_timer.take() {
-            context.cancel_timer(timer);
+        if self.save_timer.is_some() {
+            return;
         }
         self.save_timer = Some(context.set_timeout(Duration::from_millis(250), |app, _| {
             app.save_timer = None;
@@ -996,7 +1146,12 @@ impl App for ReferenceEditor {
         self.properties = Some(properties);
         self.palette = Some(palette);
         self.render_view = Some(render_view);
-        self.scene_texture = Some(SceneTexture { _texture: texture });
+        self.scene_texture = Some(SceneTexture {
+            texture,
+            background: Vec::new(),
+            background_pan: LogicalPoint::ZERO,
+            background_zoom: 0.0,
+        });
         self.toolbar = Some(toolbar);
         self.host = Some(host);
         self.sync_views()?;
@@ -1008,13 +1163,16 @@ impl App for ReferenceEditor {
         id: WindowId,
         event: WindowEvent,
     ) -> Result<(), Self::Error> {
+        let event_started = Instant::now();
         let shortcut = self.router.handle_event(&event, &self.commands);
+        let route_started = Instant::now();
         let update = {
             let host = self.host.as_mut().expect("host");
             self.placement.handle_event(host.window(), &event);
             host.handle_event(&context.clipboard(), &event)
                 .map_err(io::Error::other)?
         };
+        self.profiler.record("event.route", route_started.elapsed());
         if update.close_requested {
             if let Some(timer) = self.save_timer.take() {
                 context.cancel_timer(timer);
@@ -1046,7 +1204,10 @@ impl App for ReferenceEditor {
             messages.push(shortcut);
         }
         for message in messages {
+            let label = message_perf_label(&message);
+            let apply_started = Instant::now();
             self.apply(context, message)?;
+            self.profiler.record(label, apply_started.elapsed());
         }
         if update.redraw
             || self
@@ -1056,6 +1217,7 @@ impl App for ReferenceEditor {
         {
             context.invalidate_window(id);
         }
+        self.profiler.record("event.total", event_started.elapsed());
         Ok(())
     }
     fn redraw(
@@ -1063,10 +1225,27 @@ impl App for ReferenceEditor {
         _context: &mut AppContext<'_, '_, Self>,
         _window: WindowId,
     ) -> Result<(), Self::Error> {
+        let started = Instant::now();
         if let Some(host) = &mut self.host {
             host.redraw().map_err(io::Error::other)?;
         }
+        self.profiler.record("redraw", started.elapsed());
         Ok(())
+    }
+}
+
+fn message_perf_label(message: &Message) -> &'static str {
+    match message {
+        Message::Dock(DockAction::SetSplitRatio { .. }) => "apply.dock_resize",
+        Message::Dock(_) => "apply.dock",
+        Message::Table(TableAction::ResizeColumn { .. }) => "apply.table_resize",
+        Message::Table(TableAction::Select(_) | TableAction::Activate(_))
+        | Message::Tree(TreeAction::Select(_) | TreeAction::Activate(_)) => "apply.select",
+        Message::View(RenderViewEvent::PointerMoved { .. }) => "apply.scene_move",
+        Message::View(_) => "apply.scene",
+        Message::Property(_) => "apply.property",
+        Message::Palette(_) | Message::OpenPalette => "apply.palette",
+        _ => "apply.command",
     }
 }
 
@@ -1229,6 +1408,22 @@ fn hit_entity(
                 && (entity.y as f32 - y).abs() <= 24.0
         })
         .map(|entity| entity.id)
+}
+
+fn render_scene_background(pan: LogicalPoint, zoom: f32) -> Vec<u8> {
+    let mut pixels = vec![0_u8; (SCENE_WIDTH * SCENE_HEIGHT * 4) as usize];
+    for y in 0..SCENE_HEIGHT {
+        for x in 0..SCENE_WIDTH {
+            let index = ((y * SCENE_WIDTH + x) * 4) as usize;
+            let world_x = (x as f32 - SCENE_WIDTH as f32 * 0.5) / zoom + pan.x;
+            let world_y = (y as f32 - SCENE_HEIGHT as f32 * 0.5) / zoom + pan.y;
+            let grid = (world_x.round() as i32).rem_euclid(32) <= 1
+                || (world_y.round() as i32).rem_euclid(32) <= 1;
+            let base = if grid { 40 } else { 27 };
+            pixels[index..index + 4].copy_from_slice(&[base, base + 5, base + 12, 255]);
+        }
+    }
+    pixels
 }
 
 fn fill_rect(pixels: &mut [u8], left: i32, top: i32, right: i32, bottom: i32, color: [u8; 4]) {

@@ -535,6 +535,7 @@ where
         let resizer = ui.add_widget(
             cell,
             ColumnResizer::new(
+                cell,
                 column.id.clone(),
                 column.width,
                 column.min_width,
@@ -557,6 +558,7 @@ where
 }
 
 struct ColumnResizer<RowId, ColumnId, Message> {
+    cell: ElementHandle<astrelis_ui_core::Row>,
     column: ColumnId,
     width: f32,
     min_width: f32,
@@ -567,6 +569,7 @@ struct ColumnResizer<RowId, ColumnId, Message> {
 
 impl<RowId, ColumnId, Message> ColumnResizer<RowId, ColumnId, Message> {
     fn new(
+        cell: ElementHandle<astrelis_ui_core::Row>,
         column: ColumnId,
         width: f32,
         min_width: f32,
@@ -574,6 +577,7 @@ impl<RowId, ColumnId, Message> ColumnResizer<RowId, ColumnId, Message> {
         map: Rc<dyn Fn(TableAction<RowId, ColumnId>) -> Message>,
     ) -> Self {
         Self {
+            cell,
             column,
             width,
             min_width,
@@ -634,6 +638,14 @@ where
                     self.max_width,
                 );
                 self.dragging = Some((*device_id, start, width));
+                context.set_layout(
+                    self.cell,
+                    LayoutStyle {
+                        width: Length::Px(width),
+                        shrink: 0.0,
+                        ..Default::default()
+                    },
+                );
                 context.request_paint();
             }
             RoutedEventKind::PointerButton {

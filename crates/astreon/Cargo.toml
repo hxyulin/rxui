@@ -26,6 +26,7 @@ astrelis-app = { workspace = true }
 astrelis-core = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-platform-winit = { workspace = true }
+astrelis-profiling = { workspace = true }
 astrelis-text = { workspace = true }
 astrelis-ui-core = { workspace = true }
 serde = { workspace = true }
