@@ -12,6 +12,8 @@ use astrelis_ui_core::{
 };
 use astrelis_ui_widgets::{VirtualList, VirtualListItem, VirtualListOptions};
 
+use crate::{IconButton, icons};
+
 /// One application-owned node displayed by a [`TreeView`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeNode<Id> {
@@ -86,7 +88,7 @@ pub struct TreeView<Id, Message> {
 impl<Id, Message> TreeView<Id, Message>
 where
     Id: Clone + Eq + 'static,
-    Message: 'static,
+    Message: Clone + 'static,
 {
     /// Creates an empty tree view.
     pub fn new<T>(
@@ -171,7 +173,7 @@ fn build_tree_row<Id, Message>(
 ) -> Result<(), UiError>
 where
     Id: Clone + Eq + 'static,
-    Message: 'static,
+    Message: Clone + 'static,
 {
     let node = flat[index].clone();
     ui.set_semantic_role(item, SemanticRole::TreeItem)?;
@@ -184,6 +186,7 @@ where
         row,
         LayoutStyle {
             width: Length::Percent(1.0),
+            height: Length::Percent(1.0),
             ..Default::default()
         },
     )?;
@@ -197,27 +200,31 @@ where
         },
     )?;
     if node.has_children {
-        let disclosure = ui.add_button(row, if node.expanded { "Collapse" } else { "Expand" })?;
+        let id = node.id.clone();
+        let expanded = !node.expanded;
+        let disclosure = ui.add_widget(
+            row,
+            IconButton::icon_only(
+                if node.expanded {
+                    icons::chevron_down()
+                } else {
+                    icons::chevron_right()
+                },
+                format!(
+                    "{} {}",
+                    if node.expanded { "Collapse" } else { "Expand" },
+                    node.label
+                ),
+                map.clone()(TreeAction::SetExpanded { id, expanded }),
+            ),
+        )?;
         ui.set_layout(
             disclosure,
             LayoutStyle {
-                width: Length::Px(66.0),
+                width: Length::Px(28.0),
+                height: Length::Px(28.0),
                 shrink: 0.0,
                 ..Default::default()
-            },
-        )?;
-        let id = node.id.clone();
-        let mapper = map.clone();
-        let expanded = !node.expanded;
-        ui.listen(
-            disclosure,
-            None,
-            EventFilter::Activate,
-            move |context, _| {
-                context.emit(mapper(TreeAction::SetExpanded {
-                    id: id.clone(),
-                    expanded,
-                }));
             },
         )?;
     } else {
@@ -225,7 +232,7 @@ where
         ui.set_layout(
             spacer,
             LayoutStyle {
-                width: Length::Px(66.0),
+                width: Length::Px(28.0),
                 shrink: 0.0,
                 ..Default::default()
             },
@@ -746,6 +753,14 @@ where
     ui.set_semantic_selected(item, Some(selected))?;
     let row = ui.add_row(item)?;
     ui.set_flex(row, 0.0, Alignment::Stretch)?;
+    ui.set_layout(
+        row,
+        LayoutStyle {
+            width: Length::Percent(1.0),
+            height: Length::Percent(1.0),
+            ..Default::default()
+        },
+    )?;
     for (index, column) in columns.iter().enumerate() {
         let cell = ui.add_label(
             row,
@@ -895,6 +910,68 @@ mod tests {
             semantics
                 .iter()
                 .any(|node| node.role == SemanticRole::TreeItem && node.selected == Some(true))
+        );
+    }
+
+    #[test]
+    fn tree_uses_compact_disclosure_gutter_and_indents_only_children() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        ui.set_viewport(Size::new(400.0, 240.0), 1.0);
+        let root = ui.root();
+        let mut tree = TreeView::new(&mut ui, root, |_| ()).unwrap();
+        ui.set_layout(
+            tree.root(),
+            LayoutStyle {
+                height: Length::Px(180.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tree.sync(
+            &mut ui,
+            &[
+                TreeNode::leaf(1, "Camera"),
+                TreeNode::leaf(2, "World")
+                    .expanded(true)
+                    .children(vec![TreeNode::leaf(3, "Key Light")]),
+            ],
+            Some(&2),
+        )
+        .unwrap();
+
+        let mut semantics = Vec::new();
+        semantic_nodes(&ui.semantic_tree().unwrap(), &mut semantics);
+        let bounds = |role, label: &str| {
+            semantics
+                .iter()
+                .find(|node| node.role == role && node.label == label)
+                .unwrap_or_else(|| panic!("missing {label}"))
+                .bounds
+        };
+        let camera = bounds(SemanticRole::Label, "Camera");
+        let world = bounds(SemanticRole::Label, "World");
+        let child = bounds(SemanticRole::Label, "Key Light");
+        let disclosure = bounds(SemanticRole::Button, "Collapse World");
+        let world_item = semantics
+            .iter()
+            .find(|node| {
+                node.role == SemanticRole::TreeItem
+                    && world.origin.y >= node.bounds.origin.y
+                    && world.origin.y < node.bounds.origin.y + node.bounds.size.height
+            })
+            .expect("missing World tree item")
+            .bounds;
+        assert_eq!(disclosure.size.width, 28.0);
+        assert_eq!(camera.origin.x, world.origin.x);
+        assert_eq!(child.origin.x, world.origin.x + 16.0);
+        assert_eq!(
+            disclosure.origin.y + disclosure.size.height * 0.5,
+            world.origin.y + world.size.height * 0.5,
+        );
+        assert!(disclosure.origin.y >= world_item.origin.y);
+        assert!(
+            disclosure.origin.y + disclosure.size.height
+                <= world_item.origin.y + world_item.size.height
         );
     }
 

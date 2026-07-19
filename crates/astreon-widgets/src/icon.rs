@@ -686,24 +686,24 @@ pub mod icons {
     /// Downward chevron.
     pub fn chevron_down() -> Icon {
         polygon(&[
-            (4.0, 8.0),
-            (12.0, 16.0),
-            (20.0, 8.0),
-            (17.0, 5.0),
-            (12.0, 10.0),
-            (7.0, 5.0),
+            (4.0, 9.5),
+            (12.0, 17.5),
+            (20.0, 9.5),
+            (17.0, 6.5),
+            (12.0, 11.5),
+            (7.0, 6.5),
         ])
     }
 
     /// Rightward chevron.
     pub fn chevron_right() -> Icon {
         polygon(&[
-            (8.0, 4.0),
-            (16.0, 12.0),
-            (8.0, 20.0),
-            (5.0, 17.0),
-            (10.0, 12.0),
-            (5.0, 7.0),
+            (9.5, 4.0),
+            (17.5, 12.0),
+            (9.5, 20.0),
+            (6.5, 17.0),
+            (11.5, 12.0),
+            (6.5, 7.0),
         ])
     }
 
@@ -893,6 +893,15 @@ mod tests {
     fn rejects_invalid_view_boxes_and_empty_paths() {
         assert!(Icon::new(Size::new(0.0, 24.0), Path::builder().finish()).is_err());
         assert!(Icon::new(Size::new(24.0, 24.0), Path::builder().finish()).is_err());
+    }
+
+    #[test]
+    fn chevron_visual_bounds_are_centered_in_the_view_box() {
+        for icon in [icons::chevron_down(), icons::chevron_right()] {
+            let bounds = icon.path().bounds().expect("built-in icon has bounds");
+            assert_eq!(bounds.origin.x + bounds.size.width * 0.5, 12.0);
+            assert_eq!(bounds.origin.y + bounds.size.height * 0.5, 12.0);
+        }
     }
 
     #[test]
