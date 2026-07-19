@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, error::Error, fmt};
 
+use astrelis_platform::WindowEvent;
 use astrelis_platform::{ElementState, Key, KeyboardInput, Modifiers};
 
 /// Stable application-defined command identity.
@@ -69,6 +70,49 @@ impl Shortcut {
         input.state == ElementState::Pressed
             && self.modifiers == modifiers
             && keys_equal(&self.key, &input.logical_key)
+    }
+
+    /// Formats this shortcut using the current platform's conventional names.
+    pub fn display_label(&self) -> String {
+        let mut parts = Vec::new();
+        if self.modifiers.control {
+            parts.push("Ctrl".to_owned());
+        }
+        if self.modifiers.alt {
+            parts.push(
+                if cfg!(target_os = "macos") {
+                    "Option"
+                } else {
+                    "Alt"
+                }
+                .to_owned(),
+            );
+        }
+        if self.modifiers.shift {
+            parts.push("Shift".to_owned());
+        }
+        if self.modifiers.super_key {
+            parts.push(
+                if cfg!(target_os = "macos") {
+                    "Command"
+                } else {
+                    "Super"
+                }
+                .to_owned(),
+            );
+        }
+        parts.push(key_label(&self.key));
+        parts.join("+")
+    }
+}
+
+fn key_label(key: &Key) -> String {
+    match key {
+        Key::Character(value) => value.to_uppercase(),
+        Key::Named(value) => format!("{value:?}"),
+        Key::Native(value) => format!("{value:?}"),
+        Key::Unidentified => "Unidentified".into(),
+        _ => "Unknown".into(),
     }
 }
 
@@ -227,6 +271,53 @@ impl<Message: Clone> CommandRegistry<Message> {
     }
 }
 
+/// Tracks modifier state and dispatches command shortcuts from window events.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommandRouter {
+    modifiers: Modifiers,
+}
+
+impl CommandRouter {
+    /// Creates a router with no modifiers held.
+    pub const fn new() -> Self {
+        Self {
+            modifiers: Modifiers {
+                shift: false,
+                control: false,
+                alt: false,
+                super_key: false,
+            },
+        }
+    }
+
+    /// Returns the most recently observed modifier state.
+    pub const fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    /// Updates modifier state and invokes a matching enabled command.
+    pub fn handle_event<Message: Clone>(
+        &mut self,
+        event: &WindowEvent,
+        commands: &CommandRegistry<Message>,
+    ) -> Option<Message> {
+        match event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = *modifiers;
+                None
+            }
+            WindowEvent::Focused(false) => {
+                self.modifiers = Modifiers::default();
+                None
+            }
+            WindowEvent::KeyboardInput(input) if !input.repeat => {
+                commands.invoke_shortcut(input, self.modifiers)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Invalid command registration or identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandError(String);
@@ -298,5 +389,45 @@ mod tests {
     fn named_keys_can_be_bound() {
         let shortcut = Shortcut::new(Key::Named(NamedKey::Escape), Modifiers::default());
         assert_eq!(shortcut.key, Key::Named(NamedKey::Escape));
+    }
+
+    #[test]
+    fn router_tracks_modifiers_and_ignores_repeats() {
+        let modifiers = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let mut commands = CommandRegistry::new();
+        commands
+            .register(
+                Command::new(CommandId::new("file.save").unwrap(), "Save", 9)
+                    .shortcut(Shortcut::new(Key::Character("s".into()), modifiers)),
+            )
+            .unwrap();
+        let mut router = CommandRouter::new();
+        assert_eq!(
+            router.handle_event(&WindowEvent::ModifiersChanged(modifiers), &commands),
+            None
+        );
+        assert_eq!(
+            router.handle_event(&WindowEvent::KeyboardInput(key("s")), &commands),
+            Some(9)
+        );
+        let mut repeated = key("s");
+        repeated.repeat = true;
+        assert_eq!(
+            router.handle_event(&WindowEvent::KeyboardInput(repeated), &commands),
+            None
+        );
+        assert_eq!(
+            commands
+                .get(&CommandId::new("file.save").unwrap())
+                .unwrap()
+                .shortcut
+                .as_ref()
+                .unwrap()
+                .display_label(),
+            "Ctrl+S"
+        );
     }
 }

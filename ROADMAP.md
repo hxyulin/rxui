@@ -13,11 +13,12 @@ here.
 
 ## Release gates
 
-- **0.1 — Foundation:** workspace, reproducible dependency workflow, native
+- **0.1 — Foundation (complete):** workspace, reproducible dependency workflow, native
   window host, typed commands, façade crates, testing helpers, and examples.
-- **0.2 — Design system:** stable theme vocabulary, icons, baseline forms and
-  input controls, keyboard behavior, and a widget gallery.
-- **0.3 — Application shell:** menus, toolbars, dialogs, notifications,
+- **0.2 — Design system (complete):** stable theme vocabulary, vector icons,
+  essential editor forms and input controls, shortcut routing, a widget
+  gallery, and native macOS/Windows application menus.
+- **0.3 — Application shell:** toolbars, dialogs, notifications,
   validation, undo/redo conventions, and persisted window state.
 - **0.4 — Editor-ready alpha:** coherent docking workspace, tree/table/property
   views, render views, command palette, saved layouts, and a reference editor.
@@ -28,4 +29,3 @@ here.
 
 Every interactive feature must ship with keyboard behavior, focus handling,
 semantic coverage, deterministic tests, and correct idle invalidation.
-

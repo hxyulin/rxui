@@ -1,8 +1,9 @@
 # Contributing
 
 Astreon follows Rust 2024 conventions and uses the stable toolchain. Public
-items require documentation, unsafe code is forbidden, and Clippy warnings are
-treated as errors.
+items require documentation and Clippy warnings are treated as errors. Unsafe
+code is forbidden throughout the framework except for the audited Win32 menu
+attachment bridge in `astreon-native-menu`, where `muda` requires a live HWND.
 
 Run the full local validation suite before submitting changes:
 

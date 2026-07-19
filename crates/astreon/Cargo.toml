@@ -16,6 +16,7 @@ testing = ["dep:astreon-testing"]
 [dependencies]
 astreon-app = { workspace = true }
 astreon-editor = { workspace = true, optional = true }
+astreon-native-menu = { workspace = true }
 astreon-testing = { workspace = true, optional = true }
 astreon-widgets = { workspace = true }
 astrelis-ui = { workspace = true }
@@ -29,4 +30,3 @@ astrelis-text = { workspace = true }
 
 [lints]
 workspace = true
-

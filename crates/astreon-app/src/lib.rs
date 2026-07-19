@@ -4,6 +4,8 @@
 
 mod command;
 mod host;
+mod menu;
 
-pub use command::{Command, CommandError, CommandId, CommandRegistry, Shortcut};
+pub use command::{Command, CommandError, CommandId, CommandRegistry, CommandRouter, Shortcut};
 pub use host::{GraphicsContext, HostError, HostUpdate, WindowHost, WindowHostOptions};
+pub use menu::{Menu, MenuBar, MenuEntry, MenuError, MenuRole};

@@ -4,12 +4,13 @@ members = [
   "crates/astreon",
   "crates/astreon-app",
   "crates/astreon-editor",
+  "crates/astreon-native-menu",
   "crates/astreon-testing",
   "crates/astreon-widgets",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = ["hxyulin <hxyulin@proton.me>"]
 edition = "2024"
 license = "MIT"
@@ -17,10 +18,11 @@ repository = "https://github.com/hxyulin/astreon"
 rust-version = "1.88"
 
 [workspace.dependencies]
-astreon-app = { path = "crates/astreon-app", version = "0.1.0" }
-astreon-editor = { path = "crates/astreon-editor", version = "0.1.0" }
-astreon-testing = { path = "crates/astreon-testing", version = "0.1.0" }
-astreon-widgets = { path = "crates/astreon-widgets", version = "0.1.0" }
+astreon-app = { path = "crates/astreon-app", version = "0.2.0" }
+astreon-editor = { path = "crates/astreon-editor", version = "0.2.0" }
+astreon-native-menu = { path = "crates/astreon-native-menu", version = "0.2.0" }
+astreon-testing = { path = "crates/astreon-testing", version = "0.2.0" }
+astreon-widgets = { path = "crates/astreon-widgets", version = "0.2.0" }
 
 # Astrelis is pinned so clean clones and CI consume one reviewed engine state.
 # Developers working in the sibling repository can copy
@@ -40,6 +42,7 @@ astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19
 astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
 astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
 pollster = "0.4"
+raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 
 [workspace.lints.rust]

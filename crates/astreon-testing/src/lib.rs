@@ -4,7 +4,7 @@
 
 use astrelis_core::geometry::{LogicalSize, Size};
 use astrelis_paint::DisplayList;
-use astrelis_ui_core::{SemanticNode, SemanticRole, Ui, UiError};
+use astrelis_ui_core::{SemanticAction, SemanticNode, SemanticRole, Ui, UiError, UiUpdate};
 
 /// Headless harness around one retained UI tree.
 pub struct UiHarness<Message = ()> {
@@ -57,6 +57,24 @@ impl<Message: 'static> UiHarness<Message> {
         let root = self.semantics()?;
         Ok(find_node(&root, role, label).cloned())
     }
+
+    /// Performs an accessibility action on the first node matching role and label.
+    pub fn perform(
+        &mut self,
+        role: SemanticRole,
+        label: &str,
+        action: SemanticAction,
+    ) -> Result<UiUpdate, UiError> {
+        let node = self.find(role, label)?.ok_or_else(|| {
+            UiError::from_message(format!("semantic node `{label}` was not found"))
+        })?;
+        self.ui.perform_semantic_action(node.id, action)
+    }
+
+    /// Activates the first semantic node matching role and label.
+    pub fn activate(&mut self, role: SemanticRole, label: &str) -> Result<UiUpdate, UiError> {
+        self.perform(role, label, SemanticAction::Activate)
+    }
 }
 
 fn find_node<'a>(
@@ -90,5 +108,21 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn activates_controls_by_semantic_identity() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        let button = ui.add_button(ui.root(), "Save").unwrap();
+        ui.listen(
+            button,
+            None,
+            astrelis_ui_core::EventFilter::Activate,
+            |context, _| context.emit(7),
+        )
+        .unwrap();
+        let mut harness = UiHarness::new(ui);
+        harness.activate(SemanticRole::Button, "Save").unwrap();
+        assert_eq!(harness.drain_messages().collect::<Vec<_>>(), vec![7]);
     }
 }

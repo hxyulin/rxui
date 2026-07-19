@@ -5,6 +5,14 @@
 use astrelis_ui_core::{ElementHandle, Ui, UiError};
 use astrelis_ui_widgets::{Menu, MenuItem};
 
+mod controls;
+mod icon;
+
+pub use controls::{
+    ComboBox, ComboBoxItem, FormSection, NumericField, NumericFieldOptions, RadioGroup, RadioOption,
+};
+pub use icon::{Icon, IconButton, IconError, IconView, icons};
+
 /// Application preference for selecting a visual theme.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ThemePreference {
