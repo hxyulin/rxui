@@ -8,6 +8,7 @@ use astrelis_gpu::{
     CompositeAlphaMode, DeviceDescriptor, PresentMode, RequestAdapterOptions, SurfaceConfiguration,
     SurfaceFrameStatus, SurfaceTarget, TextureUsages, TextureViewDescriptor,
 };
+use astrelis_paint_gpu::ExternalImage;
 use astrelis_paint_gpu::{RenderStats, RenderTarget, Renderer, RendererOptions};
 use astrelis_platform::{Window, WindowAttributes, WindowEvent, WindowId};
 use astrelis_ui_core::Ui;
@@ -145,6 +146,33 @@ impl<Message: 'static> WindowHost<Message> {
     /// Returns the retained UI tree for application updates.
     pub const fn ui_mut(&mut self) -> &mut Ui<Message> {
         &mut self.ui
+    }
+
+    /// Returns the backend-neutral GPU device used by this window.
+    pub const fn device(&self) -> &astrelis_gpu::Device {
+        &self.gpu.device
+    }
+
+    /// Returns the backend-neutral GPU queue used by this window.
+    pub const fn queue(&self) -> &astrelis_gpu::Queue {
+        &self.gpu.queue
+    }
+
+    /// Registers or replaces an application-owned texture sampled by a render view.
+    pub fn register_external_image(
+        &mut self,
+        image: &ExternalImage,
+        view: astrelis_gpu::TextureView,
+    ) -> Result<(), HostError> {
+        self.gpu
+            .renderer
+            .register_external_image(image, view)
+            .map_err(HostError::from_display)
+    }
+
+    /// Removes a previously registered render-view image.
+    pub fn unregister_external_image(&mut self, image: &ExternalImage) -> bool {
+        self.gpu.renderer.unregister_external_image(image)
     }
 
     /// Drains typed messages emitted by UI listeners.

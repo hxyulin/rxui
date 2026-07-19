@@ -21,7 +21,7 @@ here.
 - **0.3 — Application shell (complete):** responsive command toolbars, retained
   modal dialogs, actionable notifications, form validation, reusable undo/redo,
   and persisted window state.
-- **0.4 — Editor-ready alpha:** coherent docking workspace, tree/table/property
+- **0.4 — Editor-ready alpha (complete):** coherent docking workspace, tree/table/property
   views, render views, command palette, saved layouts, and a reference editor.
 - **0.5 — Hardening:** inspector, snapshots, native smoke tests, profiling,
   tutorials, and migration documentation.

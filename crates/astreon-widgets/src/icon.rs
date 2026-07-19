@@ -695,6 +695,18 @@ pub mod icons {
         ])
     }
 
+    /// Rightward chevron.
+    pub fn chevron_right() -> Icon {
+        polygon(&[
+            (8.0, 4.0),
+            (16.0, 12.0),
+            (8.0, 20.0),
+            (5.0, 17.0),
+            (10.0, 12.0),
+            (5.0, 7.0),
+        ])
+    }
+
     /// Plus sign.
     pub fn add() -> Icon {
         polygon(&[

@@ -182,7 +182,10 @@ impl Gallery {
                     },
                 ],
                 |ui, content| {
-                    ui.add_label(content, "The asset stays on disk and can be re-imported later.")?;
+                    ui.add_label(
+                        content,
+                        "The asset stays on disk and can be re-imported later.",
+                    )?;
                     Ok(())
                 },
             )
@@ -314,9 +317,7 @@ impl App for Gallery {
             Some("Type scale and foreground tokens"),
         )
         .map_err(io::Error::other)?;
-        let heading = ui
-            .label(typography.content, "Heading 15 semibold")
-            .finish();
+        let heading = ui.label(typography.content, "Heading 15 semibold").finish();
         ui.label(typography.content, "Body 13 regular").finish();
         let caption = ui.label(typography.content, "Caption 11").finish();
         let muted = ui

@@ -7,19 +7,26 @@ use astrelis_ui_widgets::{Menu, MenuItem};
 
 mod controls;
 mod icon;
+mod palette;
 mod shell;
 mod validation;
+mod views;
 
 pub use controls::{
     ComboBox, ComboBoxItem, FormSection, NumericField, NumericFieldOptions, RadioGroup, RadioOption,
 };
 pub use icon::{CommandButton, Icon, IconButton, IconError, IconView, icons};
+pub use palette::{CommandPalette, CommandPaletteEvent, CommandPaletteState};
 pub use shell::{
     DialogAction, DialogActionRole, DialogError, DialogHost, DialogOptions, Toast, ToastAction,
     ToastHost, ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarItem, ToolbarOptions,
 };
 pub use validation::{
     FieldValidation, FormValidation, ValidationIssue, ValidationResult, ValidationSeverity,
+};
+pub use views::{
+    SortDirection, TableAction, TableColumn, TableRow, TableSort, TableView, TreeAction, TreeNode,
+    TreeView, clamp_column_width, duplicate_tree_ids,
 };
 
 /// Application preference for selecting a visual theme.
@@ -75,6 +82,11 @@ use astreon_app::{Command, CommandRegistry};
 pub mod foundation {
     pub use astrelis_ui_widgets::*;
 }
+
+/// Paint image token used by texture-backed render views.
+pub use astrelis_paint::ExternalImage;
+/// Retained UI types used when composing custom Astreon widgets.
+pub use astrelis_ui_core as ui_core;
 
 /// Creates a keyboard-accessible popup menu from registered commands.
 ///

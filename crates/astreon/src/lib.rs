@@ -26,12 +26,19 @@ pub mod prelude {
         WindowHostOptions, WindowPlacement, WindowPlacementTracker, redo_command_id,
         sync_undo_commands, undo_command_id,
     };
+    #[cfg(feature = "editor")]
+    pub use astreon_editor::{
+        PropertyAction, PropertyField, PropertyGrid, PropertySection, PropertyValue, SavedLayout,
+        SavedLayoutError, WorkspaceState,
+    };
     pub use astreon_native_menu::{ApplicationMenu, NativeMenuError, NativeMenuEvent};
     pub use astreon_widgets::{
-        ComboBox, ComboBoxItem, CommandButton, DialogAction, DialogActionRole, DialogHost,
-        DialogOptions, FieldValidation, FormSection, FormValidation, Icon, IconButton, IconView,
-        NumericField, NumericFieldOptions, RadioGroup, RadioOption, ThemePreference, ThemeSet,
-        Toast, ToastAction, ToastHost, ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarItem,
-        ToolbarOptions, ValidationIssue, ValidationResult, ValidationSeverity, icons,
+        ComboBox, ComboBoxItem, CommandButton, CommandPalette, CommandPaletteEvent,
+        CommandPaletteState, DialogAction, DialogActionRole, DialogHost, DialogOptions,
+        FieldValidation, FormSection, FormValidation, Icon, IconButton, IconView, NumericField,
+        NumericFieldOptions, RadioGroup, RadioOption, SortDirection, TableAction, TableColumn,
+        TableRow, TableSort, TableView, ThemePreference, ThemeSet, Toast, ToastAction, ToastHost,
+        ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarItem, ToolbarOptions, TreeAction,
+        TreeNode, TreeView, ValidationIssue, ValidationResult, ValidationSeverity, icons,
     };
 }

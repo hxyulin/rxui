@@ -15,3 +15,6 @@ pub use state::{
     JsonStateStore, PersistError, StateEnvelope, WindowPlacement, WindowPlacementTracker,
 };
 pub use undo::{UndoAction, UndoStack, redo_command_id, sync_undo_commands, undo_command_id};
+
+/// Backend-neutral GPU types used by application-owned render views.
+pub use astrelis_gpu as gpu;

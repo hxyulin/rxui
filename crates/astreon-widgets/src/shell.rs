@@ -150,8 +150,7 @@ impl<Message: Clone + 'static> Toolbar<Message> {
                     ui.set_enabled(button, command.enabled)?;
                     if let Some(label) = ui.widget(button)?.label_handle() {
                         ui.set_enabled(label, command.enabled)?;
-                        let checked_foreground = (command.checked == Some(true)
-                            && command.enabled)
+                        let checked_foreground = (command.checked == Some(true) && command.enabled)
                             .then(|| ui.theme().accent_foreground);
                         ui.set_widget_style(
                             label,

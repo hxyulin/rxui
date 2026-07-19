@@ -8,8 +8,9 @@ use astrelis_platform::{CursorIcon, ElementState, Key, NamedKey, PointerButton};
 use astrelis_ui::widget_any;
 use astrelis_ui_core::{
     Button, Column, Edges, ElementHandle, EventContext, EventFilter, Insets, LayoutStyle, Length,
-    MountContext, Positioning, RoutedEvent, RoutedEventKind, SemanticAction, SemanticActionKind,
-    SemanticRole, TextField, Theme, Ui, UiError, Widget, WidgetContainerStyle, WidgetStyle,
+    MountContext, Positioning, RoutedEvent, RoutedEventKind, Row, SemanticAction,
+    SemanticActionKind, SemanticRole, TextField, Theme, Ui, UiError, Widget, WidgetContainerStyle,
+    WidgetStyle,
 };
 use astrelis_ui_widgets::{Menu as PopupMenu, MenuItem as PopupMenuItem};
 
@@ -23,6 +24,8 @@ const RADIO_DOT: f32 = 6.0;
 /// focus ring stay inside the widget bounds instead of being shaved by an
 /// ancestor clip (e.g. a scroll view whose edge the group sits on).
 const RADIO_RING_MARGIN: f32 = 3.0;
+
+type RadioActivation<Message> = dyn Fn(&mut EventContext<'_, Message>);
 
 /// One radio-group choice.
 pub struct RadioOption {
@@ -51,7 +54,7 @@ struct RadioButton<Message> {
     hovered: bool,
     pressed: bool,
     focused: bool,
-    on_activate: Rc<dyn Fn(&mut EventContext<'_, Message>)>,
+    on_activate: Rc<RadioActivation<Message>>,
 }
 
 impl<Message: 'static> Widget<Message> for RadioButton<Message> {
@@ -308,40 +311,33 @@ impl<Message: 'static> RadioGroup<Message> {
             let all_radios = radios.clone();
             let state_for_key = state.clone();
             let message_for_key = on_select.clone();
-            ui.listen(
-                radio,
-                None,
-                EventFilter::Keyboard,
-                move |context, event| {
-                    let RoutedEventKind::Keyboard(input) = &event.kind else {
-                        return;
-                    };
-                    if input.state != ElementState::Pressed {
-                        return;
+            ui.listen(radio, None, EventFilter::Keyboard, move |context, event| {
+                let RoutedEventKind::Keyboard(input) = &event.kind else {
+                    return;
+                };
+                if input.state != ElementState::Pressed {
+                    return;
+                }
+                let Key::Named(key) = &input.logical_key else {
+                    return;
+                };
+                let direction = match key {
+                    NamedKey::Other(value) if value == "ArrowDown" || value == "ArrowRight" => 1,
+                    NamedKey::Other(value) if value == "ArrowUp" || value == "ArrowLeft" => -1,
+                    NamedKey::Other(value) if value == "Home" => i32::MIN,
+                    NamedKey::Other(value) if value == "End" => i32::MAX,
+                    _ => return,
+                };
+                let next = next_enabled(index, direction, &all_enabled);
+                if let Some(next) = next {
+                    state_for_key.set(Some(next));
+                    context.emit(message_for_key(next));
+                    if let Some(handle) = all_radios.get(next).copied() {
+                        context.request_focus_for(handle);
                     }
-                    let Key::Named(key) = &input.logical_key else {
-                        return;
-                    };
-                    let direction = match key {
-                        NamedKey::Other(value) if value == "ArrowDown" || value == "ArrowRight" => {
-                            1
-                        }
-                        NamedKey::Other(value) if value == "ArrowUp" || value == "ArrowLeft" => -1,
-                        NamedKey::Other(value) if value == "Home" => i32::MIN,
-                        NamedKey::Other(value) if value == "End" => i32::MAX,
-                        _ => return,
-                    };
-                    let next = next_enabled(index, direction, &all_enabled);
-                    if let Some(next) = next {
-                        state_for_key.set(Some(next));
-                        context.emit(message_for_key(next));
-                        if let Some(handle) = all_radios.get(next).copied() {
-                            context.request_focus_for(handle);
-                        }
-                        context.prevent_default();
-                    }
-                },
-            )?;
+                    context.prevent_default();
+                }
+            })?;
         }
         Ok(Self {
             radios,
@@ -420,6 +416,11 @@ pub struct ComboBox<Message> {
 }
 
 impl<Message: Clone + 'static> ComboBox<Message> {
+    /// Returns the retained button which owns the popup.
+    pub const fn owner(&self) -> ElementHandle<Button> {
+        self.owner
+    }
+
     /// Creates a combo box from typed entries.
     pub fn new<T>(
         ui: &mut Ui<Message>,
@@ -534,6 +535,8 @@ impl Default for NumericFieldOptions {
 
 /// Text field with increment and decrement buttons.
 pub struct NumericField<Message> {
+    /// Responsive row containing the field and step buttons.
+    pub root: ElementHandle<Row>,
     /// Editable text handle.
     pub field: ElementHandle<TextField>,
     /// Decrement button.
@@ -560,16 +563,35 @@ impl<Message: 'static> NumericField<Message> {
         validate_numeric(options)?;
         let value = normalize(value, options);
         let row = ui.add_row(parent)?;
+        ui.set_layout(
+            row,
+            LayoutStyle {
+                grow: 1.0,
+                min_width: Length::Px(0.0),
+                ..Default::default()
+            },
+        )?;
         let field = ui.add_text_field(row, format_value(value, options.decimals))?;
         ui.set_layout(
             field,
             LayoutStyle {
-                width: Length::Px(96.0),
+                grow: 1.0,
+                min_width: Length::Px(48.0),
                 ..Default::default()
             },
         )?;
         let decrement = ui.add_button(row, "−")?;
         let increment = ui.add_button(row, "+")?;
+        for button in [decrement, increment] {
+            ui.set_layout(
+                button,
+                LayoutStyle {
+                    width: Length::Px(28.0),
+                    shrink: 0.0,
+                    ..Default::default()
+                },
+            )?;
+        }
         let state = Rc::new(Cell::new(value));
         let callback: Rc<dyn Fn(f64) -> Message> = Rc::new(on_change);
         for (button, direction) in [(decrement, -1.0), (increment, 1.0)] {
@@ -620,6 +642,7 @@ impl<Message: 'static> NumericField<Message> {
             context.prevent_default();
         })?;
         Ok(Self {
+            root: row,
             field,
             decrement,
             increment,
@@ -696,9 +719,7 @@ impl FormSection {
         layout.margin.top = Length::Px(ui.theme().spacing.lg);
         ui.set_layout(section, layout)?;
         let title = ui.add_label(section, title)?;
-        let help = help
-            .map(|help| ui.add_label(section, help))
-            .transpose()?;
+        let help = help.map(|help| ui.add_label(section, help)).transpose()?;
         let content = ui.add_column(section)?;
         let this = Self {
             content,
@@ -757,6 +778,28 @@ mod tests {
         assert_eq!(normalize(0.62, options), 0.5);
         assert_eq!(normalize(9.0, options), 1.0);
         assert_eq!(normalize(f64::NAN, options), -1.0);
+    }
+
+    #[test]
+    fn numeric_field_keeps_both_step_buttons_inside_a_narrow_row() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        ui.set_viewport(Size::new(220.0, 120.0), 1.0);
+        let root = ui.root();
+        let field =
+            NumericField::new(&mut ui, root, 0.0, NumericFieldOptions::default(), |_| ()).unwrap();
+        ui.set_layout(
+            field.root,
+            LayoutStyle {
+                width: Length::Px(140.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        ui.display_list().unwrap();
+        let row = ui.layout_bounds(field.root).unwrap();
+        let increment = ui.layout_bounds(field.increment).unwrap();
+        assert!(increment.max_x() <= row.max_x());
+        assert!(increment.size.width > 0.0);
     }
 
     #[test]
