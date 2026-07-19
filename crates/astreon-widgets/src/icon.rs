@@ -163,6 +163,267 @@ pub struct IconButton<Message> {
     focused: bool,
 }
 
+/// Command-oriented button with optional icon, live label, and checked state.
+pub struct CommandButton<Message> {
+    icon: Option<Icon>,
+    label: String,
+    label_handle: Option<astrelis_ui_core::ElementHandle<astrelis_ui_core::Label>>,
+    message: Message,
+    show_label: bool,
+    checked: bool,
+    enabled: bool,
+    hovered: bool,
+    pressed: bool,
+    focused: bool,
+}
+
+impl<Message> CommandButton<Message> {
+    /// Creates a text command button.
+    pub fn new(label: impl Into<String>, message: Message) -> Self {
+        Self {
+            icon: None,
+            label: label.into(),
+            label_handle: None,
+            message,
+            show_label: true,
+            checked: false,
+            enabled: true,
+            hovered: false,
+            pressed: false,
+            focused: false,
+        }
+    }
+
+    /// Adds a leading vector icon.
+    pub fn icon(mut self, icon: Option<Icon>) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    /// Selects icon-only or icon-and-label presentation.
+    pub const fn show_label(mut self, show: bool) -> Self {
+        self.show_label = show;
+        self
+    }
+
+    /// Sets initial checked presentation.
+    pub const fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self
+    }
+
+    /// Sets initial enabled presentation.
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Updates state mirrored from a command registry.
+    pub fn sync(&mut self, label: impl Into<String>, enabled: bool, checked: bool) {
+        self.label = label.into();
+        self.enabled = enabled;
+        self.checked = checked;
+        if !enabled {
+            self.pressed = false;
+            self.hovered = false;
+        }
+    }
+
+    /// Returns the retained visible-label handle when labels are enabled.
+    pub const fn label_handle(
+        &self,
+    ) -> Option<astrelis_ui_core::ElementHandle<astrelis_ui_core::Label>> {
+        self.label_handle
+    }
+}
+
+impl<Message: Clone + 'static> Widget<Message> for CommandButton<Message> {
+    widget_any!();
+
+    fn mounted(&mut self, context: &mut MountContext<'_, Message>) -> Result<(), UiError> {
+        if self.show_label {
+            self.label_handle = Some(context.add_label(self.label.clone())?);
+        }
+        Ok(())
+    }
+
+    fn intrinsic_size(&self, _theme: &Theme) -> LogicalSize {
+        Size::new(
+            if self.show_label {
+                if self.icon.is_some() { 44.0 } else { 20.0 }
+            } else {
+                36.0
+            },
+            36.0,
+        )
+    }
+
+    fn container_style(&self, _theme: &Theme) -> WidgetContainerStyle {
+        WidgetContainerStyle {
+            padding: astrelis_ui_core::Insets {
+                left: if self.icon.is_some() { 34.0 } else { 10.0 },
+                top: 8.0,
+                right: 10.0,
+                bottom: 8.0,
+            },
+            gap: 0.0,
+        }
+    }
+
+    fn event(&mut self, context: &mut EventContext<'_, Message>, event: &RoutedEvent) {
+        if let RoutedEventKind::FocusChanged(focused) = &event.kind {
+            self.focused = *focused;
+            context.request_paint();
+            return;
+        }
+        if !self.enabled {
+            return;
+        }
+        match &event.kind {
+            RoutedEventKind::PointerEntered { .. } => {
+                self.hovered = true;
+                context.request_paint();
+            }
+            RoutedEventKind::PointerLeft { .. } | RoutedEventKind::PointerCancelled { .. } => {
+                self.hovered = false;
+                self.pressed = false;
+                context.request_paint();
+            }
+            RoutedEventKind::PointerButton {
+                button: PointerButton::Primary,
+                state,
+                ..
+            } => match state {
+                ElementState::Pressed => {
+                    self.pressed = true;
+                    context.request_focus();
+                    context.request_paint();
+                }
+                ElementState::Released if self.pressed => {
+                    self.pressed = false;
+                    context.emit(self.message.clone());
+                    context.request_paint();
+                }
+                ElementState::Released => {}
+            },
+            RoutedEventKind::Keyboard(input)
+                if input.state == ElementState::Pressed
+                    && matches!(
+                        input.logical_key,
+                        Key::Named(NamedKey::Enter | NamedKey::Space)
+                    ) =>
+            {
+                context.emit(self.message.clone());
+                context.prevent_default();
+            }
+            _ => {}
+        }
+    }
+
+    fn hit_testable(&self) -> bool {
+        self.enabled
+    }
+
+    fn focusable(&self) -> bool {
+        self.enabled
+    }
+
+    fn cursor_icon(&self) -> Option<CursorIcon> {
+        self.enabled.then_some(CursorIcon::Pointer)
+    }
+
+    fn paint(
+        &self,
+        painter: &mut Painter,
+        bounds: LogicalRect,
+        theme: &Theme,
+    ) -> Result<(), UiError> {
+        let background = if self.checked && self.enabled && !self.hovered && !self.pressed {
+            theme.accent
+        } else {
+            theme.button.resolve(astrelis_ui_core::ControlState {
+                enabled: self.enabled,
+                hovered: self.hovered,
+                pressed: self.pressed,
+            })
+        };
+        let rounded =
+            RoundedRect::new(bounds, CornerRadii::uniform(theme.radii.md)).map_err(ui_error)?;
+        painter
+            .fill_rounded_rect(rounded, Brush::Solid(background))
+            .map_err(ui_error)?;
+        if let Some(icon) = &self.icon {
+            let size = 16.0_f32.min(bounds.size.height - 8.0);
+            let icon_bounds = LogicalRect::from_xywh(
+                bounds.origin.x + 10.0,
+                bounds.origin.y + (bounds.size.height - size) * 0.5,
+                size,
+                size,
+            );
+            paint_icon(
+                painter,
+                icon,
+                icon_bounds,
+                if self.enabled {
+                    theme.foreground
+                } else {
+                    theme.disabled_foreground
+                },
+            )?;
+        }
+        if self.focused {
+            painter
+                .stroke_rounded_rect(
+                    rounded,
+                    astrelis_paint::StrokeStyle {
+                        width: theme.metrics.focus_ring,
+                        ..Default::default()
+                    },
+                    Brush::Solid(theme.accent),
+                )
+                .map_err(ui_error)?;
+        }
+        Ok(())
+    }
+
+    fn semantics(&self) -> Option<(SemanticRole, String, Option<String>)> {
+        Some((
+            SemanticRole::Button,
+            self.label.clone(),
+            self.checked.then(|| "checked".into()),
+        ))
+    }
+
+    fn semantic_actions(&self) -> Vec<SemanticActionKind> {
+        if self.enabled {
+            vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn semantic_action(
+        &mut self,
+        context: &mut EventContext<'_, Message>,
+        action: &SemanticAction,
+    ) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match action {
+            SemanticAction::Focus => {
+                context.request_focus();
+                true
+            }
+            SemanticAction::Activate => {
+                context.emit(self.message.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 impl<Message> IconButton<Message> {
     /// Creates an icon-only button. `label` is always used for accessibility.
     pub fn icon_only(icon: Icon, label: impl Into<String>, message: Message) -> Self {
@@ -472,24 +733,60 @@ pub mod icons {
         ])
     }
 
-    /// Settings gear approximation.
+    /// Settings gear with a distinct center opening.
     pub fn settings() -> Icon {
-        polygon(&[
-            (9.0, 2.0),
-            (15.0, 2.0),
-            (16.0, 6.0),
-            (20.0, 8.0),
-            (22.0, 12.0),
-            (20.0, 16.0),
-            (16.0, 18.0),
-            (15.0, 22.0),
-            (9.0, 22.0),
-            (8.0, 18.0),
-            (4.0, 16.0),
-            (2.0, 12.0),
-            (4.0, 8.0),
-            (8.0, 6.0),
-        ])
+        let outer = [
+            (9.0, 1.0),
+            (15.0, 1.0),
+            (16.0, 4.0),
+            (18.0, 5.0),
+            (21.0, 4.0),
+            (23.0, 9.0),
+            (20.0, 11.0),
+            (20.0, 13.0),
+            (23.0, 15.0),
+            (21.0, 20.0),
+            (18.0, 19.0),
+            (16.0, 20.0),
+            (15.0, 23.0),
+            (9.0, 23.0),
+            (8.0, 20.0),
+            (6.0, 19.0),
+            (3.0, 20.0),
+            (1.0, 15.0),
+            (4.0, 13.0),
+            (4.0, 11.0),
+            (1.0, 9.0),
+            (3.0, 4.0),
+            (6.0, 5.0),
+            (8.0, 4.0),
+        ];
+        let inner = [
+            (12.0, 7.5),
+            (8.8, 8.8),
+            (7.5, 12.0),
+            (8.8, 15.2),
+            (12.0, 16.5),
+            (15.2, 15.2),
+            (16.5, 12.0),
+            (15.2, 8.8),
+        ];
+        let mut verbs = Vec::with_capacity(outer.len() + inner.len() + 4);
+        verbs.push(PathVerb::MoveTo(Point::new(outer[0].0, outer[0].1)));
+        verbs.extend(
+            outer[1..]
+                .iter()
+                .map(|&(x, y)| PathVerb::LineTo(Point::new(x, y))),
+        );
+        verbs.push(PathVerb::Close);
+        verbs.push(PathVerb::MoveTo(Point::new(inner[0].0, inner[0].1)));
+        verbs.extend(
+            inner[1..]
+                .iter()
+                .map(|&(x, y)| PathVerb::LineTo(Point::new(x, y))),
+        );
+        verbs.push(PathVerb::Close);
+        Icon::from_verbs(Size::new(24.0, 24.0), verbs).expect("built-in icon is valid")
     }
 
     /// Folder.
@@ -585,5 +882,22 @@ mod tests {
         ui.perform_semantic_action(button.id(), SemanticAction::Activate)
             .unwrap();
         assert_eq!(ui.drain_messages().collect::<Vec<_>>(), vec![7]);
+    }
+
+    #[test]
+    fn disabling_a_focused_command_button_clears_its_focus_ring() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        let button = ui
+            .add_widget(ui.root(), CommandButton::new("Undo", 7))
+            .unwrap();
+        ui.focus(button).unwrap();
+        assert!(ui.widget(button).unwrap().focused);
+
+        ui.update_widget(button, |button| button.sync("Undo", false, false))
+            .unwrap();
+        ui.set_enabled(button, false).unwrap();
+
+        assert!(!ui.widget(button).unwrap().focused);
+        assert!(!ui.is_focused(button).unwrap());
     }
 }

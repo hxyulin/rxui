@@ -17,10 +17,13 @@ astrelis-paint-gpu = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-ui-core = { workspace = true }
 pollster = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+directories = { workspace = true }
+tempfile = "3"
 
 [dev-dependencies]
 astrelis-text = { workspace = true }
 
 [lints]
 workspace = true
-

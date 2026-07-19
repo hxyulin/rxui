@@ -7,11 +7,20 @@ use astrelis_ui_widgets::{Menu, MenuItem};
 
 mod controls;
 mod icon;
+mod shell;
+mod validation;
 
 pub use controls::{
     ComboBox, ComboBoxItem, FormSection, NumericField, NumericFieldOptions, RadioGroup, RadioOption,
 };
-pub use icon::{Icon, IconButton, IconError, IconView, icons};
+pub use icon::{CommandButton, Icon, IconButton, IconError, IconView, icons};
+pub use shell::{
+    DialogAction, DialogActionRole, DialogError, DialogHost, DialogOptions, Toast, ToastAction,
+    ToastHost, ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarItem, ToolbarOptions,
+};
+pub use validation::{
+    FieldValidation, FormValidation, ValidationIssue, ValidationResult, ValidationSeverity,
+};
 
 /// Application preference for selecting a visual theme.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

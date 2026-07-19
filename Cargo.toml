@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 authors = ["hxyulin <hxyulin@proton.me>"]
 edition = "2024"
 license = "MIT"
@@ -18,32 +18,34 @@ repository = "https://github.com/hxyulin/astreon"
 rust-version = "1.88"
 
 [workspace.dependencies]
-astreon-app = { path = "crates/astreon-app", version = "0.2.0" }
-astreon-editor = { path = "crates/astreon-editor", version = "0.2.0" }
-astreon-native-menu = { path = "crates/astreon-native-menu", version = "0.2.0" }
-astreon-testing = { path = "crates/astreon-testing", version = "0.2.0" }
-astreon-widgets = { path = "crates/astreon-widgets", version = "0.2.0" }
+astreon-app = { path = "crates/astreon-app", version = "0.3.0" }
+astreon-editor = { path = "crates/astreon-editor", version = "0.3.0" }
+astreon-native-menu = { path = "crates/astreon-native-menu", version = "0.3.0" }
+astreon-testing = { path = "crates/astreon-testing", version = "0.3.0" }
+astreon-widgets = { path = "crates/astreon-widgets", version = "0.3.0" }
 
 # Astrelis is pinned so clean clones and CI consume one reviewed engine state.
 # Developers working in the sibling repository can copy
 # `.cargo/config.toml.example` to `.cargo/config.toml` to use local paths.
-astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
-astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "c766b19" }
+astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
+astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "200ed56832ada2c89126ed63433d834005eb581a" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+directories = "6"
 
 [workspace.lints.rust]
 missing_docs = "warn"

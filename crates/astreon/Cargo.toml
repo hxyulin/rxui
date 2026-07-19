@@ -27,6 +27,7 @@ astrelis-core = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-platform-winit = { workspace = true }
 astrelis-text = { workspace = true }
+astrelis-ui-core = { workspace = true }
 
 [lints]
 workspace = true
