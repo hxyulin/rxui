@@ -3,8 +3,10 @@
 #![warn(missing_docs)]
 
 mod details;
+mod edit;
 mod highlight;
 mod model;
+mod resize;
 
 use std::{
     cell::{Cell, RefCell},
@@ -17,34 +19,62 @@ use astrelis_platform::{
     ElementState, Key, KeyCode, Modifiers, NamedKey, PhysicalKey, PointerButton,
 };
 use astrelis_ui_core::{
-    Alignment, Column, Edges, ElementHandle, ElementId, ElementInspection, EventFilter,
-    FocusScopeOptions, Insets, Label, LayoutStyle, Length, Overlay, OverlayAlignment,
+    Alignment, Column, Edges, ElementHandle, ElementId, ElementInspection, ElementKind,
+    EventFilter, FocusScopeOptions, Insets, Label, LayoutStyle, Length, Overlay, OverlayAlignment,
     OverlayOptions, OverlaySide, Padding, Positioning, Row, RoutedEventKind, SemanticRole, Ui,
     UiError, Visibility, WidgetStyle,
 };
 use astreon_widgets::{
-    CommandButton, IconButton, TreeAction, TreeView, TreeViewOptions, icons,
+    CommandButton, IconButton, IconView, TreeAction, TreeView, TreeViewOptions,
+    foundation::{Menu, MenuItem},
+    icons,
 };
 
 use crate::{
     details::build_details,
     highlight::{BandSet, Highlight, clipped_bounds},
     model::{Model, RowMeta, kind_color, label_color, row_meta, semantic_labels, tree_nodes},
+    resize::{
+        MAX_VIEWPORT_SHARE, PanelResizer, body_margin, dock_inset, min_panel_size, panel_layout,
+        resizer_layout,
+    },
 };
 
 const INSPECTOR_Z: i32 = 20_000;
 const TREE_ROW_EXTENT: f32 = 24.0;
 const INFO_TAG_HEIGHT: f32 = 20.0;
 
+/// Where the inspector panel mounts relative to application content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InspectorDock {
+    /// Docked to the right edge; content reflows beside it.
+    #[default]
+    Right,
+    /// Docked to the bottom edge; content reflows above it.
+    Bottom,
+    /// Docked to the left edge; content reflows beside it.
+    Left,
+    /// Floats over the right edge without reflowing content — the panel
+    /// behavior of releases before 0.6.
+    Overlay,
+}
+
 /// Configuration for an in-application UI inspector.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InspectorOptions {
     /// Whether the details panel starts open.
     pub initially_open: bool,
-    /// Logical width of the details panel.
+    /// Logical width of the details panel when docked left or right.
     pub panel_width: f32,
+    /// Logical height of the details panel when docked to the bottom.
+    pub panel_height: f32,
+    /// Where the panel docks; docked sides reflow application content.
+    pub dock: InspectorDock,
     /// Whether a small launcher remains visible while the panel is closed.
     pub show_launcher: bool,
+    /// Whether the details pane offers live editing of the selected element's
+    /// state, layout, style, and text.
+    pub allow_editing: bool,
 }
 
 impl Default for InspectorOptions {
@@ -52,7 +82,10 @@ impl Default for InspectorOptions {
         Self {
             initially_open: false,
             panel_width: 340.0,
+            panel_height: 320.0,
+            dock: InspectorDock::default(),
             show_launcher: true,
+            allow_editing: false,
         }
     }
 }
@@ -86,6 +119,52 @@ pub enum InspectorAction {
     SetHover(Option<ElementId>),
     /// Replace the tree filter text.
     SetFilter(String),
+    /// Move the panel to another dock side.
+    SetDock(InspectorDock),
+    /// Commit a new panel extent along the current dock's resize axis.
+    SetPanelSize(f32),
+    /// Replace an application element's visibility.
+    SetElementVisibility {
+        /// Element being edited.
+        id: ElementId,
+        /// Requested visibility.
+        visibility: Visibility,
+    },
+    /// Replace an application element's enabled state.
+    SetElementEnabled {
+        /// Element being edited.
+        id: ElementId,
+        /// Requested enabled state.
+        enabled: bool,
+    },
+    /// Replace an application element's declared layout.
+    SetElementLayout {
+        /// Element being edited.
+        id: ElementId,
+        /// Complete replacement layout.
+        layout: LayoutStyle,
+    },
+    /// Replace a padding container's insets.
+    SetElementPadding {
+        /// Element being edited.
+        id: ElementId,
+        /// Complete replacement insets.
+        padding: Insets,
+    },
+    /// Replace an application element's declared widget style.
+    SetElementStyle {
+        /// Element being edited.
+        id: ElementId,
+        /// Complete replacement style overrides.
+        style: WidgetStyle,
+    },
+    /// Replace a label's, button's, or text field's text content.
+    SetElementText {
+        /// Element being edited.
+        id: ElementId,
+        /// Replacement text.
+        text: String,
+    },
     /// Re-sync retained rows, e.g. after scrolling the virtualized tree.
     Refresh,
 }
@@ -101,6 +180,8 @@ pub struct UiInspector<Message> {
     highlight: ElementHandle<Highlight>,
     info_tag: ElementHandle<Label>,
     pick: ElementHandle<CommandButton<Message>>,
+    body: ElementHandle<Column>,
+    resizer: ElementHandle<PanelResizer<Message>>,
     tree: TreeView<ElementId, Message>,
     details_pad: ElementHandle<Padding>,
     details: ElementHandle<Column>,
@@ -111,6 +192,9 @@ pub struct UiInspector<Message> {
     open_state: Rc<Cell<bool>>,
     hover_cell: Rc<Cell<Option<ElementId>>>,
     open: bool,
+    dock: InspectorDock,
+    panel_width: f32,
+    panel_height: f32,
     selected: Option<ElementId>,
     hovered: Option<ElementId>,
     filter: String,
@@ -122,6 +206,7 @@ pub struct UiInspector<Message> {
     last_details: Option<(ElementId, ElementInspection)>,
     last_crumbs: Option<Option<ElementId>>,
     show_launcher: bool,
+    allow_editing: bool,
     map_action: Rc<dyn Fn(InspectorAction) -> Message>,
 }
 
@@ -215,13 +300,17 @@ where
                 ..OverlayOptions::default()
             },
         )?;
+        let panel_width = options.panel_width.max(min_panel_size(InspectorDock::Right));
+        let panel_height = options.panel_height.max(min_panel_size(InspectorDock::Bottom));
         ui.set_layout(
             panel,
-            LayoutStyle {
-                width: Length::Px(options.panel_width.max(220.0)),
-                height: Length::Percent(1.0),
-                ..LayoutStyle::default()
-            },
+            panel_layout(
+                options.dock,
+                match options.dock {
+                    InspectorDock::Bottom => panel_height,
+                    _ => panel_width,
+                },
+            ),
         )?;
         ui.set_widget_style(
             panel,
@@ -233,38 +322,14 @@ where
         ui.set_semantic_role(panel, SemanticRole::Dialog)?;
         ui.set_semantic_description(panel, Some("Retained UI inspector".into()))?;
 
-        let outer = ui.add_row(panel)?;
-        ui.set_layout(
-            outer,
-            LayoutStyle {
-                width: Length::Percent(1.0),
-                height: Length::Percent(1.0),
-                ..LayoutStyle::default()
-            },
-        )?;
-        let edge = ui.add_column(outer)?;
-        ui.set_layout(
-            edge,
-            LayoutStyle {
-                width: Length::Px(1.0),
-                height: Length::Percent(1.0),
-                shrink: 0.0,
-                ..LayoutStyle::default()
-            },
-        )?;
-        ui.set_widget_style(
-            edge,
-            WidgetStyle {
-                background: Some(theme_border),
-                ..WidgetStyle::default()
-            },
-        )?;
-        let body = ui.add_column(outer)?;
+        // Panel content keeps clear of the absolutely-placed resize handle via
+        // a margin on the docked edge; the handle itself paints the border.
+        let body = ui.add_column(panel)?;
         ui.set_layout(
             body,
             LayoutStyle {
                 grow: 1.0,
-                height: Length::Percent(1.0),
+                margin: body_margin(options.dock),
                 ..LayoutStyle::default()
             },
         )?;
@@ -308,6 +373,50 @@ where
             CommandButton::new("Pick", (map_action)(InspectorAction::TogglePicking))
                 .icon(Some(icons::crosshair())),
         )?;
+        let dock_button = ui.add_button(header, "")?;
+        ui.set_layout(
+            dock_button,
+            LayoutStyle {
+                width: Length::Px(28.0),
+                height: Length::Px(28.0),
+                shrink: 0.0,
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_semantic_description(dock_button, Some("Dock side".into()))?;
+        let dock_icon = ui.add_widget(dock_button, IconView::new(icons::dock(), 16.0))?;
+        ui.set_layout(
+            dock_icon,
+            LayoutStyle {
+                width: Length::Px(16.0),
+                height: Length::Px(16.0),
+                positioning: Positioning::Absolute,
+                inset: Edges {
+                    left: Length::Px(6.0),
+                    top: Length::Px(6.0),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
+            },
+        )?;
+        let dock_choice = |dock: InspectorDock, label: &str| MenuItem {
+            label: label.into(),
+            message: (map_action)(InspectorAction::SetDock(dock)),
+            enabled: true,
+        };
+        let dock_menu = Menu::new(
+            ui,
+            dock_button,
+            vec![
+                dock_choice(InspectorDock::Right, "Dock right"),
+                dock_choice(InspectorDock::Bottom, "Dock bottom"),
+                dock_choice(InspectorDock::Left, "Dock left"),
+                dock_choice(InspectorDock::Overlay, "Float over content"),
+            ],
+        )?;
+        // Menus default to a modest z-index; hoist this one above the panel
+        // overlay or it would open invisibly underneath it.
+        ui.set_z_index(dock_menu.popover().content(), INSPECTOR_Z + 3)?;
         let close = ui.add_widget(
             header,
             IconButton::icon_only(
@@ -459,6 +568,21 @@ where
         )?;
         let crumbs = ui.add_row(crumb_bar)?;
 
+        let map = map_action.clone();
+        let resizer = ui.add_widget(
+            panel,
+            PanelResizer::new(
+                panel,
+                options.dock,
+                match options.dock {
+                    InspectorDock::Bottom => panel_height,
+                    _ => panel_width,
+                },
+                Rc::new(move |size| map(InspectorAction::SetPanelSize(size))),
+            ),
+        )?;
+        ui.set_layout(resizer, resizer_layout(options.dock))?;
+
         let launcher = ui.add_overlay(
             root,
             OverlayOptions {
@@ -533,6 +657,8 @@ where
             highlight,
             info_tag,
             pick,
+            body,
+            resizer,
             tree,
             details_pad,
             details,
@@ -543,6 +669,9 @@ where
             open_state,
             hover_cell,
             open: options.initially_open,
+            dock: options.dock,
+            panel_width,
+            panel_height,
             selected: None,
             hovered: None,
             filter: String::new(),
@@ -554,6 +683,7 @@ where
             last_details: None,
             last_crumbs: None,
             show_launcher: options.show_launcher,
+            allow_editing: options.allow_editing,
             map_action,
         };
         inspector.update_visibility(ui)?;
@@ -618,6 +748,65 @@ where
                 return self.apply_hover(ui);
             }
             InspectorAction::SetFilter(text) => self.filter = text,
+            InspectorAction::SetDock(dock) => self.dock = dock,
+            InspectorAction::SetPanelSize(size) => {
+                let clamped = self.clamp_panel_size(size);
+                match self.dock {
+                    InspectorDock::Bottom => self.panel_height = clamped,
+                    _ => self.panel_width = clamped,
+                }
+            }
+            InspectorAction::SetElementVisibility { id, visibility } => {
+                if let Some(handle) = ui.any_handle(id) {
+                    ui.set_visibility(handle, visibility)?;
+                }
+                self.reseed_details();
+            }
+            InspectorAction::SetElementEnabled { id, enabled } => {
+                if let Some(handle) = ui.any_handle(id) {
+                    ui.set_enabled(handle, enabled)?;
+                }
+                self.reseed_details();
+            }
+            InspectorAction::SetElementLayout { id, layout } => {
+                if let Some(handle) = ui.any_handle(id) {
+                    ui.set_layout(handle, layout)?;
+                }
+                self.reseed_details();
+            }
+            InspectorAction::SetElementPadding { id, padding } => {
+                if let Some(handle) = ui.typed_handle::<Padding>(id) {
+                    ui.set_padding_insets(handle, padding)?;
+                }
+                self.reseed_details();
+            }
+            InspectorAction::SetElementStyle { id, style } => {
+                if let Some(handle) = ui.any_handle(id) {
+                    ui.set_widget_style(handle, style)?;
+                }
+                self.reseed_details();
+            }
+            InspectorAction::SetElementText { id, text } => {
+                match self.cache.get(&id).map(|node| node.kind) {
+                    Some(ElementKind::Label) => {
+                        if let Some(handle) = ui.typed_handle::<Label>(id) {
+                            ui.set_label_text(handle, text)?;
+                        }
+                    }
+                    Some(ElementKind::Button) => {
+                        if let Some(handle) = ui.typed_handle::<astrelis_ui_core::Button>(id) {
+                            ui.set_button_text(handle, text)?;
+                        }
+                    }
+                    Some(ElementKind::TextField) => {
+                        if let Some(handle) = ui.typed_handle::<astrelis_ui_core::TextField>(id) {
+                            ui.set_text(handle, text)?;
+                        }
+                    }
+                    _ => {}
+                }
+                self.reseed_details();
+            }
             InspectorAction::Refresh => {}
         }
         self.open_state.set(self.open);
@@ -633,9 +822,25 @@ where
     /// resizes** — displayed bounds and the virtualized tree's realized rows
     /// are viewport dependent.
     pub fn sync(&mut self, ui: &mut Ui<Message>) -> Result<(), UiError> {
+        // Dock geometry first, so the inspection below reports post-reflow
+        // bounds rather than a stale layout from before a dock change.
+        self.apply_dock(ui)?;
         let inspection = ui.inspect()?;
         let semantics = ui.semantic_tree()?;
         self.viewport = inspection.viewport;
+        // The highlight overlay pins to the full viewport so world-coordinate
+        // bands stay aligned regardless of the content inset; the percent
+        // fallback from construction covers the pre-viewport window.
+        if self.viewport.width > 0.0 && self.viewport.height > 0.0 {
+            ui.set_layout(
+                self.highlight_overlay,
+                LayoutStyle {
+                    width: Length::Px(self.viewport.width),
+                    height: Length::Px(self.viewport.height),
+                    ..LayoutStyle::default()
+                },
+            )?;
+        }
         let excluded = self.owned_roots(&inspection.nodes);
         let nodes = inspection
             .nodes
@@ -723,6 +928,15 @@ where
         self.sync(ui)
     }
 
+    /// Forces the next sync to rebuild the details pane, reseeding editors.
+    ///
+    /// Applied edits change the selected element's inspection and would
+    /// rebuild anyway; a rejected or no-op edit would not, leaving stale text
+    /// in the editor that produced it — this snaps such fields back.
+    fn reseed_details(&mut self) {
+        self.last_details = None;
+    }
+
     fn set_picking(&mut self, value: bool) {
         self.picking.set(value);
         if !value {
@@ -796,7 +1010,8 @@ where
         match node {
             Some(node) => {
                 let meta = self.meta.borrow().get(&node.id).cloned();
-                build_details(ui, self.details, node, meta.as_ref())?;
+                let editors = self.allow_editing.then(|| self.map_action.clone());
+                build_details(ui, self.details, node, meta.as_ref(), editors.as_ref())?;
             }
             None => {
                 let muted = ui.theme().muted_foreground;
@@ -954,6 +1169,74 @@ where
         ui.set_visibility(self.info_tag, Visibility::Visible)
     }
 
+    /// The panel's extent along the current dock's resize axis.
+    fn panel_size(&self) -> f32 {
+        match self.dock {
+            InspectorDock::Bottom => self.panel_height,
+            _ => self.panel_width,
+        }
+    }
+
+    fn clamp_panel_size(&self, size: f32) -> f32 {
+        let min = min_panel_size(self.dock);
+        let extent = match self.dock {
+            InspectorDock::Bottom => self.viewport.height,
+            _ => self.viewport.width,
+        };
+        let max = if extent > 0.0 {
+            (extent * MAX_VIEWPORT_SHARE).max(min)
+        } else {
+            f32::INFINITY
+        };
+        size.clamp(min, max)
+    }
+
+    /// Applies the current dock side: overlay placement, panel and handle
+    /// geometry, and the content inset reserving the docked strip.
+    fn apply_dock(&self, ui: &mut Ui<Message>) -> Result<(), UiError> {
+        let size = self.panel_size();
+        ui.set_overlay_options(
+            self.panel,
+            OverlayOptions {
+                side: match self.dock {
+                    InspectorDock::Bottom => OverlaySide::Below,
+                    InspectorDock::Left => OverlaySide::Left,
+                    _ => OverlaySide::Right,
+                },
+                alignment: OverlayAlignment::Start,
+                z_index: INSPECTOR_Z + 1,
+                focus: FocusScopeOptions {
+                    restore_focus: true,
+                    ..FocusScopeOptions::default()
+                },
+                ..OverlayOptions::default()
+            },
+        )?;
+        ui.set_layout(self.panel, panel_layout(self.dock, size))?;
+        ui.set_layout(
+            self.body,
+            LayoutStyle {
+                grow: 1.0,
+                margin: body_margin(self.dock),
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_layout(self.resizer, resizer_layout(self.dock))?;
+        let dock = self.dock;
+        let max = if self.viewport.width > 0.0 {
+            self.clamp_panel_size(f32::INFINITY)
+        } else {
+            f32::INFINITY
+        };
+        ui.update_widget(self.resizer, |resizer| {
+            resizer.dock = dock;
+            resizer.size = size;
+            resizer.max = max;
+        })?;
+        ui.set_content_inset(dock_inset(self.dock, size, self.open));
+        Ok(())
+    }
+
     fn update_visibility(&self, ui: &mut Ui<Message>) -> Result<(), UiError> {
         ui.set_visibility(
             self.panel,
@@ -1100,10 +1383,7 @@ mod tests {
         let root = ui.root();
         let mut parent = ui.add_column(root).unwrap();
         for _ in 0..5 {
-            parent = {
-                let next = ui.add_column(parent).unwrap();
-                next
-            };
+            parent = ui.add_column(parent).unwrap();
         }
         let deep = ui.add_button(parent, "Deep").unwrap();
         let mut inspector =
@@ -1161,6 +1441,294 @@ mod tests {
             )
             .unwrap();
         assert!(inspector.expanded.contains(&container.id()));
+    }
+
+    #[test]
+    fn docked_panel_reserves_a_content_inset_only_while_open() {
+        let (mut ui, _button) = harness();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        assert_eq!(ui.content_inset(), Insets::default());
+        inspector.apply(&mut ui, InspectorAction::Open).unwrap();
+        assert_eq!(
+            ui.content_inset(),
+            Insets {
+                right: 340.0,
+                ..Insets::default()
+            }
+        );
+        let panel = ui.inspect_element(inspector.panel).unwrap();
+        assert_eq!(panel.layout_bounds.origin.x, 460.0);
+        assert_eq!(panel.layout_bounds.size.width, 340.0);
+        inspector.apply(&mut ui, InspectorAction::Close).unwrap();
+        assert_eq!(ui.content_inset(), Insets::default());
+    }
+
+    #[test]
+    fn dock_sides_relayout_the_panel_and_inset() {
+        let (mut ui, _button) = harness();
+        let mut inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                initially_open: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::SetDock(InspectorDock::Bottom))
+            .unwrap();
+        assert_eq!(
+            ui.content_inset(),
+            Insets {
+                bottom: 320.0,
+                ..Insets::default()
+            }
+        );
+        let panel = ui.inspect_element(inspector.panel).unwrap();
+        assert_eq!(panel.layout_bounds.origin.y, 280.0);
+        assert_eq!(panel.layout_bounds.size.height, 320.0);
+        assert_eq!(panel.layout_bounds.size.width, 800.0);
+        inspector
+            .apply(&mut ui, InspectorAction::SetDock(InspectorDock::Left))
+            .unwrap();
+        assert_eq!(
+            ui.content_inset(),
+            Insets {
+                left: 340.0,
+                ..Insets::default()
+            }
+        );
+        let panel = ui.inspect_element(inspector.panel).unwrap();
+        assert_eq!(panel.layout_bounds.origin.x, 0.0);
+        inspector
+            .apply(&mut ui, InspectorAction::SetDock(InspectorDock::Overlay))
+            .unwrap();
+        assert_eq!(
+            ui.content_inset(),
+            Insets::default(),
+            "floating over content must not reflow the application"
+        );
+        let panel = ui.inspect_element(inspector.panel).unwrap();
+        assert_eq!(panel.layout_bounds.origin.x, 460.0);
+    }
+
+    #[test]
+    fn panel_size_commits_clamp_to_the_viewport_share() {
+        let (mut ui, _button) = harness();
+        let mut inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                initially_open: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::SetPanelSize(100.0))
+            .unwrap();
+        assert_eq!(
+            ui.content_inset().right,
+            220.0,
+            "sizes clamp up to the minimum panel width"
+        );
+        inspector
+            .apply(&mut ui, InspectorAction::SetPanelSize(4000.0))
+            .unwrap();
+        assert_eq!(
+            ui.content_inset().right,
+            800.0 * 0.85,
+            "sizes clamp down to the viewport share"
+        );
+        inspector
+            .apply(&mut ui, InspectorAction::SetPanelSize(400.0))
+            .unwrap();
+        assert_eq!(ui.content_inset().right, 400.0);
+        let panel = ui.inspect_element(inspector.panel).unwrap();
+        assert_eq!(panel.layout_bounds.size.width, 400.0);
+    }
+
+    #[test]
+    fn panel_popups_paint_above_the_panel_overlay() {
+        let (mut ui, button) = harness();
+        let mut inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                initially_open: true,
+                allow_editing: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::Select(button.id()))
+            .unwrap();
+        let inspection = ui.inspect().unwrap();
+        let panel_z = inspection
+            .nodes
+            .iter()
+            .find(|node| node.id == inspector.panel.id())
+            .unwrap()
+            .z_index;
+        let raised_popups = inspection
+            .nodes
+            .iter()
+            .filter(|node| node.kind == ElementKind::Overlay && node.z_index > panel_z)
+            .count();
+        assert!(
+            raised_popups >= 2,
+            "the dock menu and the visibility dropdown must paint above the \
+             panel, found {raised_popups} raised popup overlays"
+        );
+    }
+
+    #[test]
+    fn element_edits_apply_to_the_host_tree() {
+        let (mut ui, button) = harness();
+        let padding = ui.add_padding(ui.root(), Insets::all(8.0)).unwrap();
+        ui.add_label(padding, "Padded").unwrap();
+        let mut inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                initially_open: true,
+                allow_editing: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .unwrap();
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetElementLayout {
+                    id: button.id(),
+                    layout: LayoutStyle {
+                        width: Length::Px(240.0),
+                        ..LayoutStyle::default()
+                    },
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            ui.inspect_element(button).unwrap().declared_layout.width,
+            Length::Px(240.0)
+        );
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetElementText {
+                    id: button.id(),
+                    text: "Renamed".into(),
+                },
+            )
+            .unwrap();
+        let semantics = ui.semantic_tree().unwrap();
+        assert!(contains(&semantics, SemanticRole::Button, "Renamed"));
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetElementEnabled {
+                    id: button.id(),
+                    enabled: false,
+                },
+            )
+            .unwrap();
+        assert!(!ui.inspect_element(button).unwrap().enabled);
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetElementPadding {
+                    id: padding.id(),
+                    padding: Insets::all(20.0),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            ui.inspect_element(padding).unwrap().resolved_padding,
+            Insets::all(20.0)
+        );
+        // Collapsing removes the element from layout and from semantics.
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetElementVisibility {
+                    id: button.id(),
+                    visibility: Visibility::Collapsed,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            ui.inspect_element(button).unwrap().visibility,
+            Visibility::Collapsed
+        );
+        let semantics = ui.semantic_tree().unwrap();
+        assert!(!contains(&semantics, SemanticRole::Button, "Renamed"));
+    }
+
+    #[test]
+    fn edits_to_removed_elements_are_ignored() {
+        let (mut ui, button) = harness();
+        let mut inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                allow_editing: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .unwrap();
+        ui.remove(button).unwrap();
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetElementEnabled {
+                    id: button.id(),
+                    enabled: false,
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn editors_only_render_when_editing_is_allowed() {
+        let count_text_fields = |ui: &mut Ui<Message>| {
+            ui.inspect()
+                .unwrap()
+                .nodes
+                .iter()
+                .filter(|node| node.kind == ElementKind::TextField)
+                .count()
+        };
+        let (mut ui, button) = harness();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::Select(button.id()))
+            .unwrap();
+        // The search field is the only text field in the read-only inspector.
+        assert_eq!(count_text_fields(&mut ui), 1);
+        drop(inspector);
+
+        let (mut ui, button) = harness();
+        let mut inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                allow_editing: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::Select(button.id()))
+            .unwrap();
+        assert!(
+            count_text_fields(&mut ui) > 1,
+            "editable details should add editor text fields"
+        );
     }
 
     fn collect_labels(node: &SemanticNode, output: &mut Vec<String>) {

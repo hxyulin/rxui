@@ -2,31 +2,61 @@
 
 use astrelis_core::color::Color;
 use astrelis_ui_core::{
-    Alignment, Column, Edges, ElementHandle, ElementInspection, FlexStyle, Insets, Justification,
-    LayoutStyle, Length, Ui, UiError, WidgetStyle,
+    Alignment, Column, Edges, ElementHandle, ElementInspection, ElementKind, FlexStyle, Insets,
+    Justification, LayoutStyle, Length, Ui, UiError, WidgetStyle,
 };
 
-use crate::model::{RowMeta, kind_color, label_color};
+use crate::{
+    edit::{Map, edit_layout, edit_state, edit_style, edit_text},
+    model::{RowMeta, kind_color, label_color},
+};
 
 /// Builds every detail section for one element into `parent`.
-pub(crate) fn build_details<Message: 'static>(
+///
+/// With `editors` present the state, layout, style, and text properties render
+/// as commit-based editing controls instead of read-only rows.
+pub(crate) fn build_details<Message: Clone + 'static>(
     ui: &mut Ui<Message>,
     parent: ElementHandle<Column>,
     node: &ElementInspection,
     meta: Option<&RowMeta>,
+    editors: Option<&Map<Message>>,
 ) -> Result<(), UiError> {
     element_header(ui, parent, node, meta)?;
     state_chips(ui, parent, node)?;
+    if let Some(map) = editors {
+        section_header(ui, parent, "State")?;
+        edit_state(ui, parent, node, map)?;
+    }
     section_header(ui, parent, "Box model")?;
     box_model(ui, parent, node)?;
     section_header(ui, parent, "Layout")?;
-    declared_layout(ui, parent, node)?;
+    if let Some(map) = editors {
+        // The resolved padding equals the declared padding for a padding
+        // container, so it seeds the editor directly.
+        let padding =
+            (node.kind == ElementKind::Padding).then_some(node.resolved_padding);
+        edit_layout(ui, parent, node, padding, map)?;
+        declared_layout(ui, parent, node, true)?;
+    } else {
+        declared_layout(ui, parent, node, false)?;
+    }
     section_header(ui, parent, "Computed")?;
     computed(ui, parent, node)?;
     section_header(ui, parent, "Paint")?;
     kv_row(ui, parent, "z-index", node.z_index.to_string())?;
     kv_row(ui, parent, "paint rank", node.paint_rank.to_string())?;
-    kv_row(ui, parent, "visibility", format!("{:?}", node.visibility))?;
+    if editors.is_none() {
+        kv_row(ui, parent, "visibility", format!("{:?}", node.visibility))?;
+    }
+    if let Some(map) = editors {
+        section_header(ui, parent, "Style")?;
+        edit_style(ui, parent, node, map)?;
+        if let Some(seed) = text_seed(ui, node, meta) {
+            section_header(ui, parent, "Text")?;
+            edit_text(ui, parent, node, seed, map)?;
+        }
+    }
     if let Some(meta) = meta.filter(|meta| meta.role.is_some() || !meta.label.is_empty()) {
         section_header(ui, parent, "Semantics")?;
         if let Some(role) = meta.role {
@@ -37,6 +67,24 @@ pub(crate) fn build_details<Message: 'static>(
         }
     }
     Ok(())
+}
+
+/// The editable text content of a label, button, or text field.
+fn text_seed<Message: 'static>(
+    ui: &Ui<Message>,
+    node: &ElementInspection,
+    meta: Option<&RowMeta>,
+) -> Option<String> {
+    match node.kind {
+        ElementKind::TextField => ui
+            .typed_handle::<astrelis_ui_core::TextField>(node.id)
+            .and_then(|handle| ui.text(handle).ok())
+            .map(str::to_string),
+        ElementKind::Label | ElementKind::Button => {
+            Some(meta.map(|meta| meta.label.clone()).unwrap_or_default())
+        }
+        _ => None,
+    }
 }
 
 fn element_header<Message: 'static>(
@@ -276,6 +324,7 @@ fn declared_layout<Message: 'static>(
     ui: &mut Ui<Message>,
     parent: ElementHandle<Column>,
     node: &ElementInspection,
+    skip_edited: bool,
 ) -> Result<(), UiError> {
     let declared = &node.declared_layout;
     let defaults = LayoutStyle::default();
@@ -285,21 +334,25 @@ fn declared_layout<Message: 'static>(
             rows.push((key, fmt_length(value)));
         }
     };
-    length("width", declared.width, defaults.width);
-    length("height", declared.height, defaults.height);
+    if !skip_edited {
+        length("width", declared.width, defaults.width);
+        length("height", declared.height, defaults.height);
+    }
     length("min-width", declared.min_width, defaults.min_width);
     length("min-height", declared.min_height, defaults.min_height);
     length("max-width", declared.max_width, defaults.max_width);
     length("max-height", declared.max_height, defaults.max_height);
     length("basis", declared.basis, defaults.basis);
-    if declared.margin != defaults.margin {
+    if !skip_edited && declared.margin != defaults.margin {
         rows.push(("margin", fmt_edges(declared.margin)));
     }
-    if declared.grow != defaults.grow {
-        rows.push(("grow", number(declared.grow)));
-    }
-    if declared.shrink != defaults.shrink {
-        rows.push(("shrink", number(declared.shrink)));
+    if !skip_edited {
+        if declared.grow != defaults.grow {
+            rows.push(("grow", number(declared.grow)));
+        }
+        if declared.shrink != defaults.shrink {
+            rows.push(("shrink", number(declared.shrink)));
+        }
     }
     if let Some(align) = declared.align_self {
         rows.push(("align-self", format!("{align:?}")));
@@ -313,7 +366,7 @@ fn declared_layout<Message: 'static>(
     if let Some(ratio) = declared.aspect_ratio {
         rows.push(("aspect-ratio", number(ratio)));
     }
-    if rows.is_empty() {
+    if rows.is_empty() && !skip_edited {
         kv_row(ui, parent, "declared", "defaults".to_string())?;
     }
     for (key, value) in rows {
@@ -481,7 +534,7 @@ fn rect_physical(node: &ElementInspection) -> String {
     )
 }
 
-fn fmt_length(length: Length) -> String {
+pub(crate) fn fmt_length(length: Length) -> String {
     match length {
         Length::Auto => "auto".to_string(),
         Length::Px(value) => format!("{}px", number(value)),
@@ -489,7 +542,7 @@ fn fmt_length(length: Length) -> String {
     }
 }
 
-fn fmt_edges(edges: Edges<Length>) -> String {
+pub(crate) fn fmt_edges(edges: Edges<Length>) -> String {
     format!(
         "{} {} {} {}",
         fmt_length(edges.top),

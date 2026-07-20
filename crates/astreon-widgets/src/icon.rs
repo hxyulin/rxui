@@ -827,6 +827,30 @@ pub mod icons {
         Icon::from_verbs(Size::new(24.0, 24.0), verbs).expect("built-in icon is valid")
     }
 
+    /// Window frame with a filled side panel, used for dock placement.
+    pub fn dock() -> Icon {
+        let frame = [
+            // Top, bottom, left, and right 2px frame bars.
+            [(3.0, 4.0), (21.0, 4.0), (21.0, 6.0), (3.0, 6.0)],
+            [(3.0, 18.0), (21.0, 18.0), (21.0, 20.0), (3.0, 20.0)],
+            [(3.0, 6.0), (5.0, 6.0), (5.0, 18.0), (3.0, 18.0)],
+            [(19.0, 6.0), (21.0, 6.0), (21.0, 18.0), (19.0, 18.0)],
+            // Filled band marking the docked panel strip.
+            [(14.0, 6.0), (19.0, 6.0), (19.0, 18.0), (14.0, 18.0)],
+        ];
+        let mut verbs = Vec::new();
+        for subpath in &frame {
+            verbs.push(PathVerb::MoveTo(Point::new(subpath[0].0, subpath[0].1)));
+            verbs.extend(
+                subpath[1..]
+                    .iter()
+                    .map(|&(x, y)| PathVerb::LineTo(Point::new(x, y))),
+            );
+            verbs.push(PathVerb::Close);
+        }
+        Icon::from_verbs(Size::new(24.0, 24.0), verbs).expect("built-in icon is valid")
+    }
+
     /// Settings gear with a distinct center opening.
     pub fn settings() -> Icon {
         let outer = [

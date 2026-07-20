@@ -72,8 +72,15 @@ impl App for InspectorExample {
             ui.add_label(rows, format!("Row {index}"))
                 .map_err(io::Error::other)?;
         }
-        let inspector = UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector)
-            .map_err(io::Error::other)?;
+        let inspector = UiInspector::new(
+            &mut ui,
+            InspectorOptions {
+                allow_editing: true,
+                ..InspectorOptions::default()
+            },
+            Message::Inspector,
+        )
+        .map_err(io::Error::other)?;
         let host = WindowHost::open(
             context,
             &self.graphics,
