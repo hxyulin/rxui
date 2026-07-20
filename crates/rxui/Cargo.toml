@@ -1,0 +1,56 @@
+[package]
+name = "rxui"
+description = "Batteries-included retained-mode desktop UI framework"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[features]
+default = ["editor"]
+devtools = ["dep:rxui-devtools"]
+editor = ["dep:rxui-editor"]
+testing = ["dep:rxui-testing"]
+
+[dependencies]
+rxui-app = { workspace = true }
+rxui-devtools = { workspace = true, optional = true }
+rxui-editor = { workspace = true, optional = true }
+rxui-native-menu = { workspace = true }
+rxui-testing = { workspace = true, optional = true }
+rxui-widgets = { workspace = true }
+astrelis-ui = { workspace = true }
+
+[dev-dependencies]
+astrelis-app = { workspace = true }
+astrelis-compositor = { workspace = true }
+astrelis-core = { workspace = true }
+astrelis-gpu = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-platform-winit = { workspace = true }
+astrelis-profiling = { workspace = true }
+astrelis-render = { workspace = true }
+astrelis-render-3d = { workspace = true }
+astrelis-text = { workspace = true }
+astrelis-ui-core = { workspace = true }
+astrelis-ui-testing = { workspace = true }
+serde = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Document", "Element", "HtmlCanvasElement", "Window"] }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "devtools_inspector"
+required-features = ["devtools"]

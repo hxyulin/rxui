@@ -1,5 +1,5 @@
 # Copy this file to `.cargo/config.toml` when Astrelis is checked out beside
-# Astreon. Cargo resolves these paths from the workspace root.
+# RXUI. Cargo resolves these paths from the workspace root.
 [patch."https://github.com/hxyulin/astrelis"]
 astrelis-app = { path = "../astrelis/crates/astrelis-app" }
 astrelis-compositor = { path = "../astrelis/crates/astrelis-compositor" }

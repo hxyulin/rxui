@@ -1,33 +1,44 @@
-# Astreon roadmap
+# RXUI roadmap
 
 ## Product boundary
 
-Astreon is an idiomatic Rust, retained-mode, custom-rendered framework for
+RXUI is an idiomatic Rust, retained-mode, custom-rendered framework for
 desktop tools and editors. It does not emulate Qt's object model or wrap native
-OS controls. Web, mobile, game-first HUD tooling, and a declarative reconciler
-are outside the first stable release.
+OS controls. Mobile, game-first HUD tooling, and a declarative reconciler are
+outside the first stable release. Modern WebGPU browsers remain supported.
 
 Astrelis owns retained tree mechanics and engine primitives. General-purpose
-missing hooks are contributed to Astrelis; application and editor policy stays
-here.
+missing hooks belong in Astrelis; application and editor policy stays in RXUI.
 
 ## Release gates
 
-- **0.1 — Foundation (complete):** workspace, reproducible dependency workflow, native
-  window host, typed commands, façade crates, testing helpers, and examples.
-- **0.2 — Design system (complete):** stable theme vocabulary, vector icons,
-  essential editor forms and input controls, shortcut routing, a widget
-  gallery, and native macOS/Windows application menus.
-- **0.3 — Application shell (complete):** responsive command toolbars, retained
-  modal dialogs, actionable notifications, form validation, reusable undo/redo,
-  and persisted window state.
-- **0.4 — Editor-ready alpha (complete):** coherent docking workspace, tree/table/property
-  views, render views, command palette, saved layouts, and a reference editor.
-- **0.5 — Hardening (complete):** opt-in retained UI inspector, deterministic
-  structural snapshots, native smoke tests, performance budgets, tutorials,
-  and migration documentation.
-- **1.0 — Stable desktop:** reviewed API and semver policy, Windows/macOS/Linux
-  validation, and native screen-reader adapters backed by semantic trees.
+- **0.1.0-rc.1 — First public preview:** application hosting, commands,
+  design-system widgets, native menus, shell conventions, persistence,
+  docking, editor views, devtools, testing helpers, native/browser examples,
+  and performance budgets.
+- **0.1 stable:** public API review, documented SemVer policy, clean consumer
+  builds from crates.io, and validated Windows/macOS/Linux release examples.
+- **1.0 stable desktop:** native screen-reader adapters backed by the semantic
+  tree, mature application/window conventions, and a supported compatibility
+  policy.
+
+## Major missing capabilities
+
+- Native accessibility adapters; semantic trees and actions already exist,
+  but operating-system assistive technologies cannot consume them yet.
+- A high-level application runner and multi-window registry that removes the
+  lifecycle, event-routing, invalidation, redraw, and shutdown boilerplate.
+- Multiline and rich/code text editing with line navigation, large-document
+  virtualization, syntax spans, and undo integration.
+- Desktop services for open/save dialogs, filesystem watching, URL/file
+  launching, recent documents, and external file drag and drop.
+- A supported image decoding/loading widget path above external GPU images.
+- Charting for line, bar, and scatter plots with axes, legends, zooming, and
+  large-data decimation.
+- Node-graph editing with ports, routed edges, box selection, keyboard editing,
+  pan/zoom, and serialization.
+- Later hardening for localization and RTL layout, high contrast, reduced
+  motion, and animation/transitions.
 
 Every interactive feature must ship with keyboard behavior, focus handling,
 semantic coverage, deterministic tests, and correct idle invalidation.

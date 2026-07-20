@@ -1,0 +1,28 @@
+[package]
+name = "rxui-devtools"
+description = "Opt-in in-application developer tools for RXUI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[dependencies]
+astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-ui = { workspace = true }
+astrelis-ui-core = { workspace = true }
+rxui-widgets = { workspace = true }
+
+[dev-dependencies]
+astrelis-text = { workspace = true }
+
+[lints]
+workspace = true

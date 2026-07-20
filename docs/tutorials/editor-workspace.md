@@ -1,6 +1,6 @@
 # Build and harden an editor workspace
 
-`crates/astreon/examples/reference_editor.rs` combines docking, hierarchy and
+`crates/rxui/examples/reference_editor.rs` combines docking, hierarchy and
 table selection, property editing, render views, saved layouts, commands, and
 undo/redo. Keep selection and editor data application-owned; call each view's
 `sync` method after the model changes.
@@ -8,7 +8,7 @@ undo/redo. Keep selection and editor data application-owned; call each view's
 Enable the optional inspector while developing:
 
 ```toml
-astreon = { version = "0.5", features = ["editor", "devtools", "testing"] }
+rxui = { version = "=0.1.0-rc.1", features = ["editor", "devtools", "testing"] }
 ```
 
 Mount `UiInspector::new`, map `InspectorAction` into the application message
@@ -26,7 +26,7 @@ process-specific IDs and rounds logical geometry.
 Profile the three critical reference-editor interactions headlessly:
 
 ```sh
-cargo run --release -p astreon --example reference_editor_perf -- --check
+cargo run --release -p rxui --example reference_editor_perf -- --check
 ```
 
 The check warms each scenario, measures 500 updates, and enforces an 8 ms

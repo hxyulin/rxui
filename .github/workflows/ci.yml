@@ -24,11 +24,11 @@ jobs:
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
       - name: Native smoke (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a cargo run -p astreon --example native_smoke
+        run: xvfb-run -a cargo run -p rxui --example native_smoke
         timeout-minutes: 2
       - name: Native smoke (macOS and Windows)
         if: runner.os != 'Linux'
-        run: cargo run -p astreon --example native_smoke
+        run: cargo run -p rxui --example native_smoke
         timeout-minutes: 2
 
   hygiene:
@@ -43,16 +43,25 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo check --workspace --all-features
       - run: cargo check --workspace --all-features --all-targets --target wasm32-unknown-unknown
-      - run: cargo build --release -p astreon --example robot_arm --target wasm32-unknown-unknown
+      - run: cargo build --release -p rxui --example robot_arm --target wasm32-unknown-unknown
       - run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - run: >-
           wasm-bindgen --target web
-          --out-dir crates/astreon/web/pkg
+          --out-dir crates/rxui/web/pkg
           --out-name robot_arm
           target/wasm32-unknown-unknown/release/examples/robot_arm.wasm
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  release-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-features
+      - run: cargo package --workspace --no-verify
 
   performance:
     runs-on: ubuntu-latest
@@ -60,4 +69,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run --release -p astreon --example reference_editor_perf -- --check
+      - run: cargo run --release -p rxui --example reference_editor_perf -- --check

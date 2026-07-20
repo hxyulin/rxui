@@ -1,9 +1,9 @@
 # Contributing
 
-Astreon follows Rust 2024 conventions and uses the stable toolchain. Public
+RXUI follows Rust 2024 conventions and uses the stable toolchain. Public
 items require documentation and Clippy warnings are treated as errors. Unsafe
 code is forbidden throughout the framework except for the audited Win32 menu
-attachment bridge in `astreon-native-menu`, where `muda` requires a live HWND.
+attachment bridge in `rxui-native-menu`, where `muda` requires a live HWND.
 
 Run the full local validation suite before submitting changes:
 
@@ -22,4 +22,4 @@ and `refactor:`.
 During `0.x`, breaking changes are allowed only when documented in release
 notes and accompanied by migration guidance. Public types should live in the
 lowest crate that owns their policy. Generic engine capabilities belong in
-Astrelis; application and editor conventions belong in Astreon.
+Astrelis; application and editor conventions belong in RXUI.

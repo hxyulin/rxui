@@ -1,6 +1,6 @@
 # Build an application shell
 
-Use `crates/astreon/examples/application_shell.rs` as the executable companion.
+Use `crates/rxui/examples/application_shell.rs` as the executable companion.
 It demonstrates one shared `CommandRegistry` driving a responsive toolbar,
 keyboard shortcuts, and menus instead of maintaining separate action state.
 
@@ -11,7 +11,7 @@ window placement and application state with `JsonStateStore`; its versioned,
 atomic envelope is the migration boundary for stored data.
 
 ```sh
-cargo run -p astreon --example application_shell
+cargo run -p rxui --example application_shell
 ```
 
 Test shell behavior headlessly by activating controls through `UiHarness` and

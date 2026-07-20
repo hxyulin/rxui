@@ -1,6 +1,6 @@
-# Your first Astreon app
+# Your first RXUI app
 
-Start from `crates/astreon/examples/hello.rs`. An Astreon application owns an
+Start from `crates/rxui/examples/hello.rs`. An RXUI application owns an
 Astrelis `App`, creates one retained `Ui<Message>` in `resumed`, and connects it
 to a native window through `WindowHost`.
 
@@ -15,7 +15,7 @@ to a native window through `WindowHost`.
 Run the complete example with:
 
 ```sh
-cargo run -p astreon --example hello
+cargo run -p rxui --example hello
 ```
 
 Every interactive control should have an accessible label, keyboard behavior,

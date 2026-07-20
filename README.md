@@ -1,16 +1,19 @@
-# Astreon
+# RXUI
 
 A batteries-included retained-mode UI framework for Rust desktop applications
 and editors, powered by [Astrelis](https://github.com/hxyulin/astrelis).
 
-Astreon owns application conventions, commands, polished widgets, editor
+RXUI is retained and message-driven; the name does not imply a ReactiveX
+Observable programming model.
+
+RXUI owns application conventions, commands, polished widgets, editor
 compositions, and testing tools. Astrelis remains the lower-level engine for
 windows, scheduling, text, layout, retained UI state, painting, and GPU
 composition.
 
 ## Status
 
-Astreon `0.5` provides:
+RXUI `0.1.0-rc.1` is the first public preview and includes:
 
 - an idle-efficient native/browser UI window host with asynchronous WebGPU startup;
 - typed commands, shortcut routing, and application menu models;
@@ -34,42 +37,44 @@ Astreon `0.5` provides:
 - native desktop smoke coverage and release-mode editor performance budgets;
 - guided application, shell, and editor tutorials with migration notes.
 
-Modern browsers with WebGPU are an officially supported target. Astreon uses
+Modern browsers with WebGPU are an officially supported target. RXUI uses
 one supplied HTML canvas and keeps the same retained UI, compositor, and
 application scheduling model on native and Web.
 
 See [ROADMAP.md](ROADMAP.md) for release gates and scope.
+Source users of the former Astreon name should follow the
+[rename migration](docs/migrations/astreon-to-rxui.md).
 
 ## Run the examples
 
 ```sh
-cargo run -p astreon --example hello
+cargo run -p rxui --example hello
 ```
 
-This opens a native window titled **Astreon hello**. Clicking **Greet** changes
-the status line from “Ready” to “Welcome to Astreon!”. The desktop runtime
+This opens a native window titled **RXUI hello**. Clicking **Greet** changes
+the status line from “Ready” to “Welcome to RXUI!”. The desktop runtime
 sleeps while the window is idle.
 
-Explore the 0.2 controls and themes:
+Explore the controls and themes:
 
 ```sh
-cargo run -p astreon --example design_gallery
+cargo run -p rxui --example design_gallery
 ```
 
-Run the complete 0.3 application shell:
+Run the application shell:
 
 ```sh
-cargo run -p astreon --example application_shell
+cargo run -p rxui --example application_shell
 ```
 
 Expect a native window with an overflowing command toolbar, an undoable value,
 a validated Settings modal, actionable notifications, and window geometry that
 is restored after closing and reopening the example.
 
-Run the complete 0.4 editor workflow:
+Run the complete editor workflow:
 
 ```sh
-cargo run -p astreon --example reference_editor
+cargo run -p rxui --example reference_editor
 ```
 
 The reference editor synchronizes selection across its hierarchy, entity table,
@@ -80,23 +85,23 @@ save or restore the named workspace layout.
 Inspect a live retained tree (press F12, Command-Option-I, or use the launcher):
 
 ```sh
-cargo run -p astreon --example devtools_inspector --features devtools
+cargo run -p rxui --example devtools_inspector --features devtools
 ```
 
 The inspector is read-only and excluded from default production builds.
 
-The guided documentation starts at [Your first Astreon app](docs/tutorials/first-app.md),
+The guided documentation starts at [Your first RXUI app](docs/tutorials/first-app.md),
 then covers the [application shell](docs/tutorials/application-shell.md) and
 [editor workspace](docs/tutorials/editor-workspace.md).
 
 On macOS or Windows, run the native File/Edit/View/Window menu example:
 
 ```sh
-cargo run -p astreon --example native_menu
+cargo run -p rxui --example native_menu
 ```
 
 The native-menu API remains available on Linux and Web for portable source
-code, but installation returns `NativeMenuError::UnsupportedPlatform`; Astreon
+code, but installation returns `NativeMenuError::UnsupportedPlatform`; RXUI
 does not render a fake native top bar on those targets.
 
 ### Robotic-arm editor
@@ -109,21 +114,21 @@ changes, so the application sleeps while idle.
 Run it natively:
 
 ```sh
-cargo run -p astreon --example robot_arm
+cargo run -p rxui --example robot_arm
 ```
 
 Build the WebGPU version and generate its no-bundler JavaScript package:
 
 ```sh
-cargo build --release -p astreon --example robot_arm --target wasm32-unknown-unknown
+cargo build --release -p rxui --example robot_arm --target wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.126 --locked
-wasm-bindgen --target web --out-dir crates/astreon/web/pkg --out-name robot_arm \
+wasm-bindgen --target web --out-dir crates/rxui/web/pkg --out-name robot_arm \
   target/wasm32-unknown-unknown/release/examples/robot_arm.wasm
-python3 -m http.server --directory crates/astreon/web 8000
+python3 -m http.server --directory crates/rxui/web 8000
 ```
 
 Then open `http://localhost:8000/robot_arm.html`. The generated package is
-`crates/astreon/web/pkg`. Startup looks up `#astreon-canvas`, starts the browser
+`crates/rxui/web/pkg`. Startup looks up `#rxui-canvas`, starts the browser
 event loop on that canvas, and completes adapter/device creation asynchronously;
 the host reports `HostStatus::Initializing` until WebGPU is ready.
 
@@ -133,7 +138,7 @@ modern WebGPU implementation and a secure context (localhost is accepted).
 
 ## Development
 
-For joint Astreon/Astrelis development:
+For joint RXUI/Astrelis development:
 
 ```sh
 cp .cargo/config.toml.example .cargo/config.toml
