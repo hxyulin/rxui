@@ -1,14 +1,14 @@
 //! Virtualized editor tree and table views.
 
-use std::{any::Any, collections::BTreeSet, fmt::Display, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::BTreeSet, fmt::Display, rc::Rc};
 
-use astrelis_core::geometry::{LogicalRect, LogicalSize, Size};
+use astrelis_core::geometry::{LogicalRect, LogicalSize, Rect, Size};
 use astrelis_paint::{Brush, Painter};
 use astrelis_platform::{CursorIcon, DeviceId, ElementState, Key, NamedKey, PointerButton};
 use astrelis_ui_core::{
     Alignment, Column, ElementHandle, EventContext, EventFilter, LayoutStyle, Length, RoutedEvent,
-    RoutedEventKind, SemanticAction, SemanticActionKind, SemanticRole, Theme, Ui, UiError, Widget,
-    WidgetContainerStyle,
+    RoutedEventKind, Row, SemanticAction, SemanticActionKind, SemanticRole, Theme, Ui, UiError,
+    Widget, WidgetContainerStyle,
 };
 use astrelis_ui_widgets::{VirtualList, VirtualListItem, VirtualListOptions};
 
@@ -78,11 +78,35 @@ struct FlatNode<Id> {
     expanded: bool,
 }
 
+/// Presentation options for a [`TreeView`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TreeViewOptions {
+    /// Logical height of every row.
+    pub row_extent: f32,
+    /// Whether ancestor depth is painted as vertical indent guides.
+    pub indent_guides: bool,
+}
+
+impl Default for TreeViewOptions {
+    fn default() -> Self {
+        Self {
+            row_extent: 30.0,
+            indent_guides: false,
+        }
+    }
+}
+
+type RowContent<Id, Message> =
+    dyn Fn(&mut Ui<Message>, ElementHandle<Row>, &Id) -> Result<(), UiError>;
+
 /// Virtualized, controlled single-selection hierarchy view.
 pub struct TreeView<Id, Message> {
     list: VirtualList,
     flat: Vec<FlatNode<Id>>,
     map_action: Rc<dyn Fn(TreeAction<Id>) -> Message>,
+    options: TreeViewOptions,
+    row_content: Option<Rc<RowContent<Id, Message>>>,
+    reveal: RefCell<Option<Id>>,
 }
 
 impl<Id, Message> TreeView<Id, Message>
@@ -90,17 +114,27 @@ where
     Id: Clone + Eq + 'static,
     Message: Clone + 'static,
 {
-    /// Creates an empty tree view.
+    /// Creates an empty tree view with default presentation.
     pub fn new<T>(
         ui: &mut Ui<Message>,
         parent: ElementHandle<T>,
+        map_action: impl Fn(TreeAction<Id>) -> Message + 'static,
+    ) -> Result<Self, UiError> {
+        Self::with_options(ui, parent, TreeViewOptions::default(), map_action)
+    }
+
+    /// Creates an empty tree view with explicit presentation options.
+    pub fn with_options<T>(
+        ui: &mut Ui<Message>,
+        parent: ElementHandle<T>,
+        options: TreeViewOptions,
         map_action: impl Fn(TreeAction<Id>) -> Message + 'static,
     ) -> Result<Self, UiError> {
         let list = VirtualList::new(
             ui,
             parent,
             VirtualListOptions {
-                item_extent: 30.0,
+                item_extent: options.row_extent,
                 overscan: 4,
             },
         )?;
@@ -109,6 +143,9 @@ where
             list,
             flat: Vec::new(),
             map_action: Rc::new(map_action),
+            options,
+            row_content: None,
+            reveal: RefCell::new(None),
         })
     }
 
@@ -120,6 +157,27 @@ where
     /// Returns the number of retained rows after virtualization.
     pub fn realized_count(&self) -> usize {
         self.list.realized_count()
+    }
+
+    /// Replaces the default row label with an application-built renderer.
+    ///
+    /// The renderer receives the row container after the disclosure gutter and
+    /// builds the visible content for one node. [`TreeNode::label`] still feeds
+    /// row semantics, so keep it meaningful for accessibility. Already realized
+    /// rows are rebuilt on the next [`Self::sync`].
+    pub fn set_row_content(
+        &mut self,
+        ui: &mut Ui<Message>,
+        renderer: impl Fn(&mut Ui<Message>, ElementHandle<Row>, &Id) -> Result<(), UiError> + 'static,
+    ) -> Result<(), UiError> {
+        self.row_content = Some(Rc::new(renderer));
+        self.list.invalidate_all(ui)
+    }
+
+    /// Queues a node to be scrolled into view by the next [`Self::sync`]
+    /// without moving keyboard focus. Unknown ids are ignored.
+    pub fn reveal(&self, id: &Id) {
+        self.reveal.replace(Some(id.clone()));
     }
 
     /// Reconciles visible nodes from the controlled hierarchy and selection.
@@ -135,16 +193,67 @@ where
             self.flat = flat;
             self.list.invalidate_all(ui)?;
         }
+        if let Some(id) = self.reveal.borrow_mut().take()
+            && let Some(index) = self.flat.iter().position(|node| node.id == id)
+        {
+            self.list.request_reveal(index);
+        }
         let selected_index =
             selected.and_then(|id| self.flat.iter().position(|node| &node.id == id));
         self.list.sync(ui, self.flat.len(), {
             let flat = self.flat.clone();
             let map = self.map_action.clone();
+            let options = self.options;
+            let row_content = self.row_content.clone();
             move |ui, item, index| {
-                build_tree_row(ui, item, &flat, index, map.clone(), selected_index)
+                build_tree_row(
+                    ui,
+                    item,
+                    &flat,
+                    index,
+                    map.clone(),
+                    selected_index,
+                    options,
+                    row_content.clone(),
+                )
             }
         })?;
         self.list.set_selected(ui, selected_index)
+    }
+}
+
+/// Non-interactive painter of one vertical guide line per ancestor level.
+struct IndentGuides {
+    depth: usize,
+}
+
+impl<Message: 'static> Widget<Message> for IndentGuides {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn container_style(&self, _theme: &Theme) -> WidgetContainerStyle {
+        WidgetContainerStyle::structural()
+    }
+
+    fn paint(
+        &self,
+        painter: &mut Painter,
+        bounds: LogicalRect,
+        theme: &Theme,
+    ) -> Result<(), UiError> {
+        for level in 0..self.depth {
+            let x = bounds.origin.x + level as f32 * 16.0 + 14.0;
+            painter.fill_rect(
+                Rect::from_xywh(x, bounds.origin.y, 1.0, bounds.size.height),
+                Brush::Solid(theme.border),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -163,6 +272,7 @@ fn flatten<Id: Clone>(nodes: &[TreeNode<Id>], depth: usize, output: &mut Vec<Fla
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_tree_row<Id, Message>(
     ui: &mut Ui<Message>,
     item: ElementHandle<VirtualListItem>,
@@ -170,6 +280,8 @@ fn build_tree_row<Id, Message>(
     index: usize,
     map: Rc<dyn Fn(TreeAction<Id>) -> Message>,
     selected: Option<usize>,
+    options: TreeViewOptions,
+    row_content: Option<Rc<RowContent<Id, Message>>>,
 ) -> Result<(), UiError>
 where
     Id: Clone + Eq + 'static,
@@ -190,15 +302,30 @@ where
             ..Default::default()
         },
     )?;
-    let indent = ui.add_label(row, "")?;
-    ui.set_layout(
-        indent,
-        LayoutStyle {
-            width: Length::Px(node.depth as f32 * 16.0),
-            shrink: 0.0,
-            ..Default::default()
-        },
-    )?;
+    let indent_width = node.depth as f32 * 16.0;
+    if options.indent_guides && node.depth > 0 {
+        let guides = ui.add_widget(row, IndentGuides { depth: node.depth })?;
+        ui.set_layout(
+            guides,
+            LayoutStyle {
+                width: Length::Px(indent_width),
+                height: Length::Percent(1.0),
+                shrink: 0.0,
+                ..Default::default()
+            },
+        )?;
+    } else {
+        let indent = ui.add_label(row, "")?;
+        ui.set_layout(
+            indent,
+            LayoutStyle {
+                width: Length::Px(indent_width),
+                shrink: 0.0,
+                ..Default::default()
+            },
+        )?;
+    }
+    let gutter = options.row_extent.min(28.0);
     if node.has_children {
         let id = node.id.clone();
         let expanded = !node.expanded;
@@ -221,8 +348,8 @@ where
         ui.set_layout(
             disclosure,
             LayoutStyle {
-                width: Length::Px(28.0),
-                height: Length::Px(28.0),
+                width: Length::Px(gutter),
+                height: Length::Px(gutter),
                 shrink: 0.0,
                 ..Default::default()
             },
@@ -232,13 +359,17 @@ where
         ui.set_layout(
             spacer,
             LayoutStyle {
-                width: Length::Px(28.0),
+                width: Length::Px(gutter),
                 shrink: 0.0,
                 ..Default::default()
             },
         )?;
     }
-    ui.add_label(row, &node.label)?;
+    if let Some(renderer) = &row_content {
+        renderer(ui, row, &node.id)?;
+    } else {
+        ui.add_label(row, &node.label)?;
+    }
     let id = node.id.clone();
     let mapper = map.clone();
     ui.listen(item, None, EventFilter::Pointer, move |context, event| {
@@ -973,6 +1104,105 @@ mod tests {
             disclosure.origin.y + disclosure.size.height
                 <= world_item.origin.y + world_item.size.height
         );
+    }
+
+    #[test]
+    fn tree_custom_row_content_replaces_default_label() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        ui.set_viewport(Size::new(400.0, 240.0), 1.0);
+        let root = ui.root();
+        let mut tree = TreeView::new(&mut ui, root, |_| ()).unwrap();
+        ui.set_layout(
+            tree.root(),
+            LayoutStyle {
+                height: Length::Px(180.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tree.set_row_content(&mut ui, |ui, row, id: &u32| {
+            ui.add_label(row, format!("kind-{id}"))?;
+            ui.add_label(row, format!("suffix-{id}"))?;
+            Ok(())
+        })
+        .unwrap();
+        tree.sync(&mut ui, &[TreeNode::leaf(7, "Node 7")], None)
+            .unwrap();
+        let mut semantics = Vec::new();
+        semantic_nodes(&ui.semantic_tree().unwrap(), &mut semantics);
+        assert!(semantics.iter().any(|node| node.label == "kind-7"));
+        assert!(semantics.iter().any(|node| node.label == "suffix-7"));
+        assert!(semantics.iter().all(|node| node.label != "Node 7"));
+    }
+
+    #[test]
+    fn tree_reveal_scrolls_offscreen_node_into_view() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        ui.set_viewport(Size::new(400.0, 240.0), 1.0);
+        let root = ui.root();
+        let mut tree = TreeView::new(&mut ui, root, |_| ()).unwrap();
+        ui.set_layout(
+            tree.root(),
+            LayoutStyle {
+                height: Length::Px(180.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let nodes = (0..10_000)
+            .map(|id| TreeNode::leaf(id, format!("Node {id}")))
+            .collect::<Vec<_>>();
+        tree.sync(&mut ui, &nodes, None).unwrap();
+        assert_eq!(ui.scroll_offset(tree.root()).unwrap(), 0.0);
+        tree.reveal(&9_999);
+        tree.sync(&mut ui, &nodes, None).unwrap();
+        let offset = ui.scroll_offset(tree.root()).unwrap();
+        assert!(offset > 250_000.0, "unexpected offset: {offset}");
+    }
+
+    #[test]
+    fn tree_options_honor_compact_row_extent() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        ui.set_viewport(Size::new(400.0, 240.0), 1.0);
+        let root = ui.root();
+        let mut tree = TreeView::with_options(
+            &mut ui,
+            root,
+            TreeViewOptions {
+                row_extent: 24.0,
+                indent_guides: true,
+            },
+            |_| (),
+        )
+        .unwrap();
+        ui.set_layout(
+            tree.root(),
+            LayoutStyle {
+                height: Length::Px(180.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tree.sync(
+            &mut ui,
+            &[TreeNode::leaf(1, "Root")
+                .expanded(true)
+                .children(vec![TreeNode::leaf(2, "Child")])],
+            None,
+        )
+        .unwrap();
+        let mut semantics = Vec::new();
+        semantic_nodes(&ui.semantic_tree().unwrap(), &mut semantics);
+        let item = semantics
+            .iter()
+            .find(|node| node.role == SemanticRole::TreeItem)
+            .expect("missing tree item");
+        assert_eq!(item.bounds.size.height, 24.0);
+        let disclosure = semantics
+            .iter()
+            .find(|node| node.role == SemanticRole::Button && node.label == "Collapse Root")
+            .expect("missing disclosure");
+        assert_eq!(disclosure.bounds.size.width, 24.0);
     }
 
     #[test]

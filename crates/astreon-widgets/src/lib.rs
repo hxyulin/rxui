@@ -26,7 +26,7 @@ pub use validation::{
 };
 pub use views::{
     SortDirection, TableAction, TableColumn, TableRow, TableSort, TableView, TreeAction, TreeNode,
-    TreeView, clamp_column_width, duplicate_tree_ids,
+    TreeView, TreeViewOptions, clamp_column_width, duplicate_tree_ids,
 };
 
 /// Application preference for selecting a visual theme.

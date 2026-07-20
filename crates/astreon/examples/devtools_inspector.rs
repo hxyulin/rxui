@@ -8,7 +8,7 @@ use astrelis_platform::{WindowAttributes, WindowEvent, WindowId};
 use astrelis_text::FontDatabase;
 use astreon::prelude::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Message {
     Increment,
     Inspector(InspectorAction),
@@ -56,6 +56,22 @@ impl App for InspectorExample {
         let increment = ui.button(content, "Increment").finish();
         let value = ui.label(content, "Count: 0").finish();
         ui.on_click(increment, |context| context.emit(Message::Increment));
+        // Large scrollable list exercising the inspector's virtualized tree.
+        let list = ui.add_scroll_view(content).map_err(io::Error::other)?;
+        ui.set_layout(
+            list,
+            LayoutStyle {
+                height: Length::Px(160.0),
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )
+        .map_err(io::Error::other)?;
+        let rows = ui.add_column(list).map_err(io::Error::other)?;
+        for index in 0..300 {
+            ui.add_label(rows, format!("Row {index}"))
+                .map_err(io::Error::other)?;
+        }
         let inspector = UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector)
             .map_err(io::Error::other)?;
         let host = WindowHost::open(
@@ -90,6 +106,14 @@ impl App for InspectorExample {
         let update = host
             .handle_event(&context.clipboard(), &event)
             .map_err(io::Error::other)?;
+        if matches!(event, WindowEvent::Resized(_)) {
+            // Bounds shown by the inspector are viewport dependent.
+            self.inspector
+                .as_mut()
+                .expect("inspector exists")
+                .sync(host.ui_mut())
+                .map_err(io::Error::other)?;
+        }
         if update.close_requested {
             context.unregister_window(id);
             self.host = None;

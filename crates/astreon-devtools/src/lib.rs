@@ -2,29 +2,39 @@
 
 #![warn(missing_docs)]
 
+mod details;
+mod highlight;
+mod model;
+
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
 };
 
-use astrelis_core::{
-    color::Color,
-    geometry::{LogicalRect, Point, Size},
-};
-use astrelis_paint::{Brush, Painter, StrokeStyle};
+use astrelis_core::geometry::LogicalSize;
 use astrelis_platform::{
     ElementState, Key, KeyCode, Modifiers, NamedKey, PhysicalKey, PointerButton,
 };
-use astrelis_ui::widget_any;
 use astrelis_ui_core::{
-    Alignment, Column, ElementHandle, ElementId, ElementInspection, EventFilter, FocusScopeOptions,
-    LayoutStyle, Length, Overlay, OverlayAlignment, OverlayOptions, OverlaySide, RoutedEventKind,
-    SemanticNode, SemanticRole, Theme, Ui, UiError, Visibility, Widget, WidgetContainerStyle,
-    WidgetStyle,
+    Alignment, Column, Edges, ElementHandle, ElementId, ElementInspection, EventFilter,
+    FocusScopeOptions, Insets, Label, LayoutStyle, Length, Overlay, OverlayAlignment,
+    OverlayOptions, OverlaySide, Padding, Positioning, Row, RoutedEventKind, SemanticRole, Ui,
+    UiError, Visibility, WidgetStyle,
+};
+use astreon_widgets::{
+    CommandButton, IconButton, TreeAction, TreeView, TreeViewOptions, icons,
+};
+
+use crate::{
+    details::build_details,
+    highlight::{BandSet, Highlight, clipped_bounds},
+    model::{Model, RowMeta, kind_color, label_color, row_meta, semantic_labels, tree_nodes},
 };
 
 const INSPECTOR_Z: i32 = 20_000;
+const TREE_ROW_EXTENT: f32 = 24.0;
+const INFO_TAG_HEIGHT: f32 = 20.0;
 
 /// Configuration for an in-application UI inspector.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,7 +58,10 @@ impl Default for InspectorOptions {
 }
 
 /// Controlled interaction emitted by [`UiInspector`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Carries a `String` payload for tree filtering, so unlike releases before
+/// 0.6 the action is `Clone` but no longer `Copy`.
+#[derive(Clone, Debug, PartialEq)]
 pub enum InspectorAction {
     /// Toggle panel visibility.
     Toggle,
@@ -58,40 +71,23 @@ pub enum InspectorAction {
     Close,
     /// Start or stop selecting an application element with the pointer.
     SetPicking(bool),
+    /// Invert the current picking state.
+    TogglePicking,
     /// Select one retained element.
     Select(ElementId),
-}
-
-#[derive(Default)]
-struct Highlight {
-    bounds: Option<LogicalRect>,
-}
-
-impl<Message: 'static> Widget<Message> for Highlight {
-    widget_any!();
-
-    fn container_style(&self, _theme: &Theme) -> WidgetContainerStyle {
-        WidgetContainerStyle::structural()
-    }
-
-    fn paint(
-        &self,
-        painter: &mut Painter,
-        _bounds: LogicalRect,
-        _theme: &Theme,
-    ) -> Result<(), UiError> {
-        if let Some(bounds) = self.bounds {
-            painter.stroke_rect(
-                bounds,
-                StrokeStyle {
-                    width: 2.0,
-                    ..StrokeStyle::default()
-                },
-                Brush::Solid(Color::from_hex(0x4c8dff)),
-            )?;
-        }
-        Ok(())
-    }
+    /// Change whether one tree branch is expanded.
+    SetExpanded {
+        /// Element whose branch changed.
+        id: ElementId,
+        /// Requested expansion state.
+        expanded: bool,
+    },
+    /// Preview one element under the pointer while picking.
+    SetHover(Option<ElementId>),
+    /// Replace the tree filter text.
+    SetFilter(String),
+    /// Re-sync retained rows, e.g. after scrolling the virtualized tree.
+    Refresh,
 }
 
 /// Read-only in-application inspector for one retained UI tree.
@@ -103,13 +99,28 @@ pub struct UiInspector<Message> {
     launcher: ElementHandle<Overlay>,
     highlight_overlay: ElementHandle<Overlay>,
     highlight: ElementHandle<Highlight>,
-    content: ElementHandle<Column>,
-    rendered: Vec<ElementHandle<Column>>,
+    info_tag: ElementHandle<Label>,
+    pick: ElementHandle<CommandButton<Message>>,
+    tree: TreeView<ElementId, Message>,
+    details_pad: ElementHandle<Padding>,
+    details: ElementHandle<Column>,
+    crumb_bar: ElementHandle<Row>,
+    crumbs: ElementHandle<Row>,
     owned: Rc<RefCell<HashSet<ElementId>>>,
     picking: Rc<Cell<bool>>,
     open_state: Rc<Cell<bool>>,
+    hover_cell: Rc<Cell<Option<ElementId>>>,
     open: bool,
     selected: Option<ElementId>,
+    hovered: Option<ElementId>,
+    filter: String,
+    expanded: HashSet<ElementId>,
+    seeded: bool,
+    cache: HashMap<ElementId, ElementInspection>,
+    meta: Rc<RefCell<HashMap<ElementId, RowMeta>>>,
+    viewport: LogicalSize,
+    last_details: Option<(ElementId, ElementInspection)>,
+    last_crumbs: Option<Option<ElementId>>,
     show_launcher: bool,
     map_action: Rc<dyn Fn(InspectorAction) -> Message>,
 }
@@ -128,8 +139,18 @@ where
         let picking = Rc::new(Cell::new(false));
         let open_state = Rc::new(Cell::new(options.initially_open));
         let owned = Rc::new(RefCell::new(HashSet::new()));
+        let hover_cell = Rc::new(Cell::new(None));
+        let meta = Rc::new(RefCell::new(HashMap::new()));
         let root = ui.root();
+        let theme_surface = ui.theme().surface;
+        let theme_border = ui.theme().border;
+        let theme_overlay = ui.theme().overlay;
+        let heading = ui.theme().type_scale.heading;
+        let heading_weight = ui.theme().type_scale.heading_weight;
+        let caption = ui.theme().type_scale.caption;
+        let spacing_sm = ui.theme().spacing.sm;
 
+        // Highlight overlay: box-model bands plus the floating info tag.
         let highlight_overlay = ui.add_overlay(
             root,
             OverlayOptions {
@@ -157,7 +178,30 @@ where
                 ..LayoutStyle::default()
             },
         )?;
+        let info_tag = ui.add_label(highlight_overlay, "")?;
+        ui.set_layout(
+            info_tag,
+            LayoutStyle {
+                positioning: Positioning::Absolute,
+                inset: Edges {
+                    left: Length::Px(0.0),
+                    top: Length::Px(0.0),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_widget_style(
+            info_tag,
+            WidgetStyle {
+                background: Some(theme_overlay),
+                font_size: Some(caption),
+                ..WidgetStyle::default()
+            },
+        )?;
+        ui.set_visibility(info_tag, Visibility::Hidden)?;
 
+        // Right-docked panel: chrome, search, tree, details, breadcrumbs.
         let panel = ui.add_overlay(
             root,
             OverlayOptions {
@@ -182,16 +226,76 @@ where
         ui.set_widget_style(
             panel,
             WidgetStyle {
-                background: Some(Color::from_hex(0x17181d)),
+                background: Some(theme_surface),
                 ..WidgetStyle::default()
             },
         )?;
         ui.set_semantic_role(panel, SemanticRole::Dialog)?;
         ui.set_semantic_description(panel, Some("Retained UI inspector".into()))?;
 
-        let header = ui.add_row(panel)?;
-        ui.set_flex(header, 8.0, Alignment::Center)?;
+        let outer = ui.add_row(panel)?;
+        ui.set_layout(
+            outer,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                height: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        let edge = ui.add_column(outer)?;
+        ui.set_layout(
+            edge,
+            LayoutStyle {
+                width: Length::Px(1.0),
+                height: Length::Percent(1.0),
+                shrink: 0.0,
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_widget_style(
+            edge,
+            WidgetStyle {
+                background: Some(theme_border),
+                ..WidgetStyle::default()
+            },
+        )?;
+        let body = ui.add_column(outer)?;
+        ui.set_layout(
+            body,
+            LayoutStyle {
+                grow: 1.0,
+                height: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+
+        let header_pad = ui.add_padding(
+            body,
+            Insets {
+                left: spacing_sm,
+                top: spacing_sm,
+                right: spacing_sm,
+                bottom: spacing_sm,
+            },
+        )?;
+        let header = ui.add_row(header_pad)?;
+        ui.set_flex(header, 6.0, Alignment::Center)?;
+        ui.set_layout(
+            header,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
         let title = ui.add_label(header, "UI Inspector")?;
+        ui.set_widget_style(
+            title,
+            WidgetStyle {
+                font_size: Some(heading),
+                font_weight: Some(heading_weight),
+                ..WidgetStyle::default()
+            },
+        )?;
         ui.set_layout(
             title,
             LayoutStyle {
@@ -199,34 +303,161 @@ where
                 ..LayoutStyle::default()
             },
         )?;
-        let pick = ui.add_button(header, "Pick")?;
-        let map = map_action.clone();
-        let picker = picking.clone();
-        ui.listen(pick, None, EventFilter::Activate, move |context, _| {
-            context.emit(map(InspectorAction::SetPicking(!picker.get())));
-        })?;
-        let close = ui.add_button(header, "Close")?;
-        let map = map_action.clone();
-        ui.listen(close, None, EventFilter::Activate, move |context, _| {
-            context.emit(map(InspectorAction::Close));
-        })?;
-        let scroll = ui.add_scroll_view(panel)?;
+        let pick = ui.add_widget(
+            header,
+            CommandButton::new("Pick", (map_action)(InspectorAction::TogglePicking))
+                .icon(Some(icons::crosshair())),
+        )?;
+        let close = ui.add_widget(
+            header,
+            IconButton::icon_only(
+                icons::close(),
+                "Close inspector",
+                (map_action)(InspectorAction::Close),
+            ),
+        )?;
         ui.set_layout(
-            scroll,
+            close,
+            LayoutStyle {
+                width: Length::Px(28.0),
+                height: Length::Px(28.0),
+                shrink: 0.0,
+                ..LayoutStyle::default()
+            },
+        )?;
+
+        let search_pad = ui.add_padding(
+            body,
+            Insets {
+                left: spacing_sm,
+                top: 0.0,
+                right: spacing_sm,
+                bottom: spacing_sm,
+            },
+        )?;
+        let search = ui.add_text_field(search_pad, "")?;
+        ui.set_placeholder(search, "Filter by kind, role, or label")?;
+        ui.set_layout(
+            search,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        let map = map_action.clone();
+        ui.listen(search, None, EventFilter::ValueChanged, move |context, event| {
+            if let RoutedEventKind::TextChanged(text) = &event.kind {
+                context.emit(map(InspectorAction::SetFilter(text.clone())));
+            }
+        })?;
+
+        let map = map_action.clone();
+        let mut tree = TreeView::with_options(
+            ui,
+            body,
+            TreeViewOptions {
+                row_extent: TREE_ROW_EXTENT,
+                indent_guides: true,
+            },
+            move |action| match action {
+                TreeAction::Select(id) | TreeAction::Activate(id) => {
+                    map(InspectorAction::Select(id))
+                }
+                TreeAction::SetExpanded { id, expanded } => {
+                    map(InspectorAction::SetExpanded { id, expanded })
+                }
+            },
+        )?;
+        ui.set_layout(
+            tree.root(),
+            LayoutStyle {
+                grow: 1.2,
+                basis: Length::Px(0.0),
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        tree.set_row_content(ui, Self::row_renderer(meta.clone()))?;
+        let map = map_action.clone();
+        ui.listen(tree.root(), None, EventFilter::Scroll, move |context, _| {
+            context.emit(map(InspectorAction::Refresh));
+        })?;
+
+        let divider = ui.add_column(body)?;
+        ui.set_layout(
+            divider,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                height: Length::Px(1.0),
+                shrink: 0.0,
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_widget_style(
+            divider,
+            WidgetStyle {
+                background: Some(theme_border),
+                ..WidgetStyle::default()
+            },
+        )?;
+
+        let details_scroll = ui.add_scroll_view(body)?;
+        ui.set_layout(
+            details_scroll,
             LayoutStyle {
                 grow: 1.0,
+                basis: Length::Px(0.0),
                 width: Length::Percent(1.0),
                 ..LayoutStyle::default()
             },
         )?;
-        let content = ui.add_column(scroll)?;
+        let details_pad = ui.add_padding(
+            details_scroll,
+            Insets {
+                left: 10.0,
+                top: 6.0,
+                right: 10.0,
+                bottom: 10.0,
+            },
+        )?;
+        let details = ui.add_column(details_pad)?;
         ui.set_layout(
-            content,
+            details,
             LayoutStyle {
                 width: Length::Percent(1.0),
                 ..LayoutStyle::default()
             },
         )?;
+
+        let crumb_divider = ui.add_column(body)?;
+        ui.set_layout(
+            crumb_divider,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                height: Length::Px(1.0),
+                shrink: 0.0,
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_widget_style(
+            crumb_divider,
+            WidgetStyle {
+                background: Some(theme_border),
+                ..WidgetStyle::default()
+            },
+        )?;
+        let crumb_bar = ui.add_row(body)?;
+        ui.set_flex(crumb_bar, 0.0, Alignment::Center)?;
+        ui.set_layout(
+            crumb_bar,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                height: Length::Px(26.0),
+                shrink: 0.0,
+                ..LayoutStyle::default()
+            },
+        )?;
+        let crumbs = ui.add_row(crumb_bar)?;
 
         let launcher = ui.add_overlay(
             root,
@@ -247,6 +478,7 @@ where
         let picker = picking.clone();
         let inspector_open = open_state.clone();
         let inspector_nodes = owned.clone();
+        let hover = hover_cell.clone();
         ui.listen(
             root,
             None,
@@ -273,6 +505,14 @@ where
                         InspectorAction::Close
                     }));
                 }
+                RoutedEventKind::PointerEntered { .. }
+                    if picker.get()
+                        && !inspector_nodes.borrow().contains(&event.target)
+                        && hover.get() != Some(event.target) =>
+                {
+                    hover.set(Some(event.target));
+                    context.emit(map(InspectorAction::SetHover(Some(event.target))));
+                }
                 RoutedEventKind::PointerButton {
                     button: PointerButton::Primary,
                     state: ElementState::Pressed,
@@ -291,17 +531,31 @@ where
             launcher,
             highlight_overlay,
             highlight,
-            content,
-            rendered: Vec::new(),
+            info_tag,
+            pick,
+            tree,
+            details_pad,
+            details,
+            crumb_bar,
+            crumbs,
             owned,
             picking,
             open_state,
+            hover_cell,
             open: options.initially_open,
             selected: None,
+            hovered: None,
+            filter: String::new(),
+            expanded: HashSet::new(),
+            seeded: false,
+            cache: HashMap::new(),
+            meta,
+            viewport: LogicalSize::ZERO,
+            last_details: None,
+            last_crumbs: None,
             show_launcher: options.show_launcher,
             map_action,
         };
-        inspector.refresh_owned(ui)?;
         inspector.update_visibility(ui)?;
         inspector.sync(ui)?;
         Ok(inspector)
@@ -324,99 +578,380 @@ where
             InspectorAction::Open => self.open = true,
             InspectorAction::Close => {
                 self.open = false;
-                self.picking.set(false);
+                self.set_picking(false);
             }
             InspectorAction::SetPicking(value) => {
                 self.open = true;
-                self.picking.set(value);
+                self.set_picking(value);
+            }
+            InspectorAction::TogglePicking => {
+                self.open = true;
+                let picking = !self.picking.get();
+                self.set_picking(picking);
             }
             InspectorAction::Select(id) => {
                 self.open = true;
                 self.selected = Some(id);
-                self.picking.set(false);
+                self.set_picking(false);
+                let mut current = id;
+                while let Some(parent) = self.cache.get(&current).and_then(|node| node.parent) {
+                    if !self.cache.contains_key(&parent) {
+                        break;
+                    }
+                    self.expanded.insert(parent);
+                    current = parent;
+                }
+                self.tree.reveal(&id);
             }
+            InspectorAction::SetExpanded { id, expanded } => {
+                if expanded {
+                    self.expanded.insert(id);
+                } else {
+                    self.expanded.remove(&id);
+                }
+            }
+            InspectorAction::SetHover(id) => {
+                // Hot path while picking: reposition the preview without
+                // rebuilding the tree or details.
+                self.hovered = id;
+                self.hover_cell.set(id);
+                return self.apply_hover(ui);
+            }
+            InspectorAction::SetFilter(text) => self.filter = text,
+            InspectorAction::Refresh => {}
         }
         self.open_state.set(self.open);
+        let picking = self.picking.get();
+        ui.update_widget(self.pick, |button| button.sync("Pick", true, picking))?;
         self.update_visibility(ui)?;
         self.sync(ui)
     }
 
     /// Rebuilds the tree and selected-element details from current retained state.
+    ///
+    /// Hosts must call this after mutating their own UI **and after window
+    /// resizes** — displayed bounds and the virtualized tree's realized rows
+    /// are viewport dependent.
     pub fn sync(&mut self, ui: &mut Ui<Message>) -> Result<(), UiError> {
         let inspection = ui.inspect()?;
         let semantics = ui.semantic_tree()?;
-        let excluded = descendants_of(&inspection.nodes, self.panel.id())
-            .into_iter()
-            .chain(descendants_of(&inspection.nodes, self.launcher.id()))
-            .chain(descendants_of(
-                &inspection.nodes,
-                self.highlight_overlay.id(),
-            ))
-            .collect::<HashSet<_>>();
+        self.viewport = inspection.viewport;
+        let excluded = self.owned_roots(&inspection.nodes);
         let nodes = inspection
             .nodes
             .into_iter()
             .filter(|node| !excluded.contains(&node.id))
             .collect::<Vec<_>>();
-        let semantic_labels = semantic_labels(&semantics);
+        let labels = semantic_labels(&semantics);
+        let model = Model::build(nodes);
         if self
             .selected
-            .is_some_and(|id| !nodes.iter().any(|node| node.id == id))
+            .is_some_and(|id| !model.nodes.contains_key(&id))
         {
             self.selected = None;
         }
-
-        for row in self.rendered.drain(..) {
-            ui.remove(row)?;
+        if self
+            .hovered
+            .is_some_and(|id| !model.nodes.contains_key(&id))
+        {
+            self.hovered = None;
+            self.hover_cell.set(None);
         }
-        let by_id = nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect::<HashMap<_, _>>();
-        for node in &nodes {
-            let row = ui.add_column(self.content)?;
-            let depth = depth_of(node, &by_id);
-            let semantic = semantic_labels.get(&node.id);
-            let suffix = semantic
-                .filter(|(_, label)| !label.is_empty())
-                .map(|(role, label)| format!(" {role:?} \"{label}\""))
-                .unwrap_or_default();
-            let button = ui.add_button(
-                row,
-                format!("{}{:?}{suffix}", "  ".repeat(depth), node.kind),
-            )?;
-            ui.set_layout(
-                button,
-                LayoutStyle {
-                    width: Length::Percent(1.0),
-                    ..LayoutStyle::default()
+        if !self.seeded {
+            self.expanded = model.ids_up_to_depth(2);
+            self.seeded = true;
+        }
+        *self.meta.borrow_mut() = row_meta(&model, &labels);
+
+        let tree_data = {
+            let meta = self.meta.borrow();
+            tree_nodes(&model, &meta, &self.expanded, &self.filter)
+        };
+        self.tree.sync(ui, &tree_data, self.selected.as_ref())?;
+
+        if self.last_crumbs != Some(self.selected) {
+            self.rebuild_crumbs(ui, &model)?;
+            self.last_crumbs = Some(self.selected);
+        }
+
+        let details_key = self
+            .selected
+            .and_then(|id| model.nodes.get(&id))
+            .map(|node| (node.id, node.clone()));
+        if details_key != self.last_details {
+            self.rebuild_details(ui, details_key.as_ref().map(|(_, node)| node))?;
+            self.last_details = details_key;
+        }
+
+        let selection = self
+            .selected
+            .and_then(|id| model.nodes.get(&id))
+            .map(BandSet::of)
+            .filter(|_| self.open);
+        let hover = self
+            .hovered
+            .and_then(|id| model.nodes.get(&id))
+            .map(clipped_bounds)
+            .filter(|_| self.open);
+        ui.update_widget(self.highlight, |highlight| {
+            highlight.selection = selection;
+            highlight.hover = hover;
+        })?;
+        self.cache = model.nodes;
+        self.update_info_tag(ui)?;
+        self.refresh_owned(ui)
+    }
+
+    /// Reapplies theme-derived colors after a host `set_theme` call.
+    ///
+    /// Widget-style color overrides snapshot the theme they were resolved
+    /// against, so hosts switching themes at runtime should call this to keep
+    /// the inspector chrome, rows, and details in the current palette.
+    pub fn restyle(&mut self, ui: &mut Ui<Message>) -> Result<(), UiError> {
+        let surface = ui.theme().surface;
+        ui.set_widget_style(
+            self.panel,
+            WidgetStyle {
+                background: Some(surface),
+                ..WidgetStyle::default()
+            },
+        )?;
+        self.tree
+            .set_row_content(ui, Self::row_renderer(self.meta.clone()))?;
+        self.last_details = None;
+        self.last_crumbs = None;
+        self.sync(ui)
+    }
+
+    fn set_picking(&mut self, value: bool) {
+        self.picking.set(value);
+        if !value {
+            self.hovered = None;
+            self.hover_cell.set(None);
+        }
+    }
+
+    fn row_renderer(
+        meta: Rc<RefCell<HashMap<ElementId, RowMeta>>>,
+    ) -> impl Fn(&mut Ui<Message>, ElementHandle<Row>, &ElementId) -> Result<(), UiError> {
+        move |ui, row, id| {
+            let caption = ui.theme().type_scale.caption;
+            let muted = ui.theme().muted_foreground;
+            let Some(row_meta) = meta.borrow().get(id).cloned() else {
+                ui.add_label(row, "Element")?;
+                return Ok(());
+            };
+            let kind = ui.add_label(row, format!("{:?}", row_meta.kind))?;
+            ui.set_widget_style(
+                kind,
+                WidgetStyle {
+                    foreground: Some(kind_color(row_meta.kind)),
+                    ..WidgetStyle::default()
                 },
             )?;
-            let id = node.id;
-            let map = self.map_action.clone();
-            ui.listen(button, None, EventFilter::Activate, move |context, _| {
-                context.emit(map(InspectorAction::Select(id)));
-            })?;
-            self.rendered.push(row);
-        }
-
-        let details = ui.add_column(self.content)?;
-        if let Some(selected) = self.selected.and_then(|id| by_id.get(&id).copied()) {
-            for line in detail_lines(selected, semantic_labels.get(&selected.id)) {
-                ui.add_label(details, line)?;
+            if let Some(role) = row_meta.role {
+                let role = ui.add_label(row, format!("{role:?}"))?;
+                ui.set_widget_style(
+                    role,
+                    WidgetStyle {
+                        foreground: Some(muted),
+                        font_size: Some(caption),
+                        ..WidgetStyle::default()
+                    },
+                )?;
             }
-            let highlight_bounds = selected.clip.map_or(selected.world_bounds, |clip| {
-                intersect(selected.world_bounds, clip).unwrap_or(selected.world_bounds)
-            });
-            ui.update_widget(self.highlight, |highlight| {
-                highlight.bounds = self.open.then_some(highlight_bounds);
-            })?;
-        } else {
-            ui.add_label(details, "Select an element to inspect")?;
-            ui.update_widget(self.highlight, |highlight| highlight.bounds = None)?;
+            if !row_meta.label.is_empty() {
+                let mut text = row_meta.label;
+                if text.chars().count() > 24 {
+                    text = format!("{}…", text.chars().take(23).collect::<String>());
+                }
+                let label = ui.add_label(row, format!("\"{text}\""))?;
+                ui.set_widget_style(
+                    label,
+                    WidgetStyle {
+                        foreground: Some(label_color()),
+                        font_size: Some(caption),
+                        ..WidgetStyle::default()
+                    },
+                )?;
+            }
+            Ok(())
         }
-        self.rendered.push(details);
-        self.refresh_owned(ui)
+    }
+
+    fn rebuild_details(
+        &mut self,
+        ui: &mut Ui<Message>,
+        node: Option<&ElementInspection>,
+    ) -> Result<(), UiError> {
+        ui.remove(self.details)?;
+        self.details = ui.add_column(self.details_pad)?;
+        ui.set_layout(
+            self.details,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        match node {
+            Some(node) => {
+                let meta = self.meta.borrow().get(&node.id).cloned();
+                build_details(ui, self.details, node, meta.as_ref())?;
+            }
+            None => {
+                let muted = ui.theme().muted_foreground;
+                let empty = ui.add_label(self.details, "Select an element to inspect")?;
+                ui.set_widget_style(
+                    empty,
+                    WidgetStyle {
+                        foreground: Some(muted),
+                        ..WidgetStyle::default()
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn rebuild_crumbs(&mut self, ui: &mut Ui<Message>, model: &Model) -> Result<(), UiError> {
+        let caption = ui.theme().type_scale.caption;
+        let muted = ui.theme().muted_foreground;
+        let accent = ui.theme().accent;
+        ui.remove(self.crumbs)?;
+        self.crumbs = ui.add_row(self.crumb_bar)?;
+        ui.set_flex(self.crumbs, 2.0, Alignment::Center)?;
+        ui.set_layout(
+            self.crumbs,
+            LayoutStyle {
+                grow: 1.0,
+                height: Length::Percent(1.0),
+                margin: Edges {
+                    left: Length::Px(8.0),
+                    right: Length::Px(8.0),
+                    ..Edges::all(Length::Px(0.0))
+                },
+                ..LayoutStyle::default()
+            },
+        )?;
+        let Some(selected) = self.selected else {
+            return Ok(());
+        };
+        let mut chain = model.ancestor_chain(selected);
+        if chain.len() > 4 {
+            let ellipsis = ui.add_label(self.crumbs, "…")?;
+            ui.set_widget_style(
+                ellipsis,
+                WidgetStyle {
+                    foreground: Some(muted),
+                    font_size: Some(caption),
+                    ..WidgetStyle::default()
+                },
+            )?;
+            chain = chain.split_off(chain.len() - 4);
+        }
+        let meta = self.meta.borrow();
+        for (index, id) in chain.iter().copied().enumerate() {
+            if index > 0 || model.ancestor_chain(selected).len() > 4 {
+                let separator = ui.add_label(self.crumbs, "›")?;
+                ui.set_widget_style(
+                    separator,
+                    WidgetStyle {
+                        foreground: Some(muted),
+                        font_size: Some(caption),
+                        ..WidgetStyle::default()
+                    },
+                )?;
+            }
+            let name = meta
+                .get(&id)
+                .map_or_else(|| "Element".to_string(), |row| format!("{:?}", row.kind));
+            let crumb = ui.add_label(self.crumbs, name)?;
+            ui.set_widget_style(
+                crumb,
+                WidgetStyle {
+                    foreground: Some(if id == selected { accent } else { muted }),
+                    font_size: Some(caption),
+                    ..WidgetStyle::default()
+                },
+            )?;
+            if id != selected {
+                let map = self.map_action.clone();
+                ui.listen(crumb, None, EventFilter::Pointer, move |context, event| {
+                    if matches!(
+                        event.kind,
+                        RoutedEventKind::PointerButton {
+                            button: PointerButton::Primary,
+                            state: ElementState::Pressed,
+                            ..
+                        }
+                    ) {
+                        context.emit(map(InspectorAction::Select(id)));
+                    }
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Lightweight hover refresh used while the pointer moves in pick mode.
+    fn apply_hover(&mut self, ui: &mut Ui<Message>) -> Result<(), UiError> {
+        let hover = self
+            .hovered
+            .and_then(|id| self.cache.get(&id))
+            .map(clipped_bounds)
+            .filter(|_| self.open);
+        ui.update_widget(self.highlight, |highlight| highlight.hover = hover)?;
+        self.update_info_tag(ui)
+    }
+
+    fn update_info_tag(&self, ui: &mut Ui<Message>) -> Result<(), UiError> {
+        let node = self
+            .hovered
+            .filter(|_| self.open && self.picking.get())
+            .and_then(|id| self.cache.get(&id));
+        let Some(node) = node else {
+            return ui.set_visibility(self.info_tag, Visibility::Hidden);
+        };
+        let bounds = clipped_bounds(node);
+        let label = self
+            .meta
+            .borrow()
+            .get(&node.id)
+            .filter(|meta| !meta.label.is_empty())
+            .map(|meta| format!(" \"{}\"", meta.label))
+            .unwrap_or_default();
+        ui.set_label_text(
+            self.info_tag,
+            format!(
+                "{:?}{label} · {} × {}",
+                node.kind,
+                details::number(bounds.size.width),
+                details::number(bounds.size.height)
+            ),
+        )?;
+        let above = bounds.origin.y - INFO_TAG_HEIGHT - 4.0;
+        let y = if above >= 2.0 {
+            above
+        } else {
+            bounds.origin.y + bounds.size.height + 4.0
+        };
+        let x = bounds
+            .origin
+            .x
+            .clamp(4.0, (self.viewport.width - 180.0).max(4.0));
+        ui.set_layout(
+            self.info_tag,
+            LayoutStyle {
+                positioning: Positioning::Absolute,
+                inset: Edges {
+                    left: Length::Px(x),
+                    top: Length::Px(y),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_visibility(self.info_tag, Visibility::Visible)
     }
 
     fn update_visibility(&self, ui: &mut Ui<Message>) -> Result<(), UiError> {
@@ -446,16 +981,18 @@ where
         )
     }
 
+    fn owned_roots(&self, nodes: &[ElementInspection]) -> HashSet<ElementId> {
+        descendants_of(nodes, self.panel.id())
+            .into_iter()
+            .chain(descendants_of(nodes, self.launcher.id()))
+            .chain(descendants_of(nodes, self.highlight_overlay.id()))
+            .collect()
+    }
+
     fn refresh_owned(&self, ui: &mut Ui<Message>) -> Result<(), UiError> {
         let inspection = ui.inspect()?;
-        let mut owned = self.owned.borrow_mut();
-        owned.clear();
-        owned.extend(descendants_of(&inspection.nodes, self.panel.id()));
-        owned.extend(descendants_of(&inspection.nodes, self.launcher.id()));
-        owned.extend(descendants_of(
-            &inspection.nodes,
-            self.highlight_overlay.id(),
-        ));
+        let owned = self.owned_roots(&inspection.nodes);
+        *self.owned.borrow_mut() = owned;
         Ok(())
     }
 }
@@ -484,69 +1021,11 @@ fn is_toggle_shortcut(input: &astrelis_platform::KeyboardInput, modifiers: Modif
     f12 || mac_fallback
 }
 
-fn semantic_labels(root: &SemanticNode) -> HashMap<ElementId, (SemanticRole, String)> {
-    fn visit(node: &SemanticNode, output: &mut HashMap<ElementId, (SemanticRole, String)>) {
-        output.insert(node.id, (node.role, node.label.clone()));
-        for child in &node.children {
-            visit(child, output);
-        }
-    }
-    let mut output = HashMap::new();
-    visit(root, &mut output);
-    output
-}
-
-fn depth_of(node: &ElementInspection, nodes: &HashMap<ElementId, &ElementInspection>) -> usize {
-    let mut depth = 0;
-    let mut parent = node.parent;
-    while let Some(id) = parent {
-        depth += 1;
-        parent = nodes.get(&id).and_then(|node| node.parent);
-    }
-    depth
-}
-
-fn detail_lines(
-    node: &ElementInspection,
-    semantic: Option<&(SemanticRole, String)>,
-) -> Vec<String> {
-    let mut lines = vec![
-        format!("Kind: {:?}", node.kind),
-        format!("Layout: {:?}", node.declared_layout),
-        format!("Layout bounds: {:?}", node.layout_bounds),
-        format!("World bounds: {:?}", node.world_bounds),
-        format!("Physical bounds: {:?}", node.physical_bounds),
-        format!("Clip: {:?}", node.clip),
-        format!("Transform: {:?}", node.world_transform),
-        format!("Paint: z={} rank={}", node.z_index, node.paint_rank),
-        format!(
-            "State: enabled={} visible={} interactive={} focused={} hovered={}",
-            node.enabled, node.effectively_visible, node.interactive, node.focused, node.hovered
-        ),
-        format!(
-            "Hit testable: {} focusable: {}",
-            node.hit_testable, node.focusable
-        ),
-    ];
-    if let Some((role, label)) = semantic {
-        lines.push(format!("Semantics: {role:?} \"{label}\""));
-    }
-    lines
-}
-
-fn intersect(left: LogicalRect, right: LogicalRect) -> Option<LogicalRect> {
-    let x = left.origin.x.max(right.origin.x);
-    let y = left.origin.y.max(right.origin.y);
-    let max_x = (left.origin.x + left.size.width).min(right.origin.x + right.size.width);
-    let max_y = (left.origin.y + left.size.height).min(right.origin.y + right.size.height);
-    (max_x >= x && max_y >= y)
-        .then(|| LogicalRect::new(Point::new(x, y), Size::new(max_x - x, max_y - y)))
-}
-
 #[cfg(test)]
 mod tests {
+    use astrelis_core::geometry::Size;
     use astrelis_text::FontDatabase;
-    use astrelis_ui_core::{SemanticRole, Theme};
+    use astrelis_ui_core::{SemanticNode, SemanticRole, Theme};
 
     use super::*;
 
@@ -556,11 +1035,16 @@ mod tests {
         Inspector(InspectorAction),
     }
 
-    #[test]
-    fn inspector_opens_selects_and_excludes_its_own_tree() {
+    fn harness() -> (Ui<Message>, ElementHandle<astrelis_ui_core::Button>) {
         let mut ui = Ui::new(FontDatabase::default(), Theme::dark());
         ui.set_viewport(Size::new(800.0, 600.0), 1.0);
         let button = ui.add_button(ui.root(), "Application button").unwrap();
+        (ui, button)
+    }
+
+    #[test]
+    fn inspector_opens_selects_and_excludes_its_own_tree() {
+        let (mut ui, button) = harness();
         let mut inspector =
             UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
         assert!(!inspector.is_open());
@@ -584,10 +1068,106 @@ mod tests {
             .find(|node| node.id == inspector.highlight.id())
             .unwrap();
         assert!(highlight.paint_rank > application.paint_rank);
-        assert_eq!(
-            ui.widget(inspector.highlight).unwrap().bounds,
-            Some(application.world_bounds)
+        let bands = ui.widget(inspector.highlight).unwrap().selection.unwrap();
+        assert_eq!(bands.bounds, application.world_bounds);
+    }
+
+    #[test]
+    fn filter_keeps_matches_and_ancestors() {
+        let (mut ui, _button) = harness();
+        let sibling = ui.add_label(ui.root(), "Unrelated sibling").unwrap();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        inspector.apply(&mut ui, InspectorAction::Open).unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::SetFilter("button".into()))
+            .unwrap();
+        let semantics = ui.semantic_tree().unwrap();
+        let mut labels = Vec::new();
+        collect_labels(&semantics, &mut labels);
+        assert!(
+            labels.iter().any(|label| label.contains("Button")),
+            "filtered tree should keep the matching button row"
         );
+        drop(inspector);
+        let _ = sibling;
+    }
+
+    #[test]
+    fn select_expands_ancestors_and_reveals() {
+        let mut ui: Ui<Message> = Ui::new(FontDatabase::default(), Theme::dark());
+        ui.set_viewport(Size::new(800.0, 600.0), 1.0);
+        let root = ui.root();
+        let mut parent = ui.add_column(root).unwrap();
+        for _ in 0..5 {
+            parent = {
+                let next = ui.add_column(parent).unwrap();
+                next
+            };
+        }
+        let deep = ui.add_button(parent, "Deep").unwrap();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::Select(deep.id()))
+            .unwrap();
+        assert!(inspector.expanded.contains(&parent.id()));
+        assert_eq!(inspector.selected(), Some(deep.id()));
+    }
+
+    #[test]
+    fn hover_updates_highlight_without_rebuilding_the_tree() {
+        let (mut ui, button) = harness();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::SetPicking(true))
+            .unwrap();
+        let realized = inspector.tree.realized_count();
+        inspector
+            .apply(&mut ui, InspectorAction::SetHover(Some(button.id())))
+            .unwrap();
+        assert_eq!(inspector.tree.realized_count(), realized);
+        let expected = ui.inspect_element(button).unwrap().world_bounds;
+        assert_eq!(ui.widget(inspector.highlight).unwrap().hover, Some(expected));
+    }
+
+    #[test]
+    fn expansion_round_trips_through_actions() {
+        let (mut ui, _button) = harness();
+        let container = ui.add_column(ui.root()).unwrap();
+        ui.add_label(container, "Child").unwrap();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        inspector.apply(&mut ui, InspectorAction::Open).unwrap();
+        assert!(inspector.expanded.contains(&container.id()));
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetExpanded {
+                    id: container.id(),
+                    expanded: false,
+                },
+            )
+            .unwrap();
+        assert!(!inspector.expanded.contains(&container.id()));
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::SetExpanded {
+                    id: container.id(),
+                    expanded: true,
+                },
+            )
+            .unwrap();
+        assert!(inspector.expanded.contains(&container.id()));
+    }
+
+    fn collect_labels(node: &SemanticNode, output: &mut Vec<String>) {
+        output.push(node.label.clone());
+        for child in &node.children {
+            collect_labels(child, output);
+        }
     }
 
     fn contains(node: &SemanticNode, role: SemanticRole, label: &str) -> bool {

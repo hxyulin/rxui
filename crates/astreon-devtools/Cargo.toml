@@ -14,6 +14,7 @@ astrelis-paint = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-ui = { workspace = true }
 astrelis-ui-core = { workspace = true }
+astreon-widgets = { workspace = true }
 
 [dev-dependencies]
 astrelis-text = { workspace = true }

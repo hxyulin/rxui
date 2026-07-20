@@ -362,14 +362,7 @@ impl<Message: Clone + 'static> Widget<Message> for CommandButton<Message> {
             .fill_rounded_rect(rounded, Brush::Solid(background))
             .map_err(ui_error)?;
         if let Some(icon) = &self.icon {
-            let padding = theme.control_padding;
-            let size = ICON_SIZE.min(bounds.size.height - padding.top - padding.bottom);
-            let icon_bounds = LogicalRect::from_xywh(
-                bounds.origin.x + padding.left,
-                bounds.origin.y + (bounds.size.height - size) * 0.5,
-                size,
-                size,
-            );
+            let icon_bounds = icon_slot(bounds, theme.control_padding, false);
             paint_icon(
                 painter,
                 icon,
@@ -568,14 +561,7 @@ impl<Message: Clone + 'static> Widget<Message> for IconButton<Message> {
         painter
             .fill_rounded_rect(rounded, Brush::Solid(background))
             .map_err(ui_error)?;
-        let padding = theme.control_padding;
-        let size = ICON_SIZE.min(bounds.size.height - padding.top - padding.bottom);
-        let icon_bounds = LogicalRect::from_xywh(
-            bounds.origin.x + padding.left,
-            bounds.origin.y + (bounds.size.height - size) * 0.5,
-            size,
-            size,
-        );
+        let icon_bounds = icon_slot(bounds, theme.control_padding, self.icon_only);
         paint_icon(painter, &self.icon, icon_bounds, theme.foreground)?;
         if self.focused {
             painter
@@ -625,6 +611,40 @@ fn valid_size(size: f32) -> f32 {
     } else {
         16.0
     }
+}
+
+/// Computes where a button paints its icon glyph.
+///
+/// Labelled buttons reserve a fixed left slot so text lines up after the icon;
+/// icon-only buttons center the glyph in both axes — anchoring it to the left
+/// slot instead is what previously skewed square buttons like tree disclosures
+/// and close buttons.
+fn icon_slot(
+    bounds: LogicalRect,
+    padding: astrelis_ui_core::Insets,
+    icon_only: bool,
+) -> LogicalRect {
+    let vertical = (bounds.size.height - padding.top - padding.bottom).max(0.0);
+    let size = if icon_only {
+        // Square buttons use the tighter vertical inset on both axes; the
+        // horizontal control padding is sized for text, not glyph margins.
+        ICON_SIZE
+            .min(vertical)
+            .min((bounds.size.width - padding.top - padding.bottom).max(0.0))
+    } else {
+        ICON_SIZE.min(vertical)
+    };
+    let x = if icon_only {
+        bounds.origin.x + (bounds.size.width - size) * 0.5
+    } else {
+        bounds.origin.x + padding.left
+    };
+    LogicalRect::from_xywh(
+        x,
+        bounds.origin.y + (bounds.size.height - size) * 0.5,
+        size,
+        size,
+    )
 }
 
 fn paint_icon(
@@ -763,6 +783,50 @@ pub mod icons {
         ])
     }
 
+    /// Crosshair reticle used for element picking.
+    pub fn crosshair() -> Icon {
+        let ring_outer = [
+            (18.0, 12.0),
+            (16.2, 16.2),
+            (12.0, 18.0),
+            (7.8, 16.2),
+            (6.0, 12.0),
+            (7.8, 7.8),
+            (12.0, 6.0),
+            (16.2, 7.8),
+        ];
+        let ring_inner = [
+            (15.5, 12.0),
+            (14.5, 14.5),
+            (12.0, 15.5),
+            (9.5, 14.5),
+            (8.5, 12.0),
+            (9.5, 9.5),
+            (12.0, 8.5),
+            (14.5, 9.5),
+        ];
+        let ticks = [
+            [(11.0, 1.0), (13.0, 1.0), (13.0, 4.5), (11.0, 4.5)],
+            [(11.0, 19.5), (13.0, 19.5), (13.0, 23.0), (11.0, 23.0)],
+            [(1.0, 11.0), (4.5, 11.0), (4.5, 13.0), (1.0, 13.0)],
+            [(19.5, 11.0), (23.0, 11.0), (23.0, 13.0), (19.5, 13.0)],
+        ];
+        let mut verbs = Vec::new();
+        for subpath in [&ring_outer[..], &ring_inner[..]]
+            .into_iter()
+            .chain(ticks.iter().map(|tick| &tick[..]))
+        {
+            verbs.push(PathVerb::MoveTo(Point::new(subpath[0].0, subpath[0].1)));
+            verbs.extend(
+                subpath[1..]
+                    .iter()
+                    .map(|&(x, y)| PathVerb::LineTo(Point::new(x, y))),
+            );
+            verbs.push(PathVerb::Close);
+        }
+        Icon::from_verbs(Size::new(24.0, 24.0), verbs).expect("built-in icon is valid")
+    }
+
     /// Settings gear with a distinct center opening.
     pub fn settings() -> Icon {
         let outer = [
@@ -893,6 +957,30 @@ mod tests {
     fn rejects_invalid_view_boxes_and_empty_paths() {
         assert!(Icon::new(Size::new(0.0, 24.0), Path::builder().finish()).is_err());
         assert!(Icon::new(Size::new(24.0, 24.0), Path::builder().finish()).is_err());
+    }
+
+    #[test]
+    fn icon_only_slot_is_centered_and_labelled_slot_hugs_the_left_padding() {
+        let padding = astrelis_ui_core::Insets {
+            left: 10.0,
+            top: 6.0,
+            right: 10.0,
+            bottom: 6.0,
+        };
+        // Compact 24x24 square, e.g. a tree disclosure.
+        let compact = icon_slot(LogicalRect::from_xywh(0.0, 0.0, 24.0, 24.0), padding, true);
+        assert_eq!(compact.size.width, compact.size.height);
+        assert_eq!(compact.origin.x + compact.size.width * 0.5, 12.0);
+        assert_eq!(compact.origin.y + compact.size.height * 0.5, 12.0);
+        // Default 28x28 square, e.g. a close button.
+        let square = icon_slot(LogicalRect::from_xywh(100.0, 40.0, 28.0, 28.0), padding, true);
+        assert_eq!(square.size.width, 16.0);
+        assert_eq!(square.origin.x + square.size.width * 0.5, 114.0);
+        assert_eq!(square.origin.y + square.size.height * 0.5, 54.0);
+        // Labelled buttons keep the fixed left slot so text stays aligned.
+        let labelled = icon_slot(LogicalRect::from_xywh(0.0, 0.0, 96.0, 28.0), padding, false);
+        assert_eq!(labelled.origin.x, 10.0);
+        assert_eq!(labelled.origin.y + labelled.size.height * 0.5, 14.0);
     }
 
     #[test]
