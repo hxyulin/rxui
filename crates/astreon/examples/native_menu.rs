@@ -1,5 +1,7 @@
 //! Native application menu backed by Astreon commands.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::io;
 
 use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
@@ -234,6 +236,7 @@ impl App for NativeMenuDemo {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
         NativeMenuDemo::new(),
@@ -241,3 +244,6 @@ fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     )))
     .map(|_| ())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

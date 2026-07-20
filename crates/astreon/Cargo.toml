@@ -25,13 +25,23 @@ astrelis-ui = { workspace = true }
 
 [dev-dependencies]
 astrelis-app = { workspace = true }
+astrelis-compositor = { workspace = true }
 astrelis-core = { workspace = true }
+astrelis-gpu = { workspace = true }
+astrelis-paint = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-platform-winit = { workspace = true }
 astrelis-profiling = { workspace = true }
+astrelis-render = { workspace = true }
+astrelis-render-3d = { workspace = true }
 astrelis-text = { workspace = true }
 astrelis-ui-core = { workspace = true }
+astrelis-ui-testing = { workspace = true }
 serde = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Document", "Element", "HtmlCanvasElement", "Window"] }
 
 [lints]
 workspace = true

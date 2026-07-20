@@ -2,6 +2,7 @@
 # Astreon. Cargo resolves these paths from the workspace root.
 [patch."https://github.com/hxyulin/astrelis"]
 astrelis-app = { path = "../astrelis/crates/astrelis-app" }
+astrelis-compositor = { path = "../astrelis/crates/astrelis-compositor" }
 astrelis-core = { path = "../astrelis/crates/astrelis-core" }
 astrelis-gpu = { path = "../astrelis/crates/astrelis-gpu" }
 astrelis-gpu-wgpu = { path = "../astrelis/crates/astrelis-gpu-wgpu" }
@@ -10,8 +11,12 @@ astrelis-paint-gpu = { path = "../astrelis/crates/astrelis-paint-gpu" }
 astrelis-platform = { path = "../astrelis/crates/astrelis-platform" }
 astrelis-platform-winit = { path = "../astrelis/crates/astrelis-platform-winit" }
 astrelis-profiling = { path = "../astrelis/crates/astrelis-profiling" }
+astrelis-render = { path = "../astrelis/crates/astrelis-render" }
+astrelis-render-3d = { path = "../astrelis/crates/astrelis-render-3d" }
 astrelis-text = { path = "../astrelis/crates/astrelis-text" }
 astrelis-ui = { path = "../astrelis/crates/astrelis-ui" }
 astrelis-ui-core = { path = "../astrelis/crates/astrelis-ui-core" }
 astrelis-ui-docking = { path = "../astrelis/crates/astrelis-ui-docking" }
+astrelis-ui-host = { path = "../astrelis/crates/astrelis-ui-host" }
+astrelis-ui-testing = { path = "../astrelis/crates/astrelis-ui-testing" }
 astrelis-ui-widgets = { path = "../astrelis/crates/astrelis-ui-widgets" }

@@ -34,8 +34,7 @@ pub(crate) fn build_details<Message: Clone + 'static>(
     if let Some(map) = editors {
         // The resolved padding equals the declared padding for a padding
         // container, so it seeds the editor directly.
-        let padding =
-            (node.kind == ElementKind::Padding).then_some(node.resolved_padding);
+        let padding = (node.kind == ElementKind::Padding).then_some(node.resolved_padding);
         edit_layout(ui, parent, node, padding, map)?;
         declared_layout(ui, parent, node, true)?;
     } else {
@@ -137,7 +136,11 @@ fn element_header<Message: 'static>(
     let bounds = node.world_bounds;
     let size = ui.add_label(
         row,
-        format!("{} × {}", number(bounds.size.width), number(bounds.size.height)),
+        format!(
+            "{} × {}",
+            number(bounds.size.width),
+            number(bounds.size.height)
+        ),
     )?;
     ui.set_widget_style(
         size,
@@ -315,7 +318,12 @@ fn computed<Message: 'static>(
         node.clip.map_or_else(|| "none".to_string(), rect),
     )?;
     if node.world_transform != astrelis_core::math::Affine2::IDENTITY {
-        kv_row(ui, parent, "transform", format!("{:?}", node.world_transform))?;
+        kv_row(
+            ui,
+            parent,
+            "transform",
+            format!("{:?}", node.world_transform),
+        )?;
     }
     Ok(())
 }

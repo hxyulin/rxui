@@ -1,5 +1,7 @@
 //! Astreon 0.3 application-shell showcase.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::{any::Any, io};
 
 use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
@@ -448,6 +450,7 @@ impl App for Shell {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
         Shell::new(),
@@ -455,3 +458,6 @@ fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     )))
     .map(|_| ())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

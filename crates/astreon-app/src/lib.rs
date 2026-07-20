@@ -9,7 +9,7 @@ mod state;
 mod undo;
 
 pub use command::{Command, CommandError, CommandId, CommandRegistry, CommandRouter, Shortcut};
-pub use host::{GraphicsContext, HostError, HostUpdate, WindowHost, WindowHostOptions};
+pub use host::{GraphicsContext, HostError, HostStatus, HostUpdate, WindowHost, WindowHostOptions};
 pub use menu::{Menu, MenuBar, MenuEntry, MenuError, MenuRole};
 pub use state::{
     JsonStateStore, PersistError, StateEnvelope, WindowPlacement, WindowPlacementTracker,

@@ -21,7 +21,7 @@ use astrelis_platform::{
 use astrelis_ui_core::{
     Alignment, Column, Edges, ElementHandle, ElementId, ElementInspection, ElementKind,
     EventFilter, FocusScopeOptions, Insets, Label, LayoutStyle, Length, Overlay, OverlayAlignment,
-    OverlayOptions, OverlaySide, Padding, Positioning, Row, RoutedEventKind, SemanticRole, Ui,
+    OverlayOptions, OverlaySide, Padding, Positioning, RoutedEventKind, Row, SemanticRole, Ui,
     UiError, Visibility, WidgetStyle,
 };
 use astreon_widgets::{
@@ -300,8 +300,12 @@ where
                 ..OverlayOptions::default()
             },
         )?;
-        let panel_width = options.panel_width.max(min_panel_size(InspectorDock::Right));
-        let panel_height = options.panel_height.max(min_panel_size(InspectorDock::Bottom));
+        let panel_width = options
+            .panel_width
+            .max(min_panel_size(InspectorDock::Right));
+        let panel_height = options
+            .panel_height
+            .max(min_panel_size(InspectorDock::Bottom));
         ui.set_layout(
             panel,
             panel_layout(
@@ -454,11 +458,16 @@ where
             },
         )?;
         let map = map_action.clone();
-        ui.listen(search, None, EventFilter::ValueChanged, move |context, event| {
-            if let RoutedEventKind::TextChanged(text) = &event.kind {
-                context.emit(map(InspectorAction::SetFilter(text.clone())));
-            }
-        })?;
+        ui.listen(
+            search,
+            None,
+            EventFilter::ValueChanged,
+            move |context, event| {
+                if let RoutedEventKind::TextChanged(text) = &event.kind {
+                    context.emit(map(InspectorAction::SetFilter(text.clone())));
+                }
+            },
+        )?;
 
         let map = map_action.clone();
         let mut tree = TreeView::with_options(
@@ -1409,7 +1418,10 @@ mod tests {
             .unwrap();
         assert_eq!(inspector.tree.realized_count(), realized);
         let expected = ui.inspect_element(button).unwrap().world_bounds;
-        assert_eq!(ui.widget(inspector.highlight).unwrap().hover, Some(expected));
+        assert_eq!(
+            ui.widget(inspector.highlight).unwrap().hover,
+            Some(expected)
+        );
     }
 
     #[test]

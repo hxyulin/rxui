@@ -1,16 +1,10 @@
 //! Command toolbars, modal dialogs, and in-application toast notifications.
 
-use std::{
-    cell::Cell,
-    error::Error,
-    fmt,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::Cell, error::Error, fmt, rc::Rc, time::Duration};
 
 use astrelis_core::geometry::{LogicalRect, LogicalSize, Point, Size};
 use astrelis_paint::{Brush, Painter, Path, StrokeStyle};
-use astrelis_platform::{ElementState, Key, NamedKey};
+use astrelis_platform::{ElementState, Instant, Key, NamedKey};
 use astrelis_ui::widget_any;
 use astrelis_ui_core::{
     Button, Column, ElementHandle, EventFilter, FocusScopeOptions, Insets, LayoutStyle, Length,

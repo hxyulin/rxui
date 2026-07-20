@@ -10,10 +10,9 @@ rust-version.workspace = true
 
 [dependencies]
 astreon-app = { workspace = true }
-astrelis-core = { workspace = true }
-astrelis-paint = { workspace = true }
 astrelis-text = { workspace = true }
 astrelis-ui-core = { workspace = true }
+astrelis-ui-testing = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,5 +1,7 @@
 //! Astreon 0.4 reference 2D scene editor.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet},
@@ -468,7 +470,7 @@ impl ReferenceEditor {
     }
 
     fn upload_scene(&mut self) -> Result<(), io::Error> {
-        let Some(host) = &self.host else {
+        let Some(host) = &mut self.host else {
             return Ok(());
         };
         let Some(scene) = &mut self.scene_texture else {
@@ -514,6 +516,7 @@ impl ReferenceEditor {
             }
         }
         host.queue()
+            .expect("GPU is ready on native")
             .write_texture(
                 &TextureCopy {
                     texture: scene.texture.clone(),
@@ -1118,15 +1121,18 @@ impl App for ReferenceEditor {
             },
         )
         .map_err(io::Error::other)?;
-        let texture = host.device().create_texture(TextureDescriptor {
-            label: Some("reference editor scene".into()),
-            size: Extent3d::d2(SCENE_WIDTH, SCENE_HEIGHT),
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8UnormSrgb,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-        });
+        let texture = host
+            .device()
+            .expect("GPU is ready on native")
+            .create_texture(TextureDescriptor {
+                label: Some("reference editor scene".into()),
+                size: Extent3d::d2(SCENE_WIDTH, SCENE_HEIGHT),
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8UnormSrgb,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            });
         let image = ExternalImage::new(Size::<Physical, u32>::new(SCENE_WIDTH, SCENE_HEIGHT))
             .map_err(io::Error::other)?;
         host.register_external_image(&image, texture.create_view(Default::default()))
@@ -1441,6 +1447,7 @@ fn stroke_rect(pixels: &mut [u8], left: i32, top: i32, right: i32, bottom: i32, 
     fill_rect(pixels, right - 2, top, right, bottom, color);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
         ReferenceEditor::new(),
@@ -1448,3 +1455,6 @@ fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     )))
     .map(|_| ())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

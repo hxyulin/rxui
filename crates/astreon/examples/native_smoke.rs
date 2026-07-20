@@ -1,5 +1,7 @@
 //! Self-terminating real-window smoke test used by the desktop CI matrix.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::{io, time::Duration};
 
 use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
@@ -146,6 +148,7 @@ fn find<'a>(node: &'a SemanticNode, role: SemanticRole, label: &str) -> Option<&
         .find_map(|child| find(child, role, label))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
         NativeSmoke::new(),
@@ -153,3 +156,6 @@ fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
     )))
     .map(|_| ())
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

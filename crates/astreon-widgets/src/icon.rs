@@ -997,7 +997,11 @@ mod tests {
         assert_eq!(compact.origin.x + compact.size.width * 0.5, 12.0);
         assert_eq!(compact.origin.y + compact.size.height * 0.5, 12.0);
         // Default 28x28 square, e.g. a close button.
-        let square = icon_slot(LogicalRect::from_xywh(100.0, 40.0, 28.0, 28.0), padding, true);
+        let square = icon_slot(
+            LogicalRect::from_xywh(100.0, 40.0, 28.0, 28.0),
+            padding,
+            true,
+        );
         assert_eq!(square.size.width, 16.0);
         assert_eq!(square.origin.x + square.size.width * 0.5, 114.0);
         assert_eq!(square.origin.y + square.size.height * 0.5, 54.0);

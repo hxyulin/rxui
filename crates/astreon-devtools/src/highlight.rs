@@ -6,9 +6,7 @@ use astrelis_core::{
 };
 use astrelis_paint::{Brush, Painter, StrokeStyle};
 use astrelis_ui::widget_any;
-use astrelis_ui_core::{
-    ElementInspection, Insets, Theme, UiError, Widget, WidgetContainerStyle,
-};
+use astrelis_ui_core::{ElementInspection, Insets, Theme, UiError, Widget, WidgetContainerStyle};
 
 /// Chrome-style band tints; translucent so they read on any app surface.
 fn margin_tint() -> Color {

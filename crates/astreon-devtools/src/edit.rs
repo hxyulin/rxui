@@ -58,11 +58,16 @@ pub(crate) fn edit_state<Message: Clone + 'static>(
     let row = editor_row(ui, parent, "enabled")?;
     let checkbox = ui.add_checkbox(row, node.enabled)?;
     let map = map.clone();
-    ui.listen(checkbox, None, EventFilter::ValueChanged, move |context, event| {
-        if let RoutedEventKind::CheckedChanged(enabled) = event.kind {
-            context.emit(map(InspectorAction::SetElementEnabled { id, enabled }));
-        }
-    })?;
+    ui.listen(
+        checkbox,
+        None,
+        EventFilter::ValueChanged,
+        move |context, event| {
+            if let RoutedEventKind::CheckedChanged(enabled) = event.kind {
+                context.emit(map(InspectorAction::SetElementEnabled { id, enabled }));
+            }
+        },
+    )?;
     Ok(())
 }
 
@@ -76,8 +81,7 @@ pub(crate) fn edit_layout<Message: Clone + 'static>(
 ) -> Result<(), UiError> {
     let id = node.id;
     let layout = node.declared_layout;
-    let commit_layout = |map: &Map<Message>,
-                         mutate: fn(LayoutStyle, Length) -> LayoutStyle| {
+    let commit_layout = |map: &Map<Message>, mutate: fn(LayoutStyle, Length) -> LayoutStyle| {
         let map = map.clone();
         move |text: &str| {
             // An unparseable entry re-commits the current layout, which forces
@@ -113,25 +117,17 @@ pub(crate) fn edit_layout<Message: Clone + 'static>(
         "margin",
         fmt_edges(layout.margin),
         move |text| {
-            let layout = parse_edges(text).map_or(layout, |margin| LayoutStyle {
-                margin,
-                ..layout
-            });
+            let layout =
+                parse_edges(text).map_or(layout, |margin| LayoutStyle { margin, ..layout });
             margin_map(InspectorAction::SetElementLayout { id, layout })
         },
     )?;
     if let Some(current) = padding {
         let padding_map = map.clone();
-        text_editor(
-            ui,
-            parent,
-            "padding",
-            fmt_insets(current),
-            move |text| {
-                let padding = parse_insets(text).unwrap_or(current);
-                padding_map(InspectorAction::SetElementPadding { id, padding })
-            },
-        )?;
+        text_editor(ui, parent, "padding", fmt_insets(current), move |text| {
+            let padding = parse_insets(text).unwrap_or(current);
+            padding_map(InspectorAction::SetElementPadding { id, padding })
+        })?;
     }
     let factors = NumericFieldOptions {
         min: 0.0,
@@ -300,11 +296,16 @@ fn text_editor<Message: 'static>(
             ..LayoutStyle::default()
         },
     )?;
-    ui.listen(field, None, EventFilter::ValueChanged, move |context, event| {
-        if let RoutedEventKind::TextSubmitted(text) = &event.kind {
-            context.emit(commit(text));
-        }
-    })?;
+    ui.listen(
+        field,
+        None,
+        EventFilter::ValueChanged,
+        move |context, event| {
+            if let RoutedEventKind::TextSubmitted(text) = &event.kind {
+                context.emit(commit(text));
+            }
+        },
+    )?;
     Ok(())
 }
 
@@ -318,7 +319,12 @@ pub(crate) fn parse_length(text: &str) -> Option<Length> {
         let value: f32 = percent.trim().parse().ok()?;
         return value.is_finite().then_some(Length::Percent(value / 100.0));
     }
-    let value: f32 = text.strip_suffix("px").unwrap_or(&text).trim().parse().ok()?;
+    let value: f32 = text
+        .strip_suffix("px")
+        .unwrap_or(&text)
+        .trim()
+        .parse()
+        .ok()?;
     value.is_finite().then_some(Length::Px(value))
 }
 

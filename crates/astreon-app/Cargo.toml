@@ -9,14 +9,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-astrelis-app = { workspace = true }
 astrelis-core = { workspace = true }
 astrelis-gpu = { workspace = true }
-astrelis-gpu-wgpu = { workspace = true }
-astrelis-paint-gpu = { workspace = true }
 astrelis-platform = { workspace = true }
-astrelis-ui-core = { workspace = true }
-pollster = { workspace = true }
+astrelis-ui-host = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 directories = { workspace = true }

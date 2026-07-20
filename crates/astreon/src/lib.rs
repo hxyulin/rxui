@@ -24,9 +24,9 @@ pub use astreon_widgets as widgets;
 pub mod prelude {
     pub use astrelis_ui::prelude::*;
     pub use astreon_app::{
-        Command, CommandId, CommandRegistry, CommandRouter, GraphicsContext, JsonStateStore, Menu,
-        MenuBar, MenuEntry, MenuRole, Shortcut, UndoAction, UndoStack, WindowHost,
-        WindowHostOptions, WindowPlacement, WindowPlacementTracker, redo_command_id,
+        Command, CommandId, CommandRegistry, CommandRouter, GraphicsContext, HostStatus,
+        JsonStateStore, Menu, MenuBar, MenuEntry, MenuRole, Shortcut, UndoAction, UndoStack,
+        WindowHost, WindowHostOptions, WindowPlacement, WindowPlacementTracker, redo_command_id,
         sync_undo_commands, undo_command_id,
     };
     #[cfg(feature = "devtools")]

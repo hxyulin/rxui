@@ -85,9 +85,7 @@ pub(crate) fn row_meta(
                 RowMeta {
                     kind: node.kind,
                     role: semantic.map(|(role, _)| *role),
-                    label: semantic
-                        .map(|(_, label)| label.clone())
-                        .unwrap_or_default(),
+                    label: semantic.map(|(_, label)| label.clone()).unwrap_or_default(),
                 },
             )
         })

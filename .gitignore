@@ -1,3 +1,4 @@
 /target/
 /.cargo/config.toml
 Cargo.lock
+/crates/astreon/web/pkg/
