@@ -14,17 +14,23 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
+astrelis-app = { workspace = true }
 astrelis-core = { workspace = true }
 astrelis-gpu = { workspace = true }
 astrelis-platform = { workspace = true }
+astrelis-platform-winit = { workspace = true }
+astrelis-text = { workspace = true }
+astrelis-ui-core = { workspace = true }
 astrelis-ui-host = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 directories = { workspace = true }
 tempfile = "3"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { workspace = true, features = ["HtmlCanvasElement"] }
+
 [dev-dependencies]
-astrelis-text = { workspace = true }
 
 [lints]
 workspace = true

@@ -258,10 +258,23 @@ pub struct RadioGroup<Message> {
     radios: Vec<ElementHandle<RadioButton<Message>>>,
     enabled: Vec<bool>,
     selected: Rc<Cell<Option<usize>>>,
-    _message: std::marker::PhantomData<Message>,
 }
 
 impl<Message: 'static> RadioGroup<Message> {
+    /// Starts a fluent [`RadioGroupBuilder`] parented under `parent`.
+    pub fn build<T>(
+        ui: &mut Ui<Message>,
+        parent: ElementHandle<T>,
+    ) -> RadioGroupBuilder<'_, Message, T> {
+        RadioGroupBuilder {
+            ui,
+            parent,
+            options: Vec::new(),
+            selected: None,
+            on_select: None,
+        }
+    }
+
     /// Creates a group and emits `on_select(index)` when selection changes.
     pub fn new<T, F>(
         ui: &mut Ui<Message>,
@@ -343,7 +356,6 @@ impl<Message: 'static> RadioGroup<Message> {
             radios,
             enabled,
             selected: state,
-            _message: std::marker::PhantomData,
         })
     }
 
@@ -368,6 +380,69 @@ impl<Message: 'static> RadioGroup<Message> {
             ui.update_widget(radio, |radio| radio.selected = selected == Some(index))?;
         }
         Ok(())
+    }
+}
+
+/// Fluent [`RadioGroup`] constructor returned by [`RadioGroup::build`].
+pub struct RadioGroupBuilder<'ui, Message, T> {
+    ui: &'ui mut Ui<Message>,
+    parent: ElementHandle<T>,
+    options: Vec<RadioOption>,
+    selected: Option<usize>,
+    on_select: Option<Box<dyn Fn(usize) -> Message>>,
+}
+
+impl<Message: 'static, T> RadioGroupBuilder<'_, Message, T> {
+    /// Appends a selectable option.
+    pub fn option(mut self, label: impl Into<String>) -> Self {
+        self.options.push(RadioOption::new(label));
+        self
+    }
+
+    /// Appends an option that does not accept selection.
+    pub fn disabled_option(mut self, label: impl Into<String>) -> Self {
+        self.options.push(RadioOption {
+            label: label.into(),
+            enabled: false,
+        });
+        self
+    }
+
+    /// Marks the option at `index` as initially selected.
+    pub fn selected(mut self, index: usize) -> Self {
+        self.selected = Some(index);
+        self
+    }
+
+    /// Emits `on_select(index)` when selection changes.
+    pub fn on_select<F>(mut self, on_select: F) -> Self
+    where
+        F: Fn(usize) -> Message + 'static,
+    {
+        self.on_select = Some(Box::new(on_select));
+        self
+    }
+
+    /// Creates the radio group.
+    ///
+    /// # Panics
+    ///
+    /// Panics on programmer error: a selected index past the appended
+    /// options, a missing [`on_select`](Self::on_select) callback, or a
+    /// retained-tree failure while mounting the group.
+    pub fn finish(self) -> RadioGroup<Message> {
+        if let Some(index) = self.selected {
+            assert!(
+                index < self.options.len(),
+                "radio selection {index} is out of range for {} options",
+                self.options.len()
+            );
+        }
+        let on_select = self
+            .on_select
+            .expect("radio groups require an `on_select` callback before `finish`");
+        RadioGroup::new(self.ui, self.parent, self.options, self.selected, on_select)
+            .expect("failed to build radio group")
     }
 }
 
@@ -416,6 +491,20 @@ pub struct ComboBox<Message> {
 }
 
 impl<Message: Clone + 'static> ComboBox<Message> {
+    /// Starts a fluent [`ComboBoxBuilder`] parented under `parent`.
+    pub fn build<T>(
+        ui: &mut Ui<Message>,
+        parent: ElementHandle<T>,
+    ) -> ComboBoxBuilder<'_, Message, T> {
+        ComboBoxBuilder {
+            ui,
+            parent,
+            placeholder: "Select…".into(),
+            items: Vec::new(),
+            selected: None,
+        }
+    }
+
     /// Returns the retained button which owns the popup.
     pub const fn owner(&self) -> ElementHandle<Button> {
         self.owner
@@ -509,6 +598,75 @@ impl<Message: Clone + 'static> ComboBox<Message> {
     }
 }
 
+/// Fluent [`ComboBox`] constructor returned by [`ComboBox::build`].
+pub struct ComboBoxBuilder<'ui, Message, T> {
+    ui: &'ui mut Ui<Message>,
+    parent: ElementHandle<T>,
+    placeholder: String,
+    items: Vec<ComboBoxItem<Message>>,
+    selected: Option<usize>,
+}
+
+impl<Message: Clone + 'static, T> ComboBoxBuilder<'_, Message, T> {
+    /// Replaces the owner-button text shown while nothing is selected.
+    ///
+    /// Defaults to `Select…`.
+    pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+        self.placeholder = text.into();
+        self
+    }
+
+    /// Appends a selectable item emitting `message`.
+    pub fn item(mut self, label: impl Into<String>, message: Message) -> Self {
+        self.items.push(ComboBoxItem {
+            label: label.into(),
+            message,
+            enabled: true,
+        });
+        self
+    }
+
+    /// Appends an item that does not accept selection.
+    pub fn disabled_item(mut self, label: impl Into<String>, message: Message) -> Self {
+        self.items.push(ComboBoxItem {
+            label: label.into(),
+            message,
+            enabled: false,
+        });
+        self
+    }
+
+    /// Marks the item at `index` as initially selected.
+    pub fn selected(mut self, index: usize) -> Self {
+        self.selected = Some(index);
+        self
+    }
+
+    /// Creates the combo box.
+    ///
+    /// # Panics
+    ///
+    /// Panics on programmer error: a selected index past the appended items
+    /// or a retained-tree failure while mounting the combo box.
+    pub fn finish(self) -> ComboBox<Message> {
+        if let Some(index) = self.selected {
+            assert!(
+                index < self.items.len(),
+                "combo-box selection {index} is out of range for {} items",
+                self.items.len()
+            );
+        }
+        ComboBox::new(
+            self.ui,
+            self.parent,
+            self.placeholder,
+            self.items,
+            self.selected,
+        )
+        .expect("failed to build combo box")
+    }
+}
+
 /// Numeric-field bounds and stepping policy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NumericFieldOptions {
@@ -549,6 +707,20 @@ pub struct NumericField<Message> {
 }
 
 impl<Message: 'static> NumericField<Message> {
+    /// Starts a fluent [`NumericFieldBuilder`] parented under `parent`.
+    pub fn build<T>(
+        ui: &mut Ui<Message>,
+        parent: ElementHandle<T>,
+    ) -> NumericFieldBuilder<'_, Message, T> {
+        NumericFieldBuilder {
+            ui,
+            parent,
+            value: None,
+            options: NumericFieldOptions::default(),
+            on_change: None,
+        }
+    }
+
     /// Creates a numeric field and emits normalized values.
     pub fn new<T, F>(
         ui: &mut Ui<Message>,
@@ -662,6 +834,73 @@ impl<Message: 'static> NumericField<Message> {
         let value = normalize(value, self.options);
         self.value.set(value);
         ui.set_text(self.field, format_value(value, self.options.decimals))
+    }
+}
+
+/// Fluent [`NumericField`] constructor returned by [`NumericField::build`].
+pub struct NumericFieldBuilder<'ui, Message, T> {
+    ui: &'ui mut Ui<Message>,
+    parent: ElementHandle<T>,
+    value: Option<f64>,
+    options: NumericFieldOptions,
+    on_change: Option<Box<dyn Fn(f64) -> Message>>,
+}
+
+impl<Message: 'static, T> NumericFieldBuilder<'_, Message, T> {
+    /// Replaces the inclusive `[min, max]` bounds.
+    pub fn range(mut self, min: f64, max: f64) -> Self {
+        self.options.min = min;
+        self.options.max = max;
+        self
+    }
+
+    /// Replaces the positive increment applied by steppers and arrow keys.
+    pub fn step(mut self, step: f64) -> Self {
+        self.options.step = step;
+        self
+    }
+
+    /// Replaces the decimal places used for display.
+    pub fn decimals(mut self, decimals: usize) -> Self {
+        self.options.decimals = decimals;
+        self
+    }
+
+    /// Replaces the initial value, normalized into range on `finish`.
+    ///
+    /// Defaults to the range minimum.
+    pub fn value(mut self, value: f64) -> Self {
+        self.value = Some(value);
+        self
+    }
+
+    /// Emits `on_change(value)` with each normalized value.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: Fn(f64) -> Message + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// Creates the numeric field.
+    ///
+    /// # Panics
+    ///
+    /// Panics on programmer error: a non-finite or inverted range, a
+    /// non-positive step, a missing [`on_change`](Self::on_change) callback,
+    /// or a retained-tree failure while mounting the field.
+    pub fn finish(self) -> NumericField<Message> {
+        assert!(
+            validate_numeric(self.options).is_ok(),
+            "numeric fields require finite min < max and a positive step"
+        );
+        let on_change = self
+            .on_change
+            .expect("numeric fields require an `on_change` callback before `finish`");
+        let value = self.value.unwrap_or(self.options.min);
+        NumericField::new(self.ui, self.parent, value, self.options, on_change)
+            .expect("failed to build numeric field")
     }
 }
 
@@ -842,6 +1081,174 @@ mod tests {
                 .commands()
                 .iter()
                 .any(|command| matches!(command, Command::FillEllipse { .. }))
+        );
+    }
+
+    /// Flattens a semantic tree into comparable `(role, label, value)` rows.
+    fn semantic_snapshot(
+        node: &astrelis_ui_core::SemanticNode,
+    ) -> Vec<(SemanticRole, String, Option<String>)> {
+        let mut rows = vec![(node.role, node.label.clone(), node.value.clone())];
+        for child in &node.children {
+            rows.extend(semantic_snapshot(child));
+        }
+        rows
+    }
+
+    fn find_semantic(
+        node: &astrelis_ui_core::SemanticNode,
+        role: SemanticRole,
+        label: &str,
+    ) -> Option<astrelis_ui_core::ElementId> {
+        if node.role == role && node.label == label {
+            return Some(node.id);
+        }
+        node.children
+            .iter()
+            .find_map(|child| find_semantic(child, role, label))
+    }
+
+    #[test]
+    fn radio_builder_matches_new() {
+        let mut via_new = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_new.root();
+        let group = RadioGroup::new(
+            &mut via_new,
+            root,
+            vec![
+                RadioOption::new("First"),
+                RadioOption {
+                    label: "Second".into(),
+                    enabled: false,
+                },
+                RadioOption::new("Third"),
+            ],
+            Some(0),
+            |index| index,
+        )
+        .unwrap();
+        let mut via_builder = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_builder.root();
+        let built = RadioGroup::build(&mut via_builder, root)
+            .option("First")
+            .disabled_option("Second")
+            .option("Third")
+            .selected(0)
+            .on_select(|index| index)
+            .finish();
+        assert_eq!(built.selected(), group.selected());
+        via_new.set_viewport(Size::new(320.0, 240.0), 1.0);
+        via_builder.set_viewport(Size::new(320.0, 240.0), 1.0);
+        assert_eq!(
+            semantic_snapshot(&via_builder.semantic_tree().unwrap()),
+            semantic_snapshot(&via_new.semantic_tree().unwrap())
+        );
+    }
+
+    #[test]
+    fn builder_radio_group_activates_options() {
+        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
+        let root = ui.root();
+        let group = RadioGroup::build(&mut ui, root)
+            .option("First")
+            .option("Second")
+            .on_select(|index| index)
+            .finish();
+        ui.set_viewport(Size::new(320.0, 240.0), 1.0);
+        let tree = ui.semantic_tree().unwrap();
+        let second = find_semantic(&tree, SemanticRole::ListItem, "Second").unwrap();
+        ui.perform_semantic_action(second, SemanticAction::Activate)
+            .unwrap();
+        assert_eq!(ui.drain_messages().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(group.selected(), Some(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "radio selection 3 is out of range")]
+    fn radio_builder_rejects_out_of_range_selection() {
+        let mut ui = Ui::<usize>::new(FontDatabase::default(), Theme::default());
+        let root = ui.root();
+        RadioGroup::build(&mut ui, root)
+            .option("First")
+            .option("Second")
+            .selected(3)
+            .on_select(|index| index)
+            .finish();
+    }
+
+    #[test]
+    fn combo_builder_matches_new() {
+        let mut via_new = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_new.root();
+        let combo = ComboBox::new(
+            &mut via_new,
+            root,
+            "Pick quality…",
+            vec![
+                ComboBoxItem {
+                    label: "Low".into(),
+                    message: 0usize,
+                    enabled: true,
+                },
+                ComboBoxItem {
+                    label: "Medium".into(),
+                    message: 1,
+                    enabled: true,
+                },
+                ComboBoxItem {
+                    label: "High".into(),
+                    message: 2,
+                    enabled: false,
+                },
+            ],
+            Some(1),
+        )
+        .unwrap();
+        let mut via_builder = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_builder.root();
+        let built = ComboBox::build(&mut via_builder, root)
+            .placeholder("Pick quality…")
+            .item("Low", 0usize)
+            .item("Medium", 1)
+            .disabled_item("High", 2)
+            .selected(1)
+            .finish();
+        assert_eq!(built.selected(), combo.selected());
+        via_new.set_viewport(Size::new(320.0, 120.0), 1.0);
+        via_builder.set_viewport(Size::new(320.0, 120.0), 1.0);
+        assert_eq!(
+            semantic_snapshot(&via_builder.semantic_tree().unwrap()),
+            semantic_snapshot(&via_new.semantic_tree().unwrap())
+        );
+    }
+
+    #[test]
+    fn numeric_builder_matches_new() {
+        let options = NumericFieldOptions {
+            min: 0.25,
+            max: 4.0,
+            step: 0.25,
+            decimals: 2,
+        };
+        let mut via_new = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_new.root();
+        let field =
+            NumericField::new(&mut via_new, root, 1.0, options, |value| value as usize).unwrap();
+        let mut via_builder = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_builder.root();
+        let built = NumericField::build(&mut via_builder, root)
+            .range(0.25, 4.0)
+            .step(0.25)
+            .decimals(2)
+            .value(1.0)
+            .on_change(|value| value as usize)
+            .finish();
+        assert_eq!(built.value(), field.value());
+        via_new.set_viewport(Size::new(320.0, 120.0), 1.0);
+        via_builder.set_viewport(Size::new(320.0, 120.0), 1.0);
+        assert_eq!(
+            semantic_snapshot(&via_builder.semantic_tree().unwrap()),
+            semantic_snapshot(&via_new.semantic_tree().unwrap())
         );
     }
 

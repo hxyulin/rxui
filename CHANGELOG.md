@@ -9,6 +9,18 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 
 ### Included
 
+- A high-level application runner: implement `rxui::prelude::App`
+  (`build`/`update` plus optional hooks) and start with `rxui::app::run`; the
+  runner owns window hosting, message routing, redraw scheduling, timers,
+  cross-thread message proxies, and shutdown. Direct `astrelis_app::App`
+  implementations remain supported.
+- An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
+  error, removing `map_err` glue from application code.
+- Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,
+  `NumericField`, and `Toolbar` alongside the existing fallible `new(...)`
+  constructors.
+- Desktop services: native file open/save dialogs, URL and file launching,
+  and a persisted recent-documents list.
 - Native and browser UI hosting with idle-efficient scheduling.
 - Typed commands, shortcuts, native menus, undo/redo, state persistence, and
   application-shell conventions.
@@ -28,5 +40,5 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 ### Known gaps
 
 - Native screen-reader adapters are not implemented yet.
-- Multiline/rich text, platform file dialogs, image loading, charts, and node
-  graphs remain future work.
+- Multiline/rich text, filesystem watching, image loading, charts, and node
+  graphs remain future work; file dialogs are native-only for now.

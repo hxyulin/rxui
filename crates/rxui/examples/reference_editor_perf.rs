@@ -1,12 +1,16 @@
 //! Headless performance reproduction for the reference editor's retained UI.
 //!
+//! Drives a [`Ui`] tree directly without windows or the [`rxui::app`] runner,
+//! so it stays runnable in CI; failures propagate through [`rxui::Result`]
+//! like runner-based applications.
+//!
 //! Run with `cargo run -p rxui --example reference_editor_perf --locked`.
 
-use std::{collections::BTreeMap, io, time::Instant};
+use std::{collections::BTreeMap, time::Instant};
 
 use astrelis_core::geometry::Size;
 use astrelis_text::FontDatabase;
-use astrelis_ui_core::{LayoutStyle, Length, SemanticAction, SemanticRole, Theme, Ui};
+use astrelis_ui_core::{SemanticAction, SemanticRole};
 use rxui::editor::docking::{
     DockAction, DockAxis, DockLayout, DockNode, DockStyle, DockTabs, DockWorkspace,
     PanelDescriptor, PanelId,
@@ -58,7 +62,7 @@ fn layout() -> DockLayout {
     }
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() -> rxui::Result<()> {
     let check = std::env::args().any(|argument| argument == "--check");
     astrelis_profiling::init();
     let mut ui = Ui::new(FontDatabase::default(), Theme::dark());
@@ -71,49 +75,41 @@ fn main() -> Result<(), io::Error> {
             height: Length::Percent(1.0),
             ..Default::default()
         },
-    )
-    .map_err(io::Error::other)?;
+    )?;
 
-    let dock_host = ui.add_column(root).map_err(io::Error::other)?;
+    let dock_host = ui.add_column(root)?;
     ui.set_layout(
         dock_host,
         LayoutStyle {
             grow: 1.0,
             ..Default::default()
         },
-    )
-    .map_err(io::Error::other)?;
+    )?;
 
-    let hierarchy_panel = ui.add_column(root).map_err(io::Error::other)?;
-    let mut tree =
-        TreeView::new(&mut ui, hierarchy_panel, Message::Tree).map_err(io::Error::other)?;
+    let hierarchy_panel = ui.add_column(root)?;
+    let mut tree = TreeView::new(&mut ui, hierarchy_panel, Message::Tree)?;
     ui.set_layout(
         tree.root(),
         LayoutStyle {
             grow: 1.0,
             ..Default::default()
         },
-    )
-    .map_err(io::Error::other)?;
+    )?;
 
-    let table_panel = ui.add_column(root).map_err(io::Error::other)?;
-    let mut table =
-        TableView::new(&mut ui, table_panel, Message::Table).map_err(io::Error::other)?;
+    let table_panel = ui.add_column(root)?;
+    let mut table = TableView::new(&mut ui, table_panel, Message::Table)?;
     ui.set_layout(
         table.root(),
         LayoutStyle {
             grow: 1.0,
             ..Default::default()
         },
-    )
-    .map_err(io::Error::other)?;
+    )?;
 
-    let inspector_panel = ui.add_column(root).map_err(io::Error::other)?;
-    let mut properties =
-        PropertyGrid::new(&mut ui, inspector_panel, Message::Property).map_err(io::Error::other)?;
-    let scene_panel = ui.add_column(root).map_err(io::Error::other)?;
-    ui.add_label(scene_panel, "Interactive 2D scene")
-        .map_err(io::Error::other)?;
+    let inspector_panel = ui.add_column(root)?;
+    let mut properties = PropertyGrid::new(&mut ui, inspector_panel, Message::Property)?;
+    let scene_panel = ui.add_column(root)?;
+    ui.add_label(scene_panel, "Interactive 2D scene")?;
 
     let mut workspace = DockWorkspace::new(
         &mut ui,
@@ -124,22 +120,17 @@ fn main() -> Result<(), io::Error> {
             ..DockStyle::default()
         },
         Message::Dock,
-    )
-    .map_err(io::Error::other)?;
+    )?;
     for (id, title, content) in [
         (panel("hierarchy"), "Hierarchy", hierarchy_panel),
         (panel("scene"), "Scene", scene_panel),
         (panel("inspector"), "Inspector", inspector_panel),
         (panel("entities"), "Entities", table_panel),
     ] {
-        workspace
-            .register_panel(&mut ui, PanelDescriptor::new(id, title), content)
-            .map_err(io::Error::other)?;
+        workspace.register_panel(&mut ui, PanelDescriptor::new(id, title), content)?;
     }
     let default_layout = layout();
-    workspace
-        .restore(&mut ui, default_layout.clone(), default_layout)
-        .map_err(io::Error::other)?;
+    workspace.restore(&mut ui, default_layout.clone(), default_layout)?;
 
     let nodes = vec![
         TreeNode::leaf(1, "Camera"),
@@ -147,8 +138,7 @@ fn main() -> Result<(), io::Error> {
             .expanded(true)
             .children(vec![TreeNode::leaf(3, "Key Light")]),
     ];
-    tree.sync(&mut ui, &nodes, Some(&2))
-        .map_err(io::Error::other)?;
+    tree.sync(&mut ui, &nodes, Some(&2))?;
     let mut columns = vec![
         TableColumn::new("name", "Name", 180.0),
         TableColumn::new("kind", "Kind", 100.0),
@@ -168,67 +158,61 @@ fn main() -> Result<(), io::Error> {
             cells: vec!["Key Light".into(), "Light".into(), "Yes".into()],
         },
     ];
-    table
-        .sync(&mut ui, &columns, &rows, None, Some(&2))
-        .map_err(io::Error::other)?;
-    properties
-        .sync(
-            &mut ui,
-            &[PropertySection {
-                id: 0,
-                title: "Transform".into(),
-                expanded: true,
-                fields: vec![
-                    PropertyField {
-                        id: 1,
-                        label: "X".into(),
-                        value: PropertyValue::Number {
-                            value: 0.0,
-                            options: NumericFieldOptions::default(),
-                        },
-                        validation: ValidationResult::valid(),
-                        enabled: true,
+    table.sync(&mut ui, &columns, &rows, None, Some(&2))?;
+    properties.sync(
+        &mut ui,
+        &[PropertySection {
+            id: 0,
+            title: "Transform".into(),
+            expanded: true,
+            fields: vec![
+                PropertyField {
+                    id: 1,
+                    label: "X".into(),
+                    value: PropertyValue::Number {
+                        value: 0.0,
+                        options: NumericFieldOptions::default(),
                     },
-                    PropertyField {
-                        id: 2,
-                        label: "Y".into(),
-                        value: PropertyValue::Number {
-                            value: 0.0,
-                            options: NumericFieldOptions::default(),
-                        },
-                        validation: ValidationResult::valid(),
-                        enabled: true,
+                    validation: ValidationResult::valid(),
+                    enabled: true,
+                },
+                PropertyField {
+                    id: 2,
+                    label: "Y".into(),
+                    value: PropertyValue::Number {
+                        value: 0.0,
+                        options: NumericFieldOptions::default(),
                     },
-                ],
-            }],
-        )
-        .map_err(io::Error::other)?;
+                    validation: ValidationResult::valid(),
+                    enabled: true,
+                },
+            ],
+        }],
+    )?;
 
-    ui.display_list().map_err(io::Error::other)?;
+    ui.display_list()?;
     let separator = find_first_separator(&mut ui)?;
     for index in 0..WARMUP_ITERATIONS {
         let ratio = if index % 2 == 0 { 0.35 } else { 0.65 };
-        ui.perform_semantic_action(separator, SemanticAction::SetValue(ratio))
-            .map_err(io::Error::other)?;
+        ui.perform_semantic_action(separator, SemanticAction::SetValue(ratio))?;
         for message in ui.drain_messages().collect::<Vec<_>>() {
             if let Message::Dock(action) = message {
-                workspace.apply(&mut ui, action).map_err(io::Error::other)?;
+                workspace.apply(&mut ui, action)?;
             }
         }
-        ui.display_list().map_err(io::Error::other)?;
+        ui.display_list()?;
     }
     astrelis_profiling::new_frame();
     let started = Instant::now();
     for index in 0..ITERATIONS {
         let ratio = if index % 2 == 0 { 0.35 } else { 0.65 };
-        ui.perform_semantic_action(separator, SemanticAction::SetValue(ratio))
-            .map_err(io::Error::other)?;
+        ui.perform_semantic_action(separator, SemanticAction::SetValue(ratio))?;
         for message in ui.drain_messages().collect::<Vec<_>>() {
             if let Message::Dock(action) = message {
-                workspace.apply(&mut ui, action).map_err(io::Error::other)?;
+                workspace.apply(&mut ui, action)?;
             }
         }
-        ui.display_list().map_err(io::Error::other)?;
+        ui.display_list()?;
     }
     let elapsed = started.elapsed();
     astrelis_profiling::new_frame();
@@ -242,42 +226,34 @@ fn main() -> Result<(), io::Error> {
 
     for index in 0..WARMUP_ITERATIONS {
         let selected = if index % 2 == 0 { 1 } else { 2 };
-        tree.sync(&mut ui, &nodes, Some(&selected))
-            .map_err(io::Error::other)?;
-        table
-            .sync(&mut ui, &columns, &rows, None, Some(&selected))
-            .map_err(io::Error::other)?;
-        ui.display_list().map_err(io::Error::other)?;
+        tree.sync(&mut ui, &nodes, Some(&selected))?;
+        table.sync(&mut ui, &columns, &rows, None, Some(&selected))?;
+        ui.display_list()?;
     }
     let started = Instant::now();
     for index in 0..ITERATIONS {
         let selected = if index % 2 == 0 { 1 } else { 2 };
-        tree.sync(&mut ui, &nodes, Some(&selected))
-            .map_err(io::Error::other)?;
-        table
-            .sync(&mut ui, &columns, &rows, None, Some(&selected))
-            .map_err(io::Error::other)?;
-        properties
-            .sync(
-                &mut ui,
-                &[PropertySection {
-                    id: 0,
-                    title: "Transform".into(),
-                    expanded: true,
-                    fields: vec![PropertyField {
-                        id: 1,
-                        label: "X".into(),
-                        value: PropertyValue::Number {
-                            value: selected as f64,
-                            options: NumericFieldOptions::default(),
-                        },
-                        validation: ValidationResult::valid(),
-                        enabled: true,
-                    }],
+        tree.sync(&mut ui, &nodes, Some(&selected))?;
+        table.sync(&mut ui, &columns, &rows, None, Some(&selected))?;
+        properties.sync(
+            &mut ui,
+            &[PropertySection {
+                id: 0,
+                title: "Transform".into(),
+                expanded: true,
+                fields: vec![PropertyField {
+                    id: 1,
+                    label: "X".into(),
+                    value: PropertyValue::Number {
+                        value: selected as f64,
+                        options: NumericFieldOptions::default(),
+                    },
+                    validation: ValidationResult::valid(),
+                    enabled: true,
                 }],
-            )
-            .map_err(io::Error::other)?;
-        ui.display_list().map_err(io::Error::other)?;
+            }],
+        )?;
+        ui.display_list()?;
     }
     let elapsed = started.elapsed();
     println!(
@@ -289,18 +265,14 @@ fn main() -> Result<(), io::Error> {
 
     for index in 0..WARMUP_ITERATIONS {
         columns[0].width = if index % 2 == 0 { 160.0 } else { 220.0 };
-        table
-            .sync(&mut ui, &columns, &rows, None, Some(&2))
-            .map_err(io::Error::other)?;
-        ui.display_list().map_err(io::Error::other)?;
+        table.sync(&mut ui, &columns, &rows, None, Some(&2))?;
+        ui.display_list()?;
     }
     let started = Instant::now();
     for index in 0..ITERATIONS {
         columns[0].width = if index % 2 == 0 { 160.0 } else { 220.0 };
-        table
-            .sync(&mut ui, &columns, &rows, None, Some(&2))
-            .map_err(io::Error::other)?;
-        ui.display_list().map_err(io::Error::other)?;
+        table.sync(&mut ui, &columns, &rows, None, Some(&2))?;
+        ui.display_list()?;
     }
     let elapsed = started.elapsed();
     println!(
@@ -315,25 +287,25 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn check_budget(label: &str, elapsed: std::time::Duration, check: bool) -> Result<(), io::Error> {
+fn check_budget(label: &str, elapsed: std::time::Duration, check: bool) -> rxui::Result<()> {
     let average_ms = elapsed.as_secs_f64() * 1_000.0 / ITERATIONS as f64;
     if check && average_ms > BUDGET_MS {
-        return Err(io::Error::other(format!(
+        return Err(rxui::Error::msg(format!(
             "{label} averaged {average_ms:.3} ms, exceeding the {BUDGET_MS:.3} ms budget"
         )));
     }
     Ok(())
 }
 
-fn find_first_separator(ui: &mut Ui<Message>) -> Result<astrelis_ui_core::ElementId, io::Error> {
+fn find_first_separator(ui: &mut Ui<Message>) -> rxui::Result<astrelis_ui_core::ElementId> {
     fn visit(node: &astrelis_ui_core::SemanticNode) -> Option<astrelis_ui_core::ElementId> {
         if node.role == SemanticRole::Separator && node.label == "Resize panes" {
             return Some(node.id);
         }
         node.children.iter().find_map(visit)
     }
-    let tree = ui.semantic_tree().map_err(io::Error::other)?;
-    visit(&tree).ok_or_else(|| io::Error::other("dock separator was not realized"))
+    let tree = ui.semantic_tree()?;
+    visit(&tree).ok_or_else(|| rxui::Error::msg("dock separator was not realized"))
 }
 
 fn print_profile_summary() {

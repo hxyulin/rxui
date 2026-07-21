@@ -8,7 +8,7 @@ registry_probe_dir="/tmp/rxui-release-registry-probe"
 
 layers=(
   "rxui-app"
-  "rxui-widgets rxui-native-menu rxui-testing"
+  "rxui-widgets rxui-native-menu rxui-services rxui-testing"
   "rxui-editor rxui-devtools"
   "rxui"
 )

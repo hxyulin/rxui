@@ -6,6 +6,7 @@ members = [
   "crates/rxui-devtools",
   "crates/rxui-editor",
   "crates/rxui-native-menu",
+  "crates/rxui-services",
   "crates/rxui-testing",
   "crates/rxui-widgets",
 ]
@@ -28,6 +29,7 @@ rxui-app = { path = "crates/rxui-app", version = "=0.1.0-rc.1" }
 rxui-devtools = { path = "crates/rxui-devtools", version = "=0.1.0-rc.1" }
 rxui-editor = { path = "crates/rxui-editor", version = "=0.1.0-rc.1" }
 rxui-native-menu = { path = "crates/rxui-native-menu", version = "=0.1.0-rc.1" }
+rxui-services = { path = "crates/rxui-services", version = "=0.1.0-rc.1" }
 rxui-testing = { path = "crates/rxui-testing", version = "=0.1.0-rc.1" }
 rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
 

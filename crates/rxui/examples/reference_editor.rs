@@ -1,4 +1,12 @@
 //! RXUI reference 2D scene editor.
+//!
+//! Runs on the high-level [`rxui::app`] runner: `build` assembles the docked
+//! workspace and scene texture, `update` applies every typed message, the
+//! `window_event` hook routes command shortcuts, feeds the window-placement
+//! tracker, and resizes the toolbar, and `close_requested` persists the
+//! workspace before the window closes. Set `RXUI_PERF=1` to print per-message
+//! timing through [`PerfProfiler`]; debounced saves arrive as
+//! [`Message::FlushSave`] timer messages.
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
@@ -9,11 +17,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig, TimerId};
-use astrelis_core::geometry::{LogicalPoint, Physical, Size};
-use astrelis_platform::{ElementState, PointerButton, WindowAttributes, WindowEvent, WindowId};
-use astrelis_text::FontDatabase;
-use astrelis_ui_core::{ElementHandle, LayoutStyle, Length, Theme, Ui};
+use astrelis_core::geometry::{Physical, Size};
+use astrelis_platform::{ElementState, PointerButton};
+use rxui::app::WindowAttributes;
 use rxui::app::gpu::{
     Extent3d, Texture, TextureCopy, TextureDataLayout, TextureDescriptor, TextureDimension,
     TextureFormat, TextureUsages,
@@ -100,6 +106,7 @@ enum Message {
     LoadLayout,
     DeleteLayout,
     ResetLayout,
+    FlushSave,
 }
 
 struct EditEntity {
@@ -162,7 +169,7 @@ struct PerfProfiler {
 impl PerfProfiler {
     fn from_env() -> Self {
         Self {
-            enabled: std::env::var_os("ASTREON_PERF").is_some(),
+            enabled: std::env::var_os("RXUI_PERF").is_some(),
             samples: BTreeMap::new(),
             last_report: Instant::now(),
         }
@@ -203,8 +210,7 @@ struct SceneDrag {
 }
 
 struct ReferenceEditor {
-    graphics: GraphicsContext,
-    host: Option<WindowHost<Message>>,
+    window: Option<WindowId>,
     workspace: Option<DockWorkspace<Message>>,
     tree: Option<TreeView<u64, Message>>,
     table: Option<TableView<u64, &'static str, Message>>,
@@ -304,8 +310,7 @@ impl ReferenceEditor {
             commands.register(command).unwrap();
         }
         Self {
-            graphics: GraphicsContext::new(),
-            host: None,
+            window: None,
             workspace: None,
             tree: None,
             table: None,
@@ -373,17 +378,22 @@ impl ReferenceEditor {
         }
     }
 
-    fn sync_tree(&mut self) -> Result<(), io::Error> {
-        let tree_nodes = build_tree(&self.entities, None, &self.expanded);
-        let host = self.host.as_mut().expect("host exists");
-        self.tree
-            .as_mut()
-            .expect("tree")
-            .sync(host.ui_mut(), &tree_nodes, self.selected.as_ref())
-            .map_err(io::Error::other)
+    fn window_id(&self) -> WindowId {
+        self.window.expect("window is open")
     }
 
-    fn sync_table(&mut self) -> Result<(), io::Error> {
+    fn sync_tree(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let tree_nodes = build_tree(&self.entities, None, &self.expanded);
+        let window = self.window_id();
+        self.tree.as_mut().expect("tree").sync(
+            cx.ui(window)?,
+            &tree_nodes,
+            self.selected.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    fn sync_table(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
         let mut rows = self
             .entities
             .iter()
@@ -414,63 +424,61 @@ impl ReferenceEditor {
                 order.reverse()
             }
         });
-        let host = self.host.as_mut().expect("host exists");
-        self.table
-            .as_mut()
-            .expect("table")
-            .sync(
-                host.ui_mut(),
-                &self.columns,
-                &rows,
-                Some(&self.sort),
-                self.selected.as_ref(),
-            )
-            .map_err(io::Error::other)
+        let window = self.window_id();
+        self.table.as_mut().expect("table").sync(
+            cx.ui(window)?,
+            &self.columns,
+            &rows,
+            Some(&self.sort),
+            self.selected.as_ref(),
+        )?;
+        Ok(())
     }
 
-    fn sync_properties(&mut self) -> Result<(), io::Error> {
+    fn sync_properties(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
         let sections = self
             .selected
             .and_then(|id| self.entities.iter().find(|entity| entity.id == id))
             .map(|entity| property_sections(entity, &self.expanded_properties))
             .unwrap_or_default();
-        let host = self.host.as_mut().expect("host exists");
+        let window = self.window_id();
         self.properties
             .as_mut()
             .expect("properties")
-            .sync(host.ui_mut(), &sections)
-            .map_err(io::Error::other)
+            .sync(cx.ui(window)?, &sections)?;
+        Ok(())
     }
 
-    fn sync_palette(&mut self) -> Result<(), io::Error> {
-        let host = self.host.as_mut().expect("host exists");
-        self.palette
-            .as_mut()
-            .expect("palette")
-            .sync(host.ui_mut(), &self.commands, &self.palette_state)
-            .map_err(io::Error::other)
+    fn sync_palette(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let window = self.window_id();
+        self.palette.as_mut().expect("palette").sync(
+            cx.ui(window)?,
+            &self.commands,
+            &self.palette_state,
+        )?;
+        Ok(())
     }
 
-    fn sync_commands(&mut self) -> Result<(), io::Error> {
+    fn sync_commands(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
         sync_undo_commands(&mut self.commands, &self.undo);
-        let host = self.host.as_mut().expect("host exists");
+        let window = self.window_id();
         self.toolbar
             .as_ref()
             .expect("toolbar")
-            .sync(host.ui_mut(), &self.commands)
-            .map_err(io::Error::other)
+            .sync(cx.ui(window)?, &self.commands)?;
+        Ok(())
     }
 
-    fn sync_views(&mut self) -> Result<(), io::Error> {
-        self.sync_tree()?;
-        self.sync_table()?;
-        self.sync_properties()?;
-        self.sync_palette()?;
-        self.sync_commands()
+    fn sync_views(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        self.sync_tree(cx)?;
+        self.sync_table(cx)?;
+        self.sync_properties(cx)?;
+        self.sync_palette(cx)?;
+        self.sync_commands(cx)
     }
 
-    fn upload_scene(&mut self) -> Result<(), io::Error> {
-        let Some(host) = &mut self.host else {
+    fn upload_scene(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let Some(window) = self.window else {
             return Ok(());
         };
         let Some(scene) = &mut self.scene_texture else {
@@ -515,7 +523,8 @@ impl ReferenceEditor {
                 );
             }
         }
-        host.queue()
+        cx.host(window)?
+            .queue()
             .expect("GPU is ready on native")
             .write_texture(
                 &TextureCopy {
@@ -530,15 +539,12 @@ impl ReferenceEditor {
                     rows_per_image: Some(SCENE_HEIGHT),
                 },
                 Extent3d::d2(SCENE_WIDTH, SCENE_HEIGHT),
-            )
-            .map_err(io::Error::other)
+            )?;
+        Ok(())
     }
 
-    fn apply(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        message: Message,
-    ) -> Result<(), io::Error> {
+    fn apply(&mut self, cx: &mut AppCx<'_, Message>, message: Message) -> rxui::Result<()> {
+        let window = self.window_id();
         let mut scene_changed = false;
         let mut sync_tree = false;
         let mut sync_table = false;
@@ -550,12 +556,12 @@ impl ReferenceEditor {
                 let outcome = self
                     .workspace
                     .as_mut()
-                    .unwrap()
-                    .apply(self.host.as_mut().unwrap().ui_mut(), action)
-                    .map_err(io::Error::other)?;
+                    .expect("workspace")
+                    .apply(cx.ui(window)?, action)?;
                 if outcome.layout_changed {
-                    self.workspace_state.layout = self.workspace.as_ref().unwrap().layout().clone();
-                    self.schedule_save(context);
+                    self.workspace_state.layout =
+                        self.workspace.as_ref().expect("workspace").layout().clone();
+                    self.schedule_save(cx);
                 }
             }
             Message::Tree(action) => match action {
@@ -642,7 +648,7 @@ impl ReferenceEditor {
                 scene_changed |= outcome.scene_changed;
             }
             Message::Palette(event) => {
-                self.handle_palette(context, event)?;
+                self.handle_palette(cx, event)?;
                 sync_palette = true;
             }
             Message::NewEntity => {
@@ -696,24 +702,19 @@ impl ReferenceEditor {
                 sync_palette = true;
             }
             Message::SaveLayout => {
-                self.workspace_state.layout = self.workspace.as_ref().unwrap().layout().clone();
-                self.workspace_state
-                    .save_named("Workspace 1")
-                    .map_err(io::Error::other)?;
+                self.workspace_state.layout =
+                    self.workspace.as_ref().expect("workspace").layout().clone();
+                self.workspace_state.save_named("Workspace 1")?;
                 self.save_state();
             }
             Message::LoadLayout => {
                 if self.workspace_state.load_named("Workspace 1") {
                     let layout = self.workspace_state.layout.clone();
-                    self.workspace
-                        .as_mut()
-                        .unwrap()
-                        .restore(
-                            self.host.as_mut().unwrap().ui_mut(),
-                            layout,
-                            self.default_layout.clone(),
-                        )
-                        .map_err(io::Error::other)?;
+                    self.workspace.as_mut().expect("workspace").restore(
+                        cx.ui(window)?,
+                        layout,
+                        self.default_layout.clone(),
+                    )?;
                     self.save_state();
                 }
             }
@@ -723,44 +724,44 @@ impl ReferenceEditor {
             }
             Message::ResetLayout => {
                 self.workspace_state.layout = self.default_layout.clone();
-                self.workspace
-                    .as_mut()
-                    .unwrap()
-                    .restore(
-                        self.host.as_mut().unwrap().ui_mut(),
-                        self.default_layout.clone(),
-                        self.default_layout.clone(),
-                    )
-                    .map_err(io::Error::other)?;
+                self.workspace.as_mut().expect("workspace").restore(
+                    cx.ui(window)?,
+                    self.default_layout.clone(),
+                    self.default_layout.clone(),
+                )?;
+                self.save_state();
+            }
+            Message::FlushSave => {
+                self.save_timer = None;
                 self.save_state();
             }
         }
         if sync_tree {
-            self.sync_tree()?;
+            self.sync_tree(cx)?;
         }
         if sync_table {
-            self.sync_table()?;
+            self.sync_table(cx)?;
         }
         if sync_properties {
-            self.sync_properties()?;
+            self.sync_properties(cx)?;
         }
         if sync_palette {
-            self.sync_palette()?;
+            self.sync_palette(cx)?;
         }
         if sync_commands {
-            self.sync_commands()?;
+            self.sync_commands(cx)?;
         }
         if scene_changed {
-            self.upload_scene()?;
+            self.upload_scene(cx)?;
         }
         Ok(())
     }
 
     fn handle_palette(
         &mut self,
-        context: &mut AppContext<'_, '_, Self>,
+        cx: &mut AppCx<'_, Message>,
         event: CommandPaletteEvent,
-    ) -> Result<(), io::Error> {
+    ) -> rxui::Result<()> {
         match event {
             CommandPaletteEvent::QueryChanged(query) => {
                 self.palette_state.query = query;
@@ -775,7 +776,7 @@ impl ReferenceEditor {
             CommandPaletteEvent::Invoke(id) => {
                 self.palette_state.open = false;
                 if let Some(message) = self.commands.invoke(&id) {
-                    self.apply(context, message)?;
+                    self.apply(cx, message)?;
                 }
             }
             CommandPaletteEvent::InvokeSelected => {
@@ -785,7 +786,7 @@ impl ReferenceEditor {
                     let message = self.commands.invoke(id);
                     self.palette_state.open = false;
                     if let Some(message) = message {
-                        self.apply(context, message)?;
+                        self.apply(cx, message)?;
                     }
                 }
             }
@@ -926,25 +927,19 @@ impl ReferenceEditor {
         }
     }
 
-    fn schedule_save(&mut self, context: &mut AppContext<'_, '_, Self>) {
+    fn schedule_save(&mut self, cx: &mut AppCx<'_, Message>) {
         if self.save_timer.is_some() {
             return;
         }
-        self.save_timer = Some(context.set_timeout(Duration::from_millis(250), |app, _| {
-            app.save_timer = None;
-            app.save_state();
-            Ok(())
-        }));
+        self.save_timer = Some(cx.set_timeout(Duration::from_millis(250), Message::FlushSave));
     }
 }
 
 impl App for ReferenceEditor {
-    type Error = io::Error;
-    fn resumed(&mut self, context: &mut AppContext<'_, '_, Self>) -> Result<(), Self::Error> {
-        if self.host.is_some() {
-            return Ok(());
-        }
-        let mut ui = Ui::new(FontDatabase::default(), Theme::dark());
+    type Message = Message;
+
+    fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let mut ui = cx.new_ui();
         let root = ui.root();
         ui.set_layout(
             root,
@@ -953,8 +948,7 @@ impl App for ReferenceEditor {
                 height: Length::Percent(1.0),
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let toolbar = Toolbar::new(
             &mut ui,
             root,
@@ -979,9 +973,8 @@ impl App for ReferenceEditor {
             ],
             &self.commands,
             ToolbarOptions::default(),
-        )
-        .map_err(io::Error::other)?;
-        let dock_host = ui.add_column(root).map_err(io::Error::other)?;
+        )?;
+        let dock_host = ui.add_column(root)?;
         ui.set_layout(
             dock_host,
             LayoutStyle {
@@ -989,40 +982,32 @@ impl App for ReferenceEditor {
                 min_height: Length::Px(300.0),
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
-        let hierarchy_panel = ui.add_column(root).map_err(io::Error::other)?;
-        let tree =
-            TreeView::new(&mut ui, hierarchy_panel, Message::Tree).map_err(io::Error::other)?;
+        )?;
+        let hierarchy_panel = ui.add_column(root)?;
+        let tree = TreeView::new(&mut ui, hierarchy_panel, Message::Tree)?;
         ui.set_layout(
             tree.root(),
             LayoutStyle {
                 grow: 1.0,
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
-        let table_panel = ui.add_column(root).map_err(io::Error::other)?;
-        let table =
-            TableView::new(&mut ui, table_panel, Message::Table).map_err(io::Error::other)?;
+        )?;
+        let table_panel = ui.add_column(root)?;
+        let table = TableView::new(&mut ui, table_panel, Message::Table)?;
         ui.set_layout(
             table.root(),
             LayoutStyle {
                 grow: 1.0,
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
-        let inspector_panel = ui.add_column(root).map_err(io::Error::other)?;
-        let properties = PropertyGrid::new(&mut ui, inspector_panel, Message::Property)
-            .map_err(io::Error::other)?;
-        let scene_panel = ui.add_column(root).map_err(io::Error::other)?;
-        let render_view = ui
-            .add_widget(
-                scene_panel,
-                RenderView::new("Interactive 2D scene", Message::View),
-            )
-            .map_err(io::Error::other)?;
+        )?;
+        let inspector_panel = ui.add_column(root)?;
+        let properties = PropertyGrid::new(&mut ui, inspector_panel, Message::Property)?;
+        let scene_panel = ui.add_column(root)?;
+        let render_view = ui.add_widget(
+            scene_panel,
+            RenderView::new("Interactive 2D scene", Message::View),
+        )?;
         ui.set_layout(
             render_view,
             LayoutStyle {
@@ -1031,8 +1016,7 @@ impl App for ReferenceEditor {
                 height: Length::Percent(1.0),
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let mut workspace = DockWorkspace::new(
             &mut ui,
             dock_host,
@@ -1042,8 +1026,7 @@ impl App for ReferenceEditor {
                 ..DockStyle::default()
             },
             Message::Dock,
-        )
-        .map_err(io::Error::other)?;
+        )?;
         for (id, title, content, closable, preferred) in [
             (
                 panel("hierarchy"),
@@ -1089,38 +1072,26 @@ impl App for ReferenceEditor {
             if title == "Inspector" {
                 descriptor = descriptor.minimum_size(Size::new(240.0, 180.0));
             }
-            workspace
-                .register_panel(&mut ui, descriptor, content)
-                .map_err(io::Error::other)?;
+            workspace.register_panel(&mut ui, descriptor, content)?;
         }
-        workspace
-            .restore(
-                &mut ui,
-                self.workspace_state.layout.clone(),
-                self.default_layout.clone(),
-            )
-            .map_err(io::Error::other)?;
-        let palette = CommandPalette::new(&mut ui, Message::Palette).map_err(io::Error::other)?;
+        workspace.restore(
+            &mut ui,
+            self.workspace_state.layout.clone(),
+            self.default_layout.clone(),
+        )?;
+        let palette = CommandPalette::new(&mut ui, Message::Palette)?;
         let mut attributes = WindowAttributes {
             title: "RXUI reference editor".into(),
             inner_size: Some(Size::new(1200.0, 760.0)),
             ..Default::default()
         };
         if let Some(saved) = &self.saved_window {
-            let monitors = context.available_monitors();
-            let primary = context.primary_monitor();
+            let monitors = cx.available_monitors();
+            let primary = cx.primary_monitor();
             saved.apply(&mut attributes, &monitors, primary.as_ref());
         }
-        let mut host = WindowHost::open(
-            context,
-            &self.graphics,
-            ui,
-            WindowHostOptions {
-                window: attributes,
-                ..Default::default()
-            },
-        )
-        .map_err(io::Error::other)?;
+        let window = cx.open_window(WindowConfig::default().attributes(attributes), ui)?;
+        let host = cx.host(window)?;
         let texture = host
             .device()
             .expect("GPU is ready on native")
@@ -1133,19 +1104,15 @@ impl App for ReferenceEditor {
                 format: TextureFormat::Rgba8UnormSrgb,
                 usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             });
-        let image = ExternalImage::new(Size::<Physical, u32>::new(SCENE_WIDTH, SCENE_HEIGHT))
-            .map_err(io::Error::other)?;
-        host.register_external_image(&image, texture.create_view(Default::default()))
-            .map_err(io::Error::other)?;
-        host.ui_mut()
-            .update_widget(render_view, |view| {
-                view.set_corner_radius(0.0);
-                view.set_content(RenderViewContent::Ready {
-                    image: image.clone(),
-                    source_extent: Size::new(SCENE_WIDTH, SCENE_HEIGHT),
-                });
-            })
-            .map_err(io::Error::other)?;
+        let image = ExternalImage::new(Size::<Physical, u32>::new(SCENE_WIDTH, SCENE_HEIGHT))?;
+        host.register_external_image(&image, texture.create_view(Default::default()))?;
+        host.ui_mut().update_widget(render_view, |view| {
+            view.set_corner_radius(0.0);
+            view.set_content(RenderViewContent::Ready {
+                image: image.clone(),
+                source_extent: Size::new(SCENE_WIDTH, SCENE_HEIGHT),
+            });
+        })?;
         self.workspace = Some(workspace);
         self.tree = Some(tree);
         self.table = Some(table);
@@ -1159,82 +1126,61 @@ impl App for ReferenceEditor {
             background_zoom: 0.0,
         });
         self.toolbar = Some(toolbar);
-        self.host = Some(host);
-        self.sync_views()?;
-        self.upload_scene()
+        self.window = Some(window);
+        self.sync_views(cx)?;
+        self.upload_scene(cx)
     }
-    fn window_event(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        id: WindowId,
-        event: WindowEvent,
-    ) -> Result<(), Self::Error> {
-        let event_started = Instant::now();
-        let shortcut = self.router.handle_event(&event, &self.commands);
-        let route_started = Instant::now();
-        let update = {
-            let host = self.host.as_mut().expect("host");
-            self.placement.handle_event(host.window(), &event);
-            host.handle_event(&context.clipboard(), &event)
-                .map_err(io::Error::other)?
-        };
-        self.profiler.record("event.route", route_started.elapsed());
-        if update.close_requested {
-            if let Some(timer) = self.save_timer.take() {
-                context.cancel_timer(timer);
-            }
-            self.placement.capture(self.host.as_ref().unwrap().window());
-            self.workspace_state.layout = self.workspace.as_ref().unwrap().layout().clone();
-            self.save_state();
-            context.unregister_window(id);
-            self.host = None;
-            context.exit();
-            return Ok(());
-        }
-        if let WindowEvent::Resized(size) = event {
-            let width =
-                size.width as f32 / self.host.as_ref().unwrap().window().scale_factor() as f32;
-            self.toolbar
-                .as_ref()
-                .unwrap()
-                .update_overflow(self.host.as_mut().unwrap().ui_mut(), width)
-                .map_err(io::Error::other)?;
-        }
-        let mut messages = self
-            .host
-            .as_mut()
-            .unwrap()
-            .drain_messages()
-            .collect::<Vec<_>>();
-        if let Some(shortcut) = shortcut {
-            messages.push(shortcut);
-        }
-        for message in messages {
-            let label = message_perf_label(&message);
-            let apply_started = Instant::now();
-            self.apply(context, message)?;
-            self.profiler.record(label, apply_started.elapsed());
-        }
-        if update.redraw
-            || self
-                .host
-                .as_ref()
-                .is_some_and(|host| host.ui().needs_redraw())
-        {
-            context.invalidate_window(id);
-        }
-        self.profiler.record("event.total", event_started.elapsed());
+
+    fn update(&mut self, cx: &mut AppCx<'_, Message>, message: Message) -> rxui::Result<()> {
+        let label = message_perf_label(&message);
+        let started = Instant::now();
+        self.apply(cx, message)?;
+        self.profiler.record(label, started.elapsed());
         Ok(())
     }
-    fn redraw(
+
+    fn window_event(
         &mut self,
-        _context: &mut AppContext<'_, '_, Self>,
-        _window: WindowId,
-    ) -> Result<(), Self::Error> {
+        cx: &mut AppCx<'_, Message>,
+        window: WindowId,
+        event: &WindowEvent,
+    ) -> rxui::Result<()> {
+        // The runner owns host event dispatch, so `event.route` now covers
+        // only application-side routing: shortcut resolution, placement
+        // tracking, and toolbar overflow.
         let started = Instant::now();
-        if let Some(host) = &mut self.host {
-            host.redraw().map_err(io::Error::other)?;
+        if let Some(message) = self.router.handle_event(event, &self.commands) {
+            cx.post(message);
         }
+        self.placement.handle_event(cx.window(window)?, event);
+        if let WindowEvent::Resized(size) = event {
+            let width = size.width as f32 / cx.window(window)?.scale_factor() as f32;
+            self.toolbar
+                .as_ref()
+                .expect("toolbar")
+                .update_overflow(cx.ui(window)?, width)?;
+        }
+        self.profiler.record("event.route", started.elapsed());
+        Ok(())
+    }
+
+    fn close_requested(
+        &mut self,
+        cx: &mut AppCx<'_, Message>,
+        window: WindowId,
+    ) -> rxui::Result<CloseResponse> {
+        if let Some(timer) = self.save_timer.take() {
+            cx.cancel_timer(timer);
+        }
+        self.placement.capture(cx.window(window)?);
+        self.workspace_state.layout = self.workspace.as_ref().expect("workspace").layout().clone();
+        self.save_state();
+        Ok(CloseResponse::Close)
+    }
+
+    fn render(&mut self, cx: &mut AppCx<'_, Message>, window: WindowId) -> rxui::Result<()> {
+        let started = Instant::now();
+        cx.present(window)?;
         self.profiler.record("redraw", started.elapsed());
         Ok(())
     }
@@ -1448,12 +1394,11 @@ fn stroke_rect(pixels: &mut [u8], left: i32, top: i32, right: i32, bottom: i32, 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
+fn main() -> MainResult {
+    run_with(
         ReferenceEditor::new(),
-        RuntimeConfig::default(),
-    )))
-    .map(|_| ())
+        AppConfig::default().theme(Theme::dark()),
+    )
 }
 
 #[cfg(target_arch = "wasm32")]

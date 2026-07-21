@@ -2,12 +2,7 @@
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
-use std::io;
-
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
-use astrelis_core::geometry::Size;
-use astrelis_platform::{WindowAttributes, WindowEvent, WindowId};
-use astrelis_text::FontDatabase;
+use rxui::app::{WindowEvent, WindowId};
 use rxui::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -15,11 +10,10 @@ enum Message {
     New,
     Save,
     ToggleSidebar,
+    Menu(NativeMenuEvent),
 }
 
 struct NativeMenuDemo {
-    graphics: GraphicsContext,
-    host: Option<WindowHost<Message>>,
     commands: CommandRegistry<Message>,
     router: CommandRouter,
     menu: Option<ApplicationMenu>,
@@ -58,8 +52,6 @@ impl NativeMenuDemo {
             )
             .expect("unique command");
         Self {
-            graphics: GraphicsContext::new(),
-            host: None,
             commands,
             router: CommandRouter::new(),
             menu: None,
@@ -96,13 +88,59 @@ impl NativeMenuDemo {
             .menu(view)
             .menu(window)
     }
+}
 
-    fn apply_message(
-        &mut self,
-        message: Message,
-        context: &mut AppContext<'_, '_, Self>,
-    ) -> Result<(), io::Error> {
+impl App for NativeMenuDemo {
+    type Message = Message;
+
+    fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let mut ui = cx.new_ui();
+        let content = ui
+            .padding(ui.root(), Insets::all(28.0))
+            .grow(1.0)
+            .column()
+            .finish();
+        ui.label(content, "Native File / Edit / View / Window menu")
+            .finish();
+        ui.label(content, "Try Command/Ctrl+N and Command/Ctrl+S")
+            .finish();
+        self.status = Some(ui.label(content, "Ready").finish());
+        let window =
+            cx.open_window(WindowConfig::new("RXUI native menu").size(640.0, 320.0), ui)?;
+
+        let proxy = cx.proxy();
+        let menu = ApplicationMenu::install(
+            cx.window(window)?,
+            self.menu_model(),
+            &self.commands,
+            move |event| {
+                let _ = proxy.post(Message::Menu(event));
+            },
+        );
+        match menu {
+            Ok(menu) => self.menu = Some(menu),
+            Err(error @ NativeMenuError::UnsupportedPlatform) => {
+                eprintln!("native menu unavailable: {error}");
+            }
+            Err(error) => return Err(error.into()),
+        }
+        Ok(())
+    }
+
+    fn update(&mut self, cx: &mut AppCx<'_, Message>, message: Message) -> rxui::Result<()> {
         let text = match message {
+            Message::Menu(event) => {
+                // Resolve the native activation through the command registry
+                // and feed the mapped message back through `update`.
+                let mapped = self
+                    .menu
+                    .as_ref()
+                    .and_then(|menu| menu.dispatch(&event, &self.commands));
+                if let Some(mapped) = mapped {
+                    cx.post(mapped);
+                }
+                return Ok(());
+            }
             Message::New => "New command activated".to_owned(),
             Message::Save => "Save command activated".to_owned(),
             Message::ToggleSidebar => {
@@ -115,134 +153,42 @@ impl NativeMenuDemo {
                 format!("Sidebar is {}", if checked { "visible" } else { "hidden" })
             }
         };
-        if let (Some(host), Some(status)) = (&mut self.host, self.status) {
-            host.ui_mut()
-                .set_label_text(status, text)
-                .map_err(io::Error::other)?;
-            context.invalidate_window(host.id());
+        if let Some(status) = self.status {
+            cx.source_ui()?.set_label_text(status, text)?;
         }
         if let Some(menu) = &mut self.menu {
-            menu.sync(&self.commands).map_err(io::Error::other)?;
+            menu.sync(&self.commands)?;
         }
-        Ok(())
-    }
-
-    fn apply_native(
-        &mut self,
-        event: NativeMenuEvent,
-        context: &mut AppContext<'_, '_, Self>,
-    ) -> Result<(), io::Error> {
-        let message = self
-            .menu
-            .as_ref()
-            .and_then(|menu| menu.dispatch(&event, &self.commands));
-        if let Some(message) = message {
-            self.apply_message(message, context)?;
-        }
-        Ok(())
-    }
-}
-
-impl App for NativeMenuDemo {
-    type Error = io::Error;
-
-    fn resumed(&mut self, context: &mut AppContext<'_, '_, Self>) -> Result<(), Self::Error> {
-        if self.host.is_some() {
-            return Ok(());
-        }
-        let mut ui = Ui::new(FontDatabase::default(), Theme::default());
-        let content = ui
-            .padding(ui.root(), Insets::all(28.0))
-            .grow(1.0)
-            .column()
-            .finish();
-        ui.label(content, "Native File / Edit / View / Window menu")
-            .finish();
-        ui.label(content, "Try Command/Ctrl+N and Command/Ctrl+S")
-            .finish();
-        let status = ui.label(content, "Ready").finish();
-        let host = WindowHost::open(
-            context,
-            &self.graphics,
-            ui,
-            WindowHostOptions {
-                window: WindowAttributes {
-                    title: "RXUI native menu".into(),
-                    inner_size: Some(Size::new(640.0, 320.0)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )
-        .map_err(io::Error::other)?;
-
-        let proxy = context.proxy();
-        let menu = ApplicationMenu::install(
-            host.window(),
-            self.menu_model(),
-            &self.commands,
-            move |event| {
-                let _ =
-                    proxy.run_on_main_thread(move |app, context| app.apply_native(event, context));
-            },
-        );
-        match menu {
-            Ok(menu) => self.menu = Some(menu),
-            Err(error @ NativeMenuError::UnsupportedPlatform) => {
-                eprintln!("native menu unavailable: {error}");
-            }
-            Err(error) => return Err(io::Error::other(error)),
-        }
-        self.status = Some(status);
-        self.host = Some(host);
         Ok(())
     }
 
     fn window_event(
         &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        id: WindowId,
-        event: WindowEvent,
-    ) -> Result<(), Self::Error> {
-        if let Some(message) = self.router.handle_event(&event, &self.commands) {
-            self.apply_message(message, context)?;
-        }
-        let Some(host) = &mut self.host else {
-            return Ok(());
-        };
-        let update = host
-            .handle_event(&context.clipboard(), &event)
-            .map_err(io::Error::other)?;
-        if update.close_requested {
-            self.menu = None;
-            context.unregister_window(id);
-            self.host = None;
-            context.exit();
-        } else if update.redraw || host.ui().needs_redraw() {
-            context.invalidate_window(id);
+        cx: &mut AppCx<'_, Message>,
+        _window: WindowId,
+        event: &WindowEvent,
+    ) -> rxui::Result<()> {
+        // Route keyboard shortcuts through the command registry before the
+        // widget layer sees the event.
+        if let Some(message) = self.router.handle_event(event, &self.commands) {
+            cx.post(message);
         }
         Ok(())
     }
 
-    fn redraw(
+    fn window_closed(
         &mut self,
-        _context: &mut AppContext<'_, '_, Self>,
+        _cx: &mut AppCx<'_, Message>,
         _window: WindowId,
-    ) -> Result<(), Self::Error> {
-        if let Some(host) = &mut self.host {
-            host.redraw().map_err(io::Error::other)?;
-        }
+    ) -> rxui::Result<()> {
+        self.menu = None;
         Ok(())
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
-        NativeMenuDemo::new(),
-        RuntimeConfig::default(),
-    )))
-    .map(|_| ())
+fn main() -> MainResult {
+    run(NativeMenuDemo::new())
 }
 
 #[cfg(target_arch = "wasm32")]

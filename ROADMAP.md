@@ -26,12 +26,13 @@ missing hooks belong in Astrelis; application and editor policy stays in RXUI.
 
 - Native accessibility adapters; semantic trees and actions already exist,
   but operating-system assistive technologies cannot consume them yet.
-- A high-level application runner and multi-window registry that removes the
-  lifecycle, event-routing, invalidation, redraw, and shutdown boilerplate.
 - Multiline and rich/code text editing with line navigation, large-document
   virtualization, syntax spans, and undo integration.
-- Desktop services for open/save dialogs, filesystem watching, URL/file
-  launching, recent documents, and external file drag and drop.
+- Filesystem watching (open/save dialogs, URL/file launching, recent
+  documents, and external file drag and drop shipped in `rxui-services` and
+  the platform event stream; watching remains).
+- Browser-side file dialogs; `rxui-services` dialogs currently report
+  unsupported on wasm.
 - A supported image decoding/loading widget path above external GPU images.
 - Charting for line, bar, and scatter plots with axes, legends, zooming, and
   large-data decimation.

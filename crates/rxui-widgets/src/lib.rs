@@ -13,13 +13,15 @@ mod validation;
 mod views;
 
 pub use controls::{
-    ComboBox, ComboBoxItem, FormSection, NumericField, NumericFieldOptions, RadioGroup, RadioOption,
+    ComboBox, ComboBoxBuilder, ComboBoxItem, FormSection, NumericField, NumericFieldBuilder,
+    NumericFieldOptions, RadioGroup, RadioGroupBuilder, RadioOption,
 };
 pub use icon::{CommandButton, Icon, IconButton, IconError, IconView, icons};
 pub use palette::{CommandPalette, CommandPaletteEvent, CommandPaletteState};
 pub use shell::{
     DialogAction, DialogActionRole, DialogError, DialogHost, DialogOptions, Toast, ToastAction,
-    ToastHost, ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarItem, ToolbarOptions,
+    ToastHost, ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarBuilder, ToolbarItem,
+    ToolbarOptions,
 };
 pub use validation::{
     FieldValidation, FormValidation, ValidationIssue, ValidationResult, ValidationSeverity,

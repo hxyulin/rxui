@@ -114,6 +114,24 @@ impl<Message: 'static> Widget<Message> for ToolbarSeparator {
 }
 
 impl<Message: Clone + 'static> Toolbar<Message> {
+    /// Starts a fluent [`ToolbarBuilder`] parented under `parent`.
+    ///
+    /// Command enablement and messages are snapshotted from `commands` when
+    /// the builder finishes.
+    pub fn build<'a, T>(
+        ui: &'a mut Ui<Message>,
+        parent: ElementHandle<T>,
+        commands: &'a CommandRegistry<Message>,
+    ) -> ToolbarBuilder<'a, Message, T> {
+        ToolbarBuilder {
+            ui,
+            parent,
+            commands,
+            items: Vec::new(),
+            options: ToolbarOptions::default(),
+        }
+    }
+
     /// Builds a toolbar from a command snapshot.
     pub fn new<T>(
         ui: &mut Ui<Message>,
@@ -376,6 +394,76 @@ impl<Message: Clone + 'static> Toolbar<Message> {
     /// Returns the toolbar root.
     pub const fn root(&self) -> ElementHandle<astrelis_ui_core::Row> {
         self.root
+    }
+}
+
+/// Fluent [`Toolbar`] constructor returned by [`Toolbar::build`].
+pub struct ToolbarBuilder<'a, Message, T> {
+    ui: &'a mut Ui<Message>,
+    parent: ElementHandle<T>,
+    commands: &'a CommandRegistry<Message>,
+    items: Vec<ToolbarItem>,
+    options: ToolbarOptions,
+}
+
+impl<Message: Clone + 'static, T> ToolbarBuilder<'_, Message, T> {
+    /// Appends a registered command button without an icon.
+    pub fn command(mut self, id: CommandId) -> Self {
+        self.items.push(ToolbarItem::Command { id, icon: None });
+        self
+    }
+
+    /// Appends a registered command button with a vector icon.
+    pub fn command_icon(mut self, id: CommandId, icon: Icon) -> Self {
+        self.items.push(ToolbarItem::Command {
+            id,
+            icon: Some(icon),
+        });
+        self
+    }
+
+    /// Appends a visual separator between command groups.
+    pub fn separator(mut self) -> Self {
+        self.items.push(ToolbarItem::Separator);
+        self
+    }
+
+    /// Appends space that expands between command groups.
+    pub fn flexible_space(mut self) -> Self {
+        self.items.push(ToolbarItem::FlexibleSpace);
+        self
+    }
+
+    /// Shows or hides command labels beside icons.
+    pub fn show_labels(mut self, show_labels: bool) -> Self {
+        self.options.show_labels = show_labels;
+        self
+    }
+
+    /// Creates the toolbar.
+    ///
+    /// # Panics
+    ///
+    /// Panics on programmer error: a command identifier that is not
+    /// registered in the snapshot registry, or a retained-tree failure
+    /// while mounting the toolbar.
+    pub fn finish(self) -> Toolbar<Message> {
+        for item in &self.items {
+            if let ToolbarItem::Command { id, .. } = item {
+                assert!(
+                    self.commands.get(id).is_some(),
+                    "toolbar command `{id}` is not registered"
+                );
+            }
+        }
+        Toolbar::new(
+            self.ui,
+            self.parent,
+            self.items,
+            self.commands,
+            self.options,
+        )
+        .expect("failed to build toolbar")
     }
 }
 
@@ -1013,6 +1101,66 @@ mod tests {
         assert!(label_bounds.origin.x >= button_bounds.origin.x + 24.0);
         assert!(find_semantic(&tree, SemanticRole::Toolbar, "").is_some());
         assert!(find_semantic(&tree, SemanticRole::Button, "More").is_some());
+    }
+
+    #[test]
+    fn toolbar_builder_matches_new() {
+        let mut commands = CommandRegistry::new();
+        for (id, label, message) in [("a", "Alpha", 1), ("b", "Beta", 2)] {
+            commands
+                .register(rxui_app::Command::new(
+                    CommandId::new(id).unwrap(),
+                    label,
+                    message,
+                ))
+                .unwrap();
+        }
+        let mut via_new = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_new.root();
+        Toolbar::new(
+            &mut via_new,
+            root,
+            vec![
+                ToolbarItem::Command {
+                    id: CommandId::new("a").unwrap(),
+                    icon: Some(crate::icons::add()),
+                },
+                ToolbarItem::Separator,
+                ToolbarItem::FlexibleSpace,
+                ToolbarItem::Command {
+                    id: CommandId::new("b").unwrap(),
+                    icon: None,
+                },
+            ],
+            &commands,
+            ToolbarOptions::default(),
+        )
+        .unwrap();
+        let mut via_builder = Ui::new(FontDatabase::default(), Theme::default());
+        let root = via_builder.root();
+        Toolbar::build(&mut via_builder, root, &commands)
+            .command_icon(CommandId::new("a").unwrap(), crate::icons::add())
+            .separator()
+            .flexible_space()
+            .command(CommandId::new("b").unwrap())
+            .finish();
+        via_new.set_viewport(Size::new(640.0, 200.0), 1.0);
+        via_builder.set_viewport(Size::new(640.0, 200.0), 1.0);
+        assert_eq!(
+            semantic_snapshot(&via_builder.semantic_tree().unwrap()),
+            semantic_snapshot(&via_new.semantic_tree().unwrap())
+        );
+    }
+
+    /// Flattens a semantic tree into comparable `(role, label, value)` rows.
+    fn semantic_snapshot(
+        node: &astrelis_ui_core::SemanticNode,
+    ) -> Vec<(SemanticRole, String, Option<String>)> {
+        let mut rows = vec![(node.role, node.label.clone(), node.value.clone())];
+        for child in &node.children {
+            rows.extend(semantic_snapshot(child));
+        }
+        rows
     }
 
     fn find_semantic(

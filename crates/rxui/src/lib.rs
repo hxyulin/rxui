@@ -6,6 +6,7 @@
 pub use astrelis_ui as ui;
 /// Application hosting and shared commands.
 pub use rxui_app as app;
+pub use rxui_app::{Error, Result};
 #[cfg(feature = "devtools")]
 /// Optional in-application developer tools.
 pub use rxui_devtools as devtools;
@@ -14,6 +15,8 @@ pub use rxui_devtools as devtools;
 pub use rxui_editor as editor;
 /// Native macOS and Windows application menus.
 pub use rxui_native_menu as native_menu;
+/// Desktop services: file dialogs, launching, recent documents.
+pub use rxui_services as services;
 #[cfg(feature = "testing")]
 /// Deterministic testing helpers.
 pub use rxui_testing as testing;
@@ -23,12 +26,17 @@ pub use rxui_widgets as widgets;
 /// Common types for ordinary RXUI application code.
 pub mod prelude {
     pub use astrelis_ui::prelude::*;
+    #[cfg(target_arch = "wasm32")]
+    pub use rxui_app::spawn_on_canvas;
     pub use rxui_app::{
-        Command, CommandId, CommandRegistry, CommandRouter, GraphicsContext, HostStatus,
-        JsonStateStore, Menu, MenuBar, MenuEntry, MenuRole, Shortcut, UndoAction, UndoStack,
-        WindowHost, WindowHostOptions, WindowPlacement, WindowPlacementTracker, redo_command_id,
-        sync_undo_commands, undo_command_id,
+        App, AppConfig, AppCx, CloseResponse, Command, CommandId, CommandRegistry, CommandRouter,
+        GraphicsContext, HostStatus, Instant, JsonStateStore, MainResult, Menu, MenuBar, MenuEntry,
+        MenuRole, MessageProxy, Shortcut, TimerId, UndoAction, UndoStack, UpdateInfo, WindowConfig,
+        WindowEvent, WindowHost, WindowHostOptions, WindowId, WindowPlacement,
+        WindowPlacementTracker, redo_command_id, sync_undo_commands, undo_command_id,
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use rxui_app::{run, run_with};
     #[cfg(feature = "devtools")]
     pub use rxui_devtools::{InspectorAction, InspectorOptions, UiInspector};
     #[cfg(feature = "editor")]
@@ -37,6 +45,9 @@ pub mod prelude {
         SavedLayoutError, WorkspaceState,
     };
     pub use rxui_native_menu::{ApplicationMenu, NativeMenuError, NativeMenuEvent};
+    pub use rxui_services::{
+        DesktopServices, FileDialogOptions, FileFilter, RecentDocuments, ServiceError,
+    };
     pub use rxui_widgets::{
         ComboBox, ComboBoxItem, CommandButton, CommandPalette, CommandPaletteEvent,
         CommandPaletteState, DialogAction, DialogActionRole, DialogHost, DialogOptions,

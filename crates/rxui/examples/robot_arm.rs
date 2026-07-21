@@ -1,24 +1,21 @@
 //! Native and WebGPU five-degree-of-freedom robotic-arm editor.
+//!
+//! Runs on the high-level [`rxui::app`] runner. The `render` hook composites
+//! the 3D scene through [`AppCx::host`] and `WindowHost::redraw_composited`;
+//! on the web the same application starts through
+//! [`rxui::app::spawn_on_canvas`] on the host page canvas.
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
-use std::io;
-
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
 use astrelis_compositor::{CompositionStats, ViewOptions, ViewRenderTarget};
-use astrelis_core::{
-    color::Color,
-    geometry::{Logical, Size},
-    math::{EulerRot, Mat4, Vec3},
-};
+use astrelis_core::math::{EulerRot, Mat4, Vec3};
 use astrelis_paint::CompositorViewId;
-use astrelis_platform::{ElementState, PointerButton, WindowAttributes, WindowEvent, WindowId};
+use astrelis_platform::{ElementState, PointerButton};
 use astrelis_render::RenderStats;
 use astrelis_render_3d::{
     Camera3D, DrawList3D, Lighting, MaterialDescriptor, MaterialHandle, MeshDraw, MeshHandle,
     Renderer3D, cube, plane, uv_sphere,
 };
-use astrelis_ui_core::{Column, ElementHandle, Label, LayoutStyle, Length, Slider};
 use rxui::{
     editor::widgets::{
         RenderView, RenderViewContent, RenderViewEvent, SplitAxis, SplitPane, SplitPaneOptions,
@@ -218,16 +215,11 @@ struct SceneGpu {
 }
 
 impl SceneGpu {
-    fn new(device: astrelis_gpu::Device, queue: astrelis_gpu::Queue) -> Result<Self, io::Error> {
-        let mut renderer =
-            Renderer3D::new(device, queue, Default::default()).map_err(io::Error::other)?;
-        let cube = renderer.create_mesh(&cube(1.0)).map_err(io::Error::other)?;
-        let sphere = renderer
-            .create_mesh(&uv_sphere(1.0, 24, 12))
-            .map_err(io::Error::other)?;
-        let plane = renderer
-            .create_mesh(&plane(12.0, 12.0))
-            .map_err(io::Error::other)?;
+    fn new(device: astrelis_gpu::Device, queue: astrelis_gpu::Queue) -> rxui::Result<Self> {
+        let mut renderer = Renderer3D::new(device, queue, Default::default())?;
+        let cube = renderer.create_mesh(&cube(1.0))?;
+        let sphere = renderer.create_mesh(&uv_sphere(1.0, 24, 12))?;
+        let plane = renderer.create_mesh(&plane(12.0, 12.0))?;
         let colors = [
             Color::rgb(0.88, 0.22, 0.18),
             Color::rgb(0.95, 0.54, 0.12),
@@ -245,7 +237,7 @@ impl SceneGpu {
                         double_sided: true,
                         ..Default::default()
                     })
-                    .map_err(io::Error::other)
+                    .map_err(rxui::Error::from)
             })
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
@@ -356,8 +348,8 @@ impl SceneGpu {
         target: ViewRenderTarget,
         camera: &Camera3D,
         list: &DrawList3D,
-    ) -> Result<RenderStats, io::Error> {
-        match target {
+    ) -> rxui::Result<RenderStats> {
+        let stats = match target {
             ViewRenderTarget::Direct(target) => self.renderer.render_composited(
                 encoder,
                 &target,
@@ -369,14 +361,13 @@ impl SceneGpu {
                 self.renderer
                     .render(encoder, &target, camera, &Lighting::default(), list)
             }
-        }
-        .map_err(io::Error::other)
+        }?;
+        Ok(stats)
     }
 }
 
 struct RobotArm {
-    graphics: GraphicsContext,
-    host: Option<WindowHost<Message>>,
+    window: Option<WindowId>,
     ui: Option<UiHandles>,
     scene_id: CompositorViewId,
     scene: Option<SceneGpu>,
@@ -392,8 +383,7 @@ struct RobotArm {
 impl RobotArm {
     fn new() -> Self {
         Self {
-            graphics: GraphicsContext::new(),
-            host: None,
+            window: None,
             ui: None,
             scene_id: CompositorViewId::new(),
             scene: None,
@@ -407,7 +397,7 @@ impl RobotArm {
         }
     }
 
-    fn build_ui(&self) -> Result<(Ui<Message>, UiHandles), io::Error> {
+    fn build_ui(&self) -> rxui::Result<(Ui<Message>, UiHandles)> {
         let mut ui = Ui::new(
             astrelis_ui_core::deterministic_font_database(),
             Theme {
@@ -426,19 +416,16 @@ impl RobotArm {
                 second_min: 620.0,
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
-        outer
-            .set_container_layout(
-                &mut ui,
-                LayoutStyle {
-                    width: Length::Percent(1.0),
-                    height: Length::Percent(1.0),
-                    grow: 1.0,
-                    ..Default::default()
-                },
-            )
-            .map_err(io::Error::other)?;
+        )?;
+        outer.set_container_layout(
+            &mut ui,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                height: Length::Percent(1.0),
+                grow: 1.0,
+                ..Default::default()
+            },
+        )?;
         let inner = SplitPane::new(
             &mut ui,
             outer.second(),
@@ -449,19 +436,16 @@ impl RobotArm {
                 second_min: 260.0,
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
-        inner
-            .set_container_layout(
-                &mut ui,
-                LayoutStyle {
-                    grow: 1.0,
-                    width: Length::Percent(1.0),
-                    height: Length::Percent(1.0),
-                    ..Default::default()
-                },
-            )
-            .map_err(io::Error::other)?;
+        )?;
+        inner.set_container_layout(
+            &mut ui,
+            LayoutStyle {
+                grow: 1.0,
+                width: Length::Percent(1.0),
+                height: Length::Percent(1.0),
+                ..Default::default()
+            },
+        )?;
 
         let left = padded_column(&mut ui, outer.first())?;
         ui.label(left, "Joint controls").finish();
@@ -477,8 +461,7 @@ impl RobotArm {
                 .slider(left, spec.min, spec.max, 1.0, self.pose.degrees[index])
                 .width(Length::Percent(1.0))
                 .finish();
-            ui.set_semantic_label(slider, spec.name)
-                .map_err(io::Error::other)?;
+            ui.set_semantic_label(slider, spec.name)?;
             ui.on_slider(slider, move |event, value| {
                 event.emit(Message::Joint(index, value));
             });
@@ -493,20 +476,17 @@ impl RobotArm {
         ui.on_click(reset, |event| event.emit(Message::ResetCamera));
 
         let center = inner.first();
-        let view = ui
-            .add_widget(
-                center,
-                RenderView::new("Robotic arm 3D viewport", Message::View),
-            )
-            .map_err(io::Error::other)?;
+        let view = ui.add_widget(
+            center,
+            RenderView::new("Robotic arm 3D viewport", Message::View),
+        )?;
         ui.update_widget(view, |view| {
             view.set_corner_radius(0.0);
             view.set_content(RenderViewContent::Composited {
                 id: self.scene_id,
                 prefer_direct: true,
             });
-        })
-        .map_err(io::Error::other)?;
+        })?;
         ui.set_layout(
             view,
             LayoutStyle {
@@ -515,8 +495,7 @@ impl RobotArm {
                 height: Length::Percent(1.0),
                 ..Default::default()
             },
-        )
-        .map_err(io::Error::other)?;
+        )?;
 
         let right = padded_column(&mut ui, inner.second())?;
         ui.label(right, "Telemetry").finish();
@@ -553,29 +532,26 @@ impl RobotArm {
         Ok((ui, handles))
     }
 
-    fn set_pose(&mut self, pose: JointPose) -> Result<(), io::Error> {
+    fn set_pose(&mut self, cx: &mut AppCx<'_, Message>, pose: JointPose) -> rxui::Result<()> {
         self.pose = pose.clamped();
-        let (Some(host), Some(handles)) = (&mut self.host, &self.ui) else {
+        let (Some(window), Some(handles)) = (self.window, &self.ui) else {
             return Ok(());
         };
+        let ui = cx.ui(window)?;
         for index in 0..5 {
-            host.ui_mut()
-                .set_slider_value(handles.sliders[index], self.pose.degrees[index])
-                .map_err(io::Error::other)?;
-            host.ui_mut()
-                .set_label_text(
-                    handles.values[index],
-                    format!("{:+.0}°", self.pose.degrees[index]),
-                )
-                .map_err(io::Error::other)?;
+            ui.set_slider_value(handles.sliders[index], self.pose.degrees[index])?;
+            ui.set_label_text(
+                handles.values[index],
+                format!("{:+.0}°", self.pose.degrees[index]),
+            )?;
         }
-        self.update_telemetry()
+        self.update_telemetry(cx)
     }
 
-    fn update_telemetry(&mut self) -> Result<(), io::Error> {
-        if let (Some(host), Some(handles)) = (&mut self.host, &self.ui) {
+    fn update_telemetry(&self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        if let (Some(window), Some(handles)) = (self.window, &self.ui) {
             update_telemetry_labels(
-                host.ui_mut(),
+                cx.ui(window)?,
                 handles,
                 self.pose,
                 self.selected,
@@ -586,28 +562,30 @@ impl RobotArm {
         Ok(())
     }
 
-    fn handle_message(&mut self, message: Message) -> Result<bool, io::Error> {
+    fn handle_message(
+        &mut self,
+        cx: &mut AppCx<'_, Message>,
+        message: Message,
+    ) -> rxui::Result<bool> {
         match message {
             Message::Joint(joint, value) => {
                 self.pose.set(joint, value);
                 self.selected = joint;
-                if let (Some(host), Some(handles)) = (&mut self.host, &self.ui) {
-                    host.ui_mut()
-                        .set_label_text(
-                            handles.values[joint],
-                            format!("{:+.0}°", self.pose.degrees[joint]),
-                        )
-                        .map_err(io::Error::other)?;
+                if let (Some(window), Some(handles)) = (self.window, &self.ui) {
+                    cx.ui(window)?.set_label_text(
+                        handles.values[joint],
+                        format!("{:+.0}°", self.pose.degrees[joint]),
+                    )?;
                 }
-                self.update_telemetry()?;
+                self.update_telemetry(cx)?;
                 Ok(true)
             }
             Message::Home => {
-                self.set_pose(HOME_POSE)?;
+                self.set_pose(cx, HOME_POSE)?;
                 Ok(true)
             }
             Message::Zero => {
-                self.set_pose(ZERO_POSE)?;
+                self.set_pose(cx, ZERO_POSE)?;
                 Ok(true)
             }
             Message::ResetCamera => {
@@ -657,7 +635,7 @@ impl RobotArm {
 fn padded_column(
     ui: &mut Ui<Message>,
     parent: ElementHandle<Column>,
-) -> Result<ElementHandle<Column>, io::Error> {
+) -> rxui::Result<ElementHandle<Column>> {
     let content = ui
         .padding(parent, Insets::all(16.0))
         .grow(1.0)
@@ -669,8 +647,7 @@ fn padded_column(
             width: Length::Percent(1.0),
             ..Default::default()
         },
-    )
-    .map_err(io::Error::other)?;
+    )?;
     Ok(content)
 }
 
@@ -681,7 +658,7 @@ fn update_telemetry_labels(
     selected: usize,
     scene: RenderStats,
     composition: CompositionStats,
-) -> Result<(), io::Error> {
+) -> rxui::Result<()> {
     let end = end_effector_pose(pose);
     let spec = JOINTS[selected];
     ui.set_label_text(
@@ -690,24 +667,21 @@ fn update_telemetry_labels(
             "End effector XYZ\nX {:+.3}\nY {:+.3}\nZ {:+.3}",
             end.position.x, end.position.y, end.position.z
         ),
-    )
-    .map_err(io::Error::other)?;
+    )?;
     ui.set_label_text(
         handles.orientation,
         format!(
             "Yaw / pitch / roll\n{:+.1}°  {:+.1}°  {:+.1}°",
             end.yaw_pitch_roll.x, end.yaw_pitch_roll.y, end.yaw_pitch_roll.z
         ),
-    )
-    .map_err(io::Error::other)?;
+    )?;
     ui.set_label_text(
         handles.selected,
         format!(
             "Selected: {}\nAxis {}  Range {:.0}°…{:.0}°\nValue {:+.0}°",
             spec.name, spec.axis, spec.min, spec.max, pose.degrees[selected]
         ),
-    )
-    .map_err(io::Error::other)?;
+    )?;
     ui.set_label_text(
         handles.frame_stats,
         format!(
@@ -720,143 +694,102 @@ fn update_telemetry_labels(
             composition.direct_views,
             composition.texture_views,
         ),
-    )
-    .map_err(io::Error::other)?;
+    )?;
     Ok(())
 }
 
 impl App for RobotArm {
-    type Error = io::Error;
+    type Message = Message;
 
-    fn resumed(&mut self, context: &mut AppContext<'_, '_, Self>) -> Result<(), Self::Error> {
-        if self.host.is_some() {
-            return Ok(());
-        }
+    fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
         let (ui, handles) = self.build_ui()?;
-        let host = WindowHost::open(
-            context,
-            &self.graphics,
-            ui,
-            WindowHostOptions {
-                window: WindowAttributes {
-                    title: "RXUI robotic arm".into(),
-                    inner_size: initial_window_size(),
-                    ..Default::default()
-                },
-                clear_color: Color::rgb(0.018, 0.026, 0.052),
-                ..Default::default()
-            },
-        )
-        .map_err(io::Error::other)?;
+        let mut config =
+            WindowConfig::new("RXUI robotic arm").clear_color(Color::rgb(0.018, 0.026, 0.052));
+        if let Some((width, height)) = initial_window_size() {
+            config = config.size(width, height);
+        }
+        let window = cx.open_window(config, ui)?;
         self.ui = Some(handles);
-        self.host = Some(host);
+        self.window = Some(window);
         Ok(())
     }
 
-    fn window_event(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        id: WindowId,
-        event: WindowEvent,
-    ) -> Result<(), Self::Error> {
-        let Some(host) = &mut self.host else {
-            return Ok(());
-        };
-        let update = host
-            .handle_event(&context.clipboard(), &event)
-            .map_err(io::Error::other)?;
-        if update.close_requested {
-            context.unregister_window(id);
-            self.scene = None;
-            self.host = None;
-            context.exit();
-            return Ok(());
-        }
-        let messages = host.drain_messages().collect::<Vec<_>>();
-        let mut invalidate = update.redraw;
-        for message in messages {
-            invalidate |= self.handle_message(message)?;
-        }
-        if invalidate
-            || self
-                .host
-                .as_ref()
-                .is_some_and(|host| host.ui().needs_redraw())
+    fn update(&mut self, cx: &mut AppCx<'_, Message>, message: Message) -> rxui::Result<()> {
+        if self.handle_message(cx, message)?
+            && let Some(window) = self.window
         {
-            context.invalidate_window(id);
+            cx.invalidate(window);
         }
         Ok(())
     }
 
-    fn redraw(
+    fn window_closed(
         &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        window: WindowId,
-    ) -> Result<(), Self::Error> {
-        let Some(host) = &mut self.host else {
-            return Ok(());
-        };
+        _cx: &mut AppCx<'_, Message>,
+        _window: WindowId,
+    ) -> rxui::Result<()> {
+        self.scene = None;
+        self.window = None;
+        Ok(())
+    }
+
+    fn render(&mut self, cx: &mut AppCx<'_, Message>, window: WindowId) -> rxui::Result<()> {
         if self.scene.is_none() {
+            let host = cx.host(window)?;
             let device = host.device().cloned();
             let queue = host.queue().cloned();
             if let (Some(device), Some(queue)) = (device, queue) {
                 self.scene = Some(SceneGpu::new(device, queue)?);
             }
         }
-        let Some(scene) = &mut self.scene else {
-            host.redraw().map_err(io::Error::other)?;
-            return Ok(());
-        };
         let camera = self.orbit.camera();
-        let draws = scene.draw_list(self.pose);
         let scene_id = self.scene_id;
         let mut scene_stats = self.last_scene_stats;
-        let composition = host
-            .redraw_composited(
-                |_| ViewOptions {
-                    clear_color: Color::rgb(0.018, 0.026, 0.052),
-                },
-                |id, encoder, target| {
-                    if id != scene_id {
-                        return Err(io::Error::other(format!(
-                            "unknown compositor view {}",
-                            id.get()
-                        )));
-                    }
-                    scene_stats = scene.render(encoder, target, &camera, &draws)?;
-                    Ok(())
-                },
-            )
-            .map_err(io::Error::other)?;
+        let pose = self.pose;
+        let Some(scene) = &mut self.scene else {
+            return cx.present(window);
+        };
+        let draws = scene.draw_list(pose);
+        let composition = cx.host(window)?.redraw_composited(
+            |_| ViewOptions {
+                clear_color: Color::rgb(0.018, 0.026, 0.052),
+            },
+            |id, encoder, target| {
+                if id != scene_id {
+                    return Err(rxui::Error::msg(format!(
+                        "unknown compositor view {}",
+                        id.get()
+                    )));
+                }
+                scene_stats = scene.render(encoder, target, &camera, &draws)?;
+                Ok(())
+            },
+        )?;
         if let Some(composition) = composition
             && (scene_stats != self.last_scene_stats || composition != self.last_composition_stats)
         {
             self.last_scene_stats = scene_stats;
             self.last_composition_stats = composition;
-            self.update_telemetry()?;
-            context.invalidate_window(window);
+            self.update_telemetry(cx)?;
+            cx.invalidate(window);
         }
         Ok(())
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn initial_window_size() -> Option<Size<Logical, f64>> {
-    Some(Size::new(1320.0, 780.0))
+fn initial_window_size() -> Option<(f64, f64)> {
+    Some((1320.0, 780.0))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn initial_window_size() -> Option<Size<Logical, f64>> {
+fn initial_window_size() -> Option<(f64, f64)> {
     None
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
-        RobotArm::new(),
-        RuntimeConfig::default(),
-    )))
-    .map(|_| ())
+fn main() -> MainResult {
+    run(RobotArm::new())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -876,11 +809,8 @@ pub fn start() -> Result<(), wasm_bindgen::JsValue> {
         .ok_or_else(|| wasm_bindgen::JsValue::from_str("#rxui-canvas was not found"))?
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .map_err(|_| wasm_bindgen::JsValue::from_str("#rxui-canvas is not a canvas"))?;
-    astrelis_platform_winit::web::spawn_on_canvas(
-        Runtime::new(RobotArm::new(), RuntimeConfig::default()),
-        canvas,
-    )
-    .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
+    rxui::app::spawn_on_canvas(RobotArm::new(), AppConfig::default(), canvas)
+        .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
 }
 
 #[cfg(test)]

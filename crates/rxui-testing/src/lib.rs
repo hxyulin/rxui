@@ -1,8 +1,16 @@
 //! RXUI presets and compatibility exports for deterministic Astrelis UI testing.
+//!
+//! [`UiHarness`] drives one bare UI tree; [`AppHarness`] drives a complete
+//! [`rxui_app::App`] — windows, message routing, timers, close policy, and
+//! clipboard — headlessly and deterministically.
 
 #![warn(missing_docs)]
 
+mod harness;
+
+pub use astrelis_ui_core::{SemanticAction, SemanticRole};
 pub use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database};
+pub use harness::AppHarness;
 
 /// Returns the dark RXUI theme pinned to the bundled deterministic font.
 pub fn deterministic_theme() -> astrelis_ui_core::Theme {

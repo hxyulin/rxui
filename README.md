@@ -16,6 +16,8 @@ composition.
 RXUI `0.1.0-rc.1` is the first public preview and includes:
 
 - an idle-efficient native/browser UI window host with asynchronous WebGPU startup;
+- a high-level application runner (`App`, `run`) with typed messages,
+  multi-window hosting, timers, and thread-safe message proxies;
 - typed commands, shortcut routing, and application menu models;
 - native global menus on macOS and per-window menus on Windows;
 - a theme-aware vector icon API and essential built-in icon set;
@@ -24,13 +26,16 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 - synchronous field/form validation and accessible actionable toasts;
 - reusable fallible undo/redo actions with conventional command integration;
 - atomic versioned JSON state and monitor-safe window placement restoration;
+- message-driven native file dialogs, URL and path launching, and persisted
+  recent-document tracking;
 - a coherent dockable editor workspace with backward-compatible named layouts;
 - virtualized, accessible tree and sortable/resizable table views;
 - typed text, number, boolean, and enum property inspection;
 - a keyboard-first command palette over the shared command registry;
 - texture-backed render views and an interactive reference 2D scene editor;
 - façade crates for the Astrelis widget and docking foundations;
-- deterministic semantic-action and model-level testing helpers;
+- deterministic semantic-action, model-level, and headless whole-application
+  testing helpers;
 - pinned Git dependencies with an optional sibling-repository override;
 - an opt-in, read-only retained UI inspector with pointer picking;
 - normalized semantic, layout, interaction, and display-list snapshots;
@@ -120,12 +125,13 @@ cargo run -p rxui --example robot_arm
 Build the WebGPU version and generate its no-bundler JavaScript package:
 
 ```sh
-cargo build --release -p rxui --example robot_arm --target wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.126 --locked
-wasm-bindgen --target web --out-dir crates/rxui/web/pkg --out-name robot_arm \
-  target/wasm32-unknown-unknown/release/examples/robot_arm.wasm
+scripts/build-web-demo.sh
 python3 -m http.server --directory crates/rxui/web 8000
 ```
+
+The script installs the wasm target and the pinned `wasm-bindgen-cli` if
+missing, then builds the example and runs `wasm-bindgen`; see the script for
+the underlying commands.
 
 Then open `http://localhost:8000/robot_arm.html`. The generated package is
 `crates/rxui/web/pkg`. Startup looks up `#rxui-canvas`, starts the browser

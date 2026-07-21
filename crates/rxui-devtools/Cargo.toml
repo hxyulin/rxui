@@ -22,7 +22,10 @@ astrelis-ui-core = { workspace = true }
 rxui-widgets = { workspace = true }
 
 [dev-dependencies]
+astrelis-app = { workspace = true }
+astrelis-platform-test = { workspace = true }
 astrelis-text = { workspace = true }
+rxui-testing = { workspace = true }
 
 [lints]
 workspace = true

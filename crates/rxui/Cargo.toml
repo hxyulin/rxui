@@ -24,6 +24,7 @@ rxui-app = { workspace = true }
 rxui-devtools = { workspace = true, optional = true }
 rxui-editor = { workspace = true, optional = true }
 rxui-native-menu = { workspace = true }
+rxui-services = { workspace = true }
 rxui-testing = { workspace = true, optional = true }
 rxui-widgets = { workspace = true }
 astrelis-ui = { workspace = true }

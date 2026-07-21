@@ -1,13 +1,11 @@
 //! RXUI design-system gallery.
+//!
+//! Runs on the high-level [`rxui::app`] runner: [`App::build`] assembles the
+//! gallery window and [`App::update`] applies each typed message. Toast
+//! deadlines arrive as [`Message::ExpireToasts`] timer messages.
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
-use std::io;
-
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
-use astrelis_core::geometry::Size;
-use astrelis_platform::{WindowAttributes, WindowEvent, WindowId};
-use astrelis_text::FontDatabase;
 use rxui::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -26,6 +24,7 @@ enum Message {
     CancelDialog,
     PushToast,
     Dismiss(ToastId),
+    ExpireToasts,
 }
 
 /// Labels and buttons whose [`WidgetStyle`] carries a theme color.
@@ -91,8 +90,6 @@ fn apply_styles(ui: &mut Ui<Message>, styled: &StyledText) -> Result<(), UiError
 }
 
 struct Gallery {
-    graphics: GraphicsContext,
-    host: Option<WindowHost<Message>>,
     themes: ThemeSet,
     radio: Option<RadioGroup<Message>>,
     combo: Option<ComboBox<Message>>,
@@ -107,8 +104,6 @@ struct Gallery {
 impl Gallery {
     fn new() -> Self {
         Self {
-            graphics: GraphicsContext::new(),
-            host: None,
             themes: ThemeSet::default(),
             radio: None,
             combo: None,
@@ -121,171 +116,76 @@ impl Gallery {
         }
     }
 
-    fn set_status(&mut self, text: impl Into<String>) -> Result<(), io::Error> {
-        let host = self.host.as_mut().expect("gallery host exists");
-        host.ui_mut()
-            .set_label_text(self.status.expect("status exists"), text)
-            .map_err(io::Error::other)
+    fn set_status(&self, cx: &mut AppCx<'_, Message>, text: impl Into<String>) -> rxui::Result<()> {
+        cx.source_ui()?
+            .set_label_text(self.status.expect("status exists"), text)?;
+        Ok(())
     }
 
-    fn sync_toasts(&mut self) -> Result<(), io::Error> {
-        let host = self.host.as_mut().expect("gallery host exists");
-        self.toast_host
-            .as_mut()
-            .expect("toast host exists")
-            .sync(host.ui_mut(), &self.toast_queue, Message::Dismiss)
-            .map_err(io::Error::other)
+    fn sync_toasts(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let ui = cx.source_ui()?;
+        self.toast_host.as_mut().expect("toast host exists").sync(
+            ui,
+            &self.toast_queue,
+            Message::Dismiss,
+        )?;
+        Ok(())
     }
 
-    fn notify(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        toast: Toast<Message>,
-    ) -> Result<(), io::Error> {
-        let now = context.now();
+    fn notify(&mut self, cx: &mut AppCx<'_, Message>, toast: Toast<Message>) -> rxui::Result<()> {
+        let now = cx.now();
         self.toast_queue.push(toast, now);
-        self.sync_toasts()?;
+        self.sync_toasts(cx)?;
         if let Some(deadline) = self.toast_queue.next_deadline() {
-            context.set_timeout(deadline.saturating_duration_since(now), |app, context| {
-                app.toast_queue.expire(context.now());
-                app.sync_toasts()?;
-                if let Some(host) = &app.host {
-                    context.invalidate_window(host.id());
-                }
-                Ok(())
-            });
+            cx.set_timeout(
+                deadline.saturating_duration_since(now),
+                Message::ExpireToasts,
+            );
         }
         Ok(())
     }
 
-    fn open_dialog(&mut self) -> Result<(), io::Error> {
-        let host = self.host.as_mut().expect("gallery host exists");
-        self.dialogs
-            .show(
-                host.ui_mut(),
-                DialogOptions {
-                    title: "Remove asset?".into(),
-                    description: Some(
-                        "Dialogs float on the overlay surface and cast the theme shadow.".into(),
-                    ),
-                },
-                vec![
-                    DialogAction {
-                        label: "Cancel".into(),
-                        message: Message::CancelDialog,
-                        role: DialogActionRole::Cancel,
-                        enabled: true,
-                    },
-                    DialogAction {
-                        label: "Remove".into(),
-                        message: Message::ConfirmDialog,
-                        role: DialogActionRole::Destructive,
-                        enabled: true,
-                    },
-                ],
-                |ui, content| {
-                    ui.add_label(
-                        content,
-                        "The asset stays on disk and can be re-imported later.",
-                    )?;
-                    Ok(())
-                },
-            )
-            .map_err(io::Error::other)
-    }
-
-    fn apply(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        message: Message,
-    ) -> Result<(), io::Error> {
-        match message {
-            Message::Theme(dark) => {
-                let styled = self.styled.expect("styled exists");
-                let host = self.host.as_mut().expect("gallery host exists");
-                host.ui_mut().set_theme(if dark {
-                    self.themes.dark.clone()
-                } else {
-                    self.themes.light.clone()
-                });
-                // Color overrides snapshot the theme, so re-apply them.
-                apply_styles(host.ui_mut(), &styled).map_err(io::Error::other)?;
-                self.set_status(if dark { "Dark theme" } else { "Light theme" })?;
-            }
-            Message::Radio(index) => {
-                let host = self.host.as_mut().expect("gallery host exists");
-                self.radio
-                    .as_ref()
-                    .expect("radio exists")
-                    .set_selected(host.ui_mut(), Some(index))
-                    .map_err(io::Error::other)?;
-                self.set_status(format!("Radio option {} selected", index + 1))?;
-            }
-            Message::Combo(index) => {
-                let host = self.host.as_mut().expect("gallery host exists");
-                self.combo
-                    .as_mut()
-                    .expect("combo exists")
-                    .set_selected(host.ui_mut(), Some(index))
-                    .map_err(io::Error::other)?;
-                self.set_status(format!("Combo option {} selected", index + 1))?;
-            }
-            Message::Number(value) => {
-                let host = self.host.as_mut().expect("gallery host exists");
-                self.number
-                    .as_ref()
-                    .expect("number exists")
-                    .set_value(host.ui_mut(), value)
-                    .map_err(io::Error::other)?;
-                self.set_status(format!("Numeric value: {value:.2}"))?;
-            }
-            Message::Save => self.set_status("Save icon button activated")?,
-            Message::Pressed(name) => self.set_status(format!("{name} button activated"))?,
-            Message::Text(value) => self.set_status(format!("Text: {value}"))?,
-            Message::Toggle(on) => {
-                self.set_status(if on { "Snapping on" } else { "Snapping off" })?;
-            }
-            Message::Slide(value) => self.set_status(format!("Slider value: {value:.0}"))?,
-            Message::ShowDialog => self.open_dialog()?,
-            Message::ConfirmDialog => {
-                let host = self.host.as_mut().expect("gallery host exists");
-                self.dialogs
-                    .close(host.ui_mut())
-                    .map_err(io::Error::other)?;
-                self.set_status("Dialog confirmed")?;
-            }
-            Message::CancelDialog => {
-                let host = self.host.as_mut().expect("gallery host exists");
-                self.dialogs
-                    .close(host.ui_mut())
-                    .map_err(io::Error::other)?;
-                self.set_status("Dialog cancelled")?;
-            }
-            Message::PushToast => self.notify(
-                context,
-                Toast::new(
-                    ToastLevel::Success,
-                    "Toast pushed",
-                    "Toasts float on the overlay surface with the theme shadow.",
+    fn open_dialog(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let ui = cx.source_ui()?;
+        self.dialogs.show(
+            ui,
+            DialogOptions {
+                title: "Remove asset?".into(),
+                description: Some(
+                    "Dialogs float on the overlay surface and cast the theme shadow.".into(),
                 ),
-            )?,
-            Message::Dismiss(id) => {
-                self.toast_queue.dismiss(id, context.now());
-                self.sync_toasts()?;
-            }
-        }
+            },
+            vec![
+                DialogAction {
+                    label: "Cancel".into(),
+                    message: Message::CancelDialog,
+                    role: DialogActionRole::Cancel,
+                    enabled: true,
+                },
+                DialogAction {
+                    label: "Remove".into(),
+                    message: Message::ConfirmDialog,
+                    role: DialogActionRole::Destructive,
+                    enabled: true,
+                },
+            ],
+            |ui, content| {
+                ui.add_label(
+                    content,
+                    "The asset stays on disk and can be re-imported later.",
+                )?;
+                Ok(())
+            },
+        )?;
         Ok(())
     }
 }
 
 impl App for Gallery {
-    type Error = io::Error;
+    type Message = Message;
 
-    fn resumed(&mut self, context: &mut AppContext<'_, '_, Self>) -> Result<(), Self::Error> {
-        if self.host.is_some() {
-            return Ok(());
-        }
-        let mut ui = Ui::new(FontDatabase::default(), self.themes.dark.clone());
+    fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
+        let mut ui = cx.new_ui();
         let content = ui
             .padding(ui.root(), Insets::all(24.0))
             .grow(1.0)
@@ -302,23 +202,19 @@ impl App for Gallery {
         ui.on_click(dark, |event| event.emit(Message::Theme(true)));
 
         let icons_row = ui.row(content).finish();
-        ui.add_widget(icons_row, IconView::new(icons::folder(), 24.0))
-            .map_err(io::Error::other)?;
-        ui.add_widget(icons_row, IconView::new(icons::settings(), 24.0))
-            .map_err(io::Error::other)?;
+        ui.add_widget(icons_row, IconView::new(icons::folder(), 24.0))?;
+        ui.add_widget(icons_row, IconView::new(icons::settings(), 24.0))?;
         ui.add_widget(
             icons_row,
             IconButton::labelled(icons::save(), "Save", Message::Save),
-        )
-        .map_err(io::Error::other)?;
+        )?;
 
         let typography = FormSection::new(
             &mut ui,
             content,
             "Typography",
             Some("Type scale and foreground tokens"),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let heading = ui.label(typography.content, "Heading 15 semibold").finish();
         ui.label(typography.content, "Body 13 regular").finish();
         let caption = ui.label(typography.content, "Caption 11").finish();
@@ -334,24 +230,20 @@ impl App for Gallery {
             content,
             "Buttons",
             Some("Command-button states and a destructive action"),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let button_row = ui.row(buttons.content).finish();
         ui.add_widget(
             button_row,
             CommandButton::new("Normal", Message::Pressed("Normal")),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         ui.add_widget(
             button_row,
             CommandButton::new("Disabled", Message::Pressed("Disabled")).enabled(false),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         ui.add_widget(
             button_row,
             CommandButton::new("Checked", Message::Pressed("Checked")).checked(true),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let destructive = ui.button(button_row, "Delete").finish();
         ui.on_click(destructive, |event| event.emit(Message::Pressed("Delete")));
 
@@ -360,8 +252,7 @@ impl App for Gallery {
             content,
             "Editor essentials",
             Some("Keyboard-accessible retained controls"),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let radio = RadioGroup::new(
             &mut ui,
             form.content,
@@ -375,8 +266,7 @@ impl App for Gallery {
             ],
             Some(0),
             Message::Radio,
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let combo = ComboBox::new(
             &mut ui,
             form.content,
@@ -399,8 +289,7 @@ impl App for Gallery {
                 },
             ],
             Some(1),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let number = NumericField::new(
             &mut ui,
             form.content,
@@ -412,16 +301,14 @@ impl App for Gallery {
                 decimals: 2,
             },
             Message::Number,
-        )
-        .map_err(io::Error::other)?;
+        )?;
 
         let inputs = FormSection::new(
             &mut ui,
             content,
             "Inputs",
             Some("Field, checkbox, and slider tokens"),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let field = ui
             .text_field(inputs.content, "Editable text")
             .width(px(240.0))
@@ -444,14 +331,13 @@ impl App for Gallery {
             content,
             "Overlays",
             Some("Floating surfaces with real gaussian shadows"),
-        )
-        .map_err(io::Error::other)?;
+        )?;
         let overlay_row = ui.row(overlays.content).finish();
         let show_dialog = ui.button(overlay_row, "Show dialog").finish();
         ui.on_click(show_dialog, |event| event.emit(Message::ShowDialog));
         let push_toast = ui.button(overlay_row, "Push toast").finish();
         ui.on_click(push_toast, |event| event.emit(Message::PushToast));
-        let toast_host = ToastHost::new(&mut ui).map_err(io::Error::other)?;
+        let toast_host = ToastHost::new(&mut ui)?;
 
         let status = ui.label(content, "Ready").finish();
 
@@ -464,84 +350,102 @@ impl App for Gallery {
             destructive,
             sections: [typography, buttons, form, inputs, overlays],
         };
-        apply_styles(&mut ui, &styled).map_err(io::Error::other)?;
+        apply_styles(&mut ui, &styled)?;
 
-        let host = WindowHost::open(
-            context,
-            &self.graphics,
-            ui,
-            WindowHostOptions {
-                window: WindowAttributes {
-                    title: "RXUI design gallery".into(),
-                    inner_size: Some(Size::new(720.0, 760.0)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )
-        .map_err(io::Error::other)?;
         self.radio = Some(radio);
         self.combo = Some(combo);
         self.number = Some(number);
         self.status = Some(status);
         self.styled = Some(styled);
         self.toast_host = Some(toast_host);
-        self.host = Some(host);
+        cx.open_window(
+            WindowConfig::new("RXUI design gallery").size(720.0, 760.0),
+            ui,
+        )?;
         Ok(())
     }
 
-    fn window_event(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        id: WindowId,
-        event: WindowEvent,
-    ) -> Result<(), Self::Error> {
-        let Some(host) = &mut self.host else {
-            return Ok(());
-        };
-        let update = host
-            .handle_event(&context.clipboard(), &event)
-            .map_err(io::Error::other)?;
-        if update.close_requested {
-            context.unregister_window(id);
-            self.host = None;
-            context.exit();
-            return Ok(());
-        }
-        let messages = host.drain_messages().collect::<Vec<_>>();
-        for message in messages {
-            self.apply(context, message)?;
-        }
-        if update.redraw
-            || self
-                .host
-                .as_ref()
-                .is_some_and(|host| host.ui().needs_redraw())
-        {
-            context.invalidate_window(id);
-        }
-        Ok(())
-    }
-
-    fn redraw(
-        &mut self,
-        _context: &mut AppContext<'_, '_, Self>,
-        _window: WindowId,
-    ) -> Result<(), Self::Error> {
-        if let Some(host) = &mut self.host {
-            host.redraw().map_err(io::Error::other)?;
+    fn update(&mut self, cx: &mut AppCx<'_, Message>, message: Message) -> rxui::Result<()> {
+        match message {
+            Message::Theme(dark) => {
+                let styled = self.styled.expect("styled exists");
+                let theme = if dark {
+                    self.themes.dark.clone()
+                } else {
+                    self.themes.light.clone()
+                };
+                let ui = cx.source_ui()?;
+                ui.set_theme(theme);
+                // Color overrides snapshot the theme, so re-apply them.
+                apply_styles(ui, &styled)?;
+                self.set_status(cx, if dark { "Dark theme" } else { "Light theme" })?;
+            }
+            Message::Radio(index) => {
+                let ui = cx.source_ui()?;
+                self.radio
+                    .as_ref()
+                    .expect("radio exists")
+                    .set_selected(ui, Some(index))?;
+                self.set_status(cx, format!("Radio option {} selected", index + 1))?;
+            }
+            Message::Combo(index) => {
+                let ui = cx.source_ui()?;
+                self.combo
+                    .as_mut()
+                    .expect("combo exists")
+                    .set_selected(ui, Some(index))?;
+                self.set_status(cx, format!("Combo option {} selected", index + 1))?;
+            }
+            Message::Number(value) => {
+                let ui = cx.source_ui()?;
+                self.number
+                    .as_ref()
+                    .expect("number exists")
+                    .set_value(ui, value)?;
+                self.set_status(cx, format!("Numeric value: {value:.2}"))?;
+            }
+            Message::Save => self.set_status(cx, "Save icon button activated")?,
+            Message::Pressed(name) => self.set_status(cx, format!("{name} button activated"))?,
+            Message::Text(value) => self.set_status(cx, format!("Text: {value}"))?,
+            Message::Toggle(on) => {
+                self.set_status(cx, if on { "Snapping on" } else { "Snapping off" })?;
+            }
+            Message::Slide(value) => self.set_status(cx, format!("Slider value: {value:.0}"))?,
+            Message::ShowDialog => self.open_dialog(cx)?,
+            Message::ConfirmDialog => {
+                self.dialogs.close(cx.source_ui()?)?;
+                self.set_status(cx, "Dialog confirmed")?;
+            }
+            Message::CancelDialog => {
+                self.dialogs.close(cx.source_ui()?)?;
+                self.set_status(cx, "Dialog cancelled")?;
+            }
+            Message::PushToast => self.notify(
+                cx,
+                Toast::new(
+                    ToastLevel::Success,
+                    "Toast pushed",
+                    "Toasts float on the overlay surface with the theme shadow.",
+                ),
+            )?,
+            Message::Dismiss(id) => {
+                self.toast_queue.dismiss(id, cx.now());
+                self.sync_toasts(cx)?;
+            }
+            Message::ExpireToasts => {
+                self.toast_queue.expire(cx.now());
+                self.sync_toasts(cx)?;
+            }
         }
         Ok(())
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
-        Gallery::new(),
-        RuntimeConfig::default(),
-    )))
-    .map(|_| ())
+fn main() -> MainResult {
+    let gallery = Gallery::new();
+    let theme = gallery.themes.dark.clone();
+    run_with(gallery, AppConfig::default().theme(theme))
 }
 
 #[cfg(target_arch = "wasm32")]
