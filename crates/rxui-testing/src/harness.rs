@@ -11,7 +11,10 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU8, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -21,9 +24,12 @@ use astrelis_platform::{
 };
 use astrelis_ui_core::{SemanticAction, SemanticNode, SemanticRole};
 use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database};
+#[cfg(not(target_arch = "wasm32"))]
+use rxui_app::TaskSpawnError;
 use rxui_app::{
     App, AppBackend, AppCx, Clipboard, CloseResponse, Error, MessageKey, MessageProxy, Monitor,
-    ProxyClosed, Result, RuntimePolicy, Theme, TimerId, Ui, WindowConfig, WindowHost, WindowId,
+    ProxyClosed, Result, RuntimePolicy, TaskCompletionStatus, TaskId, TaskMessageFactory, TaskSink,
+    Theme, TimerId, Ui, WindowConfig, WindowHost, WindowId,
 };
 
 use crate::deterministic_theme;
@@ -35,6 +41,11 @@ const MAX_POSTED_PASSES: usize = 8;
 /// Default logical viewport applied to windows opened without an explicit
 /// size, matching [`UiHarness`]'s conventional deterministic viewport.
 const DEFAULT_VIEWPORT: (f64, f64) = (800.0, 600.0);
+
+const TASK_PENDING: u8 = 0;
+const TASK_COMPLETION_QUEUED: u8 = 1;
+const TASK_CANCELLED: u8 = 2;
+const TASK_FINISHED: u8 = 3;
 
 /// In-memory clipboard backing [`AppCx::clipboard`] in the harness.
 #[derive(Debug, Default)]
@@ -76,6 +87,31 @@ struct TimerEntry<M> {
     id: TimerId,
     due: Duration,
     kind: TimerKind<M>,
+}
+
+enum TaskEvent<M> {
+    Complete {
+        id: TaskId,
+        state: Arc<AtomicU8>,
+        factory: TaskMessageFactory<M>,
+    },
+    Abandon {
+        id: TaskId,
+        state: Arc<AtomicU8>,
+    },
+}
+
+enum ExternalEvent<M> {
+    Message(M),
+    Task(TaskEvent<M>),
+}
+
+type TaskEventQueue<M> = Arc<Mutex<VecDeque<(u64, TaskEvent<M>)>>>;
+
+struct HeadlessTask {
+    state: Arc<AtomicU8>,
+    #[cfg(not(target_arch = "wasm32"))]
+    blocking: Option<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 struct PostedMessage<M> {
@@ -143,7 +179,10 @@ struct HeadlessBackend<M: 'static> {
     theme: Theme,
     slots: Vec<(WindowId, Ui<M>)>,
     posted: PostedQueue<M>,
-    proxied: Arc<Mutex<VecDeque<M>>>,
+    proxied: Arc<Mutex<VecDeque<(u64, M)>>>,
+    task_events: TaskEventQueue<M>,
+    external_sequence: Arc<AtomicU64>,
+    tasks: HashMap<TaskId, HeadlessTask>,
     timers: Vec<TimerEntry<M>>,
     now: Duration,
     epoch: Instant,
@@ -153,6 +192,7 @@ struct HeadlessBackend<M: 'static> {
     exited: bool,
     next_window: u64,
     next_timer: u64,
+    next_task: u64,
 }
 
 impl<M: 'static> HeadlessBackend<M> {
@@ -162,6 +202,9 @@ impl<M: 'static> HeadlessBackend<M> {
             slots: Vec::new(),
             posted: PostedQueue::default(),
             proxied: Arc::new(Mutex::new(VecDeque::new())),
+            task_events: Arc::new(Mutex::new(VecDeque::new())),
+            external_sequence: Arc::new(AtomicU64::new(1)),
+            tasks: HashMap::new(),
             timers: Vec::new(),
             now: Duration::ZERO,
             epoch: Instant::now(),
@@ -171,6 +214,7 @@ impl<M: 'static> HeadlessBackend<M> {
             exited: false,
             next_window: 1,
             next_timer: 1,
+            next_task: 1,
         }
     }
 
@@ -186,6 +230,28 @@ impl<M: 'static> HeadlessBackend<M> {
         let timer = TimerId::from_raw(self.next_timer);
         self.next_timer += 1;
         timer
+    }
+
+    fn register_task_state(&mut self) -> (TaskId, Arc<AtomicU8>) {
+        let task = TaskId::from_raw(self.next_task);
+        self.next_task += 1;
+        let state = Arc::new(AtomicU8::new(TASK_PENDING));
+        self.tasks.insert(
+            task,
+            HeadlessTask {
+                state: Arc::clone(&state),
+                #[cfg(not(target_arch = "wasm32"))]
+                blocking: None,
+            },
+        );
+        (task, state)
+    }
+
+    fn cancel_all_tasks(&mut self) {
+        for task in self.tasks.values() {
+            task.state.store(TASK_CANCELLED, Ordering::Release);
+        }
+        self.tasks.clear();
     }
 }
 
@@ -265,10 +331,95 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         M: Send,
     {
         let queue = Arc::clone(&self.proxied);
+        let sequence = Arc::clone(&self.external_sequence);
         MessageProxy::from_fn(move |message| {
-            queue.lock().map_err(|_| ProxyClosed)?.push_back(message);
+            let order = sequence.fetch_add(1, Ordering::Relaxed);
+            queue
+                .lock()
+                .map_err(|_| ProxyClosed)?
+                .push_back((order, message));
             Ok(())
         })
+    }
+
+    fn register_task(&mut self) -> TaskSink<M> {
+        let (task, state) = self.register_task_state();
+
+        let submit_events = Arc::clone(&self.task_events);
+        let submit_sequence = Arc::clone(&self.external_sequence);
+        let submit_state = Arc::clone(&state);
+        let submit = Box::new(move |factory: TaskMessageFactory<M>| {
+            if submit_state
+                .compare_exchange(
+                    TASK_PENDING,
+                    TASK_COMPLETION_QUEUED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return Ok(TaskCompletionStatus::Cancelled);
+            }
+            let order = submit_sequence.fetch_add(1, Ordering::Relaxed);
+            submit_events.lock().map_err(|_| ProxyClosed)?.push_back((
+                order,
+                TaskEvent::Complete {
+                    id: task,
+                    state: Arc::clone(&submit_state),
+                    factory,
+                },
+            ));
+            Ok(TaskCompletionStatus::Queued)
+        });
+
+        let abandon_events = Arc::clone(&self.task_events);
+        let abandon_sequence = Arc::clone(&self.external_sequence);
+        let abandon_state = Arc::clone(&state);
+        let abandon = Box::new(move || {
+            if abandon_state
+                .compare_exchange(
+                    TASK_PENDING,
+                    TASK_CANCELLED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return Ok(());
+            }
+            let order = abandon_sequence.fetch_add(1, Ordering::Relaxed);
+            abandon_events.lock().map_err(|_| ProxyClosed)?.push_back((
+                order,
+                TaskEvent::Abandon {
+                    id: task,
+                    state: Arc::clone(&abandon_state),
+                },
+            ));
+            Ok(())
+        });
+
+        TaskSink::new(task, submit, abandon)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn enqueue_blocking(
+        &mut self,
+        task: TaskId,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> std::result::Result<(), TaskSpawnError> {
+        let Some(entry) = self.tasks.get_mut(&task) else {
+            return Err(TaskSpawnError::WorkerUnavailable);
+        };
+        entry.blocking = Some(job);
+        Ok(())
+    }
+
+    fn cancel_task(&mut self, task: TaskId) -> bool {
+        let Some(entry) = self.tasks.remove(&task) else {
+            return false;
+        };
+        entry.state.store(TASK_CANCELLED, Ordering::Release);
+        true
     }
 
     fn set_timeout(&mut self, delay: Duration, factory: Box<dyn FnOnce() -> M>) -> TimerId {
@@ -323,6 +474,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
 
     fn exit(&mut self) {
         self.exited = true;
+        self.cancel_all_tasks();
     }
 }
 
@@ -426,7 +578,7 @@ impl<A: App> AppHarness<A> {
             .app
             .build(&mut AppCx::new(&mut harness.backend, None))?;
         flush_posted(&mut harness.app, &mut harness.backend)?;
-        harness.pump_proxied()?;
+        harness.pump_external()?;
         Ok(harness)
     }
 
@@ -464,6 +616,46 @@ impl<A: App> AppHarness<A> {
     /// latest-value posts since this harness was created.
     pub fn coalesced_replacement_count(&self) -> u64 {
         self.backend.posted.replacements
+    }
+
+    /// Returns active task identifiers in creation order.
+    pub fn pending_task_ids(&self) -> Vec<TaskId> {
+        let mut tasks: Vec<_> = self.backend.tasks.keys().copied().collect();
+        tasks.sort_by_key(|task| task.raw());
+        tasks
+    }
+
+    /// Completes one active task with an injected application message.
+    ///
+    /// This bypasses an externally owned executor and lets a test choose task
+    /// completion order. Returns `false` when the task is no longer active.
+    pub fn complete_task(&mut self, task: TaskId, message: A::Message) -> Result<bool> {
+        let Some(entry) = self.backend.tasks.remove(&task) else {
+            return Ok(false);
+        };
+        entry.state.store(TASK_FINISHED, Ordering::Release);
+        dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+        self.pump_external()?;
+        Ok(true)
+    }
+
+    /// Runs one recorded [`AppCx::spawn_blocking`] job synchronously.
+    ///
+    /// No worker thread is created. Returns `false` when the task is not an
+    /// active queued blocking job.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn run_blocking_task(&mut self, task: TaskId) -> Result<bool> {
+        let Some(job) = self
+            .backend
+            .tasks
+            .get_mut(&task)
+            .and_then(|entry| entry.blocking.take())
+        else {
+            return Ok(false);
+        };
+        job();
+        self.pump_external()?;
+        Ok(true)
     }
 
     /// Returns a window's retained UI tree for direct inspection or setup.
@@ -506,14 +698,14 @@ impl<A: App> AppHarness<A> {
         ui.perform_semantic_action(id, action)?;
         let messages: Vec<_> = ui.drain_messages().collect();
         dispatch_batch(&mut self.app, &mut self.backend, Some(window), messages)?;
-        self.pump_proxied()
+        self.pump_external()
     }
 
     /// Dispatches one message through [`App::update`] with no source window,
     /// the path a [`MessageProxy`] or external event takes.
     pub fn post(&mut self, message: A::Message) -> Result<()> {
         dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
-        self.pump_proxied()
+        self.pump_external()
     }
 
     /// Delivers a user-initiated close request to a window.
@@ -537,8 +729,9 @@ impl<A: App> AppHarness<A> {
         flush_posted(&mut self.app, &mut self.backend)?;
         if self.backend.exit_on_last_window_close && self.backend.slots.is_empty() {
             self.backend.exited = true;
+            self.backend.cancel_all_tasks();
         }
-        self.pump_proxied()
+        self.pump_external()
     }
 
     /// Advances the virtual clock, firing every timer that becomes due.
@@ -598,7 +791,7 @@ impl<A: App> AppHarness<A> {
                 }
             }
         }
-        self.pump_proxied()
+        self.pump_external()
     }
 
     /// Captures a window's semantic, inspection, and display-list snapshots
@@ -638,19 +831,68 @@ impl<A: App> AppHarness<A> {
             .expect("clipboard lock poisoned") = Some(text.into());
     }
 
-    /// Dispatches messages queued through [`AppCx::proxy`] handles, with the
-    /// same bounded re-drain as posted messages.
-    fn pump_proxied(&mut self) -> Result<()> {
+    /// Dispatches proxy messages and task events in submission order, with
+    /// the same bounded re-drain as posted messages.
+    fn pump_external(&mut self) -> Result<()> {
         for _ in 0..MAX_POSTED_PASSES {
-            let batch: Vec<_> = {
+            let proxied: Vec<_> = {
                 let mut queue = self.backend.proxied.lock().expect("proxy queue poisoned");
                 queue.drain(..).collect()
             };
+            let tasks: Vec<_> = {
+                let mut queue = self
+                    .backend
+                    .task_events
+                    .lock()
+                    .expect("task event queue poisoned");
+                queue.drain(..).collect()
+            };
+            let mut batch: Vec<_> = proxied
+                .into_iter()
+                .map(|(order, message)| (order, ExternalEvent::Message(message)))
+                .chain(
+                    tasks
+                        .into_iter()
+                        .map(|(order, event)| (order, ExternalEvent::Task(event))),
+                )
+                .collect();
             if batch.is_empty() {
                 return Ok(());
             }
-            for message in batch {
-                dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+            batch.sort_by_key(|(order, _)| *order);
+            for (_, event) in batch {
+                match event {
+                    ExternalEvent::Message(message) => {
+                        dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+                    }
+                    ExternalEvent::Task(TaskEvent::Complete { id, state, factory }) => {
+                        let active = self
+                            .backend
+                            .tasks
+                            .get(&id)
+                            .is_some_and(|entry| Arc::ptr_eq(&entry.state, &state));
+                        if active && state.load(Ordering::Acquire) == TASK_COMPLETION_QUEUED {
+                            self.backend.tasks.remove(&id);
+                            state.store(TASK_FINISHED, Ordering::Release);
+                            dispatch_batch(
+                                &mut self.app,
+                                &mut self.backend,
+                                None,
+                                vec![factory()],
+                            )?;
+                        }
+                    }
+                    ExternalEvent::Task(TaskEvent::Abandon { id, state }) => {
+                        let active = self
+                            .backend
+                            .tasks
+                            .get(&id)
+                            .is_some_and(|entry| Arc::ptr_eq(&entry.state, &state));
+                        if active {
+                            self.backend.tasks.remove(&id);
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -676,7 +918,9 @@ mod tests {
     use std::{collections::HashMap, rc::Rc, thread};
 
     use astrelis_ui_core::{ElementHandle, EventFilter, Label};
-    use rxui_app::MessageMapper;
+    #[cfg(not(target_arch = "wasm32"))]
+    use rxui_app::TaskError;
+    use rxui_app::{MessageMapper, TaskCompletion};
 
     use super::*;
 
@@ -937,6 +1181,10 @@ mod tests {
         ScheduleNested,
         ScheduleLatestBurst,
         Latest(u32),
+        #[cfg(not(target_arch = "wasm32"))]
+        ScheduleBlocking,
+        #[cfg(not(target_arch = "wasm32"))]
+        Blocking(u32),
         Child(ChildMsg),
         GrabProxy,
         Proxied,
@@ -1023,6 +1271,18 @@ mod tests {
                 }
                 LocalMsg::Latest(value) => {
                     self.log.push((format!("latest:{value}"), source));
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                LocalMsg::ScheduleBlocking => {
+                    cx.spawn_blocking(
+                        || 41_u32,
+                        |result| LocalMsg::Blocking(result.expect("worker succeeds") + 1),
+                    )
+                    .expect("blocking task queues");
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                LocalMsg::Blocking(value) => {
+                    self.log.push((format!("blocking:{value}"), source));
                 }
                 LocalMsg::Child(ChildMsg::Ping) => self.log.push(("child".into(), source)),
                 LocalMsg::GrabProxy => self.proxy = Some(cx.proxy()),
@@ -1130,6 +1390,19 @@ mod tests {
         assert_eq!(harness.app().log, [("latest:1000".into(), None)]);
         assert_eq!(harness.pending_posted_count(), 0);
         assert_eq!(harness.coalesced_replacement_count(), 999);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mapped_blocking_task_delivers_without_a_source_window() {
+        let mut harness = mapped_harness();
+        harness
+            .post(RootMsg::Feature(LocalMsg::ScheduleBlocking))
+            .expect("blocking task schedules");
+        let task = harness.pending_task_ids()[0];
+        assert!(harness.run_blocking_task(task).expect("blocking task runs"));
+        assert_eq!(harness.app().log, [("blocking:42".into(), None)]);
+        assert!(harness.pending_task_ids().is_empty());
     }
 
     #[test]
@@ -1257,6 +1530,184 @@ mod tests {
             .expect("proxy thread joins");
         harness.advance(Duration::ZERO).expect("proxy pumps");
         assert_eq!(harness.app().log, [("proxied".into(), None)]);
+    }
+
+    enum TaskMsg {
+        #[cfg(not(target_arch = "wasm32"))]
+        StartBlocking,
+        #[cfg(not(target_arch = "wasm32"))]
+        StartPanicking,
+        StartExternal,
+        DropExternal,
+        #[cfg(not(target_arch = "wasm32"))]
+        Cancel(TaskId),
+        #[cfg(not(target_arch = "wasm32"))]
+        Exit,
+        Delivered(Rc<String>),
+    }
+
+    #[derive(Default)]
+    struct TaskFixture {
+        completions: Vec<TaskCompletion<u32>>,
+        log: Vec<String>,
+        last_source: Option<WindowId>,
+    }
+
+    impl App for TaskFixture {
+        type Message = TaskMsg;
+
+        fn build(&mut self, _cx: &mut AppCx<'_, TaskMsg>) -> Result<()> {
+            Ok(())
+        }
+
+        fn update(&mut self, cx: &mut AppCx<'_, TaskMsg>, message: TaskMsg) -> Result<()> {
+            match message {
+                #[cfg(not(target_arch = "wasm32"))]
+                TaskMsg::StartBlocking => {
+                    cx.spawn_blocking(
+                        || 7_u32,
+                        |result| {
+                            TaskMsg::Delivered(Rc::new(
+                                result.expect("worker succeeds").to_string(),
+                            ))
+                        },
+                    )
+                    .expect("blocking task queues");
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                TaskMsg::StartPanicking => {
+                    cx.spawn_blocking(
+                        || -> u32 { panic!("private panic payload") },
+                        |result| {
+                            let text = match result {
+                                Ok(value) => value.to_string(),
+                                Err(TaskError::Panicked) => "panicked".into(),
+                                Err(_) => "task error".into(),
+                            };
+                            TaskMsg::Delivered(Rc::new(text))
+                        },
+                    )
+                    .expect("panicking task queues");
+                }
+                TaskMsg::StartExternal => {
+                    self.completions.push(cx.register_task(|value: u32| {
+                        TaskMsg::Delivered(Rc::new(value.to_string()))
+                    }));
+                }
+                TaskMsg::DropExternal => self.completions.clear(),
+                #[cfg(not(target_arch = "wasm32"))]
+                TaskMsg::Cancel(task) => {
+                    self.log.push(format!("cancelled:{}", cx.cancel_task(task)));
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                TaskMsg::Exit => cx.exit(),
+                TaskMsg::Delivered(value) => {
+                    self.last_source = cx.source_window();
+                    self.log.push((*value).clone());
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn task_harness() -> AppHarness<TaskFixture> {
+        AppHarness::new(TaskFixture::default()).expect("task fixture builds")
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn blocking_tasks_create_non_send_messages_on_the_ui_thread() {
+        let mut harness = task_harness();
+        harness
+            .post(TaskMsg::StartBlocking)
+            .expect("blocking task schedules");
+        let task = harness.pending_task_ids()[0];
+        assert!(harness.run_blocking_task(task).expect("task runs"));
+        assert_eq!(harness.app().log, ["7"]);
+        assert_eq!(harness.app().last_source, None);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn blocking_panics_become_typed_task_errors() {
+        let mut harness = task_harness();
+        harness
+            .post(TaskMsg::StartPanicking)
+            .expect("panicking task schedules");
+        let task = harness.pending_task_ids()[0];
+        assert!(harness.run_blocking_task(task).expect("task runs"));
+        assert_eq!(harness.app().log, ["panicked"]);
+    }
+
+    #[test]
+    fn external_completion_and_abandonment_are_deterministic() {
+        let mut harness = task_harness();
+        harness
+            .post(TaskMsg::StartExternal)
+            .expect("external task registers");
+        let completion = harness
+            .app_mut()
+            .completions
+            .pop()
+            .expect("completion exists");
+        assert_eq!(
+            completion.complete(9).expect("runtime remains open"),
+            TaskCompletionStatus::Queued
+        );
+        harness.advance(Duration::ZERO).expect("completion pumps");
+        assert_eq!(harness.app().log, ["9"]);
+
+        harness
+            .post(TaskMsg::StartExternal)
+            .expect("second task registers");
+        assert_eq!(harness.pending_task_ids().len(), 1);
+        harness
+            .post(TaskMsg::DropExternal)
+            .expect("completion drops");
+        assert!(harness.pending_task_ids().is_empty());
+    }
+
+    #[test]
+    fn harness_can_complete_tasks_in_a_chosen_order() {
+        let mut harness = task_harness();
+        harness
+            .post(TaskMsg::StartExternal)
+            .expect("first task registers");
+        harness
+            .post(TaskMsg::StartExternal)
+            .expect("second task registers");
+        let tasks = harness.pending_task_ids();
+        assert!(
+            harness
+                .complete_task(tasks[1], TaskMsg::Delivered(Rc::new("second".into())))
+                .expect("second task completes")
+        );
+        assert!(
+            harness
+                .complete_task(tasks[0], TaskMsg::Delivered(Rc::new("first".into())))
+                .expect("first task completes")
+        );
+        assert_eq!(harness.app().log, ["second", "first"]);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cancellation_and_exit_suppress_task_delivery() {
+        let mut harness = task_harness();
+        harness
+            .post(TaskMsg::StartBlocking)
+            .expect("blocking task registers");
+        let task = harness.pending_task_ids()[0];
+        harness.post(TaskMsg::Cancel(task)).expect("task cancels");
+        assert_eq!(harness.app().log, ["cancelled:true"]);
+        assert!(!harness.run_blocking_task(task).expect("task is gone"));
+
+        harness
+            .post(TaskMsg::StartExternal)
+            .expect("external task registers");
+        harness.post(TaskMsg::Exit).expect("app exits");
+        assert!(harness.exited());
+        assert!(harness.pending_task_ids().is_empty());
     }
 
     #[test]

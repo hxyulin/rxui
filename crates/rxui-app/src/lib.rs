@@ -21,9 +21,12 @@ pub use runner::spawn_on_canvas;
 pub use runner::{
     App, AppBackend, AppConfig, AppCx, Clipboard, CloseResponse, FixedStep, FontDatabaseOptions,
     Instant, MainResult, MessageKey, MessageProxy, Monitor, ProxyClosed, RunError, RuntimeConfig,
-    RuntimePolicy, Theme, TimerId, Ui, UpdateInfo, WindowAttributes, WindowConfig, WindowEvent,
+    RuntimePolicy, TaskCompletion, TaskCompletionStatus, TaskConfig, TaskError, TaskId,
+    TaskSpawnError, Theme, TimerId, Ui, UpdateInfo, WindowAttributes, WindowConfig, WindowEvent,
     WindowId,
 };
+#[doc(hidden)]
+pub use runner::{TaskAbandon, TaskMessageFactory, TaskSink, TaskSubmit};
 #[cfg(not(target_arch = "wasm32"))]
 pub use runner::{run, run_with};
 pub use state::{

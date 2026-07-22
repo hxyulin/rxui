@@ -220,6 +220,59 @@ without invoking it, and neither the message nor the factory needs to be
 the same way as the production event loop: one interval delivery per
 `advance`, followed by a deadline strictly after the advanced time.
 
+## Deliver finite background work as tasks
+
+RXUI owns task identity, cancellation, and result delivery without requiring
+an async runtime. Register a one-shot completion and move it into the executor
+already used by your application:
+
+```rust
+let completion = cx.register_task(Message::DocumentLoaded);
+let task = completion.id();
+
+executor.spawn(async move {
+    let result = load_document().await;
+    let _ = completion.complete(result);
+});
+```
+
+`TaskCompletion` is one-shot. Dropping it before completion abandons the task;
+calling `cx.cancel_task(task)` suppresses a late result. Cancellation does not
+forcibly abort an external future, so combine `TaskId` with the executor's own
+abort handle when stopping the underlying work matters.
+
+The completed value and mapping closure are `Send` because they cross the
+runtime wakeup bridge. The future itself may remain non-`Send` in a browser
+`spawn_local`, and the application message need not be `Send`: RXUI invokes
+the mapper and constructs that message on the event-loop thread. Mapped
+contexts automatically wrap the resulting feature-local message.
+
+On native targets, finite filesystem, decoding, and similar blocking work can
+use the application-owned bounded pool:
+
+```rust
+let task = cx.spawn_blocking(
+    move || std::fs::read(path),
+    |result| Message::DocumentLoaded(result),
+)?;
+```
+
+The mapper receives `Result<Output, TaskError>`, where a caught worker panic is
+reported as `TaskError::Panicked` without exposing its payload. Pool saturation
+or worker startup failure is returned immediately as `TaskSpawnError`.
+Configure worker and waiting-queue bounds by passing a customized `TaskConfig`
+to `AppConfig::tasks`; defaults use one to four workers based on available
+parallelism and a 64-job waiting queue.
+
+Tasks are application-scoped and their messages have no source window. Closing
+one window does not cancel them; a window-owned feature should cancel its IDs
+from `window_closed`. Application shutdown cancels all active task delivery,
+and running blocking code is allowed to finish without delaying shutdown.
+
+`AppHarness` records work instead of creating threads. Use
+`pending_task_ids`, `run_blocking_task`, and `complete_task` to select completion
+order deterministically.
+
 ## Choose the smallest architecture that works
 
 Feature enums and mapped contexts are optional. Keep a single root `match`

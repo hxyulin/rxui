@@ -17,6 +17,9 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 - Hierarchical feature-message mapping, keyed latest-value queue coalescing,
   delayed timeout factories, and deterministic timer behavior shared by the
   native/browser runners and headless application harness.
+- Runtime-neutral cancellable task completions and a configurable, bounded
+  native blocking pool, with deterministic chosen-order task completion in
+  the application harness.
 - An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
   error, removing `map_err` glue from application code.
 - Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,

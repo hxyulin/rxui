@@ -20,6 +20,7 @@ enum Message {
     FilePicked(Result<Option<SelectedFile>, ServiceError>),
     Saved(Result<Option<SavedFile>, ServiceError>),
     Reload(PathBuf),
+    Reloaded(Result<Option<SelectedFile>, ServiceError>),
 }
 
 struct WorkflowStudio {
@@ -32,6 +33,7 @@ struct WorkflowStudio {
     status: Option<ElementHandle<Label>>,
     watcher: Option<FileWatcher>,
     live_timer: Option<TimerId>,
+    reload_task: Option<TaskId>,
     next_sample: u64,
     next_edge: u64,
 }
@@ -48,6 +50,7 @@ impl WorkflowStudio {
             status: None,
             watcher: None,
             live_timer: None,
+            reload_task: None,
             next_sample: 1_009,
             next_edge: 10_000,
         }
@@ -403,31 +406,54 @@ impl App for WorkflowStudio {
             }
             Message::Saved(Ok(None)) => self.set_status(cx, "Export cancelled")?,
             Message::Saved(Err(error)) => self.set_status(cx, format!("Export failed: {error}"))?,
-            Message::Reload(path) => reload(path, cx.proxy()),
+            Message::Reload(path) => {
+                if let Some(task) = self.reload_task.take() {
+                    cx.cancel_task(task);
+                }
+                self.set_status(cx, format!("Reloading {}…", path.display()))?;
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let read_path = path.clone();
+                    match cx.spawn_blocking(
+                        move || std::fs::read(read_path),
+                        move |outcome| {
+                            let result = match outcome {
+                                Ok(Ok(bytes)) => Ok(Some(SelectedFile {
+                                    name: path.file_name().map_or_else(
+                                        || path.display().to_string(),
+                                        |name| name.to_string_lossy().into_owned(),
+                                    ),
+                                    bytes: bytes.into(),
+                                    path: Some(path),
+                                })),
+                                Ok(Err(error)) => Err(ServiceError::Backend(error.to_string())),
+                                Err(error) => Err(ServiceError::Backend(error.to_string())),
+                            };
+                            Message::Reloaded(result)
+                        },
+                    ) {
+                        Ok(task) => self.reload_task = Some(task),
+                        Err(error) => {
+                            self.set_status(cx, format!("Could not queue reload: {error}"))?;
+                        }
+                    }
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                self.set_status(cx, "Native file reload is unavailable in the browser")?;
+            }
+            Message::Reloaded(result) => {
+                self.reload_task = None;
+                match result {
+                    Ok(Some(selected)) => self.import_file(cx, selected)?,
+                    Ok(None) => self.set_status(cx, "Reload cancelled")?,
+                    Err(error) => self.set_status(cx, format!("Reload failed: {error}"))?,
+                }
+            }
         }
         Ok(())
     }
-}
-
-fn reload(path: PathBuf, proxy: MessageProxy<Message>) {
-    #[cfg(not(target_arch = "wasm32"))]
-    std::thread::spawn(move || {
-        let result = std::fs::read(&path)
-            .map(|bytes| {
-                Some(SelectedFile {
-                    name: path.file_name().map_or_else(
-                        || path.display().to_string(),
-                        |name| name.to_string_lossy().into_owned(),
-                    ),
-                    bytes: bytes.into(),
-                    path: Some(path),
-                })
-            })
-            .map_err(|error| ServiceError::Backend(error.to_string()));
-        let _ = proxy.post(Message::FilePicked(result));
-    });
-    #[cfg(target_arch = "wasm32")]
-    let _ = (path, proxy);
 }
 
 fn sample_graph() -> NodeGraphDocument<u64> {

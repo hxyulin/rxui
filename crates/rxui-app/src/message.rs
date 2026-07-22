@@ -8,9 +8,11 @@ use astrelis_ui_host::WindowHost;
 
 use crate::Result;
 use crate::runner::{
-    AppCx, Clipboard, MessageKey, MessageProxy, Monitor, RuntimePolicy, TimerId, WindowConfig,
-    WindowId,
+    AppCx, Clipboard, MessageKey, MessageProxy, Monitor, RuntimePolicy, TaskCompletion, TaskId,
+    TimerId, WindowConfig, WindowId,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::runner::{TaskError, TaskSpawnError};
 
 /// A cheap, retained mapping from a feature-local message to an application's
 /// root message.
@@ -209,6 +211,33 @@ impl<'a, Local: 'static, Root: 'static> MappedAppCx<'a, Local, Root> {
         let root = self.root.proxy();
         let mapper = self.mapper.clone();
         MessageProxy::from_fn(move |message| root.post(mapper.map(message)))
+    }
+
+    /// Registers a mapped task completed by an externally owned executor.
+    pub fn register_task<T: Send + 'static>(
+        &mut self,
+        map: impl FnOnce(T) -> Local + Send + 'static,
+    ) -> TaskCompletion<T> {
+        let mapper = self.mapper.clone();
+        self.root
+            .register_task(move |output| mapper.map(map(output)))
+    }
+
+    /// Runs mapped finite work on the native bounded blocking pool.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_blocking<T: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> T + Send + 'static,
+        map: impl FnOnce(std::result::Result<T, TaskError>) -> Local + Send + 'static,
+    ) -> std::result::Result<TaskId, TaskSpawnError> {
+        let mapper = self.mapper.clone();
+        self.root
+            .spawn_blocking(work, move |result| mapper.map(map(result)))
+    }
+
+    /// Cancels a task, returning whether it was still active.
+    pub fn cancel_task(&mut self, task: TaskId) -> bool {
+        self.root.cancel_task(task)
     }
 
     /// Schedules one mapped local message after a delay.

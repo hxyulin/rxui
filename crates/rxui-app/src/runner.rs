@@ -10,8 +10,21 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
     time::Duration,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{
+        Mutex,
+        mpsc::{self, SyncSender, TrySendError},
+    },
+    thread,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,6 +47,11 @@ pub use astrelis_ui_core::{Theme, Ui};
 /// Maximum passes over messages posted from [`App::update`] before the runner
 /// defers the remainder to the next event-loop turn.
 const MAX_POSTED_PASSES: usize = 8;
+
+const TASK_PENDING: u8 = 0;
+const TASK_COMPLETION_QUEUED: u8 = 1;
+const TASK_CANCELLED: u8 = 2;
+const TASK_FINISHED: u8 = 3;
 
 /// A runner-local identity used to replace an older pending message with its
 /// newest value.
@@ -225,6 +243,211 @@ impl TimerId {
     }
 }
 
+/// Stable identifier for one application-scoped background task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TaskId(u64);
+
+impl TaskId {
+    /// Wraps a raw identifier.
+    ///
+    /// Intended for alternative [`AppBackend`] implementations such as test
+    /// harnesses; runner-issued identifiers are unique per application run.
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Returns the raw identifier value.
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// Outcome of submitting a result through [`TaskCompletion::complete`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskCompletionStatus {
+    /// The result was accepted for event-loop delivery.
+    Queued,
+    /// The task had already been cancelled or abandoned.
+    Cancelled,
+}
+
+/// Failure raised while executing a blocking task body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TaskError {
+    /// The blocking closure panicked.
+    ///
+    /// Panic payloads are deliberately not exposed through application
+    /// messages because they may contain sensitive data.
+    Panicked,
+}
+
+impl fmt::Display for TaskError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Panicked => formatter.write_str("the blocking task panicked"),
+        }
+    }
+}
+
+impl std::error::Error for TaskError {}
+
+/// Failure to enqueue work on the native blocking-task pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TaskSpawnError {
+    /// The configured bounded waiting queue is full.
+    QueueFull,
+    /// The application could not initialize its worker threads.
+    WorkerUnavailable,
+}
+
+impl fmt::Display for TaskSpawnError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QueueFull => formatter.write_str("the blocking-task queue is full"),
+            Self::WorkerUnavailable => {
+                formatter.write_str("the blocking-task worker pool is unavailable")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TaskSpawnError {}
+
+/// Type-erased message factory transported from a worker to an app backend.
+#[doc(hidden)]
+pub type TaskMessageFactory<M> = Box<dyn FnOnce() -> M + Send + 'static>;
+/// Type-erased task submission callback used by custom app backends.
+#[doc(hidden)]
+pub type TaskSubmit<M> = Box<
+    dyn FnOnce(TaskMessageFactory<M>) -> std::result::Result<TaskCompletionStatus, ProxyClosed>
+        + Send
+        + 'static,
+>;
+/// Type-erased task abandonment callback used by custom app backends.
+#[doc(hidden)]
+pub type TaskAbandon = Box<dyn FnOnce() -> std::result::Result<(), ProxyClosed> + Send + 'static>;
+type TaskFinish<T> = Box<
+    dyn FnOnce(Option<T>) -> std::result::Result<TaskCompletionStatus, ProxyClosed>
+        + Send
+        + 'static,
+>;
+
+/// Backend completion channel used to implement [`AppCx::register_task`].
+///
+/// This is public only for custom [`AppBackend`] implementations and is not
+/// part of RXUI's stable application-facing API.
+#[doc(hidden)]
+pub struct TaskSink<M: 'static> {
+    id: TaskId,
+    submit: Option<TaskSubmit<M>>,
+    abandon: Option<TaskAbandon>,
+}
+
+impl<M: 'static> TaskSink<M> {
+    /// Creates a backend task sink.
+    #[doc(hidden)]
+    pub fn new(id: TaskId, submit: TaskSubmit<M>, abandon: TaskAbandon) -> Self {
+        Self {
+            id,
+            submit: Some(submit),
+            abandon: Some(abandon),
+        }
+    }
+
+    fn id(&self) -> TaskId {
+        self.id
+    }
+
+    fn complete(
+        mut self,
+        factory: TaskMessageFactory<M>,
+    ) -> std::result::Result<TaskCompletionStatus, ProxyClosed> {
+        self.abandon = None;
+        self.submit
+            .take()
+            .expect("a task sink is completed at most once")(factory)
+    }
+
+    fn abandon(mut self) -> std::result::Result<(), ProxyClosed> {
+        self.submit = None;
+        self.abandon
+            .take()
+            .expect("a task sink is abandoned at most once")()
+    }
+}
+
+impl<M: 'static> Drop for TaskSink<M> {
+    fn drop(&mut self) {
+        if let Some(abandon) = self.abandon.take() {
+            let _ = abandon();
+        }
+    }
+}
+
+impl<M: 'static> fmt::Debug for TaskSink<M> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TaskSink")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One-shot bridge from an externally owned executor into the RXUI message
+/// queue.
+///
+/// Dropping an incomplete value abandons the registered task. Completing a
+/// cancelled task is harmless and reports [`TaskCompletionStatus::Cancelled`].
+pub struct TaskCompletion<T> {
+    id: TaskId,
+    finish: Option<TaskFinish<T>>,
+}
+
+impl<T> TaskCompletion<T> {
+    fn new(
+        id: TaskId,
+        finish: impl FnOnce(Option<T>) -> std::result::Result<TaskCompletionStatus, ProxyClosed>
+        + Send
+        + 'static,
+    ) -> Self {
+        Self {
+            id,
+            finish: Some(Box::new(finish)),
+        }
+    }
+
+    /// Returns this task's application-local identifier.
+    pub const fn id(&self) -> TaskId {
+        self.id
+    }
+
+    /// Submits the task output for normal event-loop message dispatch.
+    pub fn complete(mut self, output: T) -> std::result::Result<TaskCompletionStatus, ProxyClosed> {
+        self.finish
+            .take()
+            .expect("a task completion is consumed at most once")(Some(output))
+    }
+}
+
+impl<T> Drop for TaskCompletion<T> {
+    fn drop(&mut self) {
+        if let Some(finish) = self.finish.take() {
+            let _ = finish(None);
+        }
+    }
+}
+
+impl<T> fmt::Debug for TaskCompletion<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TaskCompletion")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The message proxy target application has shut down.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProxyClosed;
@@ -358,6 +581,61 @@ impl WindowConfig {
     }
 }
 
+/// Configuration for application-scoped background work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TaskConfig {
+    blocking_workers: usize,
+    blocking_queue_capacity: usize,
+}
+
+impl Default for TaskConfig {
+    fn default() -> Self {
+        let blocking_workers = thread_parallelism().clamp(1, 4);
+        Self {
+            blocking_workers,
+            blocking_queue_capacity: 64,
+        }
+    }
+}
+
+impl TaskConfig {
+    /// Sets the number of native blocking-worker threads.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `workers` is zero.
+    pub fn blocking_workers(mut self, workers: usize) -> Self {
+        assert!(workers > 0, "blocking worker count must be non-zero");
+        self.blocking_workers = workers;
+        self
+    }
+
+    /// Sets the maximum number of blocking jobs waiting for a worker.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `capacity` is zero.
+    pub fn blocking_queue_capacity(mut self, capacity: usize) -> Self {
+        assert!(
+            capacity > 0,
+            "blocking task queue capacity must be non-zero"
+        );
+        self.blocking_queue_capacity = capacity;
+        self
+    }
+}
+
+fn thread_parallelism() -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        thread::available_parallelism().map_or(1, usize::from)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        1
+    }
+}
+
 /// Application-wide configuration for [`run_with`].
 pub struct AppConfig {
     /// Scheduling configuration for the Astrelis runtime.
@@ -375,6 +653,8 @@ pub struct AppConfig {
     ///
     /// Defaults to `true`.
     pub exit_on_last_window_close: bool,
+    /// Background task and native blocking-pool configuration.
+    pub tasks: TaskConfig,
 }
 
 impl Default for AppConfig {
@@ -385,6 +665,7 @@ impl Default for AppConfig {
             theme: Theme::default(),
             graphics: None,
             exit_on_last_window_close: true,
+            tasks: TaskConfig::default(),
         }
     }
 }
@@ -411,6 +692,12 @@ impl AppConfig {
     /// Sets the theme for new UI trees.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
+        self
+    }
+
+    /// Sets background task and native blocking-pool configuration.
+    pub fn tasks(mut self, tasks: TaskConfig) -> Self {
+        self.tasks = tasks;
         self
     }
 
@@ -480,6 +767,20 @@ pub trait AppBackend<M: 'static> {
     fn proxy(&self) -> MessageProxy<M>
     where
         M: Send;
+
+    /// Registers an application-scoped task completion channel.
+    fn register_task(&mut self) -> TaskSink<M>;
+
+    /// Queues one closure on the native bounded blocking pool.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn enqueue_blocking(
+        &mut self,
+        task: TaskId,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> std::result::Result<(), TaskSpawnError>;
+
+    /// Cancels a task, returning whether it was still active.
+    fn cancel_task(&mut self, task: TaskId) -> bool;
 
     /// Schedules a one-shot message factory after a delay.
     fn set_timeout(&mut self, delay: Duration, factory: Box<dyn FnOnce() -> M>) -> TimerId;
@@ -642,6 +943,55 @@ impl<'a, M: 'static> AppCx<'a, M> {
         M: Send,
     {
         self.backend.proxy()
+    }
+
+    /// Registers a task completed by an externally owned executor.
+    ///
+    /// The output and mapping closure cross the runtime wakeup bridge, but
+    /// the mapper runs on the application event-loop thread. Consequently the
+    /// application message type itself does not need to implement [`Send`].
+    /// Dropping the returned completion without calling
+    /// [`complete`](TaskCompletion::complete) abandons the task.
+    pub fn register_task<T: Send + 'static>(
+        &mut self,
+        map: impl FnOnce(T) -> M + Send + 'static,
+    ) -> TaskCompletion<T> {
+        let sink = self.backend.register_task();
+        let id = sink.id();
+        TaskCompletion::new(id, move |output| match output {
+            Some(output) => sink.complete(Box::new(move || map(output))),
+            None => {
+                sink.abandon()?;
+                Ok(TaskCompletionStatus::Cancelled)
+            }
+        })
+    }
+
+    /// Runs finite blocking work on the application's bounded native worker
+    /// pool and maps its result into a message on the event-loop thread.
+    ///
+    /// A panic in `work` becomes [`TaskError::Panicked`]. Cancelling the
+    /// returned [`TaskId`] cannot forcibly interrupt work that has already
+    /// started, but always suppresses its eventual message.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_blocking<T: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> T + Send + 'static,
+        map: impl FnOnce(std::result::Result<T, TaskError>) -> M + Send + 'static,
+    ) -> std::result::Result<TaskId, TaskSpawnError> {
+        let completion = self.register_task(map);
+        let task = completion.id();
+        let job = Box::new(move || {
+            let result = catch_unwind(AssertUnwindSafe(work)).map_err(|_| TaskError::Panicked);
+            let _ = completion.complete(result);
+        });
+        self.backend.enqueue_blocking(task, job)?;
+        Ok(task)
+    }
+
+    /// Cancels a task, returning whether it was still active.
+    pub fn cancel_task(&mut self, task: TaskId) -> bool {
+        self.backend.cancel_task(task)
     }
 
     /// Schedules a message delivered once after a delay.
@@ -812,6 +1162,76 @@ pub fn spawn_on_canvas<A: App>(
         .map_err(RunError::Platform)
 }
 
+struct TaskRecord {
+    state: Arc<AtomicU8>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type BlockingJob = Box<dyn FnOnce() + Send + 'static>;
+
+#[cfg(not(target_arch = "wasm32"))]
+struct BlockingPool {
+    sender: Option<SyncSender<BlockingJob>>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BlockingPool {
+    fn new(config: TaskConfig) -> std::result::Result<Self, TaskSpawnError> {
+        let (sender, receiver) = mpsc::sync_channel(config.blocking_queue_capacity);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let mut workers = Vec::with_capacity(config.blocking_workers);
+
+        for index in 0..config.blocking_workers {
+            let receiver = Arc::clone(&receiver);
+            let worker = thread::Builder::new()
+                .name(format!("rxui-blocking-{index}"))
+                .spawn(move || {
+                    loop {
+                        let job = {
+                            let Ok(receiver) = receiver.lock() else {
+                                return;
+                            };
+                            receiver.recv()
+                        };
+                        let Ok(job) = job else {
+                            return;
+                        };
+                        let _ = catch_unwind(AssertUnwindSafe(job));
+                    }
+                })
+                .map_err(|_| TaskSpawnError::WorkerUnavailable)?;
+            workers.push(worker);
+        }
+
+        Ok(Self {
+            sender: Some(sender),
+            workers,
+        })
+    }
+
+    fn enqueue(&self, job: BlockingJob) -> std::result::Result<(), TaskSpawnError> {
+        let Some(sender) = self.sender.as_ref() else {
+            return Err(TaskSpawnError::WorkerUnavailable);
+        };
+        sender.try_send(job).map_err(|error| match error {
+            TrySendError::Full(_) => TaskSpawnError::QueueFull,
+            TrySendError::Disconnected(_) => TaskSpawnError::WorkerUnavailable,
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for BlockingPool {
+    fn drop(&mut self) {
+        self.sender.take();
+        // Never block the UI thread waiting for in-flight application work.
+        // Dropping a JoinHandle detaches it; closed-channel workers exit after
+        // any already accepted jobs observe cancellation.
+        self.workers.clear();
+    }
+}
+
 /// Runner-owned state shared by every backend call.
 struct Shell<M: 'static> {
     graphics: GraphicsContext,
@@ -822,6 +1242,12 @@ struct Shell<M: 'static> {
     posted: PostedQueue<M>,
     timers: HashMap<u64, NativeTimerId>,
     next_timer: u64,
+    tasks: HashMap<TaskId, TaskRecord>,
+    next_task: u64,
+    #[cfg(not(target_arch = "wasm32"))]
+    task_config: TaskConfig,
+    #[cfg(not(target_arch = "wasm32"))]
+    blocking_pool: Option<BlockingPool>,
     built: bool,
 }
 
@@ -836,6 +1262,12 @@ impl<M: 'static> Shell<M> {
             posted: PostedQueue::default(),
             timers: HashMap::new(),
             next_timer: 1,
+            tasks: HashMap::new(),
+            next_task: 1,
+            #[cfg(not(target_arch = "wasm32"))]
+            task_config: config.tasks,
+            #[cfg(not(target_arch = "wasm32"))]
+            blocking_pool: None,
             built: false,
         }
     }
@@ -851,6 +1283,52 @@ impl<M: 'static> Shell<M> {
         let id = TimerId(self.next_timer);
         self.next_timer += 1;
         id
+    }
+
+    fn register_task(&mut self) -> (TaskId, Arc<AtomicU8>) {
+        let id = TaskId(self.next_task);
+        self.next_task += 1;
+        let state = Arc::new(AtomicU8::new(TASK_PENDING));
+        self.tasks.insert(
+            id,
+            TaskRecord {
+                state: Arc::clone(&state),
+            },
+        );
+        (id, state)
+    }
+
+    fn cancel_task(&mut self, task: TaskId) -> bool {
+        let Some(record) = self.tasks.remove(&task) else {
+            return false;
+        };
+        record.state.store(TASK_CANCELLED, Ordering::Release);
+        true
+    }
+
+    fn abandon_task(&mut self, task: TaskId, state: &Arc<AtomicU8>) {
+        let matches = self
+            .tasks
+            .get(&task)
+            .is_some_and(|record| Arc::ptr_eq(&record.state, state));
+        if matches {
+            self.tasks.remove(&task);
+        }
+    }
+
+    fn cancel_all_tasks(&mut self) {
+        for record in self.tasks.values() {
+            record.state.store(TASK_CANCELLED, Ordering::Release);
+        }
+        self.tasks.clear();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.blocking_pool.take();
+    }
+}
+
+impl<M: 'static> Drop for Shell<M> {
+    fn drop(&mut self) {
+        self.cancel_all_tasks();
     }
 }
 
@@ -883,6 +1361,30 @@ impl<A: App> RunnerCore<A> {
         let Self { user, shell } = self;
         let mut backend = RuntimeBackend { context, shell };
         dispatch_external(user, &mut backend, message, exit_on_last).map_err(DynAppError)
+    }
+
+    fn complete_task(
+        &mut self,
+        context: &mut AppContext<'_, '_, Self>,
+        task: TaskId,
+        state: Arc<AtomicU8>,
+        factory: TaskMessageFactory<A::Message>,
+    ) -> std::result::Result<(), DynAppError> {
+        let active = self
+            .shell
+            .tasks
+            .get(&task)
+            .is_some_and(|record| Arc::ptr_eq(&record.state, &state));
+        if !active || state.load(Ordering::Acquire) != TASK_COMPLETION_QUEUED {
+            return Ok(());
+        }
+        self.shell.tasks.remove(&task);
+        state.store(TASK_FINISHED, Ordering::Release);
+        self.dispatch_queued(context, factory())
+    }
+
+    fn abandon_task(&mut self, task: TaskId, state: Arc<AtomicU8>) {
+        self.shell.abandon_task(task, &state);
     }
 }
 
@@ -976,6 +1478,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         context: &mut AppContext<'_, '_, Self>,
     ) -> std::result::Result<(), Self::Error> {
         let Self { user, shell } = self;
+        shell.cancel_all_tasks();
         let mut backend = RuntimeBackend { context, shell };
         user.exiting(&mut AppCx::new(&mut backend, None))
             .map_err(DynAppError)
@@ -1088,6 +1591,87 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
                 })
                 .map_err(|_| ProxyClosed)
         })
+    }
+
+    fn register_task(&mut self) -> TaskSink<A::Message> {
+        let (task, state) = self.shell.register_task();
+
+        let submit_proxy = self.context.proxy();
+        let submit_state = Arc::clone(&state);
+        let submit = Box::new(move |factory: TaskMessageFactory<A::Message>| {
+            if submit_state
+                .compare_exchange(
+                    TASK_PENDING,
+                    TASK_COMPLETION_QUEUED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return Ok(TaskCompletionStatus::Cancelled);
+            }
+
+            let delivery_state = Arc::clone(&submit_state);
+            match submit_proxy.run_on_main_thread(move |core, context| {
+                core.complete_task(context, task, delivery_state, factory)
+            }) {
+                Ok(()) => Ok(TaskCompletionStatus::Queued),
+                Err(_) => {
+                    submit_state.store(TASK_CANCELLED, Ordering::Release);
+                    Err(ProxyClosed)
+                }
+            }
+        });
+
+        let abandon_proxy = self.context.proxy();
+        let abandon_state = Arc::clone(&state);
+        let abandon = Box::new(move || {
+            if abandon_state
+                .compare_exchange(
+                    TASK_PENDING,
+                    TASK_CANCELLED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return Ok(());
+            }
+            let cleanup_state = Arc::clone(&abandon_state);
+            abandon_proxy
+                .run_on_main_thread(move |core, _context| {
+                    core.abandon_task(task, cleanup_state);
+                    Ok(())
+                })
+                .map_err(|_| ProxyClosed)
+        });
+
+        TaskSink::new(task, submit, abandon)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn enqueue_blocking(
+        &mut self,
+        task: TaskId,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> std::result::Result<(), TaskSpawnError> {
+        if self.shell.blocking_pool.is_none() {
+            self.shell.blocking_pool = Some(BlockingPool::new(self.shell.task_config)?);
+        }
+        let result = self
+            .shell
+            .blocking_pool
+            .as_ref()
+            .expect("blocking pool was initialized")
+            .enqueue(job);
+        if result.is_err() {
+            self.shell.cancel_task(task);
+        }
+        result
+    }
+
+    fn cancel_task(&mut self, task: TaskId) -> bool {
+        self.shell.cancel_task(task)
     }
 
     fn set_timeout(
@@ -1347,10 +1931,12 @@ mod tests {
         closed: Vec<WindowId>,
         presented: Vec<WindowId>,
         cancelled: Vec<TimerId>,
+        task_states: HashMap<TaskId, Arc<AtomicU8>>,
         policy: Option<RuntimePolicy>,
         exited: bool,
         next_window: u64,
         next_timer: u64,
+        next_task: u64,
     }
 
     impl<M: 'static> MockBackend<M> {
@@ -1363,10 +1949,12 @@ mod tests {
                 closed: Vec::new(),
                 presented: Vec::new(),
                 cancelled: Vec::new(),
+                task_states: HashMap::new(),
                 policy: None,
                 exited: false,
                 next_window: 1,
                 next_timer: 1,
+                next_task: 1,
             }
         }
 
@@ -1457,6 +2045,54 @@ mod tests {
                 sink.lock().expect("proxy sink poisoned").push(message);
                 Ok(())
             })
+        }
+
+        fn register_task(&mut self) -> TaskSink<M> {
+            let task = TaskId::from_raw(self.next_task);
+            self.next_task += 1;
+            let state = Arc::new(AtomicU8::new(TASK_PENDING));
+            self.task_states.insert(task, Arc::clone(&state));
+
+            let submit_state = Arc::clone(&state);
+            let submit = Box::new(move |_factory: TaskMessageFactory<M>| {
+                if submit_state
+                    .compare_exchange(
+                        TASK_PENDING,
+                        TASK_COMPLETION_QUEUED,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    Ok(TaskCompletionStatus::Queued)
+                } else {
+                    Ok(TaskCompletionStatus::Cancelled)
+                }
+            });
+            let abandon_state = Arc::clone(&state);
+            let abandon = Box::new(move || {
+                abandon_state.store(TASK_CANCELLED, Ordering::Release);
+                Ok(())
+            });
+            TaskSink::new(task, submit, abandon)
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        fn enqueue_blocking(
+            &mut self,
+            _task: TaskId,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> std::result::Result<(), TaskSpawnError> {
+            job();
+            Ok(())
+        }
+
+        fn cancel_task(&mut self, task: TaskId) -> bool {
+            let Some(state) = self.task_states.remove(&task) else {
+                return false;
+            };
+            state.store(TASK_CANCELLED, Ordering::Release);
+            true
         }
 
         fn set_timeout(&mut self, _delay: Duration, _factory: Box<dyn FnOnce() -> M>) -> TimerId {
@@ -1775,5 +2411,65 @@ mod tests {
             backend.proxy_sink.lock().expect("sink").as_slice(),
             [Msg::Step(3)]
         );
+    }
+
+    #[test]
+    fn cancelled_registered_task_rejects_completion() {
+        let mut backend = MockBackend::<Msg>::new();
+        let completion = AppCx::new(&mut backend, None).register_task(Msg::Step);
+        let task = completion.id();
+        assert!(AppCx::new(&mut backend, None).cancel_task(task));
+        assert_eq!(
+            completion.complete(3).expect("mock runtime remains open"),
+            TaskCompletionStatus::Cancelled
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn blocking_pool_bounds_waiting_work() {
+        let pool = BlockingPool::new(
+            TaskConfig::default()
+                .blocking_workers(1)
+                .blocking_queue_capacity(1),
+        )
+        .expect("worker starts");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        pool.enqueue(Box::new(move || {
+            started_tx.send(()).expect("test remains alive");
+            release_rx.recv().expect("test releases worker");
+        }))
+        .expect("first task starts");
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first task starts promptly");
+
+        let (queued_tx, queued_rx) = mpsc::channel();
+        pool.enqueue(Box::new(move || {
+            queued_tx.send(()).expect("test remains alive");
+        }))
+        .expect("second task enters waiting queue");
+        assert!(matches!(
+            pool.enqueue(Box::new(|| {})),
+            Err(TaskSpawnError::QueueFull)
+        ));
+
+        release_tx.send(()).expect("worker releases");
+        queued_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("queued task eventually runs");
+    }
+
+    #[test]
+    #[should_panic(expected = "blocking worker count must be non-zero")]
+    fn zero_blocking_workers_are_rejected() {
+        let _ = TaskConfig::default().blocking_workers(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "blocking task queue capacity must be non-zero")]
+    fn zero_blocking_queue_capacity_is_rejected() {
+        let _ = TaskConfig::default().blocking_queue_capacity(0);
     }
 }
