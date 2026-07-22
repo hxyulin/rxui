@@ -21,7 +21,7 @@ pub use instrumentation::{InstrumentationState, PendingMessageTrace};
 pub use instrumentation::{
     MessageDispatch, MessageMetadata, MessageOrigin, MessageOutcome, MessageTrace,
     MessageTraceIdentity, QueuedMessage, RuntimeEvent, RuntimeInstrumentationConfig,
-    RuntimeObserver,
+    RuntimeLifecycleEvent, RuntimeLifecycleTrace, RuntimeObserver, RuntimeResource,
 };
 pub use menu::{Menu, MenuBar, MenuEntry, MenuError, MenuRole};
 pub use message::{MappedAppCx, MessageMapper};

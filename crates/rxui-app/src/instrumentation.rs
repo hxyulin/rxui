@@ -2,13 +2,17 @@
 
 use std::{collections::VecDeque, time::Duration};
 
-use crate::{MessageKey, SubscriptionId, TaskId, TimerId, WindowId};
+use crate::{
+    MessageKey, SubscriptionId, SubscriptionKind, SubscriptionStatus, TaskId, TaskKind, TimerId,
+    WindowId,
+};
 
 /// Static, payload-free identity supplied by an application for one message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MessageMetadata {
     name: &'static str,
     category: &'static str,
+    scope: &'static str,
 }
 
 impl MessageMetadata {
@@ -19,7 +23,17 @@ impl MessageMetadata {
 
     /// Creates metadata with an explicit name and category.
     pub const fn new(name: &'static str, category: &'static str) -> Self {
-        Self { name, category }
+        Self {
+            name,
+            category,
+            scope: "application",
+        }
+    }
+
+    /// Associates this message with a diagnostic scope.
+    pub const fn in_scope(mut self, scope: &'static str) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// Returns metadata for an application that has not named its messages.
@@ -35,6 +49,11 @@ impl MessageMetadata {
     /// Returns the diagnostic category.
     pub const fn category(self) -> &'static str {
         self.category
+    }
+
+    /// Returns the diagnostic ownership scope.
+    pub const fn scope(self) -> &'static str {
+        self.scope
     }
 }
 
@@ -73,6 +92,81 @@ pub enum MessageOutcome {
     Success,
     /// The update returned an error. Error text is never retained.
     Error,
+}
+
+/// Runtime-owned resource described by a lifecycle trace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RuntimeResource {
+    /// One application-scoped background task.
+    Task {
+        /// Application-local task identity.
+        id: TaskId,
+        /// Application-provided diagnostic name.
+        name: String,
+        /// Execution strategy used by the task.
+        kind: TaskKind,
+        /// Diagnostic scope inherited from the message that started the task.
+        scope: &'static str,
+    },
+    /// One declarative subscription generation.
+    Subscription {
+        /// Stable desired-state identity.
+        id: SubscriptionId,
+        /// Framework-owned source kind.
+        kind: SubscriptionKind,
+        /// Running or startup-failed state.
+        status: SubscriptionStatus,
+    },
+}
+
+/// State transition recorded for a runtime-owned resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RuntimeLifecycleEvent {
+    /// A new resource started.
+    Started,
+    /// Changed subscription configuration replaced an older generation.
+    Restarted,
+    /// A task delivered its completion.
+    Completed,
+    /// Explicit cancellation or desired-state removal stopped the resource.
+    Cancelled,
+    /// Dropping an unfinished task completion abandoned the task.
+    Abandoned,
+    /// Resource startup failed.
+    Failed,
+}
+
+/// One bounded, payload-free runtime resource lifecycle record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeLifecycleTrace {
+    sequence: u64,
+    resource: RuntimeResource,
+    event: RuntimeLifecycleEvent,
+    lifetime: Duration,
+}
+
+impl RuntimeLifecycleTrace {
+    /// Returns the monotonically increasing runtime event sequence.
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the task or subscription identity and payload-free metadata.
+    pub const fn resource(&self) -> &RuntimeResource {
+        &self.resource
+    }
+
+    /// Returns the recorded lifecycle transition.
+    pub const fn event(&self) -> RuntimeLifecycleEvent {
+        self.event
+    }
+
+    /// Returns resource age when the transition occurred.
+    pub const fn lifetime(&self) -> Duration {
+        self.lifetime
+    }
 }
 
 /// Immutable identity shared by events for one message delivery.
@@ -192,6 +286,8 @@ pub enum RuntimeEvent {
     },
     /// Dispatch into `App::update` finished.
     MessageDispatchFinished(MessageTrace),
+    /// A task or subscription changed lifecycle state.
+    LifecycleRecorded(RuntimeLifecycleTrace),
 }
 
 /// Read-only sink for payload-free runtime events.
@@ -213,6 +309,7 @@ where
 #[derive(Default)]
 pub struct RuntimeInstrumentationConfig {
     pub(crate) message_history_capacity: usize,
+    pub(crate) lifecycle_history_capacity: usize,
     pub(crate) observer: Option<Box<dyn RuntimeObserver>>,
 }
 
@@ -223,6 +320,12 @@ impl RuntimeInstrumentationConfig {
         self
     }
 
+    /// Retains at most `capacity` task and subscription lifecycle traces.
+    pub const fn lifecycle_history(mut self, capacity: usize) -> Self {
+        self.lifecycle_history_capacity = capacity;
+        self
+    }
+
     /// Installs a payload-free event observer.
     pub fn observer(mut self, observer: impl RuntimeObserver) -> Self {
         self.observer = Some(Box::new(observer));
@@ -230,7 +333,9 @@ impl RuntimeInstrumentationConfig {
     }
 
     pub(crate) fn enabled(&self) -> bool {
-        self.message_history_capacity > 0 || self.observer.is_some()
+        self.message_history_capacity > 0
+            || self.lifecycle_history_capacity > 0
+            || self.observer.is_some()
     }
 }
 
@@ -264,10 +369,13 @@ pub struct InstrumentationState {
     enabled: bool,
     history_capacity: usize,
     history: VecDeque<MessageTrace>,
+    lifecycle_capacity: usize,
+    lifecycle: VecDeque<RuntimeLifecycleTrace>,
     observer: Option<Box<dyn RuntimeObserver>>,
     next_sequence: u64,
     emissions: u64,
     replacements: u64,
+    current_scope: Option<&'static str>,
 }
 
 impl InstrumentationState {
@@ -276,10 +384,13 @@ impl InstrumentationState {
             enabled: config.enabled(),
             history_capacity: config.message_history_capacity,
             history: VecDeque::with_capacity(config.message_history_capacity),
+            lifecycle_capacity: config.lifecycle_history_capacity,
+            lifecycle: VecDeque::with_capacity(config.lifecycle_history_capacity),
             observer: config.observer,
             next_sequence: 1,
             emissions: 0,
             replacements: 0,
+            current_scope: None,
         }
     }
 
@@ -339,6 +450,7 @@ impl InstrumentationState {
         let Some(trace) = trace else { return };
         trace.started_at = Some(now);
         trace.emissions_at_start = self.emissions;
+        self.current_scope = Some(trace.identity.metadata.scope());
         self.notify(RuntimeEvent::MessageDispatchStarted {
             identity: trace.identity,
             queue_latency: now.saturating_duration_since(trace.queued_at),
@@ -363,6 +475,7 @@ impl InstrumentationState {
             emitted: self.emissions.saturating_sub(trace.emissions_at_start),
             outcome,
         };
+        self.current_scope = None;
         self.notify(RuntimeEvent::MessageDispatchFinished(completed.clone()));
         if self.history_capacity > 0 {
             if self.history.len() == self.history_capacity {
@@ -372,8 +485,43 @@ impl InstrumentationState {
         }
     }
 
-    pub fn snapshot(&self) -> (Vec<MessageTrace>, u64) {
-        (self.history.iter().cloned().collect(), self.replacements)
+    pub fn record_lifecycle(
+        &mut self,
+        resource: RuntimeResource,
+        event: RuntimeLifecycleEvent,
+        lifetime: Duration,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let trace = RuntimeLifecycleTrace {
+            sequence: self.next_sequence,
+            resource,
+            event,
+            lifetime,
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.notify(RuntimeEvent::LifecycleRecorded(trace.clone()));
+        if self.lifecycle_capacity > 0 {
+            if self.lifecycle.len() == self.lifecycle_capacity {
+                self.lifecycle.pop_front();
+            }
+            self.lifecycle.push_back(trace);
+        }
+    }
+
+    /// Returns the scope of the message currently being dispatched.
+    #[doc(hidden)]
+    pub const fn current_scope(&self) -> Option<&'static str> {
+        self.current_scope
+    }
+
+    pub fn snapshot(&self) -> (Vec<MessageTrace>, Vec<RuntimeLifecycleTrace>, u64) {
+        (
+            self.history.iter().cloned().collect(),
+            self.lifecycle.iter().cloned().collect(),
+            self.replacements,
+        )
     }
 
     fn notify(&mut self, event: RuntimeEvent) {

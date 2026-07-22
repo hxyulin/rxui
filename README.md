@@ -133,8 +133,14 @@ The inspector is read-only and excluded from default production builds. Its
 including running or failed filesystem watchers. When an application opts into
 bounded runtime instrumentation, the same tab shows a payload-free message
 timeline with origins, queue latency, update duration, nested emissions, and
-latest-value replacements. The example enables a 256-message history; use its
-counter and task controls to generate diagnostic activity.
+latest-value replacements. A separate bounded lifecycle timeline records task
+and subscription starts, restarts, completion, cancellation, abandonment, and
+startup failures without exposing service payloads. The example enables both
+histories; use its counter and task controls to generate diagnostic activity.
+The Runtime view scrolls independently of the inspected application, and each
+message, lifecycle, task, and subscription section can be collapsed. Inspector
+messages and tasks are scoped separately and hidden by default; use **Show
+inspector activity** when diagnosing the inspector itself.
 
 The guided documentation starts at [Your first RXUI app](docs/tutorials/first-app.md),
 then covers [feature-local message architecture](docs/tutorials/message-architecture.md),

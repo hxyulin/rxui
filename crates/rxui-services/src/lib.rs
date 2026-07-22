@@ -378,8 +378,8 @@ mod tests {
     use std::time::Duration;
 
     use rxui_app::{
-        App, AppCx, DeliveryPolicy, SubscriptionId, SubscriptionKind, SubscriptionStatus,
-        Subscriptions,
+        App, AppCx, DeliveryPolicy, RuntimeInstrumentationConfig, RuntimeLifecycleEvent,
+        SubscriptionId, SubscriptionKind, SubscriptionStatus, Subscriptions,
     };
     use rxui_testing::AppHarness;
 
@@ -548,12 +548,15 @@ mod tests {
     fn filesystem_subscription_reports_startup_failure_once_without_retrying() {
         let (services, backend) = services();
         backend.fail_next_watch(ServiceError::Backend("watch failed".into()));
-        let mut harness = AppHarness::new(WatchApp {
-            services,
-            path: Some(PathBuf::from("/missing")),
-            label: Rc::new("failed".into()),
-            events: Vec::new(),
-        })
+        let mut harness = AppHarness::new_with_instrumentation(
+            WatchApp {
+                services,
+                path: Some(PathBuf::from("/missing")),
+                label: Rc::new("failed".into()),
+                events: Vec::new(),
+            },
+            RuntimeInstrumentationConfig::default().lifecycle_history(4),
+        )
         .unwrap();
         assert_eq!(backend.watch_start_count(), 1);
         assert_eq!(harness.app().events.len(), 1);
@@ -564,6 +567,10 @@ mod tests {
         assert_eq!(
             harness.runtime_snapshot().active_subscriptions()[0].status(),
             SubscriptionStatus::Failed
+        );
+        assert_eq!(
+            harness.runtime_snapshot().lifecycle_traces()[0].event(),
+            RuntimeLifecycleEvent::Failed
         );
 
         harness.post(WatchMessage::Noop).unwrap();

@@ -22,12 +22,12 @@ use astrelis_platform::{
 use astrelis_ui_core::{
     Alignment, Column, Edges, ElementHandle, ElementId, ElementInspection, ElementKind,
     EventFilter, FocusScopeOptions, Insets, Label, LayoutStyle, Length, Overlay, OverlayAlignment,
-    OverlayOptions, OverlaySide, Padding, Positioning, RoutedEventKind, Row, SemanticRole, Ui,
-    UiError, Visibility, WidgetStyle,
+    OverlayOptions, OverlaySide, Padding, Positioning, RoutedEventKind, Row, ScrollView,
+    SemanticRole, Ui, UiError, Visibility, WidgetStyle,
 };
 use rxui_app::{
-    DeliveryPolicy, MessageOrigin, MessageOutcome, RuntimeSnapshot, SubscriptionKind,
-    SubscriptionStatus, TaskKind,
+    DeliveryPolicy, MessageOrigin, MessageOutcome, RuntimeLifecycleEvent, RuntimeResource,
+    RuntimeSnapshot, SubscriptionKind, SubscriptionStatus, TaskKind,
 };
 use rxui_widgets::{
     CommandButton, IconButton, IconView, TreeAction, TreeView, TreeViewOptions,
@@ -48,6 +48,7 @@ use crate::{
 const INSPECTOR_Z: i32 = 20_000;
 const TREE_ROW_EXTENT: f32 = 24.0;
 const INFO_TAG_HEIGHT: f32 = 20.0;
+const DEVTOOLS_SCOPE: &str = "rxui.devtools";
 
 fn format_elapsed(duration: Duration) -> String {
     if duration.as_secs() > 0 {
@@ -75,6 +76,18 @@ fn format_message_origin(origin: MessageOrigin) -> String {
     }
 }
 
+fn format_lifecycle_event(event: RuntimeLifecycleEvent) -> &'static str {
+    match event {
+        RuntimeLifecycleEvent::Started => "started",
+        RuntimeLifecycleEvent::Restarted => "restarted",
+        RuntimeLifecycleEvent::Completed => "completed",
+        RuntimeLifecycleEvent::Cancelled => "cancelled",
+        RuntimeLifecycleEvent::Abandoned => "abandoned",
+        RuntimeLifecycleEvent::Failed => "failed",
+        _ => "changed",
+    }
+}
+
 /// Where the inspector panel mounts relative to application content.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InspectorDock {
@@ -98,6 +111,19 @@ pub enum InspectorView {
     Ui,
     /// Runner-owned active tasks and subscriptions.
     Runtime,
+}
+
+/// Collapsible section in the inspector's Runtime view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RuntimeSection {
+    /// Recent application message dispatches.
+    Messages,
+    /// Recent task and subscription lifecycle transitions.
+    Lifecycle,
+    /// Currently active background tasks.
+    Tasks,
+    /// Currently active declarative subscriptions.
+    Subscriptions,
 }
 
 /// Configuration for an in-application UI inspector.
@@ -145,6 +171,10 @@ pub enum InspectorAction {
     Close,
     /// Switch between retained-UI and runtime inspection.
     SetView(InspectorView),
+    /// Expand or collapse one Runtime view section.
+    ToggleRuntimeSection(RuntimeSection),
+    /// Show or hide runtime activity owned by the inspector itself.
+    ToggleInternalRuntimeActivity,
     /// Start or stop selecting an application element with the pointer.
     SetPicking(bool),
     /// Invert the current picking state.
@@ -227,7 +257,8 @@ pub struct UiInspector<Message> {
     ui_tab: ElementHandle<CommandButton<Message>>,
     runtime_tab: ElementHandle<CommandButton<Message>>,
     ui_content: ElementHandle<Column>,
-    runtime_content: ElementHandle<Padding>,
+    runtime_content: ElementHandle<ScrollView>,
+    runtime_pad: ElementHandle<Padding>,
     runtime_details: ElementHandle<Column>,
     resizer: ElementHandle<PanelResizer<Message>>,
     tree: TreeView<ElementId, Message>,
@@ -257,6 +288,8 @@ pub struct UiInspector<Message> {
     show_launcher: bool,
     allow_editing: bool,
     runtime_snapshot: RuntimeSnapshot,
+    collapsed_runtime_sections: HashSet<RuntimeSection>,
+    show_internal_runtime_activity: bool,
     map_action: Rc<dyn Fn(InspectorAction) -> Message>,
 }
 
@@ -664,15 +697,7 @@ where
         )?;
         let crumbs = ui.add_row(crumb_bar)?;
 
-        let runtime_content = ui.add_padding(
-            body,
-            Insets {
-                left: 10.0,
-                top: 6.0,
-                right: 10.0,
-                bottom: 10.0,
-            },
-        )?;
+        let runtime_content = ui.add_scroll_view(body)?;
         ui.set_layout(
             runtime_content,
             LayoutStyle {
@@ -682,17 +707,23 @@ where
                 ..LayoutStyle::default()
             },
         )?;
-        let runtime_scroll = ui.add_scroll_view(runtime_content)?;
+        let runtime_pad = ui.add_padding(
+            runtime_content,
+            Insets {
+                left: 10.0,
+                top: 6.0,
+                right: 10.0,
+                bottom: 10.0,
+            },
+        )?;
         ui.set_layout(
-            runtime_scroll,
+            runtime_pad,
             LayoutStyle {
-                grow: 1.0,
-                basis: Length::Px(0.0),
                 width: Length::Percent(1.0),
                 ..LayoutStyle::default()
             },
         )?;
-        let runtime_details = ui.add_column(runtime_scroll)?;
+        let runtime_details = ui.add_column(runtime_pad)?;
         ui.set_layout(
             runtime_details,
             LayoutStyle {
@@ -795,6 +826,7 @@ where
             runtime_tab,
             ui_content,
             runtime_content,
+            runtime_pad,
             runtime_details,
             resizer,
             tree,
@@ -824,6 +856,8 @@ where
             show_launcher: options.show_launcher,
             allow_editing: options.allow_editing,
             runtime_snapshot: RuntimeSnapshot::default(),
+            collapsed_runtime_sections: HashSet::new(),
+            show_internal_runtime_activity: false,
             map_action,
         };
         ui.update_widget(inspector.ui_tab, |button| button.sync("UI", true, true))?;
@@ -861,6 +895,16 @@ where
                 if view == InspectorView::Runtime {
                     self.set_picking(false);
                 }
+            }
+            InspectorAction::ToggleRuntimeSection(section) => {
+                if !self.collapsed_runtime_sections.remove(&section) {
+                    self.collapsed_runtime_sections.insert(section);
+                }
+                self.rebuild_runtime(ui)?;
+            }
+            InspectorAction::ToggleInternalRuntimeActivity => {
+                self.show_internal_runtime_activity = !self.show_internal_runtime_activity;
+                self.rebuild_runtime(ui)?;
             }
             InspectorAction::SetPicking(value) => {
                 self.open = true;
@@ -1199,9 +1243,45 @@ where
         Ok(())
     }
 
+    fn runtime_section_header(
+        &self,
+        ui: &mut Ui<Message>,
+        section: RuntimeSection,
+        label: &str,
+        count: usize,
+        separated: bool,
+    ) -> Result<bool, UiError> {
+        let expanded = !self.collapsed_runtime_sections.contains(&section);
+        let icon = if expanded {
+            icons::chevron_down()
+        } else {
+            icons::chevron_right()
+        };
+        let header = ui.add_widget(
+            self.runtime_details,
+            IconButton::labelled(
+                icon,
+                format!("{label} ({count})"),
+                (self.map_action)(InspectorAction::ToggleRuntimeSection(section)),
+            ),
+        )?;
+        ui.set_layout(
+            header,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                margin: Edges {
+                    top: Length::Px(if separated { 12.0 } else { 0.0 }),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
+            },
+        )?;
+        Ok(expanded)
+    }
+
     fn rebuild_runtime(&mut self, ui: &mut Ui<Message>) -> Result<(), UiError> {
         ui.remove(self.runtime_details)?;
-        self.runtime_details = ui.add_column(self.runtime_content)?;
+        self.runtime_details = ui.add_column(self.runtime_pad)?;
         ui.set_layout(
             self.runtime_details,
             LayoutStyle {
@@ -1209,44 +1289,145 @@ where
                 ..LayoutStyle::default()
             },
         )?;
-        let heading = ui.theme().type_scale.heading;
-        let heading_weight = ui.theme().type_scale.heading_weight;
         let caption = ui.theme().type_scale.caption;
         let muted = ui.theme().muted_foreground;
 
-        let messages = ui.add_label(
+        let show_internal = self.show_internal_runtime_activity;
+        let message_traces = self
+            .runtime_snapshot
+            .message_traces()
+            .iter()
+            .filter(|trace| show_internal || trace.identity().metadata().scope() != DEVTOOLS_SCOPE)
+            .collect::<Vec<_>>();
+        let lifecycle_traces = self
+            .runtime_snapshot
+            .lifecycle_traces()
+            .iter()
+            .filter(|trace| match trace.resource() {
+                RuntimeResource::Task { scope, .. } => show_internal || *scope != DEVTOOLS_SCOPE,
+                _ => true,
+            })
+            .collect::<Vec<_>>();
+        let active_tasks = self
+            .runtime_snapshot
+            .active_tasks()
+            .iter()
+            .filter(|task| show_internal || task.scope() != DEVTOOLS_SCOPE)
+            .collect::<Vec<_>>();
+        let internal_toggle = ui.add_widget(
             self.runtime_details,
-            format!(
-                "Messages ({})",
-                self.runtime_snapshot.message_traces().len()
+            CommandButton::new(
+                if show_internal {
+                    "Hide inspector activity"
+                } else {
+                    "Show inspector activity"
+                },
+                (self.map_action)(InspectorAction::ToggleInternalRuntimeActivity),
             ),
         )?;
-        ui.set_widget_style(
-            messages,
-            WidgetStyle {
-                font_size: Some(heading),
-                font_weight: Some(heading_weight),
-                ..WidgetStyle::default()
+        ui.set_layout(
+            internal_toggle,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                margin: Edges {
+                    bottom: Length::Px(8.0),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
             },
         )?;
-        let queue = ui.add_label(
-            self.runtime_details,
-            format!(
-                "{} pending · {} coalesced replacements",
-                self.runtime_snapshot.pending_messages(),
-                self.runtime_snapshot.coalesced_replacements()
-            ),
+
+        let messages_expanded = self.runtime_section_header(
+            ui,
+            RuntimeSection::Messages,
+            "Messages",
+            message_traces.len(),
+            false,
         )?;
-        ui.set_widget_style(
-            queue,
-            WidgetStyle {
-                foreground: Some(muted),
-                font_size: Some(caption),
-                ..WidgetStyle::default()
-            },
+        if messages_expanded {
+            let queue = ui.add_label(
+                self.runtime_details,
+                format!(
+                    "{} pending · {} coalesced replacements",
+                    self.runtime_snapshot.pending_messages(),
+                    self.runtime_snapshot.coalesced_replacements()
+                ),
+            )?;
+            ui.set_widget_style(
+                queue,
+                WidgetStyle {
+                    foreground: Some(muted),
+                    font_size: Some(caption),
+                    ..WidgetStyle::default()
+                },
+            )?;
+            if message_traces.is_empty() {
+                let empty = ui.add_label(self.runtime_details, "No recorded messages")?;
+                ui.set_widget_style(
+                    empty,
+                    WidgetStyle {
+                        foreground: Some(muted),
+                        font_size: Some(caption),
+                        ..WidgetStyle::default()
+                    },
+                )?;
+            } else {
+                for trace in message_traces.iter().rev() {
+                    let identity = trace.identity();
+                    let status = match trace.outcome() {
+                        MessageOutcome::Success => "ok",
+                        MessageOutcome::Error => "error",
+                    };
+                    ui.add_label(
+                        self.runtime_details,
+                        format!(
+                            "#{} {} · {}",
+                            identity.sequence(),
+                            identity.metadata().name(),
+                            identity.metadata().category()
+                        ),
+                    )?;
+                    let source = identity
+                        .source()
+                        .map_or_else(|| "application".into(), |window| format!("{window:?}"));
+                    let key = trace.key().map_or_else(String::new, |key| {
+                        format!(" · {}#{}", key.namespace(), key.instance())
+                    });
+                    let detail = ui.add_label(
+                        self.runtime_details,
+                        format!(
+                            "{} · {} · wait {} · update {} · emitted {} · replaced {}{} · {}",
+                            format_message_origin(identity.origin()),
+                            source,
+                            format_elapsed(trace.queue_latency()),
+                            format_elapsed(trace.update_duration()),
+                            trace.emitted(),
+                            trace.replacements(),
+                            key,
+                            status,
+                        ),
+                    )?;
+                    ui.set_widget_style(
+                        detail,
+                        WidgetStyle {
+                            foreground: Some(muted),
+                            font_size: Some(caption),
+                            ..WidgetStyle::default()
+                        },
+                    )?;
+                }
+            }
+        }
+
+        let lifecycle_expanded = self.runtime_section_header(
+            ui,
+            RuntimeSection::Lifecycle,
+            "Lifecycle",
+            lifecycle_traces.len(),
+            true,
         )?;
-        if self.runtime_snapshot.message_traces().is_empty() {
-            let empty = ui.add_label(self.runtime_details, "No recorded messages")?;
+        if lifecycle_expanded && lifecycle_traces.is_empty() {
+            let empty = ui.add_label(self.runtime_details, "No recorded lifecycle events")?;
             ui.set_widget_style(
                 empty,
                 WidgetStyle {
@@ -1255,76 +1436,52 @@ where
                     ..WidgetStyle::default()
                 },
             )?;
-        } else {
-            for trace in self.runtime_snapshot.message_traces().iter().rev() {
-                let identity = trace.identity();
-                let status = match trace.outcome() {
-                    MessageOutcome::Success => "ok",
-                    MessageOutcome::Error => "error",
+        } else if lifecycle_expanded {
+            for trace in lifecycle_traces.iter().rev() {
+                let resource = match trace.resource() {
+                    RuntimeResource::Task { id, name, kind, .. } => {
+                        let kind = match kind {
+                            TaskKind::External => "external task",
+                            TaskKind::Blocking => "blocking task",
+                            _ => "task",
+                        };
+                        format!("{name} · {kind} #{}", id.raw())
+                    }
+                    RuntimeResource::Subscription { id, kind, status } => {
+                        let kind = match kind {
+                            SubscriptionKind::Interval => "interval",
+                            SubscriptionKind::FileWatch => "filesystem watch",
+                            _ => "subscription",
+                        };
+                        let status = match status {
+                            SubscriptionStatus::Running => "running",
+                            SubscriptionStatus::Failed => "failed",
+                        };
+                        format!("{}#{} · {kind} · {status}", id.namespace(), id.instance())
+                    }
+                    _ => "runtime resource".into(),
                 };
                 ui.add_label(
                     self.runtime_details,
                     format!(
-                        "#{} {} · {}",
-                        identity.sequence(),
-                        identity.metadata().name(),
-                        identity.metadata().category()
+                        "#{} {} — {} after {}",
+                        trace.sequence(),
+                        resource,
+                        format_lifecycle_event(trace.event()),
+                        format_elapsed(trace.lifetime())
                     ),
-                )?;
-                let source = identity
-                    .source()
-                    .map_or_else(|| "application".into(), |window| format!("{window:?}"));
-                let key = trace.key().map_or_else(String::new, |key| {
-                    format!(" · {}#{}", key.namespace(), key.instance())
-                });
-                let detail = ui.add_label(
-                    self.runtime_details,
-                    format!(
-                        "{} · {} · wait {} · update {} · emitted {} · replaced {}{} · {}",
-                        format_message_origin(identity.origin()),
-                        source,
-                        format_elapsed(trace.queue_latency()),
-                        format_elapsed(trace.update_duration()),
-                        trace.emitted(),
-                        trace.replacements(),
-                        key,
-                        status,
-                    ),
-                )?;
-                ui.set_widget_style(
-                    detail,
-                    WidgetStyle {
-                        foreground: Some(muted),
-                        font_size: Some(caption),
-                        ..WidgetStyle::default()
-                    },
                 )?;
             }
         }
 
-        let tasks = ui.add_label(
-            self.runtime_details,
-            format!("Tasks ({})", self.runtime_snapshot.active_tasks().len()),
+        let tasks_expanded = self.runtime_section_header(
+            ui,
+            RuntimeSection::Tasks,
+            "Active tasks",
+            active_tasks.len(),
+            true,
         )?;
-        ui.set_layout(
-            tasks,
-            LayoutStyle {
-                margin: Edges {
-                    top: Length::Px(12.0),
-                    ..Edges::default()
-                },
-                ..LayoutStyle::default()
-            },
-        )?;
-        ui.set_widget_style(
-            tasks,
-            WidgetStyle {
-                font_size: Some(heading),
-                font_weight: Some(heading_weight),
-                ..WidgetStyle::default()
-            },
-        )?;
-        if self.runtime_snapshot.active_tasks().is_empty() {
+        if tasks_expanded && active_tasks.is_empty() {
             let empty = ui.add_label(self.runtime_details, "No active tasks")?;
             ui.set_widget_style(
                 empty,
@@ -1334,8 +1491,8 @@ where
                     ..WidgetStyle::default()
                 },
             )?;
-        } else {
-            for task in self.runtime_snapshot.active_tasks() {
+        } else if tasks_expanded {
+            for task in active_tasks {
                 let kind = match task.kind() {
                     TaskKind::External => "external",
                     TaskKind::Blocking => "blocking",
@@ -1354,32 +1511,14 @@ where
             }
         }
 
-        let subscriptions = ui.add_label(
-            self.runtime_details,
-            format!(
-                "Subscriptions ({})",
-                self.runtime_snapshot.active_subscriptions().len()
-            ),
+        let subscriptions_expanded = self.runtime_section_header(
+            ui,
+            RuntimeSection::Subscriptions,
+            "Active subscriptions",
+            self.runtime_snapshot.active_subscriptions().len(),
+            true,
         )?;
-        ui.set_layout(
-            subscriptions,
-            LayoutStyle {
-                margin: Edges {
-                    top: Length::Px(12.0),
-                    ..Edges::default()
-                },
-                ..LayoutStyle::default()
-            },
-        )?;
-        ui.set_widget_style(
-            subscriptions,
-            WidgetStyle {
-                font_size: Some(heading),
-                font_weight: Some(heading_weight),
-                ..WidgetStyle::default()
-            },
-        )?;
-        if self.runtime_snapshot.active_subscriptions().is_empty() {
+        if subscriptions_expanded && self.runtime_snapshot.active_subscriptions().is_empty() {
             let empty = ui.add_label(self.runtime_details, "No active subscriptions")?;
             ui.set_widget_style(
                 empty,
@@ -1389,7 +1528,7 @@ where
                     ..WidgetStyle::default()
                 },
             )?;
-        } else {
+        } else if subscriptions_expanded {
             for subscription in self.runtime_snapshot.active_subscriptions() {
                 let kind = match subscription.kind() {
                     SubscriptionKind::Interval => {
@@ -1799,14 +1938,17 @@ mod tests {
         use rxui_app::{
             ActiveSubscriptionSnapshot, ActiveTaskSnapshot, InstrumentationState, MessageMetadata,
             MessageOrigin, MessageOutcome, QueuedMessage, RuntimeInstrumentationConfig,
-            SubscriptionId, SubscriptionStatus, TaskId,
+            RuntimeLifecycleEvent, RuntimeResource, SubscriptionId, SubscriptionStatus, TaskId,
         };
 
         let (mut ui, _button) = harness();
         let mut inspector =
             UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
-        let mut instrumentation =
-            InstrumentationState::new(RuntimeInstrumentationConfig::default().message_history(4));
+        let mut instrumentation = InstrumentationState::new(
+            RuntimeInstrumentationConfig::default()
+                .message_history(4)
+                .lifecycle_history(4),
+        );
         let now = rxui_app::Instant::now();
         let trace = instrumentation.queued(
             MessageMetadata::new("RefreshPreview", "document"),
@@ -1819,14 +1961,55 @@ mod tests {
         let (_, _, mut dispatch) = QueuedMessage::new((), None, trace).into_parts();
         instrumentation.start_message(&mut dispatch, now);
         instrumentation.finish_message(dispatch, now, MessageOutcome::Success);
-        let (message_traces, replacements) = instrumentation.snapshot();
+        let internal_trace = instrumentation.queued(
+            MessageMetadata::new("InspectorRefresh", "devtools").in_scope(DEVTOOLS_SCOPE),
+            None,
+            MessageOrigin::Ui,
+            now,
+            1,
+            None,
+        );
+        let (_, _, mut internal_dispatch) =
+            QueuedMessage::new((), None, internal_trace).into_parts();
+        instrumentation.start_message(&mut internal_dispatch, now);
+        instrumentation.finish_message(internal_dispatch, now, MessageOutcome::Success);
+        instrumentation.record_lifecycle(
+            RuntimeResource::Task {
+                id: TaskId::from_raw(9),
+                name: "Load preview".into(),
+                kind: TaskKind::Blocking,
+                scope: "application",
+            },
+            RuntimeLifecycleEvent::Completed,
+            Duration::from_millis(250),
+        );
+        instrumentation.record_lifecycle(
+            RuntimeResource::Task {
+                id: TaskId::from_raw(10),
+                name: "Inspector refresh task".into(),
+                kind: TaskKind::External,
+                scope: DEVTOOLS_SCOPE,
+            },
+            RuntimeLifecycleEvent::Started,
+            Duration::from_millis(10),
+        );
+        let (message_traces, lifecycle_traces, replacements) = instrumentation.snapshot();
         let snapshot = RuntimeSnapshot::with_messages(
-            vec![ActiveTaskSnapshot::new(
-                TaskId::from_raw(9),
-                "Load preview".into(),
-                TaskKind::Blocking,
-                Duration::from_millis(250),
-            )],
+            vec![
+                ActiveTaskSnapshot::new(
+                    TaskId::from_raw(9),
+                    "Load preview".into(),
+                    TaskKind::Blocking,
+                    Duration::from_millis(250),
+                ),
+                ActiveTaskSnapshot::with_scope(
+                    TaskId::from_raw(10),
+                    "Inspector refresh task".into(),
+                    TaskKind::External,
+                    Duration::from_millis(10),
+                    DEVTOOLS_SCOPE,
+                ),
+            ],
             vec![ActiveSubscriptionSnapshot::new(
                 SubscriptionId::singleton("preview.live"),
                 SubscriptionKind::Interval,
@@ -1837,6 +2020,7 @@ mod tests {
                 SubscriptionStatus::Running,
             )],
             message_traces,
+            lifecycle_traces,
             0,
             replacements,
         );
@@ -1851,6 +2035,73 @@ mod tests {
         assert!(labels.iter().any(|label| label.contains("preview.live#0")));
         assert!(labels.iter().any(|label| label.contains("RefreshPreview")));
         assert!(labels.iter().any(|label| label.contains("task #9")));
+        assert!(
+            !labels
+                .iter()
+                .any(|label| label.contains("InspectorRefresh"))
+        );
+        assert!(
+            !labels
+                .iter()
+                .any(|label| label.contains("Inspector refresh task"))
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("completed after 250 ms"))
+        );
+
+        inspector
+            .apply(&mut ui, InspectorAction::ToggleInternalRuntimeActivity)
+            .unwrap();
+        let semantics = ui.semantic_tree().unwrap();
+        let mut with_internal = Vec::new();
+        collect_labels(&semantics, &mut with_internal);
+        assert!(
+            with_internal
+                .iter()
+                .any(|label| label.contains("InspectorRefresh"))
+        );
+        assert!(
+            with_internal
+                .iter()
+                .any(|label| label.contains("Inspector refresh task"))
+        );
+
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::ToggleRuntimeSection(RuntimeSection::Lifecycle),
+            )
+            .unwrap();
+        let semantics = ui.semantic_tree().unwrap();
+        let mut collapsed = Vec::new();
+        collect_labels(&semantics, &mut collapsed);
+        assert!(
+            collapsed
+                .iter()
+                .any(|label| label.contains("Lifecycle (2)"))
+        );
+        assert!(
+            !collapsed
+                .iter()
+                .any(|label| label.contains("completed after 250 ms"))
+        );
+
+        inspector
+            .apply(
+                &mut ui,
+                InspectorAction::ToggleRuntimeSection(RuntimeSection::Lifecycle),
+            )
+            .unwrap();
+        let semantics = ui.semantic_tree().unwrap();
+        let mut expanded = Vec::new();
+        collect_labels(&semantics, &mut expanded);
+        assert!(
+            expanded
+                .iter()
+                .any(|label| label.contains("completed after 250 ms"))
+        );
     }
 
     #[test]

@@ -30,10 +30,11 @@ use rxui_app::{
     ActiveSubscriptionSnapshot, ActiveTaskSnapshot, App, AppBackend, AppCx, Clipboard,
     CloseResponse, Error, InstrumentationState, MessageDispatch, MessageKey, MessageMetadata,
     MessageOrigin, MessageOutcome, MessageProxy, Monitor, ProxyClosed, QueuedMessage,
-    RawSubscriptionEvent, RawSubscriptionSink, Result, RuntimeInstrumentationConfig, RuntimePolicy,
-    RuntimeSnapshot, SubscriptionConfig, SubscriptionFactory, SubscriptionId, SubscriptionStatus,
-    Subscriptions, TaskCompletionStatus, TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme,
-    TimerId, Ui, WindowConfig, WindowHost, WindowId,
+    RawSubscriptionEvent, RawSubscriptionSink, Result, RuntimeInstrumentationConfig,
+    RuntimeLifecycleEvent, RuntimePolicy, RuntimeResource, RuntimeSnapshot, SubscriptionConfig,
+    SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions, TaskCompletionStatus,
+    TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme, TimerId, Ui, WindowConfig, WindowHost,
+    WindowId,
 };
 
 use crate::deterministic_theme;
@@ -122,6 +123,7 @@ struct HeadlessTask {
     name: String,
     kind: TaskKind,
     started_at: Duration,
+    scope: &'static str,
     #[cfg(not(target_arch = "wasm32"))]
     blocking: Option<Box<dyn FnOnce() + Send + 'static>>,
 }
@@ -133,6 +135,13 @@ enum HeadlessSubscriptionSource<M> {
         decode: Box<dyn FnMut(RawSubscriptionEvent) -> M>,
         status: SubscriptionStatus,
     },
+}
+
+fn headless_subscription_status<M>(source: &HeadlessSubscriptionSource<M>) -> SubscriptionStatus {
+    match source {
+        HeadlessSubscriptionSource::Interval(_) => SubscriptionStatus::Running,
+        HeadlessSubscriptionSource::Service { status, .. } => *status,
+    }
 }
 
 struct HeadlessSubscription<M> {
@@ -280,29 +289,61 @@ impl<M: 'static> HeadlessBackend<M> {
         timer
     }
 
-    fn register_task_state(&mut self, name: String) -> (TaskId, Arc<AtomicU8>) {
+    fn register_task_state(&mut self, name: String, kind: TaskKind) -> (TaskId, Arc<AtomicU8>) {
         let task = TaskId::from_raw(self.next_task);
         self.next_task += 1;
         let state = Arc::new(AtomicU8::new(TASK_PENDING));
+        let scope = self
+            .instrumentation
+            .current_scope()
+            .unwrap_or("application");
         self.tasks.insert(
             task,
             HeadlessTask {
                 state: Arc::clone(&state),
-                name,
-                kind: TaskKind::External,
+                name: name.clone(),
+                kind,
                 started_at: self.now,
+                scope,
                 #[cfg(not(target_arch = "wasm32"))]
                 blocking: None,
             },
         );
+        self.instrumentation.record_lifecycle(
+            RuntimeResource::Task {
+                id: task,
+                name,
+                kind,
+                scope,
+            },
+            RuntimeLifecycleEvent::Started,
+            Duration::ZERO,
+        );
         (task, state)
     }
 
+    fn finish_task(&mut self, task: TaskId, event: RuntimeLifecycleEvent) -> Option<HeadlessTask> {
+        let record = self.tasks.remove(&task)?;
+        self.instrumentation.record_lifecycle(
+            RuntimeResource::Task {
+                id: task,
+                name: record.name.clone(),
+                kind: record.kind,
+                scope: record.scope,
+            },
+            event,
+            self.now.saturating_sub(record.started_at),
+        );
+        Some(record)
+    }
+
     fn cancel_all_tasks(&mut self) {
-        for task in self.tasks.values() {
-            task.state.store(TASK_CANCELLED, Ordering::Release);
+        let tasks = self.tasks.keys().copied().collect::<Vec<_>>();
+        for task in tasks {
+            if let Some(record) = self.finish_task(task, RuntimeLifecycleEvent::Cancelled) {
+                record.state.store(TASK_CANCELLED, Ordering::Release);
+            }
         }
-        self.tasks.clear();
     }
 }
 
@@ -450,8 +491,8 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         })
     }
 
-    fn register_task(&mut self, name: String) -> TaskSink<M> {
-        let (task, state) = self.register_task_state(name);
+    fn register_task(&mut self, name: String, kind: TaskKind) -> TaskSink<M> {
+        let (task, state) = self.register_task_state(name, kind);
 
         let submit_events = Arc::clone(&self.task_events);
         let submit_sequence = Arc::clone(&self.external_sequence);
@@ -524,7 +565,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
     }
 
     fn cancel_task(&mut self, task: TaskId) -> bool {
-        let Some(entry) = self.tasks.remove(&task) else {
+        let Some(entry) = self.finish_task(task, RuntimeLifecycleEvent::Cancelled) else {
             return false;
         };
         entry.state.store(TASK_CANCELLED, Ordering::Release);
@@ -536,11 +577,12 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             .tasks
             .iter()
             .map(|(&id, task)| {
-                ActiveTaskSnapshot::new(
+                ActiveTaskSnapshot::with_scope(
                     id,
                     task.name.clone(),
                     task.kind,
                     self.now.saturating_sub(task.started_at),
+                    task.scope,
                 )
             })
             .collect::<Vec<_>>();
@@ -564,11 +606,13 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             })
             .collect::<Vec<_>>();
         subscriptions.sort_by_key(ActiveSubscriptionSnapshot::id);
-        let (message_traces, coalesced_replacements) = self.instrumentation.snapshot();
+        let (message_traces, lifecycle_traces, coalesced_replacements) =
+            self.instrumentation.snapshot();
         RuntimeSnapshot::with_messages(
             tasks,
             subscriptions,
             message_traces,
+            lifecycle_traces,
             self.posted.entries.len(),
             coalesced_replacements,
         )
@@ -587,10 +631,19 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             .filter(|id| !desired_ids.contains(id))
             .collect::<Vec<_>>();
         for id in removed {
-            if let Some(active) = self.subscriptions.remove(&id)
-                && let HeadlessSubscriptionSource::Interval(timer) = active.source
-            {
-                self.cancel_timer(timer);
+            if let Some(active) = self.subscriptions.remove(&id) {
+                self.instrumentation.record_lifecycle(
+                    RuntimeResource::Subscription {
+                        id,
+                        kind: active.config.kind(),
+                        status: headless_subscription_status(&active.source),
+                    },
+                    RuntimeLifecycleEvent::Cancelled,
+                    self.now.saturating_sub(active.started_at),
+                );
+                if let HeadlessSubscriptionSource::Interval(timer) = active.source {
+                    self.cancel_timer(timer);
+                }
             }
         }
 
@@ -628,13 +681,14 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
                 }
                 continue;
             }
-            let starts = if let Some(active) = self.subscriptions.remove(&id) {
+            let (starts, restart_lifetime) = if let Some(active) = self.subscriptions.remove(&id) {
+                let lifetime = self.now.saturating_sub(active.started_at);
                 if let HeadlessSubscriptionSource::Interval(timer) = active.source {
                     self.cancel_timer(timer);
                 }
-                active.starts.saturating_add(1)
+                (active.starts.saturating_add(1), Some(lifetime))
             } else {
-                1
+                (1, None)
             };
             let generation = self.next_subscription_generation;
             self.next_subscription_generation = generation.saturating_add(1);
@@ -682,6 +736,22 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
                     }
                 }
             };
+            let status = headless_subscription_status(&source);
+            self.instrumentation.record_lifecycle(
+                RuntimeResource::Subscription {
+                    id,
+                    kind: config.kind(),
+                    status,
+                },
+                if status == SubscriptionStatus::Failed {
+                    RuntimeLifecycleEvent::Failed
+                } else if restart_lifetime.is_some() {
+                    RuntimeLifecycleEvent::Restarted
+                } else {
+                    RuntimeLifecycleEvent::Started
+                },
+                restart_lifetime.unwrap_or(Duration::ZERO),
+            );
             self.subscriptions.insert(
                 id,
                 HeadlessSubscription {
@@ -697,16 +767,20 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
     }
 
     fn cancel_all_subscriptions(&mut self) {
-        let timers = self
-            .subscriptions
-            .drain()
-            .filter_map(|(_, subscription)| match subscription.source {
-                HeadlessSubscriptionSource::Interval(timer) => Some(timer),
-                HeadlessSubscriptionSource::Service { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        for timer in timers {
-            self.cancel_timer(timer);
+        let subscriptions = self.subscriptions.drain().collect::<Vec<_>>();
+        for (id, subscription) in subscriptions {
+            self.instrumentation.record_lifecycle(
+                RuntimeResource::Subscription {
+                    id,
+                    kind: subscription.config.kind(),
+                    status: headless_subscription_status(&subscription.source),
+                },
+                RuntimeLifecycleEvent::Cancelled,
+                self.now.saturating_sub(subscription.started_at),
+            );
+            if let HeadlessSubscriptionSource::Interval(timer) = subscription.source {
+                self.cancel_timer(timer);
+            }
         }
     }
 
@@ -1026,7 +1100,10 @@ impl<A: App> AppHarness<A> {
     /// This bypasses an externally owned executor and lets a test choose task
     /// completion order. Returns `false` when the task is no longer active.
     pub fn complete_task(&mut self, task: TaskId, message: A::Message) -> Result<bool> {
-        let Some(entry) = self.backend.tasks.remove(&task) else {
+        let Some(entry) = self
+            .backend
+            .finish_task(task, RuntimeLifecycleEvent::Completed)
+        else {
             return Ok(false);
         };
         entry.state.store(TASK_FINISHED, Ordering::Release);
@@ -1329,7 +1406,8 @@ impl<A: App> AppHarness<A> {
                             .get(&id)
                             .is_some_and(|entry| Arc::ptr_eq(&entry.state, &state));
                         if active && state.load(Ordering::Acquire) == TASK_COMPLETION_QUEUED {
-                            self.backend.tasks.remove(&id);
+                            self.backend
+                                .finish_task(id, RuntimeLifecycleEvent::Completed);
                             state.store(TASK_FINISHED, Ordering::Release);
                             dispatch_batch(
                                 &mut self.app,
@@ -1347,7 +1425,8 @@ impl<A: App> AppHarness<A> {
                             .get(&id)
                             .is_some_and(|entry| Arc::ptr_eq(&entry.state, &state));
                         if active {
-                            self.backend.tasks.remove(&id);
+                            self.backend
+                                .finish_task(id, RuntimeLifecycleEvent::Abandoned);
                         }
                     }
                     ExternalEvent::Subscription {
@@ -2050,6 +2129,15 @@ mod tests {
             Ok(())
         }
 
+        fn message_metadata(message: &Self::Message) -> MessageMetadata {
+            match message {
+                TaskMsg::StartExternal => {
+                    MessageMetadata::named("StartExternal").in_scope("test.scoped")
+                }
+                _ => MessageMetadata::unnamed(),
+            }
+        }
+
         fn update(&mut self, cx: &mut AppCx<'_, TaskMsg>, message: TaskMsg) -> Result<()> {
             match message {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -2475,15 +2563,37 @@ mod tests {
 
     #[test]
     fn instrumentation_associates_task_and_subscription_origins() {
-        let config = || RuntimeInstrumentationConfig::default().message_history(8);
+        let config = || {
+            RuntimeInstrumentationConfig::default()
+                .message_history(8)
+                .lifecycle_history(8)
+        };
 
         let mut tasks = AppHarness::new_with_instrumentation(TaskFixture::default(), config())
             .expect("task fixture builds");
         tasks.post(TaskMsg::StartExternal).unwrap();
         let task = tasks.pending_task_ids()[0];
+        assert_eq!(
+            tasks.runtime_snapshot().active_tasks()[0].scope(),
+            "test.scoped"
+        );
+        assert!(matches!(
+            tasks.runtime_snapshot().lifecycle_traces()[0].resource(),
+            RuntimeResource::Task { scope, .. } if *scope == "test.scoped"
+        ));
         tasks
             .complete_task(task, TaskMsg::Delivered(Rc::new("done".into())))
             .unwrap();
+        let task_lifecycle = tasks.runtime_snapshot();
+        assert_eq!(task_lifecycle.lifecycle_traces().len(), 2);
+        assert_eq!(
+            task_lifecycle.lifecycle_traces()[0].event(),
+            RuntimeLifecycleEvent::Started
+        );
+        assert_eq!(
+            task_lifecycle.lifecycle_traces()[1].event(),
+            RuntimeLifecycleEvent::Completed
+        );
         assert!(matches!(
             tasks
                 .runtime_snapshot()
@@ -2494,6 +2604,32 @@ mod tests {
                 .origin(),
             MessageOrigin::Task(id) if id == task
         ));
+        tasks.post(TaskMsg::StartExternal).unwrap();
+        tasks.post(TaskMsg::DropExternal).unwrap();
+        assert_eq!(
+            tasks
+                .runtime_snapshot()
+                .lifecycle_traces()
+                .last()
+                .unwrap()
+                .event(),
+            RuntimeLifecycleEvent::Abandoned
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tasks.post(TaskMsg::StartExternal).unwrap();
+            let task = tasks.pending_task_ids()[0];
+            tasks.post(TaskMsg::Cancel(task)).unwrap();
+            assert_eq!(
+                tasks
+                    .runtime_snapshot()
+                    .lifecycle_traces()
+                    .last()
+                    .unwrap()
+                    .event(),
+                RuntimeLifecycleEvent::Cancelled
+            );
+        }
 
         let id = SubscriptionId::singleton("fixture.live");
         let mut subscriptions =
@@ -2511,6 +2647,24 @@ mod tests {
                 .origin(),
             MessageOrigin::Subscription(origin) if origin == id
         ));
+        subscriptions
+            .post(SubscriptionMsg::SetPeriod(Duration::from_secs(2)))
+            .unwrap();
+        subscriptions.post(SubscriptionMsg::SetLive(false)).unwrap();
+        let lifecycle = subscriptions.runtime_snapshot();
+        assert_eq!(lifecycle.lifecycle_traces().len(), 3);
+        assert_eq!(
+            lifecycle.lifecycle_traces()[0].event(),
+            RuntimeLifecycleEvent::Started
+        );
+        assert_eq!(
+            lifecycle.lifecycle_traces()[1].event(),
+            RuntimeLifecycleEvent::Restarted
+        );
+        assert_eq!(
+            lifecycle.lifecycle_traces()[2].event(),
+            RuntimeLifecycleEvent::Cancelled
+        );
     }
 
     static METADATA_CALLS: AtomicU64 = AtomicU64::new(0);

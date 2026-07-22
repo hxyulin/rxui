@@ -34,17 +34,20 @@ pub mod prelude {
         HostStatus, Instant, JsonStateStore, MainResult, MappedAppCx, Menu, MenuBar, MenuEntry,
         MenuRole, MessageKey, MessageMapper, MessageMetadata, MessageOrigin, MessageOutcome,
         MessageProxy, MessageTrace, MessageTraceIdentity, RuntimeEvent,
-        RuntimeInstrumentationConfig, RuntimeObserver, RuntimeSnapshot, Shortcut, Subscription,
-        SubscriptionId, SubscriptionKind, SubscriptionStatus, Subscriptions, TaskCompletion,
-        TaskCompletionStatus, TaskConfig, TaskError, TaskId, TaskKind, TaskSpawnError, TimerId,
-        UndoAction, UndoStack, UpdateInfo, WindowConfig, WindowEvent, WindowHost,
-        WindowHostOptions, WindowId, WindowPlacement, WindowPlacementTracker, redo_command_id,
-        sync_undo_commands, undo_command_id,
+        RuntimeInstrumentationConfig, RuntimeLifecycleEvent, RuntimeLifecycleTrace,
+        RuntimeObserver, RuntimeResource, RuntimeSnapshot, Shortcut, Subscription, SubscriptionId,
+        SubscriptionKind, SubscriptionStatus, Subscriptions, TaskCompletion, TaskCompletionStatus,
+        TaskConfig, TaskError, TaskId, TaskKind, TaskSpawnError, TimerId, UndoAction, UndoStack,
+        UpdateInfo, WindowConfig, WindowEvent, WindowHost, WindowHostOptions, WindowId,
+        WindowPlacement, WindowPlacementTracker, redo_command_id, sync_undo_commands,
+        undo_command_id,
     };
     #[cfg(not(target_arch = "wasm32"))]
     pub use rxui_app::{run, run_with};
     #[cfg(feature = "devtools")]
-    pub use rxui_devtools::{InspectorAction, InspectorOptions, InspectorView, UiInspector};
+    pub use rxui_devtools::{
+        InspectorAction, InspectorOptions, InspectorView, RuntimeSection, UiInspector,
+    };
     #[cfg(feature = "editor")]
     pub use rxui_editor::{
         GraphEdge, GraphEndpoint, GraphInteractionPhase, GraphNode, GraphPoint, GraphPort,

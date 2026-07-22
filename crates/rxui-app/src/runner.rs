@@ -38,7 +38,8 @@ use astrelis_ui_host::{GraphicsContext, HostUpdate, WindowHost, WindowHostOption
 use crate::error::{DynAppError, Error, Result};
 use crate::instrumentation::{
     InstrumentationState, MessageDispatch, MessageMetadata, MessageOrigin, MessageOutcome,
-    MessageTrace, QueuedMessage, RuntimeInstrumentationConfig,
+    MessageTrace, QueuedMessage, RuntimeInstrumentationConfig, RuntimeLifecycleEvent,
+    RuntimeLifecycleTrace, RuntimeResource,
 };
 use crate::subscription::{
     ActiveSubscriptionSnapshot, RawSubscriptionEvent, RawSubscriptionSink, SubscriptionConfig,
@@ -308,6 +309,7 @@ pub struct ActiveTaskSnapshot {
     name: String,
     kind: TaskKind,
     elapsed: Duration,
+    scope: &'static str,
 }
 
 impl ActiveTaskSnapshot {
@@ -319,6 +321,25 @@ impl ActiveTaskSnapshot {
             name,
             kind,
             elapsed,
+            scope: "application",
+        }
+    }
+
+    /// Creates scoped task metadata for an alternative backend.
+    #[doc(hidden)]
+    pub fn with_scope(
+        id: TaskId,
+        name: String,
+        kind: TaskKind,
+        elapsed: Duration,
+        scope: &'static str,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            kind,
+            elapsed,
+            scope,
         }
     }
 
@@ -341,6 +362,11 @@ impl ActiveTaskSnapshot {
     pub const fn elapsed(&self) -> Duration {
         self.elapsed
     }
+
+    /// Returns the diagnostic ownership scope.
+    pub const fn scope(&self) -> &'static str {
+        self.scope
+    }
 }
 
 /// Point-in-time read-only state exposed to diagnostics and developer tools.
@@ -349,6 +375,7 @@ pub struct RuntimeSnapshot {
     active_tasks: Vec<ActiveTaskSnapshot>,
     active_subscriptions: Vec<ActiveSubscriptionSnapshot>,
     message_traces: Vec<MessageTrace>,
+    lifecycle_traces: Vec<RuntimeLifecycleTrace>,
     pending_messages: usize,
     coalesced_replacements: u64,
 }
@@ -364,6 +391,7 @@ impl RuntimeSnapshot {
             active_tasks,
             active_subscriptions,
             message_traces: Vec::new(),
+            lifecycle_traces: Vec::new(),
             pending_messages: 0,
             coalesced_replacements: 0,
         }
@@ -375,6 +403,7 @@ impl RuntimeSnapshot {
         active_tasks: Vec<ActiveTaskSnapshot>,
         active_subscriptions: Vec<ActiveSubscriptionSnapshot>,
         message_traces: Vec<MessageTrace>,
+        lifecycle_traces: Vec<RuntimeLifecycleTrace>,
         pending_messages: usize,
         coalesced_replacements: u64,
     ) -> Self {
@@ -382,6 +411,7 @@ impl RuntimeSnapshot {
             active_tasks,
             active_subscriptions,
             message_traces,
+            lifecycle_traces,
             pending_messages,
             coalesced_replacements,
         }
@@ -400,6 +430,11 @@ impl RuntimeSnapshot {
     /// Returns completed message traces from oldest to newest.
     pub fn message_traces(&self) -> &[MessageTrace] {
         &self.message_traces
+    }
+
+    /// Returns task and subscription lifecycle traces from oldest to newest.
+    pub fn lifecycle_traces(&self) -> &[RuntimeLifecycleTrace] {
+        &self.lifecycle_traces
     }
 
     /// Returns messages currently waiting in RXUI's posted-message queue.
@@ -946,7 +981,7 @@ pub trait AppBackend<M: 'static> {
         M: Send;
 
     /// Registers an application-scoped task completion channel.
-    fn register_task(&mut self, name: String) -> TaskSink<M>;
+    fn register_task(&mut self, name: String, kind: TaskKind) -> TaskSink<M>;
 
     /// Queues one closure on the native bounded blocking pool.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1153,7 +1188,16 @@ impl<'a, M: 'static> AppCx<'a, M> {
         name: impl Into<String>,
         map: impl FnOnce(T) -> M + Send + 'static,
     ) -> TaskCompletion<T> {
-        let sink = self.backend.register_task(name.into());
+        self.register_task_with_kind(name.into(), TaskKind::External, map)
+    }
+
+    fn register_task_with_kind<T: Send + 'static>(
+        &mut self,
+        name: String,
+        kind: TaskKind,
+        map: impl FnOnce(T) -> M + Send + 'static,
+    ) -> TaskCompletion<T> {
+        let sink = self.backend.register_task(name, kind);
         let id = sink.id();
         TaskCompletion::new(id, move |output| match output {
             Some(output) => sink.complete(Box::new(move || map(output))),
@@ -1187,7 +1231,7 @@ impl<'a, M: 'static> AppCx<'a, M> {
         work: impl FnOnce() -> T + Send + 'static,
         map: impl FnOnce(std::result::Result<T, TaskError>) -> M + Send + 'static,
     ) -> std::result::Result<TaskId, TaskSpawnError> {
-        let completion = self.register_task_named(name, map);
+        let completion = self.register_task_with_kind(name.into(), TaskKind::Blocking, map);
         let task = completion.id();
         let job = Box::new(move || {
             let result = catch_unwind(AssertUnwindSafe(work)).map_err(|_| TaskError::Panicked);
@@ -1380,6 +1424,7 @@ struct TaskRecord {
     name: String,
     kind: TaskKind,
     started_at: Instant,
+    scope: &'static str,
 }
 
 type ServiceDecoder<M> = Rc<RefCell<Box<dyn FnMut(RawSubscriptionEvent) -> M>>>;
@@ -1394,6 +1439,13 @@ enum ActiveSubscriptionSource<M: 'static> {
         decode: ServiceDecoder<M>,
         status: SubscriptionStatus,
     },
+}
+
+fn subscription_source_status<M>(source: &ActiveSubscriptionSource<M>) -> SubscriptionStatus {
+    match source {
+        ActiveSubscriptionSource::Interval { .. } => SubscriptionStatus::Running,
+        ActiveSubscriptionSource::Service { status, .. } => *status,
+    }
 }
 
 struct ActiveSubscription<M: 'static> {
@@ -1532,45 +1584,92 @@ impl<M: 'static> Shell<M> {
         id
     }
 
-    fn register_task(&mut self, name: String, started_at: Instant) -> (TaskId, Arc<AtomicU8>) {
+    fn register_task(
+        &mut self,
+        name: String,
+        kind: TaskKind,
+        started_at: Instant,
+    ) -> (TaskId, Arc<AtomicU8>) {
         let id = TaskId(self.next_task);
         self.next_task += 1;
         let state = Arc::new(AtomicU8::new(TASK_PENDING));
+        let scope = self
+            .instrumentation
+            .current_scope()
+            .unwrap_or("application");
         self.tasks.insert(
             id,
             TaskRecord {
                 state: Arc::clone(&state),
-                name,
-                kind: TaskKind::External,
+                name: name.clone(),
+                kind,
                 started_at,
+                scope,
             },
+        );
+        self.instrumentation.record_lifecycle(
+            RuntimeResource::Task {
+                id,
+                name,
+                kind,
+                scope,
+            },
+            RuntimeLifecycleEvent::Started,
+            Duration::ZERO,
         );
         (id, state)
     }
 
-    fn cancel_task(&mut self, task: TaskId) -> bool {
-        let Some(record) = self.tasks.remove(&task) else {
+    fn finish_task(
+        &mut self,
+        task: TaskId,
+        event: RuntimeLifecycleEvent,
+        now: Instant,
+    ) -> Option<TaskRecord> {
+        let record = self.tasks.remove(&task)?;
+        self.instrumentation.record_lifecycle(
+            RuntimeResource::Task {
+                id: task,
+                name: record.name.clone(),
+                kind: record.kind,
+                scope: record.scope,
+            },
+            event,
+            now.saturating_duration_since(record.started_at),
+        );
+        Some(record)
+    }
+
+    fn cancel_task(&mut self, task: TaskId, now: Instant) -> bool {
+        let Some(record) = self.finish_task(task, RuntimeLifecycleEvent::Cancelled, now) else {
             return false;
         };
         record.state.store(TASK_CANCELLED, Ordering::Release);
         true
     }
 
-    fn abandon_task(&mut self, task: TaskId, state: &Arc<AtomicU8>) {
+    fn abandon_task(&mut self, task: TaskId, state: &Arc<AtomicU8>, now: Instant) {
         let matches = self
             .tasks
             .get(&task)
             .is_some_and(|record| Arc::ptr_eq(&record.state, state));
         if matches {
-            self.tasks.remove(&task);
+            self.finish_task(task, RuntimeLifecycleEvent::Abandoned, now);
         }
     }
 
-    fn cancel_all_tasks(&mut self) {
-        for record in self.tasks.values() {
-            record.state.store(TASK_CANCELLED, Ordering::Release);
+    fn cancel_all_tasks(&mut self, now: Option<Instant>) {
+        if let Some(now) = now {
+            let tasks = self.tasks.keys().copied().collect::<Vec<_>>();
+            for task in tasks {
+                self.cancel_task(task, now);
+            }
+        } else {
+            for record in self.tasks.values() {
+                record.state.store(TASK_CANCELLED, Ordering::Release);
+            }
+            self.tasks.clear();
         }
-        self.tasks.clear();
         #[cfg(not(target_arch = "wasm32"))]
         self.blocking_pool.take();
     }
@@ -1584,6 +1683,7 @@ impl<M: 'static> Shell<M> {
                 name: task.name.clone(),
                 kind: task.kind,
                 elapsed: now.saturating_duration_since(task.started_at),
+                scope: task.scope,
             })
             .collect::<Vec<_>>();
         active_tasks.sort_by_key(|task| task.id);
@@ -1606,11 +1706,13 @@ impl<M: 'static> Shell<M> {
             })
             .collect::<Vec<_>>();
         active_subscriptions.sort_by_key(ActiveSubscriptionSnapshot::id);
-        let (message_traces, coalesced_replacements) = self.instrumentation.snapshot();
+        let (message_traces, lifecycle_traces, coalesced_replacements) =
+            self.instrumentation.snapshot();
         RuntimeSnapshot::with_messages(
             active_tasks,
             active_subscriptions,
             message_traces,
+            lifecycle_traces,
             self.posted.entries.len(),
             coalesced_replacements,
         )
@@ -1619,7 +1721,7 @@ impl<M: 'static> Shell<M> {
 
 impl<M: 'static> Drop for Shell<M> {
     fn drop(&mut self) {
-        self.cancel_all_tasks();
+        self.cancel_all_tasks(None);
     }
 }
 
@@ -1675,13 +1777,10 @@ impl<A: App> RunnerCore<A> {
         if !active || state.load(Ordering::Acquire) != TASK_COMPLETION_QUEUED {
             return Ok(());
         }
-        self.shell.tasks.remove(&task);
+        self.shell
+            .finish_task(task, RuntimeLifecycleEvent::Completed, context.now());
         state.store(TASK_FINISHED, Ordering::Release);
         self.dispatch_queued(context, factory(), MessageOrigin::Task(task))
-    }
-
-    fn abandon_task(&mut self, task: TaskId, state: Arc<AtomicU8>) {
-        self.shell.abandon_task(task, &state);
     }
 
     fn fire_subscription(
@@ -1834,7 +1933,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         context: &mut AppContext<'_, '_, Self>,
     ) -> std::result::Result<(), Self::Error> {
         let Self { user, shell } = self;
-        shell.cancel_all_tasks();
+        shell.cancel_all_tasks(Some(context.now()));
         let mut backend = RuntimeBackend { context, shell };
         backend.cancel_all_subscriptions();
         user.exiting(&mut AppCx::new(&mut backend, None))
@@ -2023,8 +2122,8 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         })
     }
 
-    fn register_task(&mut self, name: String) -> TaskSink<A::Message> {
-        let (task, state) = self.shell.register_task(name, self.context.now());
+    fn register_task(&mut self, name: String, kind: TaskKind) -> TaskSink<A::Message> {
+        let (task, state) = self.shell.register_task(name, kind, self.context.now());
 
         let submit_proxy = self.context.proxy();
         let submit_state = Arc::clone(&state);
@@ -2069,8 +2168,8 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             }
             let cleanup_state = Arc::clone(&abandon_state);
             abandon_proxy
-                .run_on_main_thread(move |core, _context| {
-                    core.abandon_task(task, cleanup_state);
+                .run_on_main_thread(move |core, context| {
+                    core.shell.abandon_task(task, &cleanup_state, context.now());
                     Ok(())
                 })
                 .map_err(|_| ProxyClosed)
@@ -2085,11 +2184,20 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         task: TaskId,
         job: Box<dyn FnOnce() + Send + 'static>,
     ) -> std::result::Result<(), TaskSpawnError> {
-        if let Some(record) = self.shell.tasks.get_mut(&task) {
-            record.kind = TaskKind::Blocking;
-        }
         if self.shell.blocking_pool.is_none() {
-            self.shell.blocking_pool = Some(BlockingPool::new(self.shell.task_config)?);
+            match BlockingPool::new(self.shell.task_config) {
+                Ok(pool) => self.shell.blocking_pool = Some(pool),
+                Err(error) => {
+                    if let Some(record) = self.shell.finish_task(
+                        task,
+                        RuntimeLifecycleEvent::Failed,
+                        self.context.now(),
+                    ) {
+                        record.state.store(TASK_CANCELLED, Ordering::Release);
+                    }
+                    return Err(error);
+                }
+            }
         }
         let result = self
             .shell
@@ -2097,14 +2205,18 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             .as_ref()
             .expect("blocking pool was initialized")
             .enqueue(job);
-        if result.is_err() {
-            self.shell.cancel_task(task);
+        if result.is_err()
+            && let Some(record) =
+                self.shell
+                    .finish_task(task, RuntimeLifecycleEvent::Failed, self.context.now())
+        {
+            record.state.store(TASK_CANCELLED, Ordering::Release);
         }
         result
     }
 
     fn cancel_task(&mut self, task: TaskId) -> bool {
-        self.shell.cancel_task(task)
+        self.shell.cancel_task(task, self.context.now())
     }
 
     fn runtime_snapshot(&self) -> RuntimeSnapshot {
@@ -2129,10 +2241,22 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             .filter(|id| !desired_ids.contains(id))
             .collect::<Vec<_>>();
         for id in removed {
-            if let Some(active) = self.shell.subscriptions.remove(&id)
-                && let ActiveSubscriptionSource::Interval { timer, .. } = active.source
-            {
-                self.context.cancel_timer(timer);
+            if let Some(active) = self.shell.subscriptions.remove(&id) {
+                let status = subscription_source_status(&active.source);
+                self.shell.instrumentation.record_lifecycle(
+                    RuntimeResource::Subscription {
+                        id,
+                        kind: active.config.kind(),
+                        status,
+                    },
+                    RuntimeLifecycleEvent::Cancelled,
+                    self.context
+                        .now()
+                        .saturating_duration_since(active.started_at),
+                );
+                if let ActiveSubscriptionSource::Interval { timer, .. } = active.source {
+                    self.context.cancel_timer(timer);
+                }
             }
         }
 
@@ -2164,14 +2288,19 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
                 }
                 continue;
             }
-            let starts = if let Some(active) = self.shell.subscriptions.remove(&id) {
-                if let ActiveSubscriptionSource::Interval { timer, .. } = active.source {
-                    self.context.cancel_timer(timer);
-                }
-                active.starts.saturating_add(1)
-            } else {
-                1
-            };
+            let (starts, restart_lifetime) =
+                if let Some(active) = self.shell.subscriptions.remove(&id) {
+                    let lifetime = self
+                        .context
+                        .now()
+                        .saturating_duration_since(active.started_at);
+                    if let ActiveSubscriptionSource::Interval { timer, .. } = active.source {
+                        self.context.cancel_timer(timer);
+                    }
+                    (active.starts.saturating_add(1), Some(lifetime))
+                } else {
+                    (1, None)
+                };
 
             let generation = self.shell.next_subscription_generation;
             self.shell.next_subscription_generation = generation.saturating_add(1);
@@ -2225,6 +2354,23 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
                     }
                 }
             };
+            let status = subscription_source_status(&source);
+            let event = if status == SubscriptionStatus::Failed {
+                RuntimeLifecycleEvent::Failed
+            } else if restart_lifetime.is_some() {
+                RuntimeLifecycleEvent::Restarted
+            } else {
+                RuntimeLifecycleEvent::Started
+            };
+            self.shell.instrumentation.record_lifecycle(
+                RuntimeResource::Subscription {
+                    id,
+                    kind: config.kind(),
+                    status,
+                },
+                event,
+                restart_lifetime.unwrap_or(Duration::ZERO),
+            );
             self.shell.subscriptions.insert(
                 id,
                 ActiveSubscription {
@@ -2240,7 +2386,18 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
     }
 
     fn cancel_all_subscriptions(&mut self) {
-        for (_, active) in self.shell.subscriptions.drain() {
+        for (id, active) in self.shell.subscriptions.drain() {
+            self.shell.instrumentation.record_lifecycle(
+                RuntimeResource::Subscription {
+                    id,
+                    kind: active.config.kind(),
+                    status: subscription_source_status(&active.source),
+                },
+                RuntimeLifecycleEvent::Cancelled,
+                self.context
+                    .now()
+                    .saturating_duration_since(active.started_at),
+            );
             if let ActiveSubscriptionSource::Interval { timer, .. } = active.source {
                 self.context.cancel_timer(timer);
             }
@@ -2684,7 +2841,7 @@ mod tests {
             })
         }
 
-        fn register_task(&mut self, _name: String) -> TaskSink<M> {
+        fn register_task(&mut self, _name: String, _kind: TaskKind) -> TaskSink<M> {
             let task = TaskId::from_raw(self.next_task);
             self.next_task += 1;
             let state = Arc::new(AtomicU8::new(TASK_PENDING));

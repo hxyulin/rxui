@@ -26,8 +26,9 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   hierarchical mapping, startup-failure messages, and deterministic testing.
 - Opt-in, bounded, payload-free message instrumentation with application-defined
   names/categories, queue and update timing, delivery origins, coalescing
-  diagnostics, deterministic harness support, observer events, and a scrollable
-  devtools timeline.
+  diagnostics, bounded task/subscription lifecycle history, deterministic
+  harness support, observer events, and a scrollable devtools Runtime view with
+  collapsible diagnostic sections and a scope-aware inspector-activity toggle.
 - An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
   error, removing `map_err` glue from application code.
 - Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,

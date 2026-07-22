@@ -50,7 +50,9 @@ impl App for InspectorExample {
             Message::CompleteTask => MessageMetadata::new("CompleteTask", "task-demo"),
             Message::CancelTask => MessageMetadata::new("CancelTask", "task-demo"),
             Message::TaskFinished => MessageMetadata::new("TaskFinished", "task-demo"),
-            Message::Inspector(_) => MessageMetadata::new("InspectorAction", "devtools"),
+            Message::Inspector(_) => {
+                MessageMetadata::new("InspectorAction", "devtools").in_scope("rxui.devtools")
+            }
         }
     }
 
@@ -190,9 +192,11 @@ impl App for InspectorExample {
 fn main() -> MainResult {
     run_with(
         InspectorExample::new(),
-        AppConfig::default()
-            .theme(Theme::dark())
-            .instrumentation(RuntimeInstrumentationConfig::default().message_history(256)),
+        AppConfig::default().theme(Theme::dark()).instrumentation(
+            RuntimeInstrumentationConfig::default()
+                .message_history(256)
+                .lifecycle_history(128),
+        ),
     )
 }
 
