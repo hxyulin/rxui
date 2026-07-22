@@ -25,7 +25,7 @@ use astrelis_ui_core::{
     OverlayOptions, OverlaySide, Padding, Positioning, RoutedEventKind, Row, SemanticRole, Ui,
     UiError, Visibility, WidgetStyle,
 };
-use rxui_app::{DeliveryPolicy, RuntimeSnapshot, SubscriptionKind, TaskKind};
+use rxui_app::{DeliveryPolicy, RuntimeSnapshot, SubscriptionKind, SubscriptionStatus, TaskKind};
 use rxui_widgets::{
     CommandButton, IconButton, IconView, TreeAction, TreeView, TreeViewOptions,
     foundation::{Menu, MenuItem},
@@ -1264,22 +1264,35 @@ where
             for subscription in self.runtime_snapshot.active_subscriptions() {
                 let kind = match subscription.kind() {
                     SubscriptionKind::Interval => {
-                        format!("every {}", format_elapsed(subscription.interval()))
+                        format!(
+                            "every {}",
+                            format_elapsed(
+                                subscription
+                                    .interval()
+                                    .expect("interval snapshot has a period")
+                            )
+                        )
                     }
+                    SubscriptionKind::FileWatch => "filesystem watch".into(),
                     _ => "subscription".into(),
                 };
                 let delivery = match subscription.delivery_policy() {
                     DeliveryPolicy::Latest => "latest",
                     DeliveryPolicy::Every => "every event",
                 };
+                let status = match subscription.status() {
+                    SubscriptionStatus::Running => "running",
+                    SubscriptionStatus::Failed => "failed",
+                };
                 ui.add_label(
                     self.runtime_details,
                     format!(
-                        "{}#{} — {} · {} · started {}×",
+                        "{}#{} — {} · {} · {} · started {}×",
                         subscription.id().namespace(),
                         subscription.id().instance(),
                         kind,
                         delivery,
+                        status,
                         subscription.starts()
                     ),
                 )?;
@@ -1654,7 +1667,10 @@ mod tests {
 
     #[test]
     fn runtime_view_renders_explicit_task_and_subscription_snapshots() {
-        use rxui_app::{ActiveSubscriptionSnapshot, ActiveTaskSnapshot, SubscriptionId, TaskId};
+        use rxui_app::{
+            ActiveSubscriptionSnapshot, ActiveTaskSnapshot, SubscriptionId, SubscriptionStatus,
+            TaskId,
+        };
 
         let (mut ui, _button) = harness();
         let mut inspector =
@@ -1670,9 +1686,10 @@ mod tests {
                 SubscriptionId::singleton("preview.live"),
                 SubscriptionKind::Interval,
                 DeliveryPolicy::Latest,
-                Duration::from_millis(120),
+                Some(Duration::from_millis(120)),
                 Duration::from_secs(2),
                 1,
+                SubscriptionStatus::Running,
             )],
         );
         inspector.sync_runtime(&mut ui, &snapshot).unwrap();

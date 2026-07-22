@@ -21,9 +21,9 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   native blocking pool, with deterministic chosen-order task completion in
   the application harness, optional diagnostic names, and active-task runtime
   snapshots.
-- Application-scoped declarative interval subscriptions with stable identity,
-  latest-value delivery, lifecycle reconciliation, hierarchical mapping, and
-  deterministic virtual-time testing.
+- Application-scoped declarative interval and filesystem subscriptions with
+  stable identity, bounded latest-value delivery, lifecycle reconciliation,
+  hierarchical mapping, startup-failure messages, and deterministic testing.
 - An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
   error, removing `map_err` glue from application code.
 - Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,
@@ -32,7 +32,7 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 - Desktop services: native file open/save dialogs, URL and file launching,
   and a persisted recent-documents list.
 - Portable byte-oriented browser open/save dialogs and debounced native
-  filesystem watching.
+  filesystem watching with imperative and declarative lifecycle APIs.
 - PNG/JPEG/WebP image decoding plus retained image fitting and sampling.
 - Interactive line, bar, and scatter charts with axes, legends, axis-specific
   pan/zoom, cursor-anchored native pinch and wheel zoom, two-axis precision

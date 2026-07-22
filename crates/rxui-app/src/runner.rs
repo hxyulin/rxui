@@ -8,12 +8,13 @@
 //! boilerplate that direct `astrelis_app::App` implementations require.
 
 use std::{
+    any::Any,
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fmt,
     rc::Rc,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU8, Ordering},
     },
     time::Duration,
@@ -22,10 +23,7 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{
-        Mutex,
-        mpsc::{self, SyncSender, TrySendError},
-    },
+    sync::mpsc::{self, SyncSender, TrySendError},
     thread,
 };
 
@@ -39,7 +37,8 @@ use astrelis_ui_host::{GraphicsContext, HostUpdate, WindowHost, WindowHostOption
 
 use crate::error::{DynAppError, Error, Result};
 use crate::subscription::{
-    ActiveSubscriptionSnapshot, SubscriptionConfig, SubscriptionId, Subscriptions,
+    ActiveSubscriptionSnapshot, RawSubscriptionEvent, RawSubscriptionSink, SubscriptionConfig,
+    SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions,
 };
 
 pub use astrelis_app::{FixedStep, RuntimeConfig, RuntimePolicy, UpdateInfo};
@@ -1300,11 +1299,24 @@ struct TaskRecord {
     started_at: Instant,
 }
 
+type ServiceDecoder<M> = Rc<RefCell<Box<dyn FnMut(RawSubscriptionEvent) -> M>>>;
+
+enum ActiveSubscriptionSource<M: 'static> {
+    Interval {
+        timer: NativeTimerId,
+        factory: Rc<RefCell<Box<dyn FnMut() -> M>>>,
+    },
+    Service {
+        _guard: Option<Box<dyn Any + Send>>,
+        decode: ServiceDecoder<M>,
+        status: SubscriptionStatus,
+    },
+}
+
 struct ActiveSubscription<M: 'static> {
     config: SubscriptionConfig,
     generation: u64,
-    timer: NativeTimerId,
-    factory: Rc<RefCell<Box<dyn FnMut() -> M>>>,
+    source: ActiveSubscriptionSource<M>,
     started_at: Instant,
     starts: u64,
 }
@@ -1495,11 +1507,15 @@ impl<M: 'static> Shell<M> {
             .map(|(&id, subscription)| {
                 ActiveSubscriptionSnapshot::new(
                     id,
-                    subscription.config.kind,
-                    subscription.config.delivery,
-                    subscription.config.interval,
+                    subscription.config.kind(),
+                    subscription.config.delivery(),
+                    subscription.config.interval(),
                     now.saturating_duration_since(subscription.started_at),
                     subscription.starts,
+                    match &subscription.source {
+                        ActiveSubscriptionSource::Interval { .. } => SubscriptionStatus::Running,
+                        ActiveSubscriptionSource::Service { status, .. } => *status,
+                    },
                 )
             })
             .collect::<Vec<_>>();
@@ -1582,12 +1598,44 @@ impl<A: App> RunnerCore<A> {
             if subscription.generation != generation {
                 return Ok(());
             }
-            (subscription.factory.borrow_mut())()
+            let ActiveSubscriptionSource::Interval { factory, .. } = &subscription.source else {
+                return Ok(());
+            };
+            (factory.borrow_mut())()
         };
         // Astrelis intervals already collapse missed periods into one callback
         // per event-loop turn. `DeliveryPolicy::Every` preserves every callback
         // that does occur; future concurrent sources will use the same policy
         // at their producer queue.
+        self.dispatch_queued(context, message)
+    }
+
+    fn fire_service_subscription(
+        &mut self,
+        context: &mut AppContext<'_, '_, Self>,
+        id: SubscriptionId,
+        generation: u64,
+        pending: Arc<Mutex<Option<RawSubscriptionEvent>>>,
+    ) -> std::result::Result<(), DynAppError> {
+        let event = pending
+            .lock()
+            .expect("subscription event slot poisoned")
+            .take();
+        let Some(event) = event else {
+            return Ok(());
+        };
+        let message = {
+            let Some(subscription) = self.shell.subscriptions.get(&id) else {
+                return Ok(());
+            };
+            if subscription.generation != generation {
+                return Ok(());
+            }
+            let ActiveSubscriptionSource::Service { decode, .. } = &subscription.source else {
+                return Ok(());
+            };
+            (decode.borrow_mut())(event)
+        };
         self.dispatch_queued(context, message)
     }
 }
@@ -1899,7 +1947,7 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         let desired = desired.into_unique()?;
         let desired_ids = desired
             .iter()
-            .map(|subscription| subscription.id)
+            .map(|subscription| subscription.id())
             .collect::<HashSet<_>>();
         let removed = self
             .shell
@@ -1909,43 +1957,108 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             .filter(|id| !desired_ids.contains(id))
             .collect::<Vec<_>>();
         for id in removed {
-            if let Some(active) = self.shell.subscriptions.remove(&id) {
-                self.context.cancel_timer(active.timer);
+            if let Some(active) = self.shell.subscriptions.remove(&id)
+                && let ActiveSubscriptionSource::Interval { timer, .. } = active.source
+            {
+                self.context.cancel_timer(timer);
             }
         }
 
         for subscription in desired {
-            if let Some(active) = self.shell.subscriptions.get_mut(&subscription.id)
-                && active.config == subscription.config
+            let (id, config, factory) = subscription.into_parts();
+            if let Some(active) = self.shell.subscriptions.get_mut(&id)
+                && active.config == config
             {
-                *active.factory.borrow_mut() = subscription.factory;
+                match (&mut active.source, factory) {
+                    (
+                        ActiveSubscriptionSource::Interval {
+                            factory: active_factory,
+                            ..
+                        },
+                        SubscriptionFactory::Interval(factory),
+                    ) => *active_factory.borrow_mut() = factory,
+                    (
+                        ActiveSubscriptionSource::Service {
+                            decode: active_decode,
+                            ..
+                        },
+                        SubscriptionFactory::Service(factory),
+                    ) => {
+                        *active_decode.borrow_mut() = factory.into_decoder();
+                    }
+                    _ => {
+                        unreachable!("equivalent subscription configurations have matching sources")
+                    }
+                }
                 continue;
             }
-            let starts = if let Some(active) = self.shell.subscriptions.remove(&subscription.id) {
-                self.context.cancel_timer(active.timer);
+            let starts = if let Some(active) = self.shell.subscriptions.remove(&id) {
+                if let ActiveSubscriptionSource::Interval { timer, .. } = active.source {
+                    self.context.cancel_timer(timer);
+                }
                 active.starts.saturating_add(1)
             } else {
                 1
             };
 
-            let id = subscription.id;
-            let config = subscription.config;
             let generation = self.shell.next_subscription_generation;
             self.shell.next_subscription_generation = generation.saturating_add(1);
-            let factory = Rc::new(RefCell::new(subscription.factory));
-            let timer = self.context.set_interval(
-                config.interval,
-                move |core: &mut RunnerCore<A>, context| {
-                    core.fire_subscription(context, id, generation)
-                },
-            );
+            let source = match factory {
+                SubscriptionFactory::Interval(factory) => {
+                    let factory = Rc::new(RefCell::new(factory));
+                    let timer = self.context.set_interval(
+                        config
+                            .interval()
+                            .expect("interval configuration has a period"),
+                        move |core: &mut RunnerCore<A>, context| {
+                            core.fire_subscription(context, id, generation)
+                        },
+                    );
+                    ActiveSubscriptionSource::Interval { timer, factory }
+                }
+                SubscriptionFactory::Service(factory) => {
+                    let pending = Arc::new(Mutex::new(None));
+                    let pending_for_sink = Arc::clone(&pending);
+                    let proxy = self.context.proxy();
+                    let sink = RawSubscriptionSink::new(move |event| {
+                        let should_schedule = {
+                            let mut pending = pending_for_sink
+                                .lock()
+                                .expect("subscription event slot poisoned");
+                            let should_schedule = pending.is_none();
+                            *pending = Some(event);
+                            should_schedule
+                        };
+                        if should_schedule {
+                            let pending = Arc::clone(&pending_for_sink);
+                            let _ = proxy.run_on_main_thread(move |core, context| {
+                                core.fire_service_subscription(context, id, generation, pending)
+                            });
+                        }
+                    });
+                    let (started, decode) = factory.start(sink.clone());
+                    let (guard, failure) = started.into_parts();
+                    let status = if failure.is_some() {
+                        SubscriptionStatus::Failed
+                    } else {
+                        SubscriptionStatus::Running
+                    };
+                    if let Some(failure) = failure {
+                        sink.emit_raw(failure);
+                    }
+                    ActiveSubscriptionSource::Service {
+                        _guard: guard,
+                        decode: Rc::new(RefCell::new(decode)),
+                        status,
+                    }
+                }
+            };
             self.shell.subscriptions.insert(
                 id,
                 ActiveSubscription {
                     config,
                     generation,
-                    timer,
-                    factory,
+                    source,
                     started_at: self.context.now(),
                     starts,
                 },
@@ -1956,7 +2069,9 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
 
     fn cancel_all_subscriptions(&mut self) {
         for (_, active) in self.shell.subscriptions.drain() {
-            self.context.cancel_timer(active.timer);
+            if let ActiveSubscriptionSource::Interval { timer, .. } = active.source {
+                self.context.cancel_timer(timer);
+            }
         }
     }
 

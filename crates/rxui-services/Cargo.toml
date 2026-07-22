@@ -30,6 +30,7 @@ web-sys = { workspace = true, features = ["Window"] }
 
 [dev-dependencies]
 tempfile = "3"
+rxui-testing = { workspace = true }
 
 [lints]
 workspace = true

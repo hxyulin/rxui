@@ -1,6 +1,8 @@
 //! Declarative descriptions of application-scoped long-lived event sources.
 
-use std::{collections::HashSet, fmt, rc::Rc, time::Duration};
+use std::{
+    any::Any, collections::HashSet, fmt, marker::PhantomData, rc::Rc, sync::Arc, time::Duration,
+};
 
 use crate::{Error, Result};
 
@@ -58,17 +60,29 @@ pub enum DeliveryPolicy {
 pub enum SubscriptionKind {
     /// A repeating application-clock interval.
     Interval,
+    /// A debounced filesystem watcher.
+    FileWatch,
 }
 
-/// Read-only metadata for one currently active subscription.
+/// Current lifecycle state of a reconciled subscription.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubscriptionStatus {
+    /// The underlying event source started successfully.
+    Running,
+    /// The source failed to start and remains dormant until its configuration changes.
+    Failed,
+}
+
+/// Read-only metadata for one currently reconciled subscription.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveSubscriptionSnapshot {
     id: SubscriptionId,
     kind: SubscriptionKind,
     delivery: DeliveryPolicy,
-    interval: Duration,
+    interval: Option<Duration>,
     elapsed: Duration,
     starts: u64,
+    status: SubscriptionStatus,
 }
 
 impl ActiveSubscriptionSnapshot {
@@ -78,9 +92,10 @@ impl ActiveSubscriptionSnapshot {
         id: SubscriptionId,
         kind: SubscriptionKind,
         delivery: DeliveryPolicy,
-        interval: Duration,
+        interval: Option<Duration>,
         elapsed: Duration,
         starts: u64,
+        status: SubscriptionStatus,
     ) -> Self {
         Self {
             id,
@@ -89,6 +104,7 @@ impl ActiveSubscriptionSnapshot {
             interval,
             elapsed,
             starts,
+            status,
         }
     }
 
@@ -104,8 +120,8 @@ impl ActiveSubscriptionSnapshot {
     pub const fn delivery_policy(&self) -> DeliveryPolicy {
         self.delivery
     }
-    /// Returns the repeating interval.
-    pub const fn interval(&self) -> Duration {
+    /// Returns the repeating period for interval sources.
+    pub const fn interval(&self) -> Option<Duration> {
         self.interval
     }
     /// Returns time since the current source generation started.
@@ -116,47 +132,200 @@ impl ActiveSubscriptionSnapshot {
     pub const fn starts(&self) -> u64 {
         self.starts
     }
+    /// Returns whether the underlying source is running or failed to start.
+    pub const fn status(&self) -> SubscriptionStatus {
+        self.status
+    }
+}
+
+trait ConfigValue: fmt::Debug {
+    fn equals(&self, other: &dyn ConfigValue) -> bool;
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl<T> ConfigValue for T
+where
+    T: Any + fmt::Debug + Eq,
+{
+    fn equals(&self, other: &dyn ConfigValue) -> bool {
+        other.as_any().downcast_ref::<T>() == Some(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Structural configuration used to decide whether a source restarts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[doc(hidden)]
 pub struct SubscriptionConfig {
-    pub(crate) kind: SubscriptionKind,
-    pub(crate) interval: Duration,
-    pub(crate) delivery: DeliveryPolicy,
+    kind: SubscriptionKind,
+    interval: Option<Duration>,
+    delivery: DeliveryPolicy,
+    source: Option<Box<dyn ConfigValue>>,
 }
 
 impl SubscriptionConfig {
     /// Returns the source category.
     #[doc(hidden)]
-    pub const fn kind(self) -> SubscriptionKind {
+    pub const fn kind(&self) -> SubscriptionKind {
         self.kind
     }
-    /// Returns the interval duration.
+    /// Returns the interval duration for interval sources.
     #[doc(hidden)]
-    pub const fn interval(self) -> Duration {
+    pub const fn interval(&self) -> Option<Duration> {
         self.interval
     }
     /// Returns the delivery policy.
     #[doc(hidden)]
-    pub const fn delivery(self) -> DeliveryPolicy {
+    pub const fn delivery(&self) -> DeliveryPolicy {
         self.delivery
     }
 }
 
+impl PartialEq for SubscriptionConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.interval == other.interval
+            && self.delivery == other.delivery
+            && match (&self.source, &other.source) {
+                (None, None) => true,
+                (Some(left), Some(right)) => left.equals(right.as_ref()),
+                _ => false,
+            }
+    }
+}
+
+impl Eq for SubscriptionConfig {}
+
+impl fmt::Debug for SubscriptionConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SubscriptionConfig")
+            .field("kind", &self.kind)
+            .field("interval", &self.interval)
+            .field("delivery", &self.delivery)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Type-erased event payload crossing from a service thread to the UI thread.
+#[doc(hidden)]
+pub type RawSubscriptionEvent = Box<dyn Any + Send>;
+
+/// Type-erased latest-value event sink used by service integrations.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct RawSubscriptionSink {
+    emit: Arc<dyn Fn(RawSubscriptionEvent) + Send + Sync>,
+}
+
+impl RawSubscriptionSink {
+    /// Creates a sink from a runtime-owned scheduling callback.
+    #[doc(hidden)]
+    pub fn new(emit: impl Fn(RawSubscriptionEvent) + Send + Sync + 'static) -> Self {
+        Self {
+            emit: Arc::new(emit),
+        }
+    }
+
+    /// Queues one already-erased service event.
+    #[doc(hidden)]
+    pub fn emit_raw(&self, event: RawSubscriptionEvent) {
+        (self.emit)(event);
+    }
+
+    fn typed<E: Send + 'static>(self) -> SubscriptionEventSink<E> {
+        SubscriptionEventSink {
+            raw: self,
+            marker: PhantomData,
+        }
+    }
+}
+
+/// Thread-safe event sink passed to one service subscription backend.
+#[doc(hidden)]
+pub struct SubscriptionEventSink<E> {
+    raw: RawSubscriptionSink,
+    marker: PhantomData<fn(E)>,
+}
+
+impl<E> Clone for SubscriptionEventSink<E> {
+    fn clone(&self) -> Self {
+        Self {
+            raw: self.raw.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<E: Send + 'static> SubscriptionEventSink<E> {
+    /// Queues the latest event for conversion on the UI thread.
+    pub fn emit(&self, event: E) {
+        (self.raw.emit)(Box::new(event));
+    }
+}
+
+/// Result of starting one service-owned subscription source.
+#[doc(hidden)]
+pub struct ServiceSubscriptionStart {
+    guard: Option<Box<dyn Any + Send>>,
+    failure: Option<RawSubscriptionEvent>,
+}
+
+impl ServiceSubscriptionStart {
+    /// Returns the live guard and optional startup failure payload.
+    #[doc(hidden)]
+    pub fn into_parts(self) -> (Option<Box<dyn Any + Send>>, Option<RawSubscriptionEvent>) {
+        (self.guard, self.failure)
+    }
+}
+
+/// Type-erased service subscription recipe used by application backends.
+#[doc(hidden)]
+pub struct ServiceSubscriptionFactory<M> {
+    start: Box<dyn FnOnce(RawSubscriptionSink) -> ServiceSubscriptionStart>,
+    decode: Box<dyn FnMut(RawSubscriptionEvent) -> M>,
+}
+
+impl<M> ServiceSubscriptionFactory<M> {
+    /// Starts the service source with a runtime-owned sink.
+    #[doc(hidden)]
+    pub fn start(
+        self,
+        sink: RawSubscriptionSink,
+    ) -> (
+        ServiceSubscriptionStart,
+        Box<dyn FnMut(RawSubscriptionEvent) -> M>,
+    ) {
+        ((self.start)(sink), self.decode)
+    }
+
+    /// Discards the unused starter and returns the newest UI-thread decoder.
+    #[doc(hidden)]
+    pub fn into_decoder(self) -> Box<dyn FnMut(RawSubscriptionEvent) -> M> {
+        self.decode
+    }
+}
+
+/// Executable portion of a subscription description.
+#[doc(hidden)]
+pub enum SubscriptionFactory<M> {
+    /// A UI-thread interval message factory.
+    Interval(Box<dyn FnMut() -> M>),
+    /// A service-owned external source and UI-thread decoder.
+    Service(ServiceSubscriptionFactory<M>),
+}
+
 /// One desired application-scoped event source.
 pub struct Subscription<M: 'static> {
-    pub(crate) id: SubscriptionId,
-    pub(crate) config: SubscriptionConfig,
-    pub(crate) factory: Box<dyn FnMut() -> M>,
+    id: SubscriptionId,
+    config: SubscriptionConfig,
+    factory: SubscriptionFactory<M>,
 }
 
 impl<M: 'static> Subscription<M> {
     /// Creates a repeating interval from one cloneable message.
-    ///
-    /// Missed intervals and pending ticks default to latest-value delivery.
-    /// The interval must be non-zero.
     pub fn interval(id: SubscriptionId, interval: Duration, message: M) -> Self
     where
         M: Clone,
@@ -165,8 +334,6 @@ impl<M: 'static> Subscription<M> {
     }
 
     /// Creates a repeating interval whose factory runs on the UI thread.
-    ///
-    /// The interval must be non-zero.
     pub fn interval_with(
         id: SubscriptionId,
         interval: Duration,
@@ -180,16 +347,59 @@ impl<M: 'static> Subscription<M> {
             id,
             config: SubscriptionConfig {
                 kind: SubscriptionKind::Interval,
-                interval,
+                interval: Some(interval),
                 delivery: DeliveryPolicy::Latest,
+                source: None,
             },
-            factory: Box::new(factory),
+            factory: SubscriptionFactory::Interval(Box::new(factory)),
+        }
+    }
+
+    /// Creates a service-owned subscription without exposing a general source trait.
+    #[doc(hidden)]
+    pub fn service<E, C, G>(
+        id: SubscriptionId,
+        kind: SubscriptionKind,
+        config: C,
+        start: impl FnOnce(SubscriptionEventSink<E>) -> std::result::Result<G, E> + 'static,
+        mut decode: impl FnMut(E) -> M + 'static,
+    ) -> Self
+    where
+        E: Send + 'static,
+        C: Any + fmt::Debug + Eq + 'static,
+        G: Any + Send,
+    {
+        let start = Box::new(move |sink: RawSubscriptionSink| match start(sink.typed()) {
+            Ok(guard) => ServiceSubscriptionStart {
+                guard: Some(Box::new(guard)),
+                failure: None,
+            },
+            Err(error) => ServiceSubscriptionStart {
+                guard: None,
+                failure: Some(Box::new(error)),
+            },
+        });
+        let decode = Box::new(move |event: RawSubscriptionEvent| {
+            let event = *event
+                .downcast::<E>()
+                .expect("service subscription emitted its declared event type");
+            decode(event)
+        });
+        Self {
+            id,
+            config: SubscriptionConfig {
+                kind,
+                interval: None,
+                delivery: DeliveryPolicy::Latest,
+                source: Some(Box::new(config)),
+            },
+            factory: SubscriptionFactory::Service(ServiceSubscriptionFactory { start, decode }),
         }
     }
 
     /// Changes how pending events from this source are delivered.
     #[must_use]
-    pub const fn delivery(mut self, delivery: DeliveryPolicy) -> Self {
+    pub fn delivery(mut self, delivery: DeliveryPolicy) -> Self {
         self.config.delivery = delivery;
         self
     }
@@ -198,25 +408,22 @@ impl<M: 'static> Subscription<M> {
     pub const fn id(&self) -> SubscriptionId {
         self.id
     }
-
     /// Returns this source's delivery policy.
     pub const fn delivery_policy(&self) -> DeliveryPolicy {
         self.config.delivery
     }
-
     /// Returns the source category.
     pub const fn kind(&self) -> SubscriptionKind {
         self.config.kind
     }
-
-    /// Returns the repeating period for an interval source.
-    pub const fn interval_duration(&self) -> Duration {
+    /// Returns the repeating period for interval sources.
+    pub const fn interval_duration(&self) -> Option<Duration> {
         self.config.interval
     }
 
     /// Decomposes a description for an alternative application backend.
     #[doc(hidden)]
-    pub fn into_parts(self) -> (SubscriptionId, SubscriptionConfig, Box<dyn FnMut() -> M>) {
+    pub fn into_parts(self) -> (SubscriptionId, SubscriptionConfig, SubscriptionFactory<M>) {
         (self.id, self.config, self.factory)
     }
 }
@@ -233,7 +440,7 @@ impl<M: 'static> fmt::Debug for Subscription<M> {
 
 /// Desired application subscriptions returned by [`crate::App::subscriptions`].
 pub struct Subscriptions<M: 'static> {
-    pub(crate) entries: Vec<Subscription<M>>,
+    entries: Vec<Subscription<M>>,
 }
 
 impl<M: 'static> Subscriptions<M> {
@@ -243,26 +450,22 @@ impl<M: 'static> Subscriptions<M> {
             entries: Vec::new(),
         }
     }
-
     /// Creates a desired set containing one source.
     pub fn one(subscription: Subscription<M>) -> Self {
         Self {
             entries: vec![subscription],
         }
     }
-
     /// Collects a desired set from subscription descriptions.
     pub fn batch(subscriptions: impl IntoIterator<Item = Subscription<M>>) -> Self {
         Self {
             entries: subscriptions.into_iter().collect(),
         }
     }
-
     /// Appends one desired source.
     pub fn push(&mut self, subscription: Subscription<M>) {
         self.entries.push(subscription);
     }
-
     /// Appends another desired set.
     pub fn extend(&mut self, subscriptions: Self) {
         self.entries.extend(subscriptions.entries);
@@ -276,12 +479,23 @@ impl<M: 'static> Subscriptions<M> {
                 .entries
                 .into_iter()
                 .map(|subscription| {
-                    let mut factory = subscription.factory;
                     let map = Rc::clone(&map);
+                    let factory = match subscription.factory {
+                        SubscriptionFactory::Interval(mut factory) => {
+                            SubscriptionFactory::Interval(Box::new(move || map(factory())))
+                        }
+                        SubscriptionFactory::Service(factory) => {
+                            let ServiceSubscriptionFactory { start, mut decode } = factory;
+                            SubscriptionFactory::Service(ServiceSubscriptionFactory {
+                                start,
+                                decode: Box::new(move |event| map(decode(event))),
+                            })
+                        }
+                    };
                     Subscription {
                         id: subscription.id,
                         config: subscription.config,
-                        factory: Box::new(move || map(factory())),
+                        factory,
                     }
                 })
                 .collect(),
@@ -293,6 +507,14 @@ impl<M: 'static> Subscriptions<M> {
     pub fn into_unique(self) -> Result<Vec<Subscription<M>>> {
         let mut ids = HashSet::with_capacity(self.entries.len());
         for subscription in &self.entries {
+            if subscription.config.kind == SubscriptionKind::FileWatch
+                && subscription.config.delivery != DeliveryPolicy::Latest
+            {
+                return Err(Error::msg(format!(
+                    "filesystem subscription {} supports latest-value delivery only",
+                    subscription.id
+                )));
+            }
             if !ids.insert(subscription.id) {
                 return Err(Error::msg(format!(
                     "duplicate subscription id {} ({:?})",
@@ -309,19 +531,16 @@ impl<M: 'static> Default for Subscriptions<M> {
         Self::none()
     }
 }
-
 impl<M: 'static> From<Subscription<M>> for Subscriptions<M> {
     fn from(subscription: Subscription<M>) -> Self {
         Self::one(subscription)
     }
 }
-
 impl<M: 'static> FromIterator<Subscription<M>> for Subscriptions<M> {
     fn from_iter<T: IntoIterator<Item = Subscription<M>>>(iter: T) -> Self {
         Self::batch(iter)
     }
 }
-
 impl<M: 'static> fmt::Debug for Subscriptions<M> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_list().entries(self.entries.iter()).finish()
@@ -341,10 +560,9 @@ mod tests {
         ))
         .map(|value| value.to_string());
         let mut entries = subscriptions.into_unique().unwrap();
-        let mut entry = entries.pop().unwrap();
-        assert_eq!(entry.id, SubscriptionId::new("editor.poll", 7));
-        assert_eq!(entry.config.interval, Duration::from_millis(40));
-        assert_eq!((entry.factory)(), "3");
+        let entry = entries.pop().unwrap();
+        assert_eq!(entry.id(), SubscriptionId::new("editor.poll", 7));
+        assert_eq!(entry.interval_duration(), Some(Duration::from_millis(40)));
     }
 
     #[test]
@@ -354,8 +572,13 @@ mod tests {
             Subscription::interval(id, Duration::from_secs(1), 1),
             Subscription::interval(id, Duration::from_secs(2), 2),
         ]);
-        let error = subscriptions.into_unique().unwrap_err();
-        assert!(error.to_string().contains("duplicate#0"));
+        assert!(
+            subscriptions
+                .into_unique()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate#0")
+        );
     }
 
     #[test]

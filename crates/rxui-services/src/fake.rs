@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -47,6 +47,8 @@ pub struct FakeBackend {
     selected_lists: Mutex<VecDeque<Result<Option<Vec<SelectedFile>>, ServiceError>>>,
     saves: Mutex<Vec<(FileDialogOptions, Arc<[u8]>)>>,
     watchers: Mutex<Vec<WatchSink>>,
+    watch_failures: Mutex<VecDeque<ServiceError>>,
+    watch_starts: AtomicU64,
 }
 
 impl std::fmt::Debug for FakeBackend {
@@ -114,6 +116,56 @@ impl FakeBackend {
                 (sink.deliver)(Ok(event.clone()));
             }
         }
+    }
+
+    /// Delivers one watcher error to every active fake watcher.
+    pub fn emit_watch_error(&self, error: ServiceError) {
+        for sink in self
+            .watchers
+            .lock()
+            .expect("FakeBackend poisoned")
+            .iter_mut()
+        {
+            if sink.active.load(Ordering::Acquire) {
+                (sink.deliver)(Err(error.clone()));
+            }
+        }
+    }
+
+    /// Delivers through a retained callback even if its guard was dropped.
+    ///
+    /// This simulates an event already in flight while a watcher generation
+    /// is being cancelled. Returns `false` when `index` never existed.
+    pub fn emit_stale_watch(&self, index: usize, event: FileWatchEvent) -> bool {
+        let mut watchers = self.watchers.lock().expect("FakeBackend poisoned");
+        let Some(sink) = watchers.get_mut(index) else {
+            return false;
+        };
+        (sink.deliver)(Ok(event));
+        true
+    }
+
+    /// Makes the next watcher startup attempt fail with `error`.
+    pub fn fail_next_watch(&self, error: ServiceError) {
+        self.watch_failures
+            .lock()
+            .expect("FakeBackend poisoned")
+            .push_back(error);
+    }
+
+    /// Returns the cumulative number of watcher startup attempts.
+    pub fn watch_start_count(&self) -> u64 {
+        self.watch_starts.load(Ordering::Acquire)
+    }
+
+    /// Returns the number of watcher guards that are still active.
+    pub fn active_watch_count(&self) -> usize {
+        self.watchers
+            .lock()
+            .expect("FakeBackend poisoned")
+            .iter()
+            .filter(|sink| sink.active.load(Ordering::Acquire))
+            .count()
     }
 
     /// Returns every dialog request received so far, in call order.
@@ -209,6 +261,15 @@ impl ServiceBackend for FakeBackend {
         _options: FileWatchOptions,
         deliver: DeliverWatch,
     ) -> Result<FileWatcher, ServiceError> {
+        self.watch_starts.fetch_add(1, Ordering::AcqRel);
+        if let Some(error) = self
+            .watch_failures
+            .lock()
+            .expect("FakeBackend poisoned")
+            .pop_front()
+        {
+            return Err(error);
+        }
         let active = Arc::new(AtomicBool::new(true));
         self.watchers
             .lock()

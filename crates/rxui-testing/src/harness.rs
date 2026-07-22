@@ -28,8 +28,9 @@ use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database
 use rxui_app::TaskSpawnError;
 use rxui_app::{
     ActiveSubscriptionSnapshot, ActiveTaskSnapshot, App, AppBackend, AppCx, Clipboard,
-    CloseResponse, Error, MessageKey, MessageProxy, Monitor, ProxyClosed, Result, RuntimePolicy,
-    RuntimeSnapshot, SubscriptionConfig, SubscriptionId, Subscriptions, TaskCompletionStatus,
+    CloseResponse, Error, MessageKey, MessageProxy, Monitor, ProxyClosed, RawSubscriptionEvent,
+    RawSubscriptionSink, Result, RuntimePolicy, RuntimeSnapshot, SubscriptionConfig,
+    SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions, TaskCompletionStatus,
     TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme, TimerId, Ui, WindowConfig, WindowHost,
     WindowId,
 };
@@ -106,6 +107,11 @@ enum TaskEvent<M> {
 enum ExternalEvent<M> {
     Message(M),
     Task(TaskEvent<M>),
+    Subscription {
+        id: SubscriptionId,
+        generation: u64,
+        event: RawSubscriptionEvent,
+    },
 }
 
 type TaskEventQueue<M> = Arc<Mutex<VecDeque<(u64, TaskEvent<M>)>>>;
@@ -119,13 +125,25 @@ struct HeadlessTask {
     blocking: Option<Box<dyn FnOnce() + Send + 'static>>,
 }
 
-struct HeadlessSubscription {
+enum HeadlessSubscriptionSource<M> {
+    Interval(TimerId),
+    Service {
+        _guard: Option<Box<dyn std::any::Any + Send>>,
+        decode: Box<dyn FnMut(RawSubscriptionEvent) -> M>,
+        status: SubscriptionStatus,
+    },
+}
+
+struct HeadlessSubscription<M> {
     config: SubscriptionConfig,
     generation: u64,
-    timer: TimerId,
+    source: HeadlessSubscriptionSource<M>,
     started_at: Duration,
     starts: u64,
 }
+
+type SubscriptionEventQueue =
+    Arc<Mutex<VecDeque<(u64, SubscriptionId, u64, RawSubscriptionEvent)>>>;
 
 struct PostedMessage<M> {
     message: M,
@@ -196,7 +214,8 @@ struct HeadlessBackend<M: 'static> {
     task_events: TaskEventQueue<M>,
     external_sequence: Arc<AtomicU64>,
     tasks: HashMap<TaskId, HeadlessTask>,
-    subscriptions: HashMap<SubscriptionId, HeadlessSubscription>,
+    subscriptions: HashMap<SubscriptionId, HeadlessSubscription<M>>,
+    subscription_events: SubscriptionEventQueue,
     timers: Vec<TimerEntry<M>>,
     now: Duration,
     epoch: Instant,
@@ -221,6 +240,7 @@ impl<M: 'static> HeadlessBackend<M> {
             external_sequence: Arc::new(AtomicU64::new(1)),
             tasks: HashMap::new(),
             subscriptions: HashMap::new(),
+            subscription_events: Arc::new(Mutex::new(VecDeque::new())),
             timers: Vec::new(),
             now: Duration::ZERO,
             epoch: Instant::now(),
@@ -468,6 +488,10 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
                     subscription.config.interval(),
                     self.now.saturating_sub(subscription.started_at),
                     subscription.starts,
+                    match &subscription.source {
+                        HeadlessSubscriptionSource::Interval(_) => SubscriptionStatus::Running,
+                        HeadlessSubscriptionSource::Service { status, .. } => *status,
+                    },
                 )
             })
             .collect::<Vec<_>>();
@@ -488,47 +512,107 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             .filter(|id| !desired_ids.contains(id))
             .collect::<Vec<_>>();
         for id in removed {
-            if let Some(active) = self.subscriptions.remove(&id) {
-                self.cancel_timer(active.timer);
+            if let Some(active) = self.subscriptions.remove(&id)
+                && let HeadlessSubscriptionSource::Interval(timer) = active.source
+            {
+                self.cancel_timer(timer);
             }
         }
 
         for subscription in desired {
             let (id, config, factory) = subscription.into_parts();
-            if let Some(active) = self.subscriptions.get(&id)
+            if let Some(active) = self.subscriptions.get_mut(&id)
                 && active.config == config
             {
-                let timer = active.timer;
-                let entry = self
-                    .timers
-                    .iter_mut()
-                    .find(|entry| entry.id == timer)
-                    .expect("active subscription timer exists");
-                let TimerKind::Interval {
-                    factory: active_factory,
-                    ..
-                } = &mut entry.kind
-                else {
-                    unreachable!("subscriptions use interval timers")
-                };
-                *active_factory = factory;
+                match (&mut active.source, factory) {
+                    (
+                        HeadlessSubscriptionSource::Interval(timer),
+                        SubscriptionFactory::Interval(factory),
+                    ) => {
+                        let entry = self
+                            .timers
+                            .iter_mut()
+                            .find(|entry| entry.id == *timer)
+                            .expect("active subscription timer exists");
+                        let TimerKind::Interval {
+                            factory: active_factory,
+                            ..
+                        } = &mut entry.kind
+                        else {
+                            unreachable!("interval subscription uses an interval timer")
+                        };
+                        *active_factory = factory;
+                    }
+                    (
+                        HeadlessSubscriptionSource::Service { decode, .. },
+                        SubscriptionFactory::Service(factory),
+                    ) => *decode = factory.into_decoder(),
+                    _ => {
+                        unreachable!("equivalent subscription configurations have matching sources")
+                    }
+                }
                 continue;
             }
             let starts = if let Some(active) = self.subscriptions.remove(&id) {
-                self.cancel_timer(active.timer);
+                if let HeadlessSubscriptionSource::Interval(timer) = active.source {
+                    self.cancel_timer(timer);
+                }
                 active.starts.saturating_add(1)
             } else {
                 1
             };
             let generation = self.next_subscription_generation;
             self.next_subscription_generation = generation.saturating_add(1);
-            let timer = self.set_interval(config.interval(), factory);
+            let source = match factory {
+                SubscriptionFactory::Interval(factory) => HeadlessSubscriptionSource::Interval(
+                    self.set_interval(
+                        config
+                            .interval()
+                            .expect("interval configuration has a period"),
+                        factory,
+                    ),
+                ),
+                SubscriptionFactory::Service(factory) => {
+                    let events = Arc::clone(&self.subscription_events);
+                    let sequence = Arc::clone(&self.external_sequence);
+                    let sink = RawSubscriptionSink::new(move |event| {
+                        let order = sequence.fetch_add(1, Ordering::Relaxed);
+                        let mut events = events.lock().expect("subscription event queue poisoned");
+                        if let Some(entry) =
+                            events
+                                .iter_mut()
+                                .find(|(_, queued_id, queued_generation, _)| {
+                                    *queued_id == id && *queued_generation == generation
+                                })
+                        {
+                            *entry = (order, id, generation, event);
+                        } else {
+                            events.push_back((order, id, generation, event));
+                        }
+                    });
+                    let (started, decode) = factory.start(sink.clone());
+                    let (guard, failure) = started.into_parts();
+                    let status = if failure.is_some() {
+                        SubscriptionStatus::Failed
+                    } else {
+                        SubscriptionStatus::Running
+                    };
+                    if let Some(failure) = failure {
+                        sink.emit_raw(failure);
+                    }
+                    HeadlessSubscriptionSource::Service {
+                        _guard: guard,
+                        decode,
+                        status,
+                    }
+                }
+            };
             self.subscriptions.insert(
                 id,
                 HeadlessSubscription {
                     config,
                     generation,
-                    timer,
+                    source,
                     started_at: self.now,
                     starts,
                 },
@@ -541,7 +625,10 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         let timers = self
             .subscriptions
             .drain()
-            .map(|(_, subscription)| subscription.timer)
+            .filter_map(|(_, subscription)| match subscription.source {
+                HeadlessSubscriptionSource::Interval(timer) => Some(timer),
+                HeadlessSubscriptionSource::Service { .. } => None,
+            })
             .collect::<Vec<_>>();
         for timer in timers {
             self.cancel_timer(timer);
@@ -788,7 +875,10 @@ impl<A: App> AppHarness<A> {
         let Some(active) = self.backend.subscriptions.get(&id) else {
             return Ok(false);
         };
-        let timer = active.timer;
+        let HeadlessSubscriptionSource::Interval(timer) = &active.source else {
+            return Ok(false);
+        };
+        let timer = *timer;
         let generation = active.generation;
         let Some(entry) = self
             .backend
@@ -1046,6 +1136,14 @@ impl<A: App> AppHarness<A> {
                     .expect("task event queue poisoned");
                 queue.drain(..).collect()
             };
+            let subscriptions: Vec<_> = {
+                let mut queue = self
+                    .backend
+                    .subscription_events
+                    .lock()
+                    .expect("subscription event queue poisoned");
+                queue.drain(..).collect()
+            };
             let mut batch: Vec<_> = proxied
                 .into_iter()
                 .map(|(order, message)| (order, ExternalEvent::Message(message)))
@@ -1053,6 +1151,20 @@ impl<A: App> AppHarness<A> {
                     tasks
                         .into_iter()
                         .map(|(order, event)| (order, ExternalEvent::Task(event))),
+                )
+                .chain(
+                    subscriptions
+                        .into_iter()
+                        .map(|(order, id, generation, event)| {
+                            (
+                                order,
+                                ExternalEvent::Subscription {
+                                    id,
+                                    generation,
+                                    event,
+                                },
+                            )
+                        }),
                 )
                 .collect();
             if batch.is_empty() {
@@ -1089,6 +1201,30 @@ impl<A: App> AppHarness<A> {
                             .is_some_and(|entry| Arc::ptr_eq(&entry.state, &state));
                         if active {
                             self.backend.tasks.remove(&id);
+                        }
+                    }
+                    ExternalEvent::Subscription {
+                        id,
+                        generation,
+                        event,
+                    } => {
+                        let message =
+                            self.backend
+                                .subscriptions
+                                .get_mut(&id)
+                                .and_then(|subscription| {
+                                    if subscription.generation != generation {
+                                        return None;
+                                    }
+                                    let HeadlessSubscriptionSource::Service { decode, .. } =
+                                        &mut subscription.source
+                                    else {
+                                        return None;
+                                    };
+                                    Some(decode(event))
+                                });
+                        if let Some(message) = message {
+                            dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
                         }
                     }
                 }
@@ -2026,7 +2162,7 @@ mod tests {
         assert_eq!(harness.subscription_start_count(id), 2);
         assert_eq!(
             harness.runtime_snapshot().active_subscriptions()[0].interval(),
-            Duration::from_secs(2)
+            Some(Duration::from_secs(2))
         );
         harness
             .advance(Duration::from_secs(2))

@@ -18,8 +18,8 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 - an idle-efficient native/browser UI window host with asynchronous WebGPU startup;
 - a high-level application runner (`App`, `run`) with typed messages,
   multi-window hosting, timers, keyed latest-value posting, cancellable
-  background tasks, declarative interval subscriptions, runtime snapshots,
-  and thread-safe message proxies;
+  background tasks, declarative interval and filesystem subscriptions,
+  runtime snapshots, and thread-safe message proxies;
 - composable feature-local message mapping with scoped application contexts;
 - typed commands, shortcut routing, and application menu models;
 - native global menus on macOS and per-window menus on Windows;
@@ -29,8 +29,8 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 - synchronous field/form validation and accessible actionable toasts;
 - reusable fallible undo/redo actions with conventional command integration;
 - atomic versioned JSON state and monitor-safe window placement restoration;
-- message-driven native file dialogs, URL and path launching, and persisted
-  recent-document tracking;
+- message-driven native file dialogs, lifecycle-managed filesystem watching,
+  URL and path launching, and persisted recent-document tracking;
 - portable byte-oriented browser file opening/downloads and debounced native
   filesystem watching;
 - decoded PNG/JPEG/WebP images with contain, cover, fill, and pixel-size fitting;
@@ -129,8 +129,9 @@ cargo run -p rxui --example devtools_inspector --features devtools
 ```
 
 The inspector is read-only and excluded from default production builds. Its
-**Runtime** tab shows explicitly synchronized active tasks and subscriptions;
-use the example's task controls to inspect named task lifecycle changes.
+**Runtime** tab shows explicitly synchronized active tasks and subscriptions,
+including running or failed filesystem watchers; use the example's task
+controls to inspect named task lifecycle changes.
 
 The guided documentation starts at [Your first RXUI app](docs/tutorials/first-app.md),
 then covers [feature-local message architecture](docs/tutorials/message-architecture.md),

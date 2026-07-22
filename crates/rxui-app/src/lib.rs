@@ -35,7 +35,12 @@ pub use state::{
 };
 pub use subscription::{
     ActiveSubscriptionSnapshot, DeliveryPolicy, Subscription, SubscriptionConfig, SubscriptionId,
-    SubscriptionKind, Subscriptions,
+    SubscriptionKind, SubscriptionStatus, Subscriptions,
+};
+#[doc(hidden)]
+pub use subscription::{
+    RawSubscriptionEvent, RawSubscriptionSink, ServiceSubscriptionFactory,
+    ServiceSubscriptionStart, SubscriptionEventSink, SubscriptionFactory,
 };
 pub use undo::{UndoAction, UndoStack, redo_command_id, sync_undo_commands, undo_command_id};
 

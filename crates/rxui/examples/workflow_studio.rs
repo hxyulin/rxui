@@ -19,6 +19,7 @@ enum Message {
     Export,
     FilePicked(Result<Option<SelectedFile>, ServiceError>),
     Saved(Result<Option<SavedFile>, ServiceError>),
+    Watched(Result<FileWatchEvent, ServiceError>),
     Reload(PathBuf),
     Reloaded(Result<Option<SelectedFile>, ServiceError>),
 }
@@ -31,7 +32,7 @@ struct WorkflowStudio {
     chart_view: Option<ElementHandle<ChartView<Message>>>,
     image_view: Option<ElementHandle<ImageView>>,
     status: Option<ElementHandle<Label>>,
-    watcher: Option<FileWatcher>,
+    watched_path: Option<PathBuf>,
     live: bool,
     reload_task: Option<TaskId>,
     next_sample: u64,
@@ -48,7 +49,7 @@ impl WorkflowStudio {
             chart_view: None,
             image_view: None,
             status: None,
-            watcher: None,
+            watched_path: None,
             live: false,
             reload_task: None,
             next_sample: 1_009,
@@ -92,17 +93,7 @@ impl WorkflowStudio {
             self.set_status(cx, format!("Imported image: {}", selected.name))?;
         }
 
-        if let Some(path) = selected.path {
-            let proxy = cx.proxy();
-            self.watcher = self
-                .services
-                .watch(FileWatchOptions::new(path.clone()), move |event| {
-                    if event.is_ok() {
-                        let _ = proxy.post(Message::Reload(path.clone()));
-                    }
-                })
-                .ok();
-        }
+        self.watched_path = selected.path;
         Ok(())
     }
 
@@ -169,15 +160,22 @@ impl App for WorkflowStudio {
     type Message = Message;
 
     fn subscriptions(&self) -> Subscriptions<Message> {
+        let mut subscriptions = Subscriptions::none();
         if self.live {
-            Subscriptions::one(Subscription::interval(
+            subscriptions.push(Subscription::interval(
                 SubscriptionId::singleton("workflow.live-data"),
                 Duration::from_millis(120),
                 Message::LiveTick,
-            ))
-        } else {
-            Subscriptions::none()
+            ));
         }
+        if let Some(path) = self.watched_path.clone() {
+            subscriptions.push(self.services.watch_subscription(
+                SubscriptionId::singleton("workflow.imported-file"),
+                FileWatchOptions::new(path),
+                Message::Watched,
+            ));
+        }
+        subscriptions
     }
 
     fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
@@ -417,6 +415,17 @@ impl App for WorkflowStudio {
             }
             Message::Saved(Ok(None)) => self.set_status(cx, "Export cancelled")?,
             Message::Saved(Err(error)) => self.set_status(cx, format!("Export failed: {error}"))?,
+            Message::Watched(Ok(_event)) => {
+                if let Some(path) = self.watched_path.clone() {
+                    cx.post_latest(
+                        MessageKey::singleton("workflow.file-reload"),
+                        Message::Reload(path),
+                    );
+                }
+            }
+            Message::Watched(Err(error)) => {
+                self.set_status(cx, format!("File watching failed: {error}"))?
+            }
             Message::Reload(path) => {
                 if let Some(task) = self.reload_task.take() {
                     cx.cancel_task(task);

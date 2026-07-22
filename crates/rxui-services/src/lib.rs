@@ -41,6 +41,8 @@ use std::{
     sync::Arc,
 };
 
+use rxui_app::{Subscription, SubscriptionId, SubscriptionKind};
+
 mod dialogs;
 pub mod fake;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +164,29 @@ pub struct DesktopServices {
     backend: Arc<dyn ServiceBackend>,
 }
 
+#[derive(Clone)]
+struct WatchSubscriptionConfig {
+    backend: Arc<dyn ServiceBackend>,
+    options: FileWatchOptions,
+}
+
+impl PartialEq for WatchSubscriptionConfig {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.backend, &other.backend) && self.options == other.options
+    }
+}
+
+impl Eq for WatchSubscriptionConfig {}
+
+impl fmt::Debug for WatchSubscriptionConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WatchSubscriptionConfig")
+            .field("options", &self.options)
+            .finish_non_exhaustive()
+    }
+}
+
 impl fmt::Debug for DesktopServices {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -271,6 +296,36 @@ impl DesktopServices {
         self.backend.watch(options, Box::new(deliver))
     }
 
+    /// Describes a lifecycle-managed, debounced filesystem subscription.
+    ///
+    /// Events and startup failures are converted into application messages on
+    /// the UI thread. Filesystem subscriptions retain only the latest pending
+    /// event; [`rxui_app::DeliveryPolicy::Every`] is not supported for this
+    /// invalidation-oriented source.
+    pub fn watch_subscription<M: 'static>(
+        &self,
+        id: SubscriptionId,
+        options: FileWatchOptions,
+        map: impl FnMut(Result<FileWatchEvent, ServiceError>) -> M + 'static,
+    ) -> Subscription<M> {
+        let config = WatchSubscriptionConfig {
+            backend: Arc::clone(&self.backend),
+            options: options.clone(),
+        };
+        let services = self.clone();
+        Subscription::service(
+            id,
+            SubscriptionKind::FileWatch,
+            config,
+            move |sink| {
+                services
+                    .watch(options, move |event| sink.emit(event))
+                    .map_err(Err)
+            },
+            map,
+        )
+    }
+
     /// Opens a URL with the user's default handler.
     pub fn open_url(&self, url: &str) -> Result<(), ServiceError> {
         self.backend.open_url(url)
@@ -318,7 +373,15 @@ impl Error for ServiceError {}
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use rxui_app::{
+        App, AppCx, DeliveryPolicy, SubscriptionId, SubscriptionKind, SubscriptionStatus,
+        Subscriptions,
+    };
+    use rxui_testing::AppHarness;
 
     use super::*;
 
@@ -365,6 +428,167 @@ mod tests {
         assert_eq!(
             *seen.lock().unwrap(),
             vec![Some(PathBuf::from("/one")), Some(PathBuf::from("/two"))]
+        );
+    }
+
+    enum WatchMessage {
+        SetPath(Option<PathBuf>),
+        SetLabel(Rc<String>),
+        Event(Rc<String>, Result<FileWatchEvent, ServiceError>),
+        Noop,
+    }
+
+    struct WatchApp {
+        services: DesktopServices,
+        path: Option<PathBuf>,
+        label: Rc<String>,
+        events: Vec<(Rc<String>, Result<FileWatchEvent, ServiceError>)>,
+    }
+
+    impl App for WatchApp {
+        type Message = WatchMessage;
+
+        fn build(&mut self, _cx: &mut AppCx<'_, Self::Message>) -> rxui_app::Result<()> {
+            Ok(())
+        }
+
+        fn subscriptions(&self) -> Subscriptions<Self::Message> {
+            let Some(path) = self.path.clone() else {
+                return Subscriptions::none();
+            };
+            let label = Rc::clone(&self.label);
+            Subscriptions::one(self.services.watch_subscription(
+                SubscriptionId::singleton("test.watch"),
+                FileWatchOptions::new(path),
+                move |event| WatchMessage::Event(Rc::clone(&label), event),
+            ))
+        }
+
+        fn update(
+            &mut self,
+            _cx: &mut AppCx<'_, Self::Message>,
+            message: Self::Message,
+        ) -> rxui_app::Result<()> {
+            match message {
+                WatchMessage::SetPath(path) => self.path = path,
+                WatchMessage::SetLabel(label) => self.label = label,
+                WatchMessage::Event(label, event) => self.events.push((label, event)),
+                WatchMessage::Noop => {}
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn filesystem_subscription_reconciles_and_coalesces_latest_events() {
+        let (services, backend) = services();
+        let mut harness = AppHarness::new(WatchApp {
+            services,
+            path: Some(PathBuf::from("/one")),
+            label: Rc::new("first".into()),
+            events: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(backend.watch_start_count(), 1);
+        assert_eq!(backend.active_watch_count(), 1);
+
+        harness
+            .post(WatchMessage::SetLabel(Rc::new("newest".into())))
+            .unwrap();
+        harness.post(WatchMessage::Noop).unwrap();
+        assert_eq!(backend.watch_start_count(), 1);
+
+        backend.emit_watch(FileWatchEvent {
+            paths: vec![PathBuf::from("/one/old")],
+            kind: FileWatchKind::Modified,
+        });
+        backend.emit_watch(FileWatchEvent {
+            paths: vec![PathBuf::from("/one/latest")],
+            kind: FileWatchKind::Modified,
+        });
+        harness.advance(Duration::ZERO).unwrap();
+        assert_eq!(harness.app().events.len(), 1);
+        assert_eq!(harness.app().events[0].0.as_str(), "newest");
+        assert_eq!(
+            harness.app().events[0].1.as_ref().unwrap().paths,
+            [PathBuf::from("/one/latest")]
+        );
+        backend.emit_watch_error(ServiceError::Backend("watch event failed".into()));
+        harness.advance(Duration::ZERO).unwrap();
+        assert_eq!(
+            harness.app().events[1].1,
+            Err(ServiceError::Backend("watch event failed".into()))
+        );
+
+        harness
+            .post(WatchMessage::SetPath(Some(PathBuf::from("/two"))))
+            .unwrap();
+        assert_eq!(backend.watch_start_count(), 2);
+        assert_eq!(backend.active_watch_count(), 1);
+        assert!(backend.emit_stale_watch(
+            0,
+            FileWatchEvent {
+                paths: vec![PathBuf::from("/one/stale")],
+                kind: FileWatchKind::Modified,
+            }
+        ));
+        harness.advance(Duration::ZERO).unwrap();
+        assert_eq!(harness.app().events.len(), 2);
+        let runtime = harness.runtime_snapshot();
+        let snapshot = &runtime.active_subscriptions()[0];
+        assert_eq!(snapshot.kind(), SubscriptionKind::FileWatch);
+        assert_eq!(snapshot.interval(), None);
+        assert_eq!(snapshot.status(), SubscriptionStatus::Running);
+
+        harness.post(WatchMessage::SetPath(None)).unwrap();
+        assert_eq!(backend.active_watch_count(), 0);
+    }
+
+    #[test]
+    fn filesystem_subscription_reports_startup_failure_once_without_retrying() {
+        let (services, backend) = services();
+        backend.fail_next_watch(ServiceError::Backend("watch failed".into()));
+        let mut harness = AppHarness::new(WatchApp {
+            services,
+            path: Some(PathBuf::from("/missing")),
+            label: Rc::new("failed".into()),
+            events: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(backend.watch_start_count(), 1);
+        assert_eq!(harness.app().events.len(), 1);
+        assert_eq!(
+            harness.app().events[0].1,
+            Err(ServiceError::Backend("watch failed".into()))
+        );
+        assert_eq!(
+            harness.runtime_snapshot().active_subscriptions()[0].status(),
+            SubscriptionStatus::Failed
+        );
+
+        harness.post(WatchMessage::Noop).unwrap();
+        assert_eq!(backend.watch_start_count(), 1);
+        assert_eq!(harness.app().events.len(), 1);
+    }
+
+    #[test]
+    fn filesystem_subscription_rejects_every_delivery() {
+        let (services, _backend) = services();
+        let subscriptions = Subscriptions::one(
+            services
+                .watch_subscription(
+                    SubscriptionId::singleton("test.every-watch"),
+                    FileWatchOptions::new("/tmp"),
+                    |_| (),
+                )
+                .delivery(DeliveryPolicy::Every),
+        );
+        assert!(
+            subscriptions
+                .into_unique()
+                .unwrap_err()
+                .to_string()
+                .contains("latest-value delivery only")
         );
     }
 

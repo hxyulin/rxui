@@ -3042,6 +3042,7 @@ dependencies = [
  "pollster",
  "rfd",
  "rxui-app",
+ "rxui-testing",
  "serde",
  "tempfile",
  "wasm-bindgen-futures",
