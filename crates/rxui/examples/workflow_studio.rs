@@ -274,6 +274,7 @@ impl App for WorkflowStudio {
                         zoom: ChartAxes::Horizontal,
                         bounds: Some(ChartViewport::new(0.0, 1_000_000.0, 0.0, 100.0)?),
                         follow_latest_x: Some(240.0),
+                        ..Default::default()
                     },
                     ..Default::default()
                 },

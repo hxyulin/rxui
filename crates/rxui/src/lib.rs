@@ -61,9 +61,10 @@ pub mod prelude {
         CommandPaletteState, DialogAction, DialogActionRole, DialogHost, DialogOptions,
         FieldValidation, FormSection, FormValidation, Icon, IconButton, IconView, ImageAlignment,
         ImageDecodeError, ImageFit, ImageView, NumericField, NumericFieldOptions, RadioGroup,
-        RadioOption, SortDirection, TableAction, TableColumn, TableRow, TableSort, TableView,
-        ThemePreference, ThemeSet, Toast, ToastAction, ToastHost, ToastId, ToastLevel, ToastQueue,
-        Toolbar, ToolbarItem, ToolbarOptions, TreeAction, TreeNode, TreeView, ValidationIssue,
-        ValidationResult, ValidationSeverity, decode_image, icons,
+        RadioOption, ScrollNavigation, SortDirection, TableAction, TableColumn, TableRow,
+        TableSort, TableView, ThemePreference, ThemeSet, Toast, ToastAction, ToastHost, ToastId,
+        ToastLevel, ToastQueue, Toolbar, ToolbarItem, ToolbarOptions, TreeAction, TreeNode,
+        TreeView, ValidationIssue, ValidationResult, ValidationSeverity,
+        ViewportNavigationBindings, ViewportNavigationIntent, decode_image, icons,
     };
 }

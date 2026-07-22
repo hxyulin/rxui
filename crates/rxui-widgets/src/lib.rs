@@ -9,6 +9,7 @@ mod chart;
 mod controls;
 mod icon;
 mod image;
+mod navigation;
 mod palette;
 mod shell;
 mod validation;
@@ -25,6 +26,7 @@ pub use controls::{
 };
 pub use icon::{CommandButton, Icon, IconButton, IconError, IconView, icons};
 pub use image::{ImageAlignment, ImageDecodeError, ImageFit, ImageView, decode_image};
+pub use navigation::{ScrollNavigation, ViewportNavigationBindings, ViewportNavigationIntent};
 pub use palette::{CommandPalette, CommandPaletteEvent, CommandPaletteState};
 pub use shell::{
     DialogAction, DialogActionRole, DialogError, DialogHost, DialogOptions, Toast, ToastAction,

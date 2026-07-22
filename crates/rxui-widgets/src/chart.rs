@@ -14,6 +14,8 @@ use astrelis_ui_core::{
     Theme, UiError, Widget, WidgetContainerStyle, deterministic_font_database,
 };
 
+use crate::{ViewportNavigationBindings, ViewportNavigationIntent};
+
 /// One numeric Cartesian sample.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChartPoint {
@@ -133,6 +135,8 @@ pub struct ChartInteractionOptions {
     pub bounds: Option<ChartViewport>,
     /// Keep this many horizontal data units visible while following new data.
     pub follow_latest_x: Option<f64>,
+    /// Mapping from wheels and native gestures to pan and zoom intents.
+    pub navigation: ViewportNavigationBindings,
 }
 
 impl Default for ChartInteractionOptions {
@@ -142,6 +146,7 @@ impl Default for ChartInteractionOptions {
             zoom: ChartAxes::Both,
             bounds: None,
             follow_latest_x: None,
+            navigation: ViewportNavigationBindings::default(),
         }
     }
 }
@@ -823,45 +828,55 @@ impl<Message: 'static> Widget<Message> for ChartView<Message> {
                 }
                 context.release_pointer(*device_id);
             }
-            RoutedEventKind::Scroll { device_id, delta } => {
-                if context.modifiers().shift || self.options.interaction.zoom == ChartAxes::None {
-                    if self.options.interaction.pan == ChartAxes::None {
-                        return;
+            RoutedEventKind::Scroll { .. }
+            | RoutedEventKind::PinchGesture { .. }
+            | RoutedEventKind::PanGesture { .. } => {
+                let Some(intent) = self
+                    .options
+                    .interaction
+                    .navigation
+                    .decode(&event.kind, context.modifiers())
+                else {
+                    return;
+                };
+                match intent {
+                    ViewportNavigationIntent::Pan { delta, .. } => {
+                        if self.options.interaction.pan == ChartAxes::None {
+                            return;
+                        }
+                        let x = f64::from(delta.x) / f64::from(plot.size.width)
+                            * (self.viewport.x_max - self.viewport.x_min);
+                        let y = f64::from(delta.y) / f64::from(plot.size.height)
+                            * (self.viewport.y_max - self.viewport.y_min);
+                        self.apply_user_viewport(self.viewport.pan_axes(
+                            x,
+                            y,
+                            self.options.interaction.pan,
+                        ));
                     }
-                    let horizontal_delta = if delta.x.abs() > f32::EPSILON {
-                        delta.x
-                    } else {
-                        delta.y
-                    };
-                    let x = f64::from(horizontal_delta)
-                        * 0.002
-                        * (self.viewport.x_max - self.viewport.x_min);
-                    let y =
-                        f64::from(delta.y) * 0.002 * (self.viewport.y_max - self.viewport.y_min);
-                    self.apply_user_viewport(self.viewport.pan_axes(
-                        x,
-                        y,
-                        self.options.interaction.pan,
-                    ));
-                } else {
-                    let center = self
-                        .hover
-                        .filter(|(hovered, _)| hovered == device_id)
-                        .map_or_else(
+                    ViewportNavigationIntent::Zoom {
+                        position, factor, ..
+                    } => {
+                        if self.options.interaction.zoom == ChartAxes::None {
+                            return;
+                        }
+                        let center = context.window_to_local(position).map_or_else(
                             || {
                                 ChartPoint::new(
                                     (self.viewport.x_min + self.viewport.x_max) * 0.5,
                                     (self.viewport.y_min + self.viewport.y_max) * 0.5,
                                 )
                             },
-                            |(_, position)| self.data_at(position, plot),
+                            |position| self.data_at(position, plot),
                         );
-                    self.apply_user_viewport(self.viewport.zoom_axes(
-                        (f64::from(delta.y) * 0.002).exp(),
-                        center,
-                        self.options.interaction.zoom,
-                    ));
+                        self.apply_user_viewport(self.viewport.zoom_axes(
+                            factor.recip(),
+                            center,
+                            self.options.interaction.zoom,
+                        ));
+                    }
                 }
+                context.prevent_default();
                 self.emit(context, ChartAction::SetViewport(self.viewport));
                 context.request_paint();
             }
@@ -1282,6 +1297,7 @@ mod tests {
                 zoom: ChartAxes::Horizontal,
                 bounds: Some(ChartViewport::new(0.0, 100.0, 0.0, 100.0).unwrap()),
                 follow_latest_x: Some(5.0),
+                ..Default::default()
             },
             ..Default::default()
         };

@@ -33,8 +33,9 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 - portable byte-oriented browser file opening/downloads and debounced native
   filesystem watching;
 - decoded PNG/JPEG/WebP images with contain, cover, fill, and pixel-size fitting;
-- interactive line, bar, and scatter charts with axis-specific navigation,
-  clamped viewports, live latest-data following, and deterministic large-data
+- interactive line, bar, and scatter charts with cursor-anchored wheel/pinch
+  zoom, two-axis precision scrolling, configurable navigation, clamped
+  viewports, live latest-data following, and deterministic large-data
   decimation;
 - serializable node graphs with ports, routed edges, selection, keyboard
   editing, and pan/zoom;
@@ -116,7 +117,9 @@ Workflow Studio combines an editable node graph, horizontally scrollable live
 chart with a fixed vertical range, decoded image preview, portable graph/image
 import, graph export, and native automatic reload when an imported file
 changes. Use **Toggle live data** to append samples and **Follow latest** to
-resume automatic scrolling after inspecting history.
+resume automatic scrolling after inspecting history. Trackpad scrolling pans
+on both reported axes, pinch zooms around the cursor, and a discrete mouse
+wheel zooms; hold Shift to turn a vertical wheel into horizontal panning.
 
 Inspect a live retained tree (press F12, Command-Option-I, or use the launcher):
 

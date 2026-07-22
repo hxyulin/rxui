@@ -31,10 +31,12 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   filesystem watching.
 - PNG/JPEG/WebP image decoding plus retained image fitting and sampling.
 - Interactive line, bar, and scatter charts with axes, legends, axis-specific
-  pan/zoom, viewport clamping, live latest-X following, selection, and
-  deterministic large-data decimation.
+  pan/zoom, cursor-anchored native pinch and wheel zoom, two-axis precision
+  scrolling, configurable input bindings, viewport clamping, live latest-X
+  following, selection, and deterministic large-data decimation.
 - Versioned serializable node-graph editing with ports, routed edges, box
-  selection, connection gestures, keyboard editing, and pan/zoom.
+  selection, connection gestures, keyboard editing, and shared gesture-aware
+  pan/zoom navigation.
 - Native and browser UI hosting with idle-efficient scheduling.
 - Typed commands, shortcuts, native menus, undo/redo, state persistence, and
   application-shell conventions.

@@ -16,6 +16,7 @@ use astrelis_ui_core::{
     EventContext, RoutedEvent, RoutedEventKind, SemanticAction, SemanticActionKind, SemanticRole,
     Theme, UiError, Widget, WidgetContainerStyle, deterministic_font_database,
 };
+use rxui_widgets::{ViewportNavigationBindings, ViewportNavigationIntent};
 use serde::{Deserialize, Serialize};
 
 /// Current serialized node-graph envelope version.
@@ -321,6 +322,8 @@ pub struct NodeGraphOptions {
     pub grid_size: f32,
     /// Whether node movement snaps to the grid.
     pub snap_to_grid: bool,
+    /// Mapping from wheels and native gestures to viewport navigation.
+    pub navigation: ViewportNavigationBindings,
 }
 
 impl Default for NodeGraphOptions {
@@ -328,6 +331,7 @@ impl Default for NodeGraphOptions {
         Self {
             grid_size: 16.0,
             snap_to_grid: true,
+            navigation: ViewportNavigationBindings::default(),
         }
     }
 }
@@ -785,9 +789,32 @@ where
                 context.release_pointer(*device_id);
                 context.request_paint();
             }
-            RoutedEventKind::Scroll { delta, .. } => {
+            RoutedEventKind::Scroll { .. }
+            | RoutedEventKind::PinchGesture { .. }
+            | RoutedEventKind::PanGesture { .. } => {
+                let Some(intent) = self
+                    .options
+                    .navigation
+                    .decode(&event.kind, context.modifiers())
+                else {
+                    return;
+                };
                 let old = self.document.viewport;
-                self.document.viewport.zoom = (old.zoom * (-delta.y * 0.002).exp()).clamp(0.1, 4.0);
+                match intent {
+                    ViewportNavigationIntent::Pan { delta, .. } => {
+                        self.document.viewport.pan =
+                            GraphPoint::new(old.pan.x - delta.x, old.pan.y - delta.y);
+                    }
+                    ViewportNavigationIntent::Zoom {
+                        position, factor, ..
+                    } => {
+                        let Some(local) = context.window_to_local(position) else {
+                            return;
+                        };
+                        self.document.viewport = zoom_viewport_around(old, factor, local);
+                    }
+                }
+                context.prevent_default();
                 self.emit(
                     context,
                     NodeGraphAction::SetViewport {
@@ -1064,6 +1091,20 @@ where
     }
 }
 
+fn zoom_viewport_around(
+    viewport: GraphViewport,
+    factor: f64,
+    position: LogicalPoint,
+) -> GraphViewport {
+    let zoom = (viewport.zoom * factor as f32).clamp(0.1, 4.0);
+    let graph_x = (position.x - viewport.pan.x) / viewport.zoom;
+    let graph_y = (position.y - viewport.pan.y) / viewport.zoom;
+    GraphViewport {
+        pan: GraphPoint::new(position.x - graph_x * zoom, position.y - graph_y * zoom),
+        zoom,
+    }
+}
+
 fn shape_node_labels<Id>(
     document: &NodeGraphDocument<Id>,
 ) -> Result<Vec<NodeLabel<Id>>, NodeGraphError>
@@ -1191,6 +1232,26 @@ mod tests {
         let labels = shape_node_labels(&document()).unwrap();
         assert_eq!(labels[0].layout.text(), "Source");
         assert!(!labels[0].layout.glyph_runs().is_empty());
+    }
+
+    #[test]
+    fn viewport_zoom_preserves_the_graph_point_under_the_cursor() {
+        let viewport = GraphViewport {
+            pan: GraphPoint::new(25.0, -10.0),
+            zoom: 1.5,
+        };
+        let cursor = Point::new(220.0, 130.0);
+        let before = GraphPoint::new(
+            (cursor.x - viewport.pan.x) / viewport.zoom,
+            (cursor.y - viewport.pan.y) / viewport.zoom,
+        );
+        let zoomed = zoom_viewport_around(viewport, 1.8, cursor);
+        let after = GraphPoint::new(
+            (cursor.x - zoomed.pan.x) / zoomed.zoom,
+            (cursor.y - zoomed.pan.y) / zoomed.zoom,
+        );
+        assert!((before.x - after.x).abs() < 1.0e-4);
+        assert!((before.y - after.y).abs() < 1.0e-4);
     }
     #[test]
     fn rejects_dangling_and_wrong_direction_edges() {
