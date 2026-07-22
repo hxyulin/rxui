@@ -603,9 +603,10 @@ fn find_node<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, rc::Rc, thread};
 
     use astrelis_ui_core::{ElementHandle, EventFilter, Label};
+    use rxui_app::MessageMapper;
 
     use super::*;
 
@@ -848,5 +849,210 @@ mod tests {
         assert_eq!(harness.clipboard_text().as_deref(), Some("from fixture"));
         harness.set_clipboard_text("seeded");
         assert_eq!(harness.clipboard_text().as_deref(), Some("seeded"));
+    }
+
+    #[derive(Clone, Debug)]
+    enum LocalMsg {
+        Activated,
+        Posted,
+        ScheduleTimeout,
+        ScheduleCancelledTimeout,
+        Timeout,
+        ScheduleFixedInterval,
+        FixedTick,
+        ScheduleFactoryInterval,
+        FactoryTick(u32),
+        ScheduleNested,
+        Child(ChildMsg),
+        GrabProxy,
+        Proxied,
+    }
+
+    #[derive(Clone, Debug)]
+    enum ChildMsg {
+        Ping,
+    }
+
+    #[derive(Debug)]
+    enum RootMsg {
+        Feature(LocalMsg),
+    }
+
+    #[derive(Default)]
+    struct MappedFixture {
+        log: Vec<(String, Option<WindowId>)>,
+        proxy: Option<MessageProxy<LocalMsg>>,
+    }
+
+    impl App for MappedFixture {
+        type Message = RootMsg;
+
+        fn build(&mut self, cx: &mut AppCx<'_, RootMsg>) -> Result<()> {
+            let mapper = MessageMapper::new(RootMsg::Feature);
+            let mut ui = cx.new_ui();
+            let button = ui.add_button(ui.root(), "Mapped action")?;
+            ui.listen(button, None, EventFilter::Activate, move |event, _| {
+                mapper.emit(event, LocalMsg::Activated);
+            })?;
+            cx.open_window(WindowConfig::new("Mapped fixture"), ui)?;
+            Ok(())
+        }
+
+        fn update(&mut self, cx: &mut AppCx<'_, RootMsg>, message: RootMsg) -> Result<()> {
+            let RootMsg::Feature(message) = message;
+            let mut cx = cx.map_messages(MessageMapper::new(RootMsg::Feature));
+            let source = cx.source_window();
+            match message {
+                LocalMsg::Activated => {
+                    self.log.push(("activated".into(), source));
+                    cx.post(LocalMsg::Posted);
+                }
+                LocalMsg::Posted => self.log.push(("posted".into(), source)),
+                LocalMsg::ScheduleTimeout => {
+                    cx.set_timeout(Duration::from_secs(1), LocalMsg::Timeout);
+                }
+                LocalMsg::ScheduleCancelledTimeout => {
+                    let timer = cx.set_timeout(Duration::from_secs(1), LocalMsg::Timeout);
+                    let cancelled = cx.cancel_timer(timer);
+                    self.log.push((format!("cancelled:{cancelled}"), source));
+                }
+                LocalMsg::Timeout => self.log.push(("timeout".into(), source)),
+                LocalMsg::ScheduleFixedInterval => {
+                    cx.set_interval(Duration::from_secs(1), LocalMsg::FixedTick);
+                }
+                LocalMsg::FixedTick => self.log.push(("fixed".into(), source)),
+                LocalMsg::ScheduleFactoryInterval => {
+                    let mut tick = 0;
+                    cx.set_interval_with(Duration::from_secs(1), move || {
+                        tick += 1;
+                        LocalMsg::FactoryTick(tick)
+                    });
+                }
+                LocalMsg::FactoryTick(tick) => {
+                    self.log.push((format!("factory:{tick}"), source));
+                }
+                LocalMsg::ScheduleNested => {
+                    let mut child = cx.map_messages(MessageMapper::new(LocalMsg::Child));
+                    child.post(ChildMsg::Ping);
+                }
+                LocalMsg::Child(ChildMsg::Ping) => self.log.push(("child".into(), source)),
+                LocalMsg::GrabProxy => self.proxy = Some(cx.proxy()),
+                LocalMsg::Proxied => self.log.push(("proxied".into(), source)),
+            }
+            Ok(())
+        }
+    }
+
+    fn mapped_harness() -> AppHarness<MappedFixture> {
+        AppHarness::new(MappedFixture::default()).expect("mapped fixture builds")
+    }
+
+    #[test]
+    fn mapped_widget_emission_and_post_preserve_the_source_window() {
+        let mut harness = mapped_harness();
+        let window = harness.windows()[0];
+        harness
+            .activate(window, SemanticRole::Button, "Mapped action")
+            .expect("mapped action activates");
+        assert_eq!(
+            harness.app().log,
+            [
+                ("activated".into(), Some(window)),
+                ("posted".into(), Some(window))
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_mapped_contexts_apply_each_mapping_once() {
+        let mut harness = mapped_harness();
+        harness
+            .post(RootMsg::Feature(LocalMsg::ScheduleNested))
+            .expect("nested message posts");
+        assert_eq!(harness.app().log, [("child".into(), None)]);
+    }
+
+    #[test]
+    fn mapped_timeout_and_intervals_deliver_without_a_source_window() {
+        let mut timeout = mapped_harness();
+        timeout
+            .post(RootMsg::Feature(LocalMsg::ScheduleTimeout))
+            .expect("timeout schedules");
+        timeout
+            .advance(Duration::from_secs(1))
+            .expect("timeout advances");
+        assert_eq!(timeout.app().log, [("timeout".into(), None)]);
+
+        let mut fixed = mapped_harness();
+        fixed
+            .post(RootMsg::Feature(LocalMsg::ScheduleFixedInterval))
+            .expect("fixed interval schedules");
+        fixed
+            .advance(Duration::from_secs(2))
+            .expect("fixed interval advances");
+        assert_eq!(
+            fixed.app().log,
+            [("fixed".into(), None), ("fixed".into(), None)]
+        );
+
+        let mut factory = mapped_harness();
+        factory
+            .post(RootMsg::Feature(LocalMsg::ScheduleFactoryInterval))
+            .expect("factory interval schedules");
+        factory
+            .advance(Duration::from_secs(2))
+            .expect("factory interval advances");
+        assert_eq!(
+            factory.app().log,
+            [("factory:1".into(), None), ("factory:2".into(), None)]
+        );
+    }
+
+    #[test]
+    fn mapped_timer_can_be_cancelled() {
+        let mut harness = mapped_harness();
+        harness
+            .post(RootMsg::Feature(LocalMsg::ScheduleCancelledTimeout))
+            .expect("cancelled timeout schedules");
+        harness
+            .advance(Duration::from_secs(2))
+            .expect("clock advances beyond cancelled timeout");
+        assert_eq!(harness.app().log, [("cancelled:true".into(), None)]);
+    }
+
+    #[test]
+    fn mapped_proxy_posts_from_another_thread() {
+        let mut harness = mapped_harness();
+        harness
+            .post(RootMsg::Feature(LocalMsg::GrabProxy))
+            .expect("proxy is captured");
+        let proxy = harness.app().proxy.clone().expect("proxy exists");
+        thread::spawn(move || proxy.post(LocalMsg::Proxied).expect("proxy stays open"))
+            .join()
+            .expect("proxy thread joins");
+        harness.advance(Duration::ZERO).expect("proxy pumps");
+        assert_eq!(harness.app().log, [("proxied".into(), None)]);
+    }
+
+    #[test]
+    fn synchronous_mapper_accepts_non_send_non_clone_messages() {
+        struct Local(Rc<String>);
+        struct Root(Rc<String>);
+
+        let mapper = MessageMapper::new(|Local(value)| Root(value));
+        let mapper_clone = mapper.clone();
+        let mut ui = Ui::new(deterministic_font_database(), deterministic_theme());
+        let button = ui.add_button(ui.root(), "Local action").expect("button");
+        ui.listen(button, None, EventFilter::Activate, move |event, _| {
+            mapper_clone.emit(event, Local(Rc::new("local".into())));
+        })
+        .expect("listener");
+        let mut harness = UiHarness::new(ui);
+        harness
+            .activate(SemanticRole::Button, "Local action")
+            .expect("local action activates");
+        let messages = harness.drain_messages().collect::<Vec<_>>();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].0.as_str(), "local");
     }
 }

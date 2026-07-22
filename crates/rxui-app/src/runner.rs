@@ -436,6 +436,13 @@ impl<'a, M: 'static> AppCx<'a, M> {
         Self { backend, source }
     }
 
+    pub(crate) fn reborrow(&mut self) -> AppCx<'_, M> {
+        AppCx {
+            backend: &mut *self.backend,
+            source: self.source,
+        }
+    }
+
     /// Builds an empty UI from the application fonts and theme.
     pub fn new_ui(&mut self) -> Ui<M> {
         self.backend.new_ui()
@@ -544,8 +551,20 @@ impl<'a, M: 'static> AppCx<'a, M> {
     where
         M: Clone,
     {
-        self.backend
-            .set_interval(interval, Box::new(move || message.clone()))
+        self.set_interval_with(interval, move || message.clone())
+    }
+
+    /// Schedules messages produced by a factory repeatedly at an interval.
+    ///
+    /// The factory runs on the application event-loop thread. Use this form
+    /// when each delivery differs or the message type is not [`Clone`]. Missed
+    /// intervals are coalesced into one delivery per event-loop turn.
+    pub fn set_interval_with(
+        &mut self,
+        interval: Duration,
+        factory: impl FnMut() -> M + 'static,
+    ) -> TimerId {
+        self.backend.set_interval(interval, Box::new(factory))
     }
 
     /// Cancels a timer, returning whether it was still scheduled.

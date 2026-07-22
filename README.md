@@ -18,6 +18,7 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 - an idle-efficient native/browser UI window host with asynchronous WebGPU startup;
 - a high-level application runner (`App`, `run`) with typed messages,
   multi-window hosting, timers, and thread-safe message proxies;
+- composable feature-local message mapping with scoped application contexts;
 - typed commands, shortcut routing, and application menu models;
 - native global menus on macOS and per-window menus on Windows;
 - a theme-aware vector icon API and essential built-in icon set;
@@ -74,6 +75,12 @@ Explore the controls and themes:
 cargo run -p rxui --example design_gallery
 ```
 
+Explore hierarchical messages with two independent feature instances:
+
+```sh
+cargo run -p rxui --example message_architecture
+```
+
 Run the application shell:
 
 ```sh
@@ -116,7 +123,8 @@ cargo run -p rxui --example devtools_inspector --features devtools
 The inspector is read-only and excluded from default production builds.
 
 The guided documentation starts at [Your first RXUI app](docs/tutorials/first-app.md),
-then covers the [application shell](docs/tutorials/application-shell.md) and
+then covers [feature-local message architecture](docs/tutorials/message-architecture.md),
+the [application shell](docs/tutorials/application-shell.md), and the
 [editor workspace](docs/tutorials/editor-workspace.md).
 
 On macOS or Windows, run the native File/Edit/View/Window menu example:

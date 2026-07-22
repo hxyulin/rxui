@@ -6,6 +6,7 @@ mod command;
 mod error;
 mod host;
 mod menu;
+mod message;
 mod runner;
 mod state;
 mod undo;
@@ -14,6 +15,7 @@ pub use command::{Command, CommandError, CommandId, CommandRegistry, CommandRout
 pub use error::{Error, Result};
 pub use host::{GraphicsContext, HostError, HostStatus, HostUpdate, WindowHost, WindowHostOptions};
 pub use menu::{Menu, MenuBar, MenuEntry, MenuError, MenuRole};
+pub use message::{MappedAppCx, MessageMapper};
 #[cfg(target_arch = "wasm32")]
 pub use runner::spawn_on_canvas;
 pub use runner::{
