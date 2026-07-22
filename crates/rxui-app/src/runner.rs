@@ -10,7 +10,7 @@
 use std::{
     any::Any,
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fmt,
     rc::Rc,
     sync::{
@@ -41,6 +41,7 @@ use crate::instrumentation::{
     MessageTrace, QueuedMessage, RuntimeInstrumentationConfig, RuntimeLifecycleEvent,
     RuntimeLifecycleTrace, RuntimeResource,
 };
+use crate::queue::{POSTED_PASS_LIMIT, PostedQueue};
 use crate::subscription::{
     ActiveSubscriptionSnapshot, RawSubscriptionEvent, RawSubscriptionSink, SubscriptionConfig,
     SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions,
@@ -53,111 +54,12 @@ pub use astrelis_platform::{Clipboard, Monitor, WindowAttributes, WindowEvent, W
 pub use astrelis_text::FontDatabaseOptions;
 pub use astrelis_ui_core::{Theme, Ui};
 
-/// Maximum passes over messages posted from [`App::update`] before the runner
-/// defers the remainder to the next event-loop turn.
-const MAX_POSTED_PASSES: usize = 8;
-
 const TASK_PENDING: u8 = 0;
 const TASK_COMPLETION_QUEUED: u8 = 1;
 const TASK_CANCELLED: u8 = 2;
 const TASK_FINISHED: u8 = 3;
 
-/// A runner-local identity used to replace an older pending message with its
-/// newest value.
-///
-/// Namespaces should describe the coalesced event, such as
-/// `"chart.viewport"`. Use the instance component to distinguish repeated
-/// feature instances.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct MessageKey {
-    namespace: &'static str,
-    instance: u64,
-}
-
-impl MessageKey {
-    /// Creates a key in a static namespace for one stable feature instance.
-    pub const fn new(namespace: &'static str, instance: u64) -> Self {
-        Self {
-            namespace,
-            instance,
-        }
-    }
-
-    /// Creates a key for an application-wide singleton event.
-    pub const fn singleton(namespace: &'static str) -> Self {
-        Self::new(namespace, 0)
-    }
-
-    /// Returns the descriptive static namespace.
-    pub const fn namespace(self) -> &'static str {
-        self.namespace
-    }
-
-    /// Returns the stable feature-instance component.
-    pub const fn instance(self) -> u64 {
-        self.instance
-    }
-}
-
-struct PostedQueue<M> {
-    entries: VecDeque<QueuedMessage<M>>,
-    keyed: HashMap<MessageKey, usize>,
-}
-
-impl<M> Default for PostedQueue<M> {
-    fn default() -> Self {
-        Self {
-            entries: VecDeque::new(),
-            keyed: HashMap::new(),
-        }
-    }
-}
-
-impl<M> PostedQueue<M> {
-    fn post(&mut self, message: QueuedMessage<M>) {
-        self.entries.push_back(message);
-    }
-
-    fn replace_latest(
-        &mut self,
-        key: MessageKey,
-        message: M,
-        source: Option<WindowId>,
-        metadata: MessageMetadata,
-        origin: MessageOrigin,
-        instrumentation: &mut InstrumentationState,
-    ) -> std::result::Result<(), M> {
-        if let Some(index) = self.keyed.get(&key).copied() {
-            let entry = self
-                .entries
-                .get_mut(index)
-                .expect("pending keyed-message index stays valid until the batch is drained");
-            if let Some(existing) = &mut entry.trace {
-                existing.update_latest(metadata, source, origin);
-            }
-            entry.message = message;
-            entry.source = source;
-            instrumentation.coalesced(&mut entry.trace);
-            return Ok(());
-        }
-        Err(message)
-    }
-
-    fn post_keyed(&mut self, key: MessageKey, message: QueuedMessage<M>) {
-        let index = self.entries.len();
-        self.entries.push_back(message);
-        self.keyed.insert(key, index);
-    }
-
-    fn take(&mut self) -> Vec<QueuedMessage<M>> {
-        self.keyed.clear();
-        self.entries.drain(..).collect()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
+pub use crate::queue::MessageKey;
 
 /// A high-level RXUI application.
 ///
@@ -1713,7 +1615,7 @@ impl<M: 'static> Shell<M> {
             active_subscriptions,
             message_traces,
             lifecycle_traces,
-            self.posted.entries.len(),
+            self.posted.len(),
             coalesced_replacements,
         )
     }
@@ -2042,7 +1944,7 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             Ok(()) => return,
             Err(message) => message,
         };
-        let queue_depth = self.shell.posted.entries.len().saturating_add(1);
+        let queue_depth = self.shell.posted.len().saturating_add(1);
         let trace = self.shell.instrumentation.queued(
             metadata,
             source,
@@ -2073,7 +1975,7 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
     ) -> QueuedMessage<A::Message> {
         let trace = if self.shell.instrumentation.enabled() {
             let metadata = A::message_metadata(&message);
-            let queue_depth = self.shell.posted.entries.len().saturating_add(1);
+            let queue_depth = self.shell.posted.len().saturating_add(1);
             self.shell.instrumentation.queued(
                 metadata,
                 source,
@@ -2538,12 +2440,12 @@ fn dispatch_external<A: App>(
 /// Drains messages posted with [`AppCx::post`] through [`App::update`].
 ///
 /// Updates may post further messages, so draining repeats up to
-/// [`MAX_POSTED_PASSES`] times; any surplus remains queued for the next
+/// [`POSTED_PASS_LIMIT`] times; any surplus remains queued for the next
 /// event-loop turn rather than looping forever. Returns whether any message
 /// was dispatched.
 fn flush_posted<A: App>(user: &mut A, backend: &mut dyn AppBackend<A::Message>) -> Result<bool> {
     let mut processed = false;
-    for _ in 0..MAX_POSTED_PASSES {
+    for _ in 0..POSTED_PASS_LIMIT {
         let batch = backend.take_posted();
         if batch.is_empty() {
             return Ok(processed);
@@ -2556,7 +2458,7 @@ fn flush_posted<A: App>(user: &mut A, backend: &mut dyn AppBackend<A::Message>) 
     if backend.has_posted() {
         debug_assert!(
             false,
-            "posted-message re-drain exceeded {MAX_POSTED_PASSES} passes; an `update` \
+            "posted-message re-drain exceeded {POSTED_PASS_LIMIT} passes; an `update` \
              handler keeps posting new messages on every pass"
         );
     }

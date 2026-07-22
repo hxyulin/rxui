@@ -40,7 +40,7 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
   decimation;
 - serializable node graphs with ports, routed edges, selection, keyboard
   editing, and pan/zoom;
-- a coherent dockable editor workspace with backward-compatible named layouts;
+- an RXUI-owned dockable editor workspace with backward-compatible named layouts;
 - virtualized, accessible tree and sortable/resizable table views;
 - typed text, number, boolean, and enum property inspection;
 - a keyboard-first command palette over the shared command registry;
@@ -57,6 +57,10 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 Modern browsers with WebGPU are an officially supported target. RXUI uses
 one supplied HTML canvas and keeps the same retained UI, compositor, and
 application scheduling model on native and Web.
+
+Image presentation and viewport navigation come from Astrelis's generic widget
+layer; RXUI retains codec compatibility exports and application design-system
+policy.
 
 See [ROADMAP.md](ROADMAP.md) for release gates and scope.
 Source users of the former Astreon name should follow the

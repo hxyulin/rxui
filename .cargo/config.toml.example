@@ -17,7 +17,6 @@ astrelis-render-3d = { path = "../astrelis/crates/astrelis-render-3d" }
 astrelis-text = { path = "../astrelis/crates/astrelis-text" }
 astrelis-ui = { path = "../astrelis/crates/astrelis-ui" }
 astrelis-ui-core = { path = "../astrelis/crates/astrelis-ui-core" }
-astrelis-ui-docking = { path = "../astrelis/crates/astrelis-ui-docking" }
 astrelis-ui-host = { path = "../astrelis/crates/astrelis-ui-host" }
 astrelis-ui-testing = { path = "../astrelis/crates/astrelis-ui-testing" }
 astrelis-ui-widgets = { path = "../astrelis/crates/astrelis-ui-widgets" }

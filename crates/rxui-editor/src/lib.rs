@@ -2,11 +2,13 @@
 
 #![warn(missing_docs)]
 
-use astrelis_ui_docking::DockLayout;
 use serde::{Deserialize, Serialize};
 
+pub mod docking;
 mod node_graph;
 mod property;
+
+pub use docking::*;
 
 pub use node_graph::{
     GraphEdge, GraphEndpoint, GraphInteractionPhase, GraphNode, GraphPoint, GraphPort,
@@ -14,11 +16,6 @@ pub use node_graph::{
     NodeGraphDocument, NodeGraphError, NodeGraphOptions, NodeGraphSelection, NodeGraphView,
 };
 pub use property::{PropertyAction, PropertyField, PropertyGrid, PropertySection, PropertyValue};
-
-/// Re-exports of Astrelis's retained docking implementation.
-pub mod docking {
-    pub use astrelis_ui_docking::*;
-}
 
 /// Re-exports of scene-view and virtualization foundations used by editors.
 pub mod widgets {

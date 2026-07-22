@@ -8,6 +8,7 @@ mod host;
 mod instrumentation;
 mod menu;
 mod message;
+mod queue;
 mod runner;
 mod state;
 mod subscription;
@@ -25,6 +26,8 @@ pub use instrumentation::{
 };
 pub use menu::{Menu, MenuBar, MenuEntry, MenuError, MenuRole};
 pub use message::{MappedAppCx, MessageMapper};
+#[doc(hidden)]
+pub use queue::{POSTED_PASS_LIMIT, PostedQueue};
 #[cfg(target_arch = "wasm32")]
 pub use runner::spawn_on_canvas;
 pub use runner::{

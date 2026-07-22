@@ -29,19 +29,15 @@ use rxui_app::TaskSpawnError;
 use rxui_app::{
     ActiveSubscriptionSnapshot, ActiveTaskSnapshot, App, AppBackend, AppCx, Clipboard,
     CloseResponse, Error, InstrumentationState, MessageDispatch, MessageKey, MessageMetadata,
-    MessageOrigin, MessageOutcome, MessageProxy, Monitor, ProxyClosed, QueuedMessage,
-    RawSubscriptionEvent, RawSubscriptionSink, Result, RuntimeInstrumentationConfig,
-    RuntimeLifecycleEvent, RuntimePolicy, RuntimeResource, RuntimeSnapshot, SubscriptionConfig,
-    SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions, TaskCompletionStatus,
-    TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme, TimerId, Ui, WindowConfig, WindowHost,
-    WindowId,
+    MessageOrigin, MessageOutcome, MessageProxy, Monitor, POSTED_PASS_LIMIT, PostedQueue,
+    ProxyClosed, QueuedMessage, RawSubscriptionEvent, RawSubscriptionSink, Result,
+    RuntimeInstrumentationConfig, RuntimeLifecycleEvent, RuntimePolicy, RuntimeResource,
+    RuntimeSnapshot, SubscriptionConfig, SubscriptionFactory, SubscriptionId, SubscriptionStatus,
+    Subscriptions, TaskCompletionStatus, TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme,
+    TimerId, Ui, WindowConfig, WindowHost, WindowId,
 };
 
 use crate::deterministic_theme;
-
-/// Maximum passes over messages posted from [`App::update`] before the
-/// harness defers the remainder to the next operation, mirroring the runner.
-const MAX_POSTED_PASSES: usize = 8;
 
 /// Default logical viewport applied to windows opened without an explicit
 /// size, matching [`UiHarness`]'s conventional deterministic viewport.
@@ -154,65 +150,6 @@ struct HeadlessSubscription<M> {
 
 type SubscriptionEventQueue =
     Arc<Mutex<VecDeque<(u64, SubscriptionId, u64, RawSubscriptionEvent)>>>;
-
-struct PostedQueue<M> {
-    entries: VecDeque<QueuedMessage<M>>,
-    keyed: HashMap<MessageKey, usize>,
-    replacements: u64,
-}
-
-impl<M> Default for PostedQueue<M> {
-    fn default() -> Self {
-        Self {
-            entries: VecDeque::new(),
-            keyed: HashMap::new(),
-            replacements: 0,
-        }
-    }
-}
-
-impl<M> PostedQueue<M> {
-    fn post(&mut self, message: QueuedMessage<M>) {
-        self.entries.push_back(message);
-    }
-
-    fn replace_latest(
-        &mut self,
-        key: MessageKey,
-        message: M,
-        source: Option<WindowId>,
-        metadata: MessageMetadata,
-        origin: MessageOrigin,
-        instrumentation: &mut InstrumentationState,
-    ) -> std::result::Result<(), M> {
-        if let Some(index) = self.keyed.get(&key).copied() {
-            let entry = self
-                .entries
-                .get_mut(index)
-                .expect("pending keyed-message index stays valid until the batch is drained");
-            entry.replace(message, source, metadata, origin);
-            instrumentation.coalesce_message(entry);
-            self.replacements = self.replacements.saturating_add(1);
-            return Ok(());
-        }
-        Err(message)
-    }
-
-    fn post_keyed(&mut self, key: MessageKey, message: QueuedMessage<M>) {
-        let index = self.entries.len();
-        self.entries.push_back(message);
-        self.keyed.insert(key, index);
-    }
-
-    fn take(&mut self) -> Vec<QueuedMessage<M>> {
-        self.keyed.clear();
-        self.entries.drain(..).collect()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
 
 /// Headless [`AppBackend`] used by [`AppHarness`].
 ///
@@ -429,7 +366,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             source,
             MessageOrigin::Posted,
             self.epoch + self.now,
-            self.posted.entries.len().saturating_add(1),
+            self.posted.len().saturating_add(1),
             Some(key),
         );
         self.posted
@@ -452,7 +389,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
                 source,
                 origin,
                 self.epoch + self.now,
-                self.posted.entries.len().saturating_add(1),
+                self.posted.len().saturating_add(1),
                 None,
             )
         } else {
@@ -613,7 +550,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             subscriptions,
             message_traces,
             lifecycle_traces,
-            self.posted.entries.len(),
+            self.posted.len(),
             coalesced_replacements,
         )
     }
@@ -842,11 +779,11 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
 }
 
 /// Drains messages posted with [`AppCx::post`] through [`App::update`],
-/// mirroring the runner's bounded re-drain: up to [`MAX_POSTED_PASSES`]
+/// mirroring the runner's bounded re-drain: up to [`POSTED_PASS_LIMIT`]
 /// passes, with any surplus retained for the next harness operation. In
 /// debug builds an exhausted re-drain panics, exactly like the runner.
 fn flush_posted<A: App>(app: &mut A, backend: &mut HeadlessBackend<A::Message>) -> Result<()> {
-    for _ in 0..MAX_POSTED_PASSES {
+    for _ in 0..POSTED_PASS_LIMIT {
         let batch = backend.posted.take();
         if batch.is_empty() {
             return Ok(());
@@ -857,7 +794,7 @@ fn flush_posted<A: App>(app: &mut A, backend: &mut HeadlessBackend<A::Message>) 
     }
     debug_assert!(
         backend.posted.is_empty(),
-        "posted-message re-drain exceeded {MAX_POSTED_PASSES} passes; an `update` handler \
+        "posted-message re-drain exceeded {POSTED_PASS_LIMIT} passes; an `update` handler \
          keeps posting new messages on every pass"
     );
     Ok(())
@@ -1011,13 +948,13 @@ impl<A: App> AppHarness<A> {
     /// Messages waiting in a [`MessageProxy`] or scheduled timer are not
     /// included.
     pub fn pending_posted_count(&self) -> usize {
-        self.backend.posted.entries.len()
+        self.backend.posted.len()
     }
 
     /// Returns the cumulative number of pending messages replaced by keyed
     /// latest-value posts since this harness was created.
     pub fn coalesced_replacement_count(&self) -> u64 {
-        self.backend.posted.replacements
+        self.backend.posted.replacements()
     }
 
     /// Returns a point-in-time snapshot of active tasks and subscriptions.
@@ -1340,7 +1277,7 @@ impl<A: App> AppHarness<A> {
     /// Dispatches proxy messages and task events in submission order, with
     /// the same bounded re-drain as posted messages.
     fn pump_external(&mut self) -> Result<()> {
-        for _ in 0..MAX_POSTED_PASSES {
+        for _ in 0..POSTED_PASS_LIMIT {
             let proxied: Vec<_> = {
                 let mut queue = self.backend.proxied.lock().expect("proxy queue poisoned");
                 queue.drain(..).collect()

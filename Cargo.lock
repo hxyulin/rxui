@@ -304,18 +304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astrelis-ui-docking"
-version = "0.3.0-rc.1"
-dependencies = [
- "astrelis-core",
- "astrelis-paint",
- "astrelis-platform",
- "astrelis-ui-core",
- "astrelis-ui-widgets",
- "serde",
-]
-
-[[package]]
 name = "astrelis-ui-host"
 version = "0.3.0-rc.1"
 dependencies = [
@@ -328,6 +316,7 @@ dependencies = [
  "astrelis-paint-gpu",
  "astrelis-platform",
  "astrelis-ui-core",
+ "futures-util",
  "pollster",
  "wasm-bindgen-futures",
 ]
@@ -3015,7 +3004,6 @@ dependencies = [
  "astrelis-platform",
  "astrelis-text",
  "astrelis-ui-core",
- "astrelis-ui-docking",
  "astrelis-ui-widgets",
  "rxui-app",
  "rxui-widgets",

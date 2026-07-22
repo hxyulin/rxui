@@ -9,6 +9,15 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 
 ### Included
 
+- RXUI now owns its docking model and retained workspace policy; the public
+  API remains available under `rxui_editor::docking` and the editor façade.
+- The native runner and deterministic harness share one posted-message queue
+  kernel and bounded redrain limit.
+- Generic image presentation and pan/zoom input decoding are compatibility
+  re-exports of the Astrelis widget implementations.
+- Radio options, combo boxes, and numeric fields expose their specific
+  engine semantic roles for platform accessibility adapters.
+
 - A high-level application runner: implement `rxui::prelude::App`
   (`build`/`update` plus optional hooks) and start with `rxui::app::run`; the
   runner owns window hosting, message routing, redraw scheduling, timers,

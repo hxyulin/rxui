@@ -36,26 +36,25 @@ rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
 # Astrelis is pinned so clean clones and CI consume one reviewed engine state.
 # Developers working in the sibling repository can copy
 # `.cargo/config.toml.example` to `.cargo/config.toml` to use local paths.
-astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-compositor = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-profiling = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-render = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-render-3d = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-ui-docking = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-ui-host = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-ui-testing = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
-astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "6bfbcea27839968436fc4959f843059a5fba7214", version = "=0.3.0-rc.1" }
+astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-compositor = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-gpu-wgpu = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-platform-test = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-profiling = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-render = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-render-3d = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-ui-host = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-ui-testing = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
+astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "92b508657cad90cedf376861ab7f0bdf1744f162", version = "=0.3.0-rc.1" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
@@ -83,9 +82,6 @@ opt-level = 1
 opt-level = 2
 
 [profile.dev.package.astrelis-ui-widgets]
-opt-level = 2
-
-[profile.dev.package.astrelis-ui-docking]
 opt-level = 2
 
 [profile.dev.package.taffy]

@@ -213,7 +213,7 @@ impl<Message: 'static> Widget<Message> for RadioButton<Message> {
 
     fn semantics(&self) -> Option<(SemanticRole, String, Option<String>)> {
         Some((
-            SemanticRole::ListItem,
+            SemanticRole::RadioButton,
             self.label.clone(),
             self.selected.then(|| "selected".into()),
         ))
@@ -529,6 +529,7 @@ impl<Message: Clone + 'static> ComboBox<Message> {
             .and_then(|index| labels.get(index).cloned())
             .unwrap_or_else(|| placeholder.into());
         let owner = ui.add_button(parent, owner_label)?;
+        ui.set_semantic_role(owner, SemanticRole::ComboBox)?;
         ui.set_layout(
             owner,
             LayoutStyle {
@@ -744,6 +745,7 @@ impl<Message: 'static> NumericField<Message> {
             },
         )?;
         let field = ui.add_text_field(row, format_value(value, options.decimals))?;
+        ui.set_semantic_role(field, SemanticRole::SpinButton)?;
         ui.set_layout(
             field,
             LayoutStyle {
@@ -1156,7 +1158,7 @@ mod tests {
             .finish();
         ui.set_viewport(Size::new(320.0, 240.0), 1.0);
         let tree = ui.semantic_tree().unwrap();
-        let second = find_semantic(&tree, SemanticRole::ListItem, "Second").unwrap();
+        let second = find_semantic(&tree, SemanticRole::RadioButton, "Second").unwrap();
         ui.perform_semantic_action(second, SemanticAction::Activate)
             .unwrap();
         assert_eq!(ui.drain_messages().collect::<Vec<_>>(), vec![1]);
@@ -1220,6 +1222,8 @@ mod tests {
             semantic_snapshot(&via_builder.semantic_tree().unwrap()),
             semantic_snapshot(&via_new.semantic_tree().unwrap())
         );
+        let tree = via_builder.semantic_tree().unwrap();
+        assert!(find_semantic(&tree, SemanticRole::ComboBox, "Medium").is_some());
     }
 
     #[test]
@@ -1250,6 +1254,8 @@ mod tests {
             semantic_snapshot(&via_builder.semantic_tree().unwrap()),
             semantic_snapshot(&via_new.semantic_tree().unwrap())
         );
+        let tree = via_builder.semantic_tree().unwrap();
+        assert!(find_semantic(&tree, SemanticRole::SpinButton, "").is_some());
     }
 
     #[test]
