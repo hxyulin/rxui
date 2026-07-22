@@ -28,11 +28,12 @@ use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database
 use rxui_app::TaskSpawnError;
 use rxui_app::{
     ActiveSubscriptionSnapshot, ActiveTaskSnapshot, App, AppBackend, AppCx, Clipboard,
-    CloseResponse, Error, MessageKey, MessageProxy, Monitor, ProxyClosed, RawSubscriptionEvent,
-    RawSubscriptionSink, Result, RuntimePolicy, RuntimeSnapshot, SubscriptionConfig,
-    SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions, TaskCompletionStatus,
-    TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme, TimerId, Ui, WindowConfig, WindowHost,
-    WindowId,
+    CloseResponse, Error, InstrumentationState, MessageDispatch, MessageKey, MessageMetadata,
+    MessageOrigin, MessageOutcome, MessageProxy, Monitor, ProxyClosed, QueuedMessage,
+    RawSubscriptionEvent, RawSubscriptionSink, Result, RuntimeInstrumentationConfig, RuntimePolicy,
+    RuntimeSnapshot, SubscriptionConfig, SubscriptionFactory, SubscriptionId, SubscriptionStatus,
+    Subscriptions, TaskCompletionStatus, TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme,
+    TimerId, Ui, WindowConfig, WindowHost, WindowId,
 };
 
 use crate::deterministic_theme;
@@ -145,13 +146,8 @@ struct HeadlessSubscription<M> {
 type SubscriptionEventQueue =
     Arc<Mutex<VecDeque<(u64, SubscriptionId, u64, RawSubscriptionEvent)>>>;
 
-struct PostedMessage<M> {
-    message: M,
-    source: Option<WindowId>,
-}
-
 struct PostedQueue<M> {
-    entries: VecDeque<PostedMessage<M>>,
+    entries: VecDeque<QueuedMessage<M>>,
     keyed: HashMap<MessageKey, usize>,
     replacements: u64,
 }
@@ -167,33 +163,41 @@ impl<M> Default for PostedQueue<M> {
 }
 
 impl<M> PostedQueue<M> {
-    fn post(&mut self, message: M, source: Option<WindowId>) {
-        self.entries.push_back(PostedMessage { message, source });
+    fn post(&mut self, message: QueuedMessage<M>) {
+        self.entries.push_back(message);
     }
 
-    fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
+    fn replace_latest(
+        &mut self,
+        key: MessageKey,
+        message: M,
+        source: Option<WindowId>,
+        metadata: MessageMetadata,
+        origin: MessageOrigin,
+        instrumentation: &mut InstrumentationState,
+    ) -> std::result::Result<(), M> {
         if let Some(index) = self.keyed.get(&key).copied() {
             let entry = self
                 .entries
                 .get_mut(index)
                 .expect("pending keyed-message index stays valid until the batch is drained");
-            entry.message = message;
-            entry.source = source;
+            entry.replace(message, source, metadata, origin);
+            instrumentation.coalesce_message(entry);
             self.replacements = self.replacements.saturating_add(1);
-            return;
+            return Ok(());
         }
+        Err(message)
+    }
 
+    fn post_keyed(&mut self, key: MessageKey, message: QueuedMessage<M>) {
         let index = self.entries.len();
-        self.entries.push_back(PostedMessage { message, source });
+        self.entries.push_back(message);
         self.keyed.insert(key, index);
     }
 
-    fn take(&mut self) -> Vec<(M, Option<WindowId>)> {
+    fn take(&mut self) -> Vec<QueuedMessage<M>> {
         self.keyed.clear();
-        self.entries
-            .drain(..)
-            .map(|entry| (entry.message, entry.source))
-            .collect()
+        self.entries.drain(..).collect()
     }
 
     fn is_empty(&self) -> bool {
@@ -210,6 +214,8 @@ struct HeadlessBackend<M: 'static> {
     theme: Theme,
     slots: Vec<(WindowId, Ui<M>)>,
     posted: PostedQueue<M>,
+    instrumentation: InstrumentationState,
+    message_metadata: fn(&M) -> MessageMetadata,
     proxied: Arc<Mutex<VecDeque<(u64, M)>>>,
     task_events: TaskEventQueue<M>,
     external_sequence: Arc<AtomicU64>,
@@ -230,11 +236,16 @@ struct HeadlessBackend<M: 'static> {
 }
 
 impl<M: 'static> HeadlessBackend<M> {
-    fn new() -> Self {
+    fn new(
+        instrumentation: RuntimeInstrumentationConfig,
+        message_metadata: fn(&M) -> MessageMetadata,
+    ) -> Self {
         Self {
             theme: deterministic_theme(),
             slots: Vec::new(),
             posted: PostedQueue::default(),
+            instrumentation: InstrumentationState::new(instrumentation),
+            message_metadata,
             proxied: Arc::new(Mutex::new(VecDeque::new())),
             task_events: Arc::new(Mutex::new(VecDeque::new())),
             external_sequence: Arc::new(AtomicU64::new(1)),
@@ -351,15 +362,72 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
     fn invalidate_all(&mut self) {}
 
     fn post(&mut self, message: M, source: Option<WindowId>) {
-        self.posted.post(message, source);
+        let message = self.instrument_message(message, source, MessageOrigin::Posted);
+        self.posted.post(message);
     }
 
     fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
-        self.posted.post_latest(key, message, source);
+        let metadata = if self.instrumentation.enabled() {
+            (self.message_metadata)(&message)
+        } else {
+            MessageMetadata::unnamed()
+        };
+        let message = match self.posted.replace_latest(
+            key,
+            message,
+            source,
+            metadata,
+            MessageOrigin::Posted,
+            &mut self.instrumentation,
+        ) {
+            Ok(()) => return,
+            Err(message) => message,
+        };
+        let trace = self.instrumentation.queued(
+            metadata,
+            source,
+            MessageOrigin::Posted,
+            self.epoch + self.now,
+            self.posted.entries.len().saturating_add(1),
+            Some(key),
+        );
+        self.posted
+            .post_keyed(key, QueuedMessage::new(message, source, trace));
     }
 
-    fn take_posted(&mut self) -> Vec<(M, Option<WindowId>)> {
+    fn take_posted(&mut self) -> Vec<QueuedMessage<M>> {
         self.posted.take()
+    }
+
+    fn instrument_message(
+        &mut self,
+        message: M,
+        source: Option<WindowId>,
+        origin: MessageOrigin,
+    ) -> QueuedMessage<M> {
+        let trace = if self.instrumentation.enabled() {
+            self.instrumentation.queued(
+                (self.message_metadata)(&message),
+                source,
+                origin,
+                self.epoch + self.now,
+                self.posted.entries.len().saturating_add(1),
+                None,
+            )
+        } else {
+            None
+        };
+        QueuedMessage::new(message, source, trace)
+    }
+
+    fn message_dispatch_started(&mut self, dispatch: &mut MessageDispatch) {
+        self.instrumentation
+            .start_message(dispatch, self.epoch + self.now);
+    }
+
+    fn message_dispatch_finished(&mut self, dispatch: MessageDispatch, outcome: MessageOutcome) {
+        self.instrumentation
+            .finish_message(dispatch, self.epoch + self.now, outcome);
     }
 
     fn has_posted(&self) -> bool {
@@ -496,7 +564,14 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
             })
             .collect::<Vec<_>>();
         subscriptions.sort_by_key(ActiveSubscriptionSnapshot::id);
-        RuntimeSnapshot::new(tasks, subscriptions)
+        let (message_traces, coalesced_replacements) = self.instrumentation.snapshot();
+        RuntimeSnapshot::with_messages(
+            tasks,
+            subscriptions,
+            message_traces,
+            self.posted.entries.len(),
+            coalesced_replacements,
+        )
     }
 
     fn reconcile_subscriptions(&mut self, desired: Subscriptions<M>) -> Result<()> {
@@ -702,8 +777,8 @@ fn flush_posted<A: App>(app: &mut A, backend: &mut HeadlessBackend<A::Message>) 
         if batch.is_empty() {
             return Ok(());
         }
-        for (message, source) in batch {
-            app.update(&mut AppCx::new(backend, source), message)?;
+        for message in batch {
+            dispatch_message(app, backend, message)?;
         }
     }
     debug_assert!(
@@ -722,10 +797,12 @@ fn dispatch_batch<A: App>(
     backend: &mut HeadlessBackend<A::Message>,
     source: Option<WindowId>,
     messages: Vec<A::Message>,
+    origin: MessageOrigin,
 ) -> Result<()> {
     let had_windows = !backend.slots.is_empty();
     for message in messages {
-        app.update(&mut AppCx::new(backend, source), message)?;
+        let message = backend.instrument_message(message, source, origin);
+        dispatch_message(app, backend, message)?;
     }
     flush_posted(app, backend)?;
     if !backend.exited {
@@ -738,6 +815,25 @@ fn dispatch_batch<A: App>(
         backend.cancel_all_subscriptions();
     }
     Ok(())
+}
+
+fn dispatch_message<A: App>(
+    app: &mut A,
+    backend: &mut HeadlessBackend<A::Message>,
+    message: QueuedMessage<A::Message>,
+) -> Result<()> {
+    let (message, source, mut dispatch) = message.into_parts();
+    backend.message_dispatch_started(&mut dispatch);
+    let result = app.update(&mut AppCx::new(backend, source), message);
+    backend.message_dispatch_finished(
+        dispatch,
+        if result.is_ok() {
+            MessageOutcome::Success
+        } else {
+            MessageOutcome::Error
+        },
+    );
+    result
 }
 
 /// Deterministic, headless harness around one [`App`] implementation.
@@ -792,7 +888,15 @@ impl<A: App> AppHarness<A> {
     /// ([`deterministic_theme`]), running [`App::build`] and flushing any
     /// messages it posts.
     pub fn new(app: A) -> Result<Self> {
-        let backend = HeadlessBackend::new();
+        Self::new_with_instrumentation(app, RuntimeInstrumentationConfig::default())
+    }
+
+    /// Builds the application with opt-in payload-free runtime instrumentation.
+    pub fn new_with_instrumentation(
+        app: A,
+        instrumentation: RuntimeInstrumentationConfig,
+    ) -> Result<Self> {
+        let backend = HeadlessBackend::new(instrumentation, A::message_metadata);
         let mut harness = Self { app, backend };
         harness
             .app
@@ -898,7 +1002,13 @@ impl<A: App> AppHarness<A> {
             .get(&id)
             .is_some_and(|active| active.generation == generation);
         if still_active {
-            dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+            dispatch_batch(
+                &mut self.app,
+                &mut self.backend,
+                None,
+                vec![message],
+                MessageOrigin::Subscription(id),
+            )?;
         }
         self.pump_external()?;
         Ok(still_active)
@@ -920,7 +1030,13 @@ impl<A: App> AppHarness<A> {
             return Ok(false);
         };
         entry.state.store(TASK_FINISHED, Ordering::Release);
-        dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+        dispatch_batch(
+            &mut self.app,
+            &mut self.backend,
+            None,
+            vec![message],
+            MessageOrigin::Task(task),
+        )?;
         self.pump_external()?;
         Ok(true)
     }
@@ -983,14 +1099,26 @@ impl<A: App> AppHarness<A> {
         let id = node.id;
         ui.perform_semantic_action(id, action)?;
         let messages: Vec<_> = ui.drain_messages().collect();
-        dispatch_batch(&mut self.app, &mut self.backend, Some(window), messages)?;
+        dispatch_batch(
+            &mut self.app,
+            &mut self.backend,
+            Some(window),
+            messages,
+            MessageOrigin::Ui,
+        )?;
         self.pump_external()
     }
 
     /// Dispatches one message through [`App::update`] with no source window,
     /// the path a [`MessageProxy`] or external event takes.
     pub fn post(&mut self, message: A::Message) -> Result<()> {
-        dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+        dispatch_batch(
+            &mut self.app,
+            &mut self.backend,
+            None,
+            vec![message],
+            MessageOrigin::External,
+        )?;
         self.pump_external()
     }
 
@@ -1058,7 +1186,13 @@ impl<A: App> AppHarness<A> {
             let entry = self.backend.timers.remove(index);
             match entry.kind {
                 TimerKind::Timeout(factory) => {
-                    dispatch_batch(&mut self.app, &mut self.backend, None, vec![factory()])?;
+                    dispatch_batch(
+                        &mut self.app,
+                        &mut self.backend,
+                        None,
+                        vec![factory()],
+                        MessageOrigin::Timeout(timer),
+                    )?;
                 }
                 TimerKind::Interval {
                     period,
@@ -1076,7 +1210,13 @@ impl<A: App> AppHarness<A> {
                         due: next_due,
                         kind: TimerKind::Interval { period, factory },
                     });
-                    dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+                    dispatch_batch(
+                        &mut self.app,
+                        &mut self.backend,
+                        None,
+                        vec![message],
+                        MessageOrigin::Interval(timer),
+                    )?;
                 }
             }
         }
@@ -1174,7 +1314,13 @@ impl<A: App> AppHarness<A> {
             for (_, event) in batch {
                 match event {
                     ExternalEvent::Message(message) => {
-                        dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+                        dispatch_batch(
+                            &mut self.app,
+                            &mut self.backend,
+                            None,
+                            vec![message],
+                            MessageOrigin::Proxy,
+                        )?;
                     }
                     ExternalEvent::Task(TaskEvent::Complete { id, state, factory }) => {
                         let active = self
@@ -1190,6 +1336,7 @@ impl<A: App> AppHarness<A> {
                                 &mut self.backend,
                                 None,
                                 vec![factory()],
+                                MessageOrigin::Task(id),
                             )?;
                         }
                     }
@@ -1224,7 +1371,13 @@ impl<A: App> AppHarness<A> {
                                     Some(decode(event))
                                 });
                         if let Some(message) = message {
-                            dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+                            dispatch_batch(
+                                &mut self.app,
+                                &mut self.backend,
+                                None,
+                                vec![message],
+                                MessageOrigin::Subscription(id),
+                            )?;
                         }
                     }
                 }
@@ -1253,6 +1406,7 @@ mod tests {
     use std::{collections::HashMap, rc::Rc, thread};
 
     use astrelis_ui_core::{ElementHandle, EventFilter, Label};
+    use rxui_app::RuntimeEvent;
     #[cfg(not(target_arch = "wasm32"))]
     use rxui_app::TaskError;
     use rxui_app::{MessageMapper, Subscription, TaskCompletion};
@@ -2215,6 +2369,224 @@ mod tests {
     #[test]
     fn duplicate_subscription_ids_fail_initial_reconciliation() {
         assert!(AppHarness::new(DuplicateSubscriptions).is_err());
+    }
+
+    #[derive(Clone, Copy)]
+    enum TraceMsg {
+        Burst,
+        Preview(u32),
+        Timeout,
+    }
+
+    struct TraceApp;
+
+    impl App for TraceApp {
+        type Message = TraceMsg;
+
+        fn build(&mut self, cx: &mut AppCx<'_, Self::Message>) -> Result<()> {
+            cx.set_timeout(Duration::from_millis(5), TraceMsg::Timeout);
+            Ok(())
+        }
+
+        fn message_metadata(message: &Self::Message) -> MessageMetadata {
+            match message {
+                TraceMsg::Burst => MessageMetadata::new("Burst", "test"),
+                TraceMsg::Preview(_) => MessageMetadata::new("Preview", "test"),
+                TraceMsg::Timeout => MessageMetadata::new("Timeout", "test"),
+            }
+        }
+
+        fn update(
+            &mut self,
+            cx: &mut AppCx<'_, Self::Message>,
+            message: Self::Message,
+        ) -> Result<()> {
+            if let TraceMsg::Burst = message {
+                for value in 0..3 {
+                    cx.post_latest(
+                        MessageKey::singleton("trace.preview"),
+                        TraceMsg::Preview(value),
+                    );
+                }
+            }
+            if let TraceMsg::Preview(value) = message {
+                assert_eq!(value, 2);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn instrumentation_reports_order_coalescing_and_timer_origins() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&events);
+        let config = RuntimeInstrumentationConfig::default()
+            .message_history(2)
+            .observer(move |event: &RuntimeEvent| {
+                observed.lock().unwrap().push(event.clone());
+            });
+        let mut harness = AppHarness::new_with_instrumentation(TraceApp, config).unwrap();
+
+        harness.post(TraceMsg::Burst).unwrap();
+        let burst_snapshot = harness.runtime_snapshot();
+        assert_eq!(burst_snapshot.message_traces().len(), 2);
+        let burst = &burst_snapshot.message_traces()[0];
+        assert_eq!(burst.identity().metadata().name(), "Burst");
+        assert_eq!(burst.identity().origin(), MessageOrigin::External);
+        assert_eq!(burst.emitted(), 3);
+        let preview = &burst_snapshot.message_traces()[1];
+        assert_eq!(preview.replacements(), 2);
+        assert_eq!(preview.key(), Some(MessageKey::singleton("trace.preview")));
+        assert_eq!(burst_snapshot.coalesced_replacements(), 2);
+
+        harness.advance(Duration::from_millis(5)).unwrap();
+        let snapshot = harness.runtime_snapshot();
+        assert_eq!(snapshot.message_traces().len(), 2);
+        assert!(matches!(
+            snapshot.message_traces()[1].identity().origin(),
+            MessageOrigin::Timeout(_)
+        ));
+
+        let events = events.lock().unwrap();
+        let burst_sequence = burst.identity().sequence();
+        let kinds = events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::MessageQueued { identity, .. }
+                    if identity.sequence() == burst_sequence =>
+                {
+                    Some("queued")
+                }
+                RuntimeEvent::MessageDispatchStarted { identity, .. }
+                    if identity.sequence() == burst_sequence =>
+                {
+                    Some("started")
+                }
+                RuntimeEvent::MessageDispatchFinished(trace)
+                    if trace.identity().sequence() == burst_sequence =>
+                {
+                    Some("finished")
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(kinds, ["queued", "started", "finished"]);
+    }
+
+    #[test]
+    fn instrumentation_associates_task_and_subscription_origins() {
+        let config = || RuntimeInstrumentationConfig::default().message_history(8);
+
+        let mut tasks = AppHarness::new_with_instrumentation(TaskFixture::default(), config())
+            .expect("task fixture builds");
+        tasks.post(TaskMsg::StartExternal).unwrap();
+        let task = tasks.pending_task_ids()[0];
+        tasks
+            .complete_task(task, TaskMsg::Delivered(Rc::new("done".into())))
+            .unwrap();
+        assert!(matches!(
+            tasks
+                .runtime_snapshot()
+                .message_traces()
+                .last()
+                .unwrap()
+                .identity()
+                .origin(),
+            MessageOrigin::Task(id) if id == task
+        ));
+
+        let id = SubscriptionId::singleton("fixture.live");
+        let mut subscriptions =
+            AppHarness::new_with_instrumentation(SubscriptionFixture::default(), config())
+                .expect("subscription fixture builds");
+        subscriptions.post(SubscriptionMsg::SetLive(true)).unwrap();
+        subscriptions.emit_subscription(id).unwrap();
+        assert!(matches!(
+            subscriptions
+                .runtime_snapshot()
+                .message_traces()
+                .last()
+                .unwrap()
+                .identity()
+                .origin(),
+            MessageOrigin::Subscription(origin) if origin == id
+        ));
+    }
+
+    static METADATA_CALLS: AtomicU64 = AtomicU64::new(0);
+
+    struct DisabledInstrumentationApp;
+
+    impl App for DisabledInstrumentationApp {
+        type Message = ();
+
+        fn build(&mut self, _cx: &mut AppCx<'_, Self::Message>) -> Result<()> {
+            Ok(())
+        }
+
+        fn message_metadata(_message: &Self::Message) -> MessageMetadata {
+            METADATA_CALLS.fetch_add(1, Ordering::Relaxed);
+            MessageMetadata::named("Unit")
+        }
+
+        fn update(
+            &mut self,
+            _cx: &mut AppCx<'_, Self::Message>,
+            _message: Self::Message,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn disabled_instrumentation_skips_metadata_and_history() {
+        METADATA_CALLS.store(0, Ordering::Relaxed);
+        let mut harness = AppHarness::new(DisabledInstrumentationApp).unwrap();
+        harness.post(()).unwrap();
+        assert_eq!(METADATA_CALLS.load(Ordering::Relaxed), 0);
+        assert!(harness.runtime_snapshot().message_traces().is_empty());
+    }
+
+    struct FailingInstrumentationApp;
+
+    impl App for FailingInstrumentationApp {
+        type Message = Rc<String>;
+
+        fn build(&mut self, _cx: &mut AppCx<'_, Self::Message>) -> Result<()> {
+            Ok(())
+        }
+
+        fn message_metadata(_message: &Self::Message) -> MessageMetadata {
+            MessageMetadata::new("PrivateFailure", "test")
+        }
+
+        fn update(
+            &mut self,
+            _cx: &mut AppCx<'_, Self::Message>,
+            _message: Self::Message,
+        ) -> Result<()> {
+            Err(Error::msg("sensitive payload must not be retained"))
+        }
+    }
+
+    #[test]
+    fn instrumentation_records_errors_without_requiring_send_or_debug() {
+        let mut harness = AppHarness::new_with_instrumentation(
+            FailingInstrumentationApp,
+            RuntimeInstrumentationConfig::default().message_history(1),
+        )
+        .unwrap();
+        assert!(harness.post(Rc::new("secret".into())).is_err());
+        let snapshot = harness.runtime_snapshot();
+        assert_eq!(snapshot.message_traces().len(), 1);
+        assert_eq!(
+            snapshot.message_traces()[0].outcome(),
+            MessageOutcome::Error
+        );
+        assert_eq!(
+            snapshot.message_traces()[0].identity().metadata().name(),
+            "PrivateFailure"
+        );
     }
 
     #[test]

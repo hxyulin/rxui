@@ -25,7 +25,10 @@ use astrelis_ui_core::{
     OverlayOptions, OverlaySide, Padding, Positioning, RoutedEventKind, Row, SemanticRole, Ui,
     UiError, Visibility, WidgetStyle,
 };
-use rxui_app::{DeliveryPolicy, RuntimeSnapshot, SubscriptionKind, SubscriptionStatus, TaskKind};
+use rxui_app::{
+    DeliveryPolicy, MessageOrigin, MessageOutcome, RuntimeSnapshot, SubscriptionKind,
+    SubscriptionStatus, TaskKind,
+};
 use rxui_widgets::{
     CommandButton, IconButton, IconView, TreeAction, TreeView, TreeViewOptions,
     foundation::{Menu, MenuItem},
@@ -51,6 +54,24 @@ fn format_elapsed(duration: Duration) -> String {
         format!("{:.1} s", duration.as_secs_f64())
     } else {
         format!("{} ms", duration.as_millis())
+    }
+}
+
+fn format_message_origin(origin: MessageOrigin) -> String {
+    match origin {
+        MessageOrigin::Ui => "ui".into(),
+        MessageOrigin::Posted => "posted".into(),
+        MessageOrigin::Proxy => "proxy".into(),
+        MessageOrigin::Timeout(timer) => format!("timeout #{}", timer.raw()),
+        MessageOrigin::Interval(timer) => format!("interval #{}", timer.raw()),
+        MessageOrigin::Task(task) => format!("task #{}", task.raw()),
+        MessageOrigin::Subscription(subscription) => format!(
+            "subscription {}#{}",
+            subscription.namespace(),
+            subscription.instance()
+        ),
+        MessageOrigin::External => "external".into(),
+        _ => "runtime".into(),
     }
 }
 
@@ -661,7 +682,17 @@ where
                 ..LayoutStyle::default()
             },
         )?;
-        let runtime_details = ui.add_column(runtime_content)?;
+        let runtime_scroll = ui.add_scroll_view(runtime_content)?;
+        ui.set_layout(
+            runtime_scroll,
+            LayoutStyle {
+                grow: 1.0,
+                basis: Length::Px(0.0),
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        let runtime_details = ui.add_column(runtime_scroll)?;
         ui.set_layout(
             runtime_details,
             LayoutStyle {
@@ -1183,9 +1214,107 @@ where
         let caption = ui.theme().type_scale.caption;
         let muted = ui.theme().muted_foreground;
 
+        let messages = ui.add_label(
+            self.runtime_details,
+            format!(
+                "Messages ({})",
+                self.runtime_snapshot.message_traces().len()
+            ),
+        )?;
+        ui.set_widget_style(
+            messages,
+            WidgetStyle {
+                font_size: Some(heading),
+                font_weight: Some(heading_weight),
+                ..WidgetStyle::default()
+            },
+        )?;
+        let queue = ui.add_label(
+            self.runtime_details,
+            format!(
+                "{} pending · {} coalesced replacements",
+                self.runtime_snapshot.pending_messages(),
+                self.runtime_snapshot.coalesced_replacements()
+            ),
+        )?;
+        ui.set_widget_style(
+            queue,
+            WidgetStyle {
+                foreground: Some(muted),
+                font_size: Some(caption),
+                ..WidgetStyle::default()
+            },
+        )?;
+        if self.runtime_snapshot.message_traces().is_empty() {
+            let empty = ui.add_label(self.runtime_details, "No recorded messages")?;
+            ui.set_widget_style(
+                empty,
+                WidgetStyle {
+                    foreground: Some(muted),
+                    font_size: Some(caption),
+                    ..WidgetStyle::default()
+                },
+            )?;
+        } else {
+            for trace in self.runtime_snapshot.message_traces().iter().rev() {
+                let identity = trace.identity();
+                let status = match trace.outcome() {
+                    MessageOutcome::Success => "ok",
+                    MessageOutcome::Error => "error",
+                };
+                ui.add_label(
+                    self.runtime_details,
+                    format!(
+                        "#{} {} · {}",
+                        identity.sequence(),
+                        identity.metadata().name(),
+                        identity.metadata().category()
+                    ),
+                )?;
+                let source = identity
+                    .source()
+                    .map_or_else(|| "application".into(), |window| format!("{window:?}"));
+                let key = trace.key().map_or_else(String::new, |key| {
+                    format!(" · {}#{}", key.namespace(), key.instance())
+                });
+                let detail = ui.add_label(
+                    self.runtime_details,
+                    format!(
+                        "{} · {} · wait {} · update {} · emitted {} · replaced {}{} · {}",
+                        format_message_origin(identity.origin()),
+                        source,
+                        format_elapsed(trace.queue_latency()),
+                        format_elapsed(trace.update_duration()),
+                        trace.emitted(),
+                        trace.replacements(),
+                        key,
+                        status,
+                    ),
+                )?;
+                ui.set_widget_style(
+                    detail,
+                    WidgetStyle {
+                        foreground: Some(muted),
+                        font_size: Some(caption),
+                        ..WidgetStyle::default()
+                    },
+                )?;
+            }
+        }
+
         let tasks = ui.add_label(
             self.runtime_details,
             format!("Tasks ({})", self.runtime_snapshot.active_tasks().len()),
+        )?;
+        ui.set_layout(
+            tasks,
+            LayoutStyle {
+                margin: Edges {
+                    top: Length::Px(12.0),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
+            },
         )?;
         ui.set_widget_style(
             tasks,
@@ -1668,14 +1797,30 @@ mod tests {
     #[test]
     fn runtime_view_renders_explicit_task_and_subscription_snapshots() {
         use rxui_app::{
-            ActiveSubscriptionSnapshot, ActiveTaskSnapshot, SubscriptionId, SubscriptionStatus,
-            TaskId,
+            ActiveSubscriptionSnapshot, ActiveTaskSnapshot, InstrumentationState, MessageMetadata,
+            MessageOrigin, MessageOutcome, QueuedMessage, RuntimeInstrumentationConfig,
+            SubscriptionId, SubscriptionStatus, TaskId,
         };
 
         let (mut ui, _button) = harness();
         let mut inspector =
             UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
-        let snapshot = RuntimeSnapshot::new(
+        let mut instrumentation =
+            InstrumentationState::new(RuntimeInstrumentationConfig::default().message_history(4));
+        let now = rxui_app::Instant::now();
+        let trace = instrumentation.queued(
+            MessageMetadata::new("RefreshPreview", "document"),
+            None,
+            MessageOrigin::Task(TaskId::from_raw(9)),
+            now,
+            1,
+            None,
+        );
+        let (_, _, mut dispatch) = QueuedMessage::new((), None, trace).into_parts();
+        instrumentation.start_message(&mut dispatch, now);
+        instrumentation.finish_message(dispatch, now, MessageOutcome::Success);
+        let (message_traces, replacements) = instrumentation.snapshot();
+        let snapshot = RuntimeSnapshot::with_messages(
             vec![ActiveTaskSnapshot::new(
                 TaskId::from_raw(9),
                 "Load preview".into(),
@@ -1691,6 +1836,9 @@ mod tests {
                 1,
                 SubscriptionStatus::Running,
             )],
+            message_traces,
+            0,
+            replacements,
         );
         inspector.sync_runtime(&mut ui, &snapshot).unwrap();
         inspector
@@ -1701,6 +1849,8 @@ mod tests {
         collect_labels(&semantics, &mut labels);
         assert!(labels.iter().any(|label| label.contains("Load preview")));
         assert!(labels.iter().any(|label| label.contains("preview.live#0")));
+        assert!(labels.iter().any(|label| label.contains("RefreshPreview")));
+        assert!(labels.iter().any(|label| label.contains("task #9")));
     }
 
     #[test]

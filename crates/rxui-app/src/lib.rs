@@ -5,6 +5,7 @@
 mod command;
 mod error;
 mod host;
+mod instrumentation;
 mod menu;
 mod message;
 mod runner;
@@ -15,6 +16,13 @@ mod undo;
 pub use command::{Command, CommandError, CommandId, CommandRegistry, CommandRouter, Shortcut};
 pub use error::{Error, Result};
 pub use host::{GraphicsContext, HostError, HostStatus, HostUpdate, WindowHost, WindowHostOptions};
+#[doc(hidden)]
+pub use instrumentation::{InstrumentationState, PendingMessageTrace};
+pub use instrumentation::{
+    MessageDispatch, MessageMetadata, MessageOrigin, MessageOutcome, MessageTrace,
+    MessageTraceIdentity, QueuedMessage, RuntimeEvent, RuntimeInstrumentationConfig,
+    RuntimeObserver,
+};
 pub use menu::{Menu, MenuBar, MenuEntry, MenuError, MenuRole};
 pub use message::{MappedAppCx, MessageMapper};
 #[cfg(target_arch = "wasm32")]

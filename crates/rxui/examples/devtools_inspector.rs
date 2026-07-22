@@ -11,6 +11,7 @@ use rxui::prelude::*;
 #[derive(Clone)]
 enum Message {
     Increment,
+    Preview(u32),
     StartTask,
     CompleteTask,
     CancelTask,
@@ -40,6 +41,18 @@ impl InspectorExample {
 
 impl App for InspectorExample {
     type Message = Message;
+
+    fn message_metadata(message: &Message) -> MessageMetadata {
+        match message {
+            Message::Increment => MessageMetadata::new("Increment", "counter"),
+            Message::Preview(_) => MessageMetadata::new("Preview", "counter"),
+            Message::StartTask => MessageMetadata::new("StartTask", "task-demo"),
+            Message::CompleteTask => MessageMetadata::new("CompleteTask", "task-demo"),
+            Message::CancelTask => MessageMetadata::new("CancelTask", "task-demo"),
+            Message::TaskFinished => MessageMetadata::new("TaskFinished", "task-demo"),
+            Message::Inspector(_) => MessageMetadata::new("InspectorAction", "devtools"),
+        }
+    }
 
     fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
         let mut ui = cx.new_ui();
@@ -101,6 +114,12 @@ impl App for InspectorExample {
         match message {
             Message::Increment => {
                 self.count += 1;
+                for value in 0..4 {
+                    cx.post_latest(
+                        MessageKey::singleton("inspector.preview"),
+                        Message::Preview(value),
+                    );
+                }
                 let ui = cx.source_ui()?;
                 ui.set_label_text(
                     self.value.expect("value label exists"),
@@ -110,6 +129,9 @@ impl App for InspectorExample {
                     .as_mut()
                     .expect("inspector exists")
                     .sync(ui)?;
+            }
+            Message::Preview(value) => {
+                let _ = value;
             }
             Message::StartTask => {
                 if self.demo_task.is_none() {
@@ -168,7 +190,9 @@ impl App for InspectorExample {
 fn main() -> MainResult {
     run_with(
         InspectorExample::new(),
-        AppConfig::default().theme(Theme::dark()),
+        AppConfig::default()
+            .theme(Theme::dark())
+            .instrumentation(RuntimeInstrumentationConfig::default().message_history(256)),
     )
 }
 

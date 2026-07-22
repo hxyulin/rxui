@@ -130,8 +130,11 @@ cargo run -p rxui --example devtools_inspector --features devtools
 
 The inspector is read-only and excluded from default production builds. Its
 **Runtime** tab shows explicitly synchronized active tasks and subscriptions,
-including running or failed filesystem watchers; use the example's task
-controls to inspect named task lifecycle changes.
+including running or failed filesystem watchers. When an application opts into
+bounded runtime instrumentation, the same tab shows a payload-free message
+timeline with origins, queue latency, update duration, nested emissions, and
+latest-value replacements. The example enables a 256-message history; use its
+counter and task controls to generate diagnostic activity.
 
 The guided documentation starts at [Your first RXUI app](docs/tutorials/first-app.md),
 then covers [feature-local message architecture](docs/tutorials/message-architecture.md),

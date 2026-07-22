@@ -36,6 +36,10 @@ use astrelis_text::FontDatabase;
 use astrelis_ui_host::{GraphicsContext, HostUpdate, WindowHost, WindowHostOptions};
 
 use crate::error::{DynAppError, Error, Result};
+use crate::instrumentation::{
+    InstrumentationState, MessageDispatch, MessageMetadata, MessageOrigin, MessageOutcome,
+    MessageTrace, QueuedMessage, RuntimeInstrumentationConfig,
+};
 use crate::subscription::{
     ActiveSubscriptionSnapshot, RawSubscriptionEvent, RawSubscriptionSink, SubscriptionConfig,
     SubscriptionFactory, SubscriptionId, SubscriptionStatus, Subscriptions,
@@ -94,13 +98,8 @@ impl MessageKey {
     }
 }
 
-struct PostedMessage<M> {
-    message: M,
-    source: Option<WindowId>,
-}
-
 struct PostedQueue<M> {
-    entries: VecDeque<PostedMessage<M>>,
+    entries: VecDeque<QueuedMessage<M>>,
     keyed: HashMap<MessageKey, usize>,
 }
 
@@ -114,32 +113,44 @@ impl<M> Default for PostedQueue<M> {
 }
 
 impl<M> PostedQueue<M> {
-    fn post(&mut self, message: M, source: Option<WindowId>) {
-        self.entries.push_back(PostedMessage { message, source });
+    fn post(&mut self, message: QueuedMessage<M>) {
+        self.entries.push_back(message);
     }
 
-    fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
+    fn replace_latest(
+        &mut self,
+        key: MessageKey,
+        message: M,
+        source: Option<WindowId>,
+        metadata: MessageMetadata,
+        origin: MessageOrigin,
+        instrumentation: &mut InstrumentationState,
+    ) -> std::result::Result<(), M> {
         if let Some(index) = self.keyed.get(&key).copied() {
             let entry = self
                 .entries
                 .get_mut(index)
                 .expect("pending keyed-message index stays valid until the batch is drained");
+            if let Some(existing) = &mut entry.trace {
+                existing.update_latest(metadata, source, origin);
+            }
             entry.message = message;
             entry.source = source;
-            return;
+            instrumentation.coalesced(&mut entry.trace);
+            return Ok(());
         }
+        Err(message)
+    }
 
+    fn post_keyed(&mut self, key: MessageKey, message: QueuedMessage<M>) {
         let index = self.entries.len();
-        self.entries.push_back(PostedMessage { message, source });
+        self.entries.push_back(message);
         self.keyed.insert(key, index);
     }
 
-    fn take(&mut self) -> Vec<(M, Option<WindowId>)> {
+    fn take(&mut self) -> Vec<QueuedMessage<M>> {
         self.keyed.clear();
-        self.entries
-            .drain(..)
-            .map(|entry| (entry.message, entry.source))
-            .collect()
+        self.entries.drain(..).collect()
     }
 
     fn is_empty(&self) -> bool {
@@ -164,6 +175,13 @@ pub trait App: Sized + 'static {
 
     /// Applies one message to application state.
     fn update(&mut self, cx: &mut AppCx<'_, Self::Message>, message: Self::Message) -> Result<()>;
+
+    /// Returns payload-free diagnostic identity for one message.
+    ///
+    /// This hook is called only while runtime instrumentation is enabled.
+    fn message_metadata(_message: &Self::Message) -> MessageMetadata {
+        MessageMetadata::unnamed()
+    }
 
     /// Describes application-scoped long-lived event sources desired by state.
     ///
@@ -330,6 +348,9 @@ impl ActiveTaskSnapshot {
 pub struct RuntimeSnapshot {
     active_tasks: Vec<ActiveTaskSnapshot>,
     active_subscriptions: Vec<ActiveSubscriptionSnapshot>,
+    message_traces: Vec<MessageTrace>,
+    pending_messages: usize,
+    coalesced_replacements: u64,
 }
 
 impl RuntimeSnapshot {
@@ -342,6 +363,27 @@ impl RuntimeSnapshot {
         Self {
             active_tasks,
             active_subscriptions,
+            message_traces: Vec::new(),
+            pending_messages: 0,
+            coalesced_replacements: 0,
+        }
+    }
+
+    /// Creates a complete snapshot for an alternative backend.
+    #[doc(hidden)]
+    pub fn with_messages(
+        active_tasks: Vec<ActiveTaskSnapshot>,
+        active_subscriptions: Vec<ActiveSubscriptionSnapshot>,
+        message_traces: Vec<MessageTrace>,
+        pending_messages: usize,
+        coalesced_replacements: u64,
+    ) -> Self {
+        Self {
+            active_tasks,
+            active_subscriptions,
+            message_traces,
+            pending_messages,
+            coalesced_replacements,
         }
     }
 
@@ -353,6 +395,21 @@ impl RuntimeSnapshot {
     /// Returns active subscriptions ordered by identity.
     pub fn active_subscriptions(&self) -> &[ActiveSubscriptionSnapshot] {
         &self.active_subscriptions
+    }
+
+    /// Returns completed message traces from oldest to newest.
+    pub fn message_traces(&self) -> &[MessageTrace] {
+        &self.message_traces
+    }
+
+    /// Returns messages currently waiting in RXUI's posted-message queue.
+    pub const fn pending_messages(&self) -> usize {
+        self.pending_messages
+    }
+
+    /// Returns cumulative latest-value replacements during this run.
+    pub const fn coalesced_replacements(&self) -> u64 {
+        self.coalesced_replacements
     }
 }
 
@@ -749,6 +806,8 @@ pub struct AppConfig {
     pub exit_on_last_window_close: bool,
     /// Background task and native blocking-pool configuration.
     pub tasks: TaskConfig,
+    /// Optional payload-free runtime instrumentation.
+    pub instrumentation: RuntimeInstrumentationConfig,
 }
 
 impl Default for AppConfig {
@@ -760,6 +819,7 @@ impl Default for AppConfig {
             graphics: None,
             exit_on_last_window_close: true,
             tasks: TaskConfig::default(),
+            instrumentation: RuntimeInstrumentationConfig::default(),
         }
     }
 }
@@ -792,6 +852,12 @@ impl AppConfig {
     /// Sets background task and native blocking-pool configuration.
     pub fn tasks(mut self, tasks: TaskConfig) -> Self {
         self.tasks = tasks;
+        self
+    }
+
+    /// Configures payload-free runtime instrumentation and bounded history.
+    pub fn instrumentation(mut self, instrumentation: RuntimeInstrumentationConfig) -> Self {
+        self.instrumentation = instrumentation;
         self
     }
 
@@ -852,7 +918,24 @@ pub trait AppBackend<M: 'static> {
     fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>);
 
     /// Takes every queued posted message and its source window.
-    fn take_posted(&mut self) -> Vec<(M, Option<WindowId>)>;
+    fn take_posted(&mut self) -> Vec<QueuedMessage<M>>;
+
+    /// Wraps one direct message with optional tracing metadata.
+    #[doc(hidden)]
+    fn instrument_message(
+        &mut self,
+        message: M,
+        source: Option<WindowId>,
+        origin: MessageOrigin,
+    ) -> QueuedMessage<M>;
+
+    /// Records the beginning of one application update.
+    #[doc(hidden)]
+    fn message_dispatch_started(&mut self, dispatch: &mut MessageDispatch);
+
+    /// Records the completion of one application update.
+    #[doc(hidden)]
+    fn message_dispatch_finished(&mut self, dispatch: MessageDispatch, outcome: MessageOutcome);
 
     /// Returns whether any posted messages remain queued.
     fn has_posted(&self) -> bool;
@@ -1395,6 +1478,7 @@ struct Shell<M: 'static> {
     exit_on_last_window_close: bool,
     hosts: Vec<(WindowId, WindowHost<M>)>,
     posted: PostedQueue<M>,
+    instrumentation: InstrumentationState,
     timers: HashMap<u64, NativeTimerId>,
     next_timer: u64,
     tasks: HashMap<TaskId, TaskRecord>,
@@ -1411,6 +1495,7 @@ struct Shell<M: 'static> {
 
 impl<M: 'static> Shell<M> {
     fn new(config: AppConfig) -> Self {
+        let instrumentation = InstrumentationState::new(config.instrumentation);
         Self {
             graphics: config.graphics.unwrap_or_default(),
             fonts: config.fonts,
@@ -1418,6 +1503,7 @@ impl<M: 'static> Shell<M> {
             exit_on_last_window_close: config.exit_on_last_window_close,
             hosts: Vec::new(),
             posted: PostedQueue::default(),
+            instrumentation,
             timers: HashMap::new(),
             next_timer: 1,
             tasks: HashMap::new(),
@@ -1520,7 +1606,14 @@ impl<M: 'static> Shell<M> {
             })
             .collect::<Vec<_>>();
         active_subscriptions.sort_by_key(ActiveSubscriptionSnapshot::id);
-        RuntimeSnapshot::new(active_tasks, active_subscriptions)
+        let (message_traces, coalesced_replacements) = self.instrumentation.snapshot();
+        RuntimeSnapshot::with_messages(
+            active_tasks,
+            active_subscriptions,
+            message_traces,
+            self.posted.entries.len(),
+            coalesced_replacements,
+        )
     }
 }
 
@@ -1550,15 +1643,21 @@ impl<A: App> RunnerCore<A> {
         &mut self,
         context: &mut AppContext<'_, '_, Self>,
         message: A::Message,
+        origin: MessageOrigin,
     ) -> std::result::Result<(), DynAppError> {
         if !self.shell.built {
-            self.shell.posted.post(message, None);
+            let mut backend = RuntimeBackend {
+                context,
+                shell: &mut self.shell,
+            };
+            let message = backend.instrument_message(message, None, origin);
+            backend.shell.posted.post(message);
             return Ok(());
         }
         let exit_on_last = self.shell.exit_on_last_window_close;
         let Self { user, shell } = self;
         let mut backend = RuntimeBackend { context, shell };
-        dispatch_external(user, &mut backend, message, exit_on_last).map_err(DynAppError)
+        dispatch_external(user, &mut backend, message, origin, exit_on_last).map_err(DynAppError)
     }
 
     fn complete_task(
@@ -1578,7 +1677,7 @@ impl<A: App> RunnerCore<A> {
         }
         self.shell.tasks.remove(&task);
         state.store(TASK_FINISHED, Ordering::Release);
-        self.dispatch_queued(context, factory())
+        self.dispatch_queued(context, factory(), MessageOrigin::Task(task))
     }
 
     fn abandon_task(&mut self, task: TaskId, state: Arc<AtomicU8>) {
@@ -1607,7 +1706,7 @@ impl<A: App> RunnerCore<A> {
         // per event-loop turn. `DeliveryPolicy::Every` preserves every callback
         // that does occur; future concurrent sources will use the same policy
         // at their producer queue.
-        self.dispatch_queued(context, message)
+        self.dispatch_queued(context, message, MessageOrigin::Subscription(id))
     }
 
     fn fire_service_subscription(
@@ -1636,7 +1735,7 @@ impl<A: App> RunnerCore<A> {
             };
             (decode.borrow_mut())(event)
         };
-        self.dispatch_queued(context, message)
+        self.dispatch_queued(context, message, MessageOrigin::Subscription(id))
     }
 }
 
@@ -1822,15 +1921,88 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
     }
 
     fn post(&mut self, message: A::Message, source: Option<WindowId>) {
-        self.shell.posted.post(message, source);
+        let message = self.instrument_message(message, source, MessageOrigin::Posted);
+        self.shell.posted.post(message);
     }
 
     fn post_latest(&mut self, key: MessageKey, message: A::Message, source: Option<WindowId>) {
-        self.shell.posted.post_latest(key, message, source);
+        let metadata = if self.shell.instrumentation.enabled() {
+            A::message_metadata(&message)
+        } else {
+            MessageMetadata::unnamed()
+        };
+        let origin = MessageOrigin::Posted;
+        let message = match self.shell.posted.replace_latest(
+            key,
+            message,
+            source,
+            metadata,
+            origin,
+            &mut self.shell.instrumentation,
+        ) {
+            Ok(()) => return,
+            Err(message) => message,
+        };
+        let queue_depth = self.shell.posted.entries.len().saturating_add(1);
+        let trace = self.shell.instrumentation.queued(
+            metadata,
+            source,
+            origin,
+            self.context.now(),
+            queue_depth,
+            Some(key),
+        );
+        self.shell.posted.post_keyed(
+            key,
+            QueuedMessage {
+                message,
+                source,
+                trace,
+            },
+        );
     }
 
-    fn take_posted(&mut self) -> Vec<(A::Message, Option<WindowId>)> {
+    fn take_posted(&mut self) -> Vec<QueuedMessage<A::Message>> {
         self.shell.posted.take()
+    }
+
+    fn instrument_message(
+        &mut self,
+        message: A::Message,
+        source: Option<WindowId>,
+        origin: MessageOrigin,
+    ) -> QueuedMessage<A::Message> {
+        let trace = if self.shell.instrumentation.enabled() {
+            let metadata = A::message_metadata(&message);
+            let queue_depth = self.shell.posted.entries.len().saturating_add(1);
+            self.shell.instrumentation.queued(
+                metadata,
+                source,
+                origin,
+                self.context.now(),
+                queue_depth,
+                None,
+            )
+        } else {
+            None
+        };
+        QueuedMessage {
+            message,
+            source,
+            trace,
+        }
+    }
+
+    fn message_dispatch_started(&mut self, dispatch: &mut MessageDispatch) {
+        self.shell
+            .instrumentation
+            .started(&mut dispatch.trace, self.context.now());
+    }
+
+    fn message_dispatch_finished(&mut self, dispatch: MessageDispatch, outcome: MessageOutcome) {
+        self.shell
+            .instrumentation
+            .finished(dispatch.trace, self.context.now(), outcome);
     }
 
     fn has_posted(&self) -> bool {
@@ -1845,7 +2017,7 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         MessageProxy::from_fn(move |message| {
             proxy
                 .run_on_main_thread(move |core: &mut RunnerCore<A>, context| {
-                    core.dispatch_queued(context, message)
+                    core.dispatch_queued(context, message, MessageOrigin::Proxy)
                 })
                 .map_err(|_| ProxyClosed)
         })
@@ -2088,7 +2260,9 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             .set_timeout(delay, move |core: &mut RunnerCore<A>, context| {
                 core.shell.timers.remove(&raw);
                 match slot.take() {
-                    Some(factory) => core.dispatch_queued(context, factory()),
+                    Some(factory) => {
+                        core.dispatch_queued(context, factory(), MessageOrigin::Timeout(timer))
+                    }
                     None => Ok(()),
                 }
             });
@@ -2106,7 +2280,7 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
             self.context
                 .set_interval(interval, move |core: &mut RunnerCore<A>, context| {
                     let message = factory();
-                    core.dispatch_queued(context, message)
+                    core.dispatch_queued(context, message, MessageOrigin::Interval(timer))
                 });
         self.shell.timers.insert(timer.raw(), native);
         timer
@@ -2168,7 +2342,8 @@ fn process_host_update<A: App>(
     }
     if !closed {
         for message in messages {
-            user.update(&mut AppCx::new(&mut *backend, Some(window)), message)?;
+            let message = backend.instrument_message(message, Some(window), MessageOrigin::Ui);
+            dispatch_message(user, backend, message)?;
         }
     }
     flush_posted(user, backend)?;
@@ -2188,10 +2363,12 @@ fn dispatch_external<A: App>(
     user: &mut A,
     backend: &mut dyn AppBackend<A::Message>,
     message: A::Message,
+    origin: MessageOrigin,
     exit_on_last_window_close: bool,
 ) -> Result<()> {
     let had_windows = !backend.windows().is_empty();
-    user.update(&mut AppCx::new(&mut *backend, None), message)?;
+    let message = backend.instrument_message(message, None, origin);
+    dispatch_message(user, backend, message)?;
     flush_posted(user, backend)?;
     reconcile_subscriptions(user, backend)?;
     invalidate_dirty(backend);
@@ -2215,8 +2392,8 @@ fn flush_posted<A: App>(user: &mut A, backend: &mut dyn AppBackend<A::Message>) 
             return Ok(processed);
         }
         processed = true;
-        for (message, source) in batch {
-            user.update(&mut AppCx::new(&mut *backend, source), message)?;
+        for message in batch {
+            dispatch_message(user, backend, message)?;
         }
     }
     if backend.has_posted() {
@@ -2227,6 +2404,23 @@ fn flush_posted<A: App>(user: &mut A, backend: &mut dyn AppBackend<A::Message>) 
         );
     }
     Ok(processed)
+}
+
+fn dispatch_message<A: App>(
+    user: &mut A,
+    backend: &mut dyn AppBackend<A::Message>,
+    message: QueuedMessage<A::Message>,
+) -> Result<()> {
+    let (message, source, mut dispatch) = message.into_parts();
+    backend.message_dispatch_started(&mut dispatch);
+    let result = user.update(&mut AppCx::new(&mut *backend, source), message);
+    let outcome = if result.is_ok() {
+        MessageOutcome::Success
+    } else {
+        MessageOutcome::Error
+    };
+    backend.message_dispatch_finished(dispatch, outcome);
+    result
 }
 
 fn reconcile_subscriptions<A: App>(
@@ -2337,6 +2531,7 @@ mod tests {
     struct MockBackend<M: 'static> {
         uis: Vec<(WindowId, Ui<M>)>,
         posted: PostedQueue<M>,
+        instrumentation: InstrumentationState,
         proxy_sink: Arc<Mutex<Vec<M>>>,
         invalidated: Vec<WindowId>,
         closed: Vec<WindowId>,
@@ -2355,6 +2550,7 @@ mod tests {
             Self {
                 uis: Vec::new(),
                 posted: PostedQueue::default(),
+                instrumentation: InstrumentationState::new(RuntimeInstrumentationConfig::default()),
                 proxy_sink: Arc::new(Mutex::new(Vec::new())),
                 invalidated: Vec::new(),
                 closed: Vec::new(),
@@ -2432,15 +2628,45 @@ mod tests {
         }
 
         fn post(&mut self, message: M, source: Option<WindowId>) {
-            self.posted.post(message, source);
+            self.posted.post(QueuedMessage::new(message, source, None));
         }
 
         fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
-            self.posted.post_latest(key, message, source);
+            let message = match self.posted.replace_latest(
+                key,
+                message,
+                source,
+                MessageMetadata::unnamed(),
+                MessageOrigin::Posted,
+                &mut self.instrumentation,
+            ) {
+                Ok(()) => return,
+                Err(message) => message,
+            };
+            self.posted
+                .post_keyed(key, QueuedMessage::new(message, source, None));
         }
 
-        fn take_posted(&mut self) -> Vec<(M, Option<WindowId>)> {
+        fn take_posted(&mut self) -> Vec<QueuedMessage<M>> {
             self.posted.take()
+        }
+
+        fn instrument_message(
+            &mut self,
+            message: M,
+            source: Option<WindowId>,
+            _origin: MessageOrigin,
+        ) -> QueuedMessage<M> {
+            QueuedMessage::new(message, source, None)
+        }
+
+        fn message_dispatch_started(&mut self, _dispatch: &mut MessageDispatch) {}
+
+        fn message_dispatch_finished(
+            &mut self,
+            _dispatch: MessageDispatch,
+            _outcome: MessageOutcome,
+        ) {
         }
 
         fn has_posted(&self) -> bool {
@@ -2589,14 +2815,23 @@ mod tests {
         assert_eq!(viewport.namespace(), "chart.viewport");
         assert_eq!(viewport.instance(), 7);
 
-        let mut queue = PostedQueue::default();
-        queue.post_latest(viewport, Msg::Step(1), Some(first));
-        queue.post(Msg::Posted(9), None);
-        queue.post_latest(progress, Msg::Step(2), Some(first));
-        queue.post_latest(viewport, Msg::Step(3), Some(second));
+        let mut backend = MockBackend::new();
+        backend.post_latest(viewport, Msg::Step(1), Some(first));
+        backend.post(Msg::Posted(9), None);
+        backend.post_latest(progress, Msg::Step(2), Some(first));
+        backend.post_latest(viewport, Msg::Step(3), Some(second));
+
+        let messages = backend
+            .take_posted()
+            .into_iter()
+            .map(|message| {
+                let (message, source, _) = message.into_parts();
+                (message, source)
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(
-            queue.take(),
+            messages,
             [
                 (Msg::Step(3), Some(second)),
                 (Msg::Posted(9), None),
@@ -2608,11 +2843,13 @@ mod tests {
     #[test]
     fn a_drained_key_starts_a_new_pending_entry() {
         let key = MessageKey::singleton("testing.preview");
-        let mut queue = PostedQueue::default();
-        queue.post_latest(key, Msg::Step(1), None);
-        assert_eq!(queue.take(), [(Msg::Step(1), None)]);
-        queue.post_latest(key, Msg::Step(2), None);
-        assert_eq!(queue.take(), [(Msg::Step(2), None)]);
+        let mut backend = MockBackend::new();
+        backend.post_latest(key, Msg::Step(1), None);
+        let (message, source, _) = backend.take_posted().pop().unwrap().into_parts();
+        assert_eq!((message, source), (Msg::Step(1), None));
+        backend.post_latest(key, Msg::Step(2), None);
+        let (message, source, _) = backend.take_posted().pop().unwrap().into_parts();
+        assert_eq!((message, source), (Msg::Step(2), None));
     }
 
     #[test]
@@ -2800,7 +3037,14 @@ mod tests {
         let mut backend = MockBackend::new();
         let window = backend.open();
         // `dispatch_external` has no source window, so route the close by id.
-        dispatch_external(&mut app, &mut backend, Msg::Step(7), true).expect("dispatch succeeds");
+        dispatch_external(
+            &mut app,
+            &mut backend,
+            Msg::Step(7),
+            MessageOrigin::External,
+            true,
+        )
+        .expect("dispatch succeeds");
         assert_eq!(app.log, ["step:7"]);
         assert!(!backend.exited);
         assert_eq!(backend.windows(), [window]);
