@@ -9,6 +9,7 @@ astrelis-gpu-wgpu = { path = "../astrelis/crates/astrelis-gpu-wgpu" }
 astrelis-paint = { path = "../astrelis/crates/astrelis-paint" }
 astrelis-paint-gpu = { path = "../astrelis/crates/astrelis-paint-gpu" }
 astrelis-platform = { path = "../astrelis/crates/astrelis-platform" }
+astrelis-platform-test = { path = "../astrelis/crates/astrelis-platform-test" }
 astrelis-platform-winit = { path = "../astrelis/crates/astrelis-platform-winit" }
 astrelis-profiling = { path = "../astrelis/crates/astrelis-profiling" }
 astrelis-render = { path = "../astrelis/crates/astrelis-render" }

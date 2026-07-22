@@ -214,7 +214,6 @@ dependencies = [
 [[package]]
 name = "astrelis-platform-test"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=6bfbcea27839968436fc4959f843059a5fba7214#6bfbcea27839968436fc4959f843059a5fba7214"
 dependencies = [
  "astrelis-core",
  "astrelis-platform",
@@ -3002,6 +3001,7 @@ dependencies = [
  "astrelis-text",
  "astrelis-ui",
  "astrelis-ui-core",
+ "rxui-app",
  "rxui-testing",
  "rxui-widgets",
 ]

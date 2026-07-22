@@ -9,6 +9,7 @@ mod menu;
 mod message;
 mod runner;
 mod state;
+mod subscription;
 mod undo;
 
 pub use command::{Command, CommandError, CommandId, CommandRegistry, CommandRouter, Shortcut};
@@ -19,11 +20,11 @@ pub use message::{MappedAppCx, MessageMapper};
 #[cfg(target_arch = "wasm32")]
 pub use runner::spawn_on_canvas;
 pub use runner::{
-    App, AppBackend, AppConfig, AppCx, Clipboard, CloseResponse, FixedStep, FontDatabaseOptions,
-    Instant, MainResult, MessageKey, MessageProxy, Monitor, ProxyClosed, RunError, RuntimeConfig,
-    RuntimePolicy, TaskCompletion, TaskCompletionStatus, TaskConfig, TaskError, TaskId,
-    TaskSpawnError, Theme, TimerId, Ui, UpdateInfo, WindowAttributes, WindowConfig, WindowEvent,
-    WindowId,
+    ActiveTaskSnapshot, App, AppBackend, AppConfig, AppCx, Clipboard, CloseResponse, FixedStep,
+    FontDatabaseOptions, Instant, MainResult, MessageKey, MessageProxy, Monitor, ProxyClosed,
+    RunError, RuntimeConfig, RuntimePolicy, RuntimeSnapshot, TaskCompletion, TaskCompletionStatus,
+    TaskConfig, TaskError, TaskId, TaskKind, TaskSpawnError, Theme, TimerId, Ui, UpdateInfo,
+    WindowAttributes, WindowConfig, WindowEvent, WindowId,
 };
 #[doc(hidden)]
 pub use runner::{TaskAbandon, TaskMessageFactory, TaskSink, TaskSubmit};
@@ -31,6 +32,10 @@ pub use runner::{TaskAbandon, TaskMessageFactory, TaskSink, TaskSubmit};
 pub use runner::{run, run_with};
 pub use state::{
     JsonStateStore, PersistError, StateEnvelope, WindowPlacement, WindowPlacementTracker,
+};
+pub use subscription::{
+    ActiveSubscriptionSnapshot, DeliveryPolicy, Subscription, SubscriptionConfig, SubscriptionId,
+    SubscriptionKind, Subscriptions,
 };
 pub use undo::{UndoAction, UndoStack, redo_command_id, sync_undo_commands, undo_command_id};
 

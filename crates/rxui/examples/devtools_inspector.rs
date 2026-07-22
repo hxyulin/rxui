@@ -11,12 +11,18 @@ use rxui::prelude::*;
 #[derive(Clone)]
 enum Message {
     Increment,
+    StartTask,
+    CompleteTask,
+    CancelTask,
+    TaskFinished,
     Inspector(InspectorAction),
 }
 
 struct InspectorExample {
     inspector: Option<UiInspector<Message>>,
     value: Option<ElementHandle<Label>>,
+    window: Option<WindowId>,
+    demo_task: Option<TaskCompletion<()>>,
     count: usize,
 }
 
@@ -25,6 +31,8 @@ impl InspectorExample {
         Self {
             inspector: None,
             value: None,
+            window: None,
+            demo_task: None,
             count: 0,
         }
     }
@@ -47,8 +55,16 @@ impl App for InspectorExample {
         )
         .finish();
         let increment = ui.button(content, "Increment").finish();
+        let tasks = ui.row(content).finish();
+        ui.set_flex(tasks, 8.0, Alignment::Center)?;
+        let start_task = ui.button(tasks, "Start named task").finish();
+        let complete_task = ui.button(tasks, "Complete task").finish();
+        let cancel_task = ui.button(tasks, "Cancel task").finish();
         let value = ui.label(content, "Count: 0").finish();
         ui.on_click(increment, |context| context.emit(Message::Increment));
+        ui.on_click(start_task, |context| context.emit(Message::StartTask));
+        ui.on_click(complete_task, |context| context.emit(Message::CompleteTask));
+        ui.on_click(cancel_task, |context| context.emit(Message::CancelTask));
         // Large scrollable list exercising the inspector's virtualized tree.
         let list = ui.add_scroll_view(content)?;
         ui.set_layout(
@@ -73,18 +89,19 @@ impl App for InspectorExample {
         )?;
         self.value = Some(value);
         self.inspector = Some(inspector);
-        cx.open_window(
+        let window = cx.open_window(
             WindowConfig::new("RXUI UI inspector").size(900.0, 620.0),
             ui,
         )?;
+        self.window = Some(window);
         Ok(())
     }
 
     fn update(&mut self, cx: &mut AppCx<'_, Message>, message: Message) -> rxui::Result<()> {
-        let ui = cx.source_ui()?;
         match message {
             Message::Increment => {
                 self.count += 1;
+                let ui = cx.source_ui()?;
                 ui.set_label_text(
                     self.value.expect("value label exists"),
                     format!("Count: {}", self.count),
@@ -94,12 +111,39 @@ impl App for InspectorExample {
                     .expect("inspector exists")
                     .sync(ui)?;
             }
-            Message::Inspector(action) => self
-                .inspector
-                .as_mut()
-                .expect("inspector exists")
-                .apply(ui, action)?,
+            Message::StartTask => {
+                if self.demo_task.is_none() {
+                    self.demo_task =
+                        Some(cx.register_task_named("Inspector demo load", |()| {
+                            Message::TaskFinished
+                        }));
+                }
+            }
+            Message::CompleteTask => {
+                if let Some(task) = self.demo_task.take() {
+                    let _ = task.complete(());
+                }
+            }
+            Message::CancelTask => {
+                if let Some(task) = self.demo_task.take() {
+                    cx.cancel_task(task.id());
+                }
+            }
+            Message::TaskFinished => {}
+            Message::Inspector(action) => {
+                let window = self.window.expect("window exists");
+                self.inspector
+                    .as_mut()
+                    .expect("inspector exists")
+                    .apply(cx.ui(window)?, action)?;
+            }
         }
+        let snapshot = cx.runtime_snapshot();
+        let window = self.window.expect("window exists");
+        self.inspector
+            .as_mut()
+            .expect("inspector exists")
+            .sync_runtime(cx.ui(window)?, &snapshot)?;
         Ok(())
     }
 

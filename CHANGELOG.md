@@ -19,7 +19,11 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   native/browser runners and headless application harness.
 - Runtime-neutral cancellable task completions and a configurable, bounded
   native blocking pool, with deterministic chosen-order task completion in
-  the application harness.
+  the application harness, optional diagnostic names, and active-task runtime
+  snapshots.
+- Application-scoped declarative interval subscriptions with stable identity,
+  latest-value delivery, lifecycle reconciliation, hierarchical mapping, and
+  deterministic virtual-time testing.
 - An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
   error, removing `map_err` glue from application code.
 - Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,
@@ -43,8 +47,8 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 - Theme-aware widgets, forms, validation, dialogs, notifications, and command
   palettes.
 - Docking, virtualized tree/table views, property editing, and render views.
-- Retained UI inspection, deterministic semantic testing, native smoke tests,
-  WebAssembly coverage, and editor performance budgets.
+- Retained UI and runtime inspection, deterministic semantic testing, native
+  smoke tests, WebAssembly coverage, and editor performance budgets.
 
 ### Naming
 

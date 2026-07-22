@@ -29,18 +29,20 @@ pub mod prelude {
     #[cfg(target_arch = "wasm32")]
     pub use rxui_app::spawn_on_canvas;
     pub use rxui_app::{
-        App, AppConfig, AppCx, CloseResponse, Command, CommandId, CommandRegistry, CommandRouter,
-        GraphicsContext, HostStatus, Instant, JsonStateStore, MainResult, MappedAppCx, Menu,
-        MenuBar, MenuEntry, MenuRole, MessageKey, MessageMapper, MessageProxy, Shortcut,
-        TaskCompletion, TaskCompletionStatus, TaskConfig, TaskError, TaskId, TaskSpawnError,
-        TimerId, UndoAction, UndoStack, UpdateInfo, WindowConfig, WindowEvent, WindowHost,
-        WindowHostOptions, WindowId, WindowPlacement, WindowPlacementTracker, redo_command_id,
-        sync_undo_commands, undo_command_id,
+        ActiveSubscriptionSnapshot, ActiveTaskSnapshot, App, AppConfig, AppCx, CloseResponse,
+        Command, CommandId, CommandRegistry, CommandRouter, DeliveryPolicy, GraphicsContext,
+        HostStatus, Instant, JsonStateStore, MainResult, MappedAppCx, Menu, MenuBar, MenuEntry,
+        MenuRole, MessageKey, MessageMapper, MessageProxy, RuntimeSnapshot, Shortcut, Subscription,
+        SubscriptionId, SubscriptionKind, Subscriptions, TaskCompletion, TaskCompletionStatus,
+        TaskConfig, TaskError, TaskId, TaskKind, TaskSpawnError, TimerId, UndoAction, UndoStack,
+        UpdateInfo, WindowConfig, WindowEvent, WindowHost, WindowHostOptions, WindowId,
+        WindowPlacement, WindowPlacementTracker, redo_command_id, sync_undo_commands,
+        undo_command_id,
     };
     #[cfg(not(target_arch = "wasm32"))]
     pub use rxui_app::{run, run_with};
     #[cfg(feature = "devtools")]
-    pub use rxui_devtools::{InspectorAction, InspectorOptions, UiInspector};
+    pub use rxui_devtools::{InspectorAction, InspectorOptions, InspectorView, UiInspector};
     #[cfg(feature = "editor")]
     pub use rxui_editor::{
         GraphEdge, GraphEndpoint, GraphInteractionPhase, GraphNode, GraphPoint, GraphPort,

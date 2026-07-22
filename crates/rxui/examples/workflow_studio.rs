@@ -32,7 +32,7 @@ struct WorkflowStudio {
     image_view: Option<ElementHandle<ImageView>>,
     status: Option<ElementHandle<Label>>,
     watcher: Option<FileWatcher>,
-    live_timer: Option<TimerId>,
+    live: bool,
     reload_task: Option<TaskId>,
     next_sample: u64,
     next_edge: u64,
@@ -49,7 +49,7 @@ impl WorkflowStudio {
             image_view: None,
             status: None,
             watcher: None,
-            live_timer: None,
+            live: false,
             reload_task: None,
             next_sample: 1_009,
             next_edge: 10_000,
@@ -167,6 +167,18 @@ impl WorkflowStudio {
 
 impl App for WorkflowStudio {
     type Message = Message;
+
+    fn subscriptions(&self) -> Subscriptions<Message> {
+        if self.live {
+            Subscriptions::one(Subscription::interval(
+                SubscriptionId::singleton("workflow.live-data"),
+                Duration::from_millis(120),
+                Message::LiveTick,
+            ))
+        } else {
+            Subscriptions::none()
+        }
+    }
 
     fn build(&mut self, cx: &mut AppCx<'_, Message>) -> rxui::Result<()> {
         let mut ui = Ui::new(
@@ -338,12 +350,10 @@ impl App for WorkflowStudio {
                 }
             }
             Message::ToggleLive => {
-                if let Some(timer) = self.live_timer.take() {
-                    cx.cancel_timer(timer);
+                self.live = !self.live;
+                if !self.live {
                     self.set_status(cx, "Live updates paused")?;
                 } else {
-                    self.live_timer =
-                        Some(cx.set_interval(Duration::from_millis(120), Message::LiveTick));
                     self.set_status(
                         cx,
                         "Live updates running — manual X navigation pauses follow",

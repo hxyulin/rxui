@@ -223,6 +223,17 @@ impl<'a, Local: 'static, Root: 'static> MappedAppCx<'a, Local, Root> {
             .register_task(move |output| mapper.map(map(output)))
     }
 
+    /// Registers a named mapped task completed by an external executor.
+    pub fn register_task_named<T: Send + 'static>(
+        &mut self,
+        name: impl Into<String>,
+        map: impl FnOnce(T) -> Local + Send + 'static,
+    ) -> TaskCompletion<T> {
+        let mapper = self.mapper.clone();
+        self.root
+            .register_task_named(name, move |output| mapper.map(map(output)))
+    }
+
     /// Runs mapped finite work on the native bounded blocking pool.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_blocking<T: Send + 'static>(
@@ -235,9 +246,27 @@ impl<'a, Local: 'static, Root: 'static> MappedAppCx<'a, Local, Root> {
             .spawn_blocking(work, move |result| mapper.map(map(result)))
     }
 
+    /// Runs named mapped finite work on the native bounded blocking pool.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_blocking_named<T: Send + 'static>(
+        &mut self,
+        name: impl Into<String>,
+        work: impl FnOnce() -> T + Send + 'static,
+        map: impl FnOnce(std::result::Result<T, TaskError>) -> Local + Send + 'static,
+    ) -> std::result::Result<TaskId, TaskSpawnError> {
+        let mapper = self.mapper.clone();
+        self.root
+            .spawn_blocking_named(name, work, move |result| mapper.map(map(result)))
+    }
+
     /// Cancels a task, returning whether it was still active.
     pub fn cancel_task(&mut self, task: TaskId) -> bool {
         self.root.cancel_task(task)
+    }
+
+    /// Returns a read-only snapshot of root runtime state.
+    pub fn runtime_snapshot(&self) -> crate::runner::RuntimeSnapshot {
+        self.root.runtime_snapshot()
     }
 
     /// Schedules one mapped local message after a delay.

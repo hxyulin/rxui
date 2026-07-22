@@ -27,9 +27,11 @@ use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database
 #[cfg(not(target_arch = "wasm32"))]
 use rxui_app::TaskSpawnError;
 use rxui_app::{
-    App, AppBackend, AppCx, Clipboard, CloseResponse, Error, MessageKey, MessageProxy, Monitor,
-    ProxyClosed, Result, RuntimePolicy, TaskCompletionStatus, TaskId, TaskMessageFactory, TaskSink,
-    Theme, TimerId, Ui, WindowConfig, WindowHost, WindowId,
+    ActiveSubscriptionSnapshot, ActiveTaskSnapshot, App, AppBackend, AppCx, Clipboard,
+    CloseResponse, Error, MessageKey, MessageProxy, Monitor, ProxyClosed, Result, RuntimePolicy,
+    RuntimeSnapshot, SubscriptionConfig, SubscriptionId, Subscriptions, TaskCompletionStatus,
+    TaskId, TaskKind, TaskMessageFactory, TaskSink, Theme, TimerId, Ui, WindowConfig, WindowHost,
+    WindowId,
 };
 
 use crate::deterministic_theme;
@@ -110,8 +112,19 @@ type TaskEventQueue<M> = Arc<Mutex<VecDeque<(u64, TaskEvent<M>)>>>;
 
 struct HeadlessTask {
     state: Arc<AtomicU8>,
+    name: String,
+    kind: TaskKind,
+    started_at: Duration,
     #[cfg(not(target_arch = "wasm32"))]
     blocking: Option<Box<dyn FnOnce() + Send + 'static>>,
+}
+
+struct HeadlessSubscription {
+    config: SubscriptionConfig,
+    generation: u64,
+    timer: TimerId,
+    started_at: Duration,
+    starts: u64,
 }
 
 struct PostedMessage<M> {
@@ -183,6 +196,7 @@ struct HeadlessBackend<M: 'static> {
     task_events: TaskEventQueue<M>,
     external_sequence: Arc<AtomicU64>,
     tasks: HashMap<TaskId, HeadlessTask>,
+    subscriptions: HashMap<SubscriptionId, HeadlessSubscription>,
     timers: Vec<TimerEntry<M>>,
     now: Duration,
     epoch: Instant,
@@ -193,6 +207,7 @@ struct HeadlessBackend<M: 'static> {
     next_window: u64,
     next_timer: u64,
     next_task: u64,
+    next_subscription_generation: u64,
 }
 
 impl<M: 'static> HeadlessBackend<M> {
@@ -205,6 +220,7 @@ impl<M: 'static> HeadlessBackend<M> {
             task_events: Arc::new(Mutex::new(VecDeque::new())),
             external_sequence: Arc::new(AtomicU64::new(1)),
             tasks: HashMap::new(),
+            subscriptions: HashMap::new(),
             timers: Vec::new(),
             now: Duration::ZERO,
             epoch: Instant::now(),
@@ -215,6 +231,7 @@ impl<M: 'static> HeadlessBackend<M> {
             next_window: 1,
             next_timer: 1,
             next_task: 1,
+            next_subscription_generation: 1,
         }
     }
 
@@ -232,7 +249,7 @@ impl<M: 'static> HeadlessBackend<M> {
         timer
     }
 
-    fn register_task_state(&mut self) -> (TaskId, Arc<AtomicU8>) {
+    fn register_task_state(&mut self, name: String) -> (TaskId, Arc<AtomicU8>) {
         let task = TaskId::from_raw(self.next_task);
         self.next_task += 1;
         let state = Arc::new(AtomicU8::new(TASK_PENDING));
@@ -240,6 +257,9 @@ impl<M: 'static> HeadlessBackend<M> {
             task,
             HeadlessTask {
                 state: Arc::clone(&state),
+                name,
+                kind: TaskKind::External,
+                started_at: self.now,
                 #[cfg(not(target_arch = "wasm32"))]
                 blocking: None,
             },
@@ -342,8 +362,8 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         })
     }
 
-    fn register_task(&mut self) -> TaskSink<M> {
-        let (task, state) = self.register_task_state();
+    fn register_task(&mut self, name: String) -> TaskSink<M> {
+        let (task, state) = self.register_task_state(name);
 
         let submit_events = Arc::clone(&self.task_events);
         let submit_sequence = Arc::clone(&self.external_sequence);
@@ -410,6 +430,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         let Some(entry) = self.tasks.get_mut(&task) else {
             return Err(TaskSpawnError::WorkerUnavailable);
         };
+        entry.kind = TaskKind::Blocking;
         entry.blocking = Some(job);
         Ok(())
     }
@@ -420,6 +441,111 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         };
         entry.state.store(TASK_CANCELLED, Ordering::Release);
         true
+    }
+
+    fn runtime_snapshot(&self) -> RuntimeSnapshot {
+        let mut tasks = self
+            .tasks
+            .iter()
+            .map(|(&id, task)| {
+                ActiveTaskSnapshot::new(
+                    id,
+                    task.name.clone(),
+                    task.kind,
+                    self.now.saturating_sub(task.started_at),
+                )
+            })
+            .collect::<Vec<_>>();
+        tasks.sort_by_key(ActiveTaskSnapshot::id);
+        let mut subscriptions = self
+            .subscriptions
+            .iter()
+            .map(|(&id, subscription)| {
+                ActiveSubscriptionSnapshot::new(
+                    id,
+                    subscription.config.kind(),
+                    subscription.config.delivery(),
+                    subscription.config.interval(),
+                    self.now.saturating_sub(subscription.started_at),
+                    subscription.starts,
+                )
+            })
+            .collect::<Vec<_>>();
+        subscriptions.sort_by_key(ActiveSubscriptionSnapshot::id);
+        RuntimeSnapshot::new(tasks, subscriptions)
+    }
+
+    fn reconcile_subscriptions(&mut self, desired: Subscriptions<M>) -> Result<()> {
+        let desired = desired.into_unique()?;
+        let desired_ids = desired
+            .iter()
+            .map(|subscription| subscription.id())
+            .collect::<std::collections::HashSet<_>>();
+        let removed = self
+            .subscriptions
+            .keys()
+            .copied()
+            .filter(|id| !desired_ids.contains(id))
+            .collect::<Vec<_>>();
+        for id in removed {
+            if let Some(active) = self.subscriptions.remove(&id) {
+                self.cancel_timer(active.timer);
+            }
+        }
+
+        for subscription in desired {
+            let (id, config, factory) = subscription.into_parts();
+            if let Some(active) = self.subscriptions.get(&id)
+                && active.config == config
+            {
+                let timer = active.timer;
+                let entry = self
+                    .timers
+                    .iter_mut()
+                    .find(|entry| entry.id == timer)
+                    .expect("active subscription timer exists");
+                let TimerKind::Interval {
+                    factory: active_factory,
+                    ..
+                } = &mut entry.kind
+                else {
+                    unreachable!("subscriptions use interval timers")
+                };
+                *active_factory = factory;
+                continue;
+            }
+            let starts = if let Some(active) = self.subscriptions.remove(&id) {
+                self.cancel_timer(active.timer);
+                active.starts.saturating_add(1)
+            } else {
+                1
+            };
+            let generation = self.next_subscription_generation;
+            self.next_subscription_generation = generation.saturating_add(1);
+            let timer = self.set_interval(config.interval(), factory);
+            self.subscriptions.insert(
+                id,
+                HeadlessSubscription {
+                    config,
+                    generation,
+                    timer,
+                    started_at: self.now,
+                    starts,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn cancel_all_subscriptions(&mut self) {
+        let timers = self
+            .subscriptions
+            .drain()
+            .map(|(_, subscription)| subscription.timer)
+            .collect::<Vec<_>>();
+        for timer in timers {
+            self.cancel_timer(timer);
+        }
     }
 
     fn set_timeout(&mut self, delay: Duration, factory: Box<dyn FnOnce() -> M>) -> TimerId {
@@ -475,6 +601,7 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
     fn exit(&mut self) {
         self.exited = true;
         self.cancel_all_tasks();
+        self.cancel_all_subscriptions();
     }
 }
 
@@ -514,8 +641,14 @@ fn dispatch_batch<A: App>(
         app.update(&mut AppCx::new(backend, source), message)?;
     }
     flush_posted(app, backend)?;
+    if !backend.exited {
+        let subscriptions = app.subscriptions();
+        backend.reconcile_subscriptions(subscriptions)?;
+    }
     if backend.exit_on_last_window_close && had_windows && backend.slots.is_empty() {
         backend.exited = true;
+        backend.cancel_all_tasks();
+        backend.cancel_all_subscriptions();
     }
     Ok(())
 }
@@ -578,6 +711,10 @@ impl<A: App> AppHarness<A> {
             .app
             .build(&mut AppCx::new(&mut harness.backend, None))?;
         flush_posted(&mut harness.app, &mut harness.backend)?;
+        if !harness.backend.exited {
+            let subscriptions = harness.app.subscriptions();
+            harness.backend.reconcile_subscriptions(subscriptions)?;
+        }
         harness.pump_external()?;
         Ok(harness)
     }
@@ -616,6 +753,65 @@ impl<A: App> AppHarness<A> {
     /// latest-value posts since this harness was created.
     pub fn coalesced_replacement_count(&self) -> u64 {
         self.backend.posted.replacements
+    }
+
+    /// Returns a point-in-time snapshot of active tasks and subscriptions.
+    pub fn runtime_snapshot(&self) -> RuntimeSnapshot {
+        self.backend.runtime_snapshot()
+    }
+
+    /// Returns active subscription identities in stable order.
+    pub fn active_subscription_ids(&self) -> Vec<SubscriptionId> {
+        let mut ids = self
+            .backend
+            .subscriptions
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
+
+    /// Returns how many times one subscription identity has started.
+    pub fn subscription_start_count(&self, id: SubscriptionId) -> u64 {
+        self.backend
+            .subscriptions
+            .get(&id)
+            .map(|subscription| subscription.starts)
+            .unwrap_or(0)
+    }
+
+    /// Injects one event from an active subscription without advancing time.
+    ///
+    /// Returns `false` if the identity is not active.
+    pub fn emit_subscription(&mut self, id: SubscriptionId) -> Result<bool> {
+        let Some(active) = self.backend.subscriptions.get(&id) else {
+            return Ok(false);
+        };
+        let timer = active.timer;
+        let generation = active.generation;
+        let Some(entry) = self
+            .backend
+            .timers
+            .iter_mut()
+            .find(|entry| entry.id == timer)
+        else {
+            return Ok(false);
+        };
+        let TimerKind::Interval { factory, .. } = &mut entry.kind else {
+            return Ok(false);
+        };
+        let message = factory();
+        let still_active = self
+            .backend
+            .subscriptions
+            .get(&id)
+            .is_some_and(|active| active.generation == generation);
+        if still_active {
+            dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+        }
+        self.pump_external()?;
+        Ok(still_active)
     }
 
     /// Returns active task identifiers in creation order.
@@ -727,9 +923,12 @@ impl<A: App> AppHarness<A> {
                 .window_closed(&mut AppCx::new(&mut self.backend, Some(window)), window)?;
         }
         flush_posted(&mut self.app, &mut self.backend)?;
+        let subscriptions = self.app.subscriptions();
+        self.backend.reconcile_subscriptions(subscriptions)?;
         if self.backend.exit_on_last_window_close && self.backend.slots.is_empty() {
             self.backend.exited = true;
             self.backend.cancel_all_tasks();
+            self.backend.cancel_all_subscriptions();
         }
         self.pump_external()
     }
@@ -920,7 +1119,7 @@ mod tests {
     use astrelis_ui_core::{ElementHandle, EventFilter, Label};
     #[cfg(not(target_arch = "wasm32"))]
     use rxui_app::TaskError;
-    use rxui_app::{MessageMapper, TaskCompletion};
+    use rxui_app::{MessageMapper, Subscription, TaskCompletion};
 
     use super::*;
 
@@ -1538,6 +1737,7 @@ mod tests {
         #[cfg(not(target_arch = "wasm32"))]
         StartPanicking,
         StartExternal,
+        StartNamed,
         DropExternal,
         #[cfg(not(target_arch = "wasm32"))]
         Cancel(TaskId),
@@ -1593,6 +1793,13 @@ mod tests {
                     self.completions.push(cx.register_task(|value: u32| {
                         TaskMsg::Delivered(Rc::new(value.to_string()))
                     }));
+                }
+                TaskMsg::StartNamed => {
+                    self.completions.push(
+                        cx.register_task_named("Load named fixture", |value: u32| {
+                            TaskMsg::Delivered(Rc::new(value.to_string()))
+                        }),
+                    );
                 }
                 TaskMsg::DropExternal => self.completions.clear(),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1668,6 +1875,22 @@ mod tests {
     }
 
     #[test]
+    fn runtime_snapshot_reports_named_task_metadata_on_virtual_time() {
+        let mut harness = task_harness();
+        harness.post(TaskMsg::StartNamed).expect("task registers");
+        harness
+            .advance(Duration::from_millis(25))
+            .expect("virtual clock advances");
+        let snapshot = harness.runtime_snapshot();
+        let task = &snapshot.active_tasks()[0];
+        assert_eq!(task.name(), "Load named fixture");
+        assert_eq!(task.kind(), TaskKind::External);
+        assert_eq!(task.elapsed(), Duration::from_millis(25));
+        harness.post(TaskMsg::DropExternal).expect("task abandons");
+        assert!(harness.runtime_snapshot().active_tasks().is_empty());
+    }
+
+    #[test]
     fn harness_can_complete_tasks_in_a_chosen_order() {
         let mut harness = task_harness();
         harness
@@ -1708,6 +1931,154 @@ mod tests {
         harness.post(TaskMsg::Exit).expect("app exits");
         assert!(harness.exited());
         assert!(harness.pending_task_ids().is_empty());
+    }
+
+    #[derive(Clone)]
+    enum SubscriptionMsg {
+        SetLive(bool),
+        SetPayload(u32),
+        SetPeriod(Duration),
+        Tick(u32),
+        Noop,
+        Exit,
+    }
+
+    struct SubscriptionFixture {
+        live: bool,
+        payload: u32,
+        period: Duration,
+        ticks: Vec<u32>,
+    }
+
+    impl Default for SubscriptionFixture {
+        fn default() -> Self {
+            Self {
+                live: false,
+                payload: 1,
+                period: Duration::from_secs(1),
+                ticks: Vec::new(),
+            }
+        }
+    }
+
+    impl App for SubscriptionFixture {
+        type Message = SubscriptionMsg;
+
+        fn build(&mut self, _cx: &mut AppCx<'_, Self::Message>) -> Result<()> {
+            Ok(())
+        }
+
+        fn subscriptions(&self) -> Subscriptions<Self::Message> {
+            if self.live {
+                let payload = self.payload;
+                Subscriptions::one(Subscription::interval_with(
+                    SubscriptionId::singleton("fixture.live"),
+                    self.period,
+                    move || SubscriptionMsg::Tick(payload),
+                ))
+            } else {
+                Subscriptions::none()
+            }
+        }
+
+        fn update(
+            &mut self,
+            cx: &mut AppCx<'_, Self::Message>,
+            message: Self::Message,
+        ) -> Result<()> {
+            match message {
+                SubscriptionMsg::SetLive(live) => self.live = live,
+                SubscriptionMsg::SetPayload(payload) => self.payload = payload,
+                SubscriptionMsg::SetPeriod(period) => self.period = period,
+                SubscriptionMsg::Tick(value) => self.ticks.push(value),
+                SubscriptionMsg::Noop => {}
+                SubscriptionMsg::Exit => cx.exit(),
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn subscriptions_reconcile_once_and_replace_factories_without_restart() {
+        let id = SubscriptionId::singleton("fixture.live");
+        let mut harness = AppHarness::new(SubscriptionFixture::default()).unwrap();
+        assert!(harness.active_subscription_ids().is_empty());
+
+        harness
+            .post(SubscriptionMsg::SetLive(true))
+            .expect("subscription starts");
+        assert_eq!(harness.active_subscription_ids(), [id]);
+        assert_eq!(harness.subscription_start_count(id), 1);
+
+        harness
+            .post(SubscriptionMsg::SetPayload(7))
+            .expect("factory changes");
+        harness
+            .post(SubscriptionMsg::Noop)
+            .expect("unrelated update");
+        assert_eq!(harness.subscription_start_count(id), 1);
+        assert!(harness.emit_subscription(id).expect("event injects"));
+        assert_eq!(harness.app().ticks, [7]);
+
+        harness
+            .post(SubscriptionMsg::SetPeriod(Duration::from_secs(2)))
+            .expect("configuration changes");
+        assert_eq!(harness.subscription_start_count(id), 2);
+        assert_eq!(
+            harness.runtime_snapshot().active_subscriptions()[0].interval(),
+            Duration::from_secs(2)
+        );
+        harness
+            .advance(Duration::from_secs(2))
+            .expect("interval fires");
+        assert_eq!(harness.app().ticks, [7, 7]);
+
+        harness
+            .post(SubscriptionMsg::SetLive(false))
+            .expect("subscription cancels");
+        assert!(harness.active_subscription_ids().is_empty());
+        assert!(
+            !harness
+                .emit_subscription(id)
+                .expect("inactive event rejects")
+        );
+
+        let mut exiting = AppHarness::new(SubscriptionFixture::default()).unwrap();
+        exiting.post(SubscriptionMsg::SetLive(true)).unwrap();
+        exiting.post(SubscriptionMsg::Exit).unwrap();
+        assert!(exiting.exited());
+        assert!(exiting.active_subscription_ids().is_empty());
+    }
+
+    struct DuplicateSubscriptions;
+
+    impl App for DuplicateSubscriptions {
+        type Message = ();
+
+        fn build(&mut self, _cx: &mut AppCx<'_, Self::Message>) -> Result<()> {
+            Ok(())
+        }
+
+        fn subscriptions(&self) -> Subscriptions<Self::Message> {
+            let id = SubscriptionId::singleton("duplicate");
+            Subscriptions::batch([
+                Subscription::interval(id, Duration::from_secs(1), ()),
+                Subscription::interval(id, Duration::from_secs(2), ()),
+            ])
+        }
+
+        fn update(
+            &mut self,
+            _cx: &mut AppCx<'_, Self::Message>,
+            _message: Self::Message,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn duplicate_subscription_ids_fail_initial_reconciliation() {
+        assert!(AppHarness::new(DuplicateSubscriptions).is_err());
     }
 
     #[test]

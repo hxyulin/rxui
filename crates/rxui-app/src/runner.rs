@@ -8,8 +8,10 @@
 //! boilerplate that direct `astrelis_app::App` implementations require.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    cell::RefCell,
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
@@ -36,6 +38,9 @@ use astrelis_text::FontDatabase;
 use astrelis_ui_host::{GraphicsContext, HostUpdate, WindowHost, WindowHostOptions};
 
 use crate::error::{DynAppError, Error, Result};
+use crate::subscription::{
+    ActiveSubscriptionSnapshot, SubscriptionConfig, SubscriptionId, Subscriptions,
+};
 
 pub use astrelis_app::{FixedStep, RuntimeConfig, RuntimePolicy, UpdateInfo};
 /// Platform-portable instant; aliases `web_time::Instant` on the web.
@@ -161,6 +166,13 @@ pub trait App: Sized + 'static {
     /// Applies one message to application state.
     fn update(&mut self, cx: &mut AppCx<'_, Self::Message>, message: Self::Message) -> Result<()>;
 
+    /// Describes application-scoped long-lived event sources desired by state.
+    ///
+    /// The runner reconciles this set after each completed callback batch.
+    fn subscriptions(&self) -> Subscriptions<Self::Message> {
+        Subscriptions::none()
+    }
+
     /// Observes a raw window event before the UI handles it.
     ///
     /// Use this for command routers, window-placement tracking, and other
@@ -259,6 +271,89 @@ impl TaskId {
     /// Returns the raw identifier value.
     pub const fn raw(self) -> u64 {
         self.0
+    }
+}
+
+/// Broad category of one active background task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TaskKind {
+    /// Completion is owned by an external executor or callback API.
+    External,
+    /// Work is running through RXUI's bounded native blocking pool.
+    Blocking,
+}
+
+/// Read-only metadata for one currently active task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveTaskSnapshot {
+    id: TaskId,
+    name: String,
+    kind: TaskKind,
+    elapsed: Duration,
+}
+
+impl ActiveTaskSnapshot {
+    /// Creates task metadata for an alternative backend.
+    #[doc(hidden)]
+    pub fn new(id: TaskId, name: String, kind: TaskKind, elapsed: Duration) -> Self {
+        Self {
+            id,
+            name,
+            kind,
+            elapsed,
+        }
+    }
+
+    /// Returns the task's application-local identifier.
+    pub const fn id(&self) -> TaskId {
+        self.id
+    }
+
+    /// Returns the human-readable diagnostic name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns how the work is being executed.
+    pub const fn kind(&self) -> TaskKind {
+        self.kind
+    }
+
+    /// Returns time elapsed on the application's clock.
+    pub const fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+}
+
+/// Point-in-time read-only state exposed to diagnostics and developer tools.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuntimeSnapshot {
+    active_tasks: Vec<ActiveTaskSnapshot>,
+    active_subscriptions: Vec<ActiveSubscriptionSnapshot>,
+}
+
+impl RuntimeSnapshot {
+    /// Creates a snapshot for an alternative backend.
+    #[doc(hidden)]
+    pub fn new(
+        active_tasks: Vec<ActiveTaskSnapshot>,
+        active_subscriptions: Vec<ActiveSubscriptionSnapshot>,
+    ) -> Self {
+        Self {
+            active_tasks,
+            active_subscriptions,
+        }
+    }
+
+    /// Returns active tasks in creation order.
+    pub fn active_tasks(&self) -> &[ActiveTaskSnapshot] {
+        &self.active_tasks
+    }
+
+    /// Returns active subscriptions ordered by identity.
+    pub fn active_subscriptions(&self) -> &[ActiveSubscriptionSnapshot] {
+        &self.active_subscriptions
     }
 }
 
@@ -769,7 +864,7 @@ pub trait AppBackend<M: 'static> {
         M: Send;
 
     /// Registers an application-scoped task completion channel.
-    fn register_task(&mut self) -> TaskSink<M>;
+    fn register_task(&mut self, name: String) -> TaskSink<M>;
 
     /// Queues one closure on the native bounded blocking pool.
     #[cfg(not(target_arch = "wasm32"))]
@@ -781,6 +876,17 @@ pub trait AppBackend<M: 'static> {
 
     /// Cancels a task, returning whether it was still active.
     fn cancel_task(&mut self, task: TaskId) -> bool;
+
+    /// Returns a read-only snapshot of runner-owned runtime state.
+    fn runtime_snapshot(&self) -> RuntimeSnapshot;
+
+    /// Reconciles one complete desired subscription set.
+    #[doc(hidden)]
+    fn reconcile_subscriptions(&mut self, desired: Subscriptions<M>) -> Result<()>;
+
+    /// Cancels every active subscription during orderly shutdown.
+    #[doc(hidden)]
+    fn cancel_all_subscriptions(&mut self);
 
     /// Schedules a one-shot message factory after a delay.
     fn set_timeout(&mut self, delay: Duration, factory: Box<dyn FnOnce() -> M>) -> TimerId;
@@ -956,7 +1062,16 @@ impl<'a, M: 'static> AppCx<'a, M> {
         &mut self,
         map: impl FnOnce(T) -> M + Send + 'static,
     ) -> TaskCompletion<T> {
-        let sink = self.backend.register_task();
+        self.register_task_named("External task", map)
+    }
+
+    /// Registers a diagnostically named task completed by an external executor.
+    pub fn register_task_named<T: Send + 'static>(
+        &mut self,
+        name: impl Into<String>,
+        map: impl FnOnce(T) -> M + Send + 'static,
+    ) -> TaskCompletion<T> {
+        let sink = self.backend.register_task(name.into());
         let id = sink.id();
         TaskCompletion::new(id, move |output| match output {
             Some(output) => sink.complete(Box::new(move || map(output))),
@@ -979,7 +1094,18 @@ impl<'a, M: 'static> AppCx<'a, M> {
         work: impl FnOnce() -> T + Send + 'static,
         map: impl FnOnce(std::result::Result<T, TaskError>) -> M + Send + 'static,
     ) -> std::result::Result<TaskId, TaskSpawnError> {
-        let completion = self.register_task(map);
+        self.spawn_blocking_named("Blocking task", work, map)
+    }
+
+    /// Runs diagnostically named finite work on the bounded native worker pool.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_blocking_named<T: Send + 'static>(
+        &mut self,
+        name: impl Into<String>,
+        work: impl FnOnce() -> T + Send + 'static,
+        map: impl FnOnce(std::result::Result<T, TaskError>) -> M + Send + 'static,
+    ) -> std::result::Result<TaskId, TaskSpawnError> {
+        let completion = self.register_task_named(name, map);
         let task = completion.id();
         let job = Box::new(move || {
             let result = catch_unwind(AssertUnwindSafe(work)).map_err(|_| TaskError::Panicked);
@@ -992,6 +1118,11 @@ impl<'a, M: 'static> AppCx<'a, M> {
     /// Cancels a task, returning whether it was still active.
     pub fn cancel_task(&mut self, task: TaskId) -> bool {
         self.backend.cancel_task(task)
+    }
+
+    /// Returns a read-only snapshot of runner-owned runtime state.
+    pub fn runtime_snapshot(&self) -> RuntimeSnapshot {
+        self.backend.runtime_snapshot()
     }
 
     /// Schedules a message delivered once after a delay.
@@ -1164,6 +1295,18 @@ pub fn spawn_on_canvas<A: App>(
 
 struct TaskRecord {
     state: Arc<AtomicU8>,
+    name: String,
+    kind: TaskKind,
+    started_at: Instant,
+}
+
+struct ActiveSubscription<M: 'static> {
+    config: SubscriptionConfig,
+    generation: u64,
+    timer: NativeTimerId,
+    factory: Rc<RefCell<Box<dyn FnMut() -> M>>>,
+    started_at: Instant,
+    starts: u64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1244,6 +1387,9 @@ struct Shell<M: 'static> {
     next_timer: u64,
     tasks: HashMap<TaskId, TaskRecord>,
     next_task: u64,
+    subscriptions: HashMap<SubscriptionId, ActiveSubscription<M>>,
+    next_subscription_generation: u64,
+    exit_requested: bool,
     #[cfg(not(target_arch = "wasm32"))]
     task_config: TaskConfig,
     #[cfg(not(target_arch = "wasm32"))]
@@ -1264,6 +1410,9 @@ impl<M: 'static> Shell<M> {
             next_timer: 1,
             tasks: HashMap::new(),
             next_task: 1,
+            subscriptions: HashMap::new(),
+            next_subscription_generation: 1,
+            exit_requested: false,
             #[cfg(not(target_arch = "wasm32"))]
             task_config: config.tasks,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1285,7 +1434,7 @@ impl<M: 'static> Shell<M> {
         id
     }
 
-    fn register_task(&mut self) -> (TaskId, Arc<AtomicU8>) {
+    fn register_task(&mut self, name: String, started_at: Instant) -> (TaskId, Arc<AtomicU8>) {
         let id = TaskId(self.next_task);
         self.next_task += 1;
         let state = Arc::new(AtomicU8::new(TASK_PENDING));
@@ -1293,6 +1442,9 @@ impl<M: 'static> Shell<M> {
             id,
             TaskRecord {
                 state: Arc::clone(&state),
+                name,
+                kind: TaskKind::External,
+                started_at,
             },
         );
         (id, state)
@@ -1323,6 +1475,36 @@ impl<M: 'static> Shell<M> {
         self.tasks.clear();
         #[cfg(not(target_arch = "wasm32"))]
         self.blocking_pool.take();
+    }
+
+    fn runtime_snapshot(&self, now: Instant) -> RuntimeSnapshot {
+        let mut active_tasks = self
+            .tasks
+            .iter()
+            .map(|(&id, task)| ActiveTaskSnapshot {
+                id,
+                name: task.name.clone(),
+                kind: task.kind,
+                elapsed: now.saturating_duration_since(task.started_at),
+            })
+            .collect::<Vec<_>>();
+        active_tasks.sort_by_key(|task| task.id);
+        let mut active_subscriptions = self
+            .subscriptions
+            .iter()
+            .map(|(&id, subscription)| {
+                ActiveSubscriptionSnapshot::new(
+                    id,
+                    subscription.config.kind,
+                    subscription.config.delivery,
+                    subscription.config.interval,
+                    now.saturating_duration_since(subscription.started_at),
+                    subscription.starts,
+                )
+            })
+            .collect::<Vec<_>>();
+        active_subscriptions.sort_by_key(ActiveSubscriptionSnapshot::id);
+        RuntimeSnapshot::new(active_tasks, active_subscriptions)
     }
 }
 
@@ -1386,6 +1568,28 @@ impl<A: App> RunnerCore<A> {
     fn abandon_task(&mut self, task: TaskId, state: Arc<AtomicU8>) {
         self.shell.abandon_task(task, &state);
     }
+
+    fn fire_subscription(
+        &mut self,
+        context: &mut AppContext<'_, '_, Self>,
+        id: SubscriptionId,
+        generation: u64,
+    ) -> std::result::Result<(), DynAppError> {
+        let message = {
+            let Some(subscription) = self.shell.subscriptions.get(&id) else {
+                return Ok(());
+            };
+            if subscription.generation != generation {
+                return Ok(());
+            }
+            (subscription.factory.borrow_mut())()
+        };
+        // Astrelis intervals already collapse missed periods into one callback
+        // per event-loop turn. `DeliveryPolicy::Every` preserves every callback
+        // that does occur; future concurrent sources will use the same policy
+        // at their producer queue.
+        self.dispatch_queued(context, message)
+    }
 }
 
 impl<A: App> astrelis_app::App for RunnerCore<A> {
@@ -1404,6 +1608,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         user.build(&mut AppCx::new(&mut backend, None))
             .map_err(DynAppError)?;
         flush_posted(user, &mut backend).map_err(DynAppError)?;
+        reconcile_subscriptions(user, &mut backend).map_err(DynAppError)?;
         invalidate_dirty(&mut backend);
         Ok(())
     }
@@ -1422,6 +1627,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
             .map_err(DynAppError)?;
         let Some(host) = backend.shell.host_mut(window) else {
             flush_posted(user, &mut backend).map_err(DynAppError)?;
+            reconcile_subscriptions(user, &mut backend).map_err(DynAppError)?;
             invalidate_dirty(&mut backend);
             return Ok(());
         };
@@ -1448,6 +1654,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         user.tick(&mut AppCx::new(&mut backend, None), info)
             .map_err(DynAppError)?;
         flush_posted(user, &mut backend).map_err(DynAppError)?;
+        reconcile_subscriptions(user, &mut backend).map_err(DynAppError)?;
         invalidate_dirty(&mut backend);
         if exit_on_last && had_windows && backend.windows().is_empty() {
             backend.exit();
@@ -1467,7 +1674,9 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         let mut backend = RuntimeBackend { context, shell };
         user.render(&mut AppCx::new(&mut backend, Some(window)), window)
             .map_err(DynAppError)?;
-        if flush_posted(user, &mut backend).map_err(DynAppError)? {
+        let posted = flush_posted(user, &mut backend).map_err(DynAppError)?;
+        reconcile_subscriptions(user, &mut backend).map_err(DynAppError)?;
+        if posted {
             invalidate_dirty(&mut backend);
         }
         Ok(())
@@ -1480,6 +1689,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         let Self { user, shell } = self;
         shell.cancel_all_tasks();
         let mut backend = RuntimeBackend { context, shell };
+        backend.cancel_all_subscriptions();
         user.exiting(&mut AppCx::new(&mut backend, None))
             .map_err(DynAppError)
     }
@@ -1593,8 +1803,8 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         })
     }
 
-    fn register_task(&mut self) -> TaskSink<A::Message> {
-        let (task, state) = self.shell.register_task();
+    fn register_task(&mut self, name: String) -> TaskSink<A::Message> {
+        let (task, state) = self.shell.register_task(name, self.context.now());
 
         let submit_proxy = self.context.proxy();
         let submit_state = Arc::clone(&state);
@@ -1655,6 +1865,9 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         task: TaskId,
         job: Box<dyn FnOnce() + Send + 'static>,
     ) -> std::result::Result<(), TaskSpawnError> {
+        if let Some(record) = self.shell.tasks.get_mut(&task) {
+            record.kind = TaskKind::Blocking;
+        }
         if self.shell.blocking_pool.is_none() {
             self.shell.blocking_pool = Some(BlockingPool::new(self.shell.task_config)?);
         }
@@ -1672,6 +1885,79 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
 
     fn cancel_task(&mut self, task: TaskId) -> bool {
         self.shell.cancel_task(task)
+    }
+
+    fn runtime_snapshot(&self) -> RuntimeSnapshot {
+        self.shell.runtime_snapshot(self.context.now())
+    }
+
+    fn reconcile_subscriptions(&mut self, desired: Subscriptions<A::Message>) -> Result<()> {
+        if self.shell.exit_requested {
+            self.cancel_all_subscriptions();
+            return Ok(());
+        }
+        let desired = desired.into_unique()?;
+        let desired_ids = desired
+            .iter()
+            .map(|subscription| subscription.id)
+            .collect::<HashSet<_>>();
+        let removed = self
+            .shell
+            .subscriptions
+            .keys()
+            .copied()
+            .filter(|id| !desired_ids.contains(id))
+            .collect::<Vec<_>>();
+        for id in removed {
+            if let Some(active) = self.shell.subscriptions.remove(&id) {
+                self.context.cancel_timer(active.timer);
+            }
+        }
+
+        for subscription in desired {
+            if let Some(active) = self.shell.subscriptions.get_mut(&subscription.id)
+                && active.config == subscription.config
+            {
+                *active.factory.borrow_mut() = subscription.factory;
+                continue;
+            }
+            let starts = if let Some(active) = self.shell.subscriptions.remove(&subscription.id) {
+                self.context.cancel_timer(active.timer);
+                active.starts.saturating_add(1)
+            } else {
+                1
+            };
+
+            let id = subscription.id;
+            let config = subscription.config;
+            let generation = self.shell.next_subscription_generation;
+            self.shell.next_subscription_generation = generation.saturating_add(1);
+            let factory = Rc::new(RefCell::new(subscription.factory));
+            let timer = self.context.set_interval(
+                config.interval,
+                move |core: &mut RunnerCore<A>, context| {
+                    core.fire_subscription(context, id, generation)
+                },
+            );
+            self.shell.subscriptions.insert(
+                id,
+                ActiveSubscription {
+                    config,
+                    generation,
+                    timer,
+                    factory,
+                    started_at: self.context.now(),
+                    starts,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn cancel_all_subscriptions(&mut self) {
+        for (_, active) in self.shell.subscriptions.drain() {
+            self.context.cancel_timer(active.timer);
+        }
     }
 
     fn set_timeout(
@@ -1739,6 +2025,7 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
     }
 
     fn exit(&mut self) {
+        self.shell.exit_requested = true;
         self.context.exit();
     }
 }
@@ -1770,6 +2057,7 @@ fn process_host_update<A: App>(
         }
     }
     flush_posted(user, backend)?;
+    reconcile_subscriptions(user, backend)?;
     if !closed && update.redraw && backend.windows().contains(&window) {
         backend.invalidate(window);
     }
@@ -1790,6 +2078,7 @@ fn dispatch_external<A: App>(
     let had_windows = !backend.windows().is_empty();
     user.update(&mut AppCx::new(&mut *backend, None), message)?;
     flush_posted(user, backend)?;
+    reconcile_subscriptions(user, backend)?;
     invalidate_dirty(backend);
     if exit_on_last_window_close && had_windows && backend.windows().is_empty() {
         backend.exit();
@@ -1823,6 +2112,13 @@ fn flush_posted<A: App>(user: &mut A, backend: &mut dyn AppBackend<A::Message>) 
         );
     }
     Ok(processed)
+}
+
+fn reconcile_subscriptions<A: App>(
+    user: &A,
+    backend: &mut dyn AppBackend<A::Message>,
+) -> Result<()> {
+    backend.reconcile_subscriptions(user.subscriptions())
 }
 
 /// Invalidates every window whose UI reports pending redraw work.
@@ -2047,7 +2343,7 @@ mod tests {
             })
         }
 
-        fn register_task(&mut self) -> TaskSink<M> {
+        fn register_task(&mut self, _name: String) -> TaskSink<M> {
             let task = TaskId::from_raw(self.next_task);
             self.next_task += 1;
             let state = Arc::new(AtomicU8::new(TASK_PENDING));
@@ -2094,6 +2390,16 @@ mod tests {
             state.store(TASK_CANCELLED, Ordering::Release);
             true
         }
+
+        fn runtime_snapshot(&self) -> RuntimeSnapshot {
+            RuntimeSnapshot::default()
+        }
+
+        fn reconcile_subscriptions(&mut self, desired: Subscriptions<M>) -> Result<()> {
+            desired.into_unique().map(|_| ())
+        }
+
+        fn cancel_all_subscriptions(&mut self) {}
 
         fn set_timeout(&mut self, _delay: Duration, _factory: Box<dyn FnOnce() -> M>) -> TimerId {
             let timer = TimerId::from_raw(self.next_timer);

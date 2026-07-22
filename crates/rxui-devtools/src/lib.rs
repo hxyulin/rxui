@@ -12,6 +12,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
+    time::Duration,
 };
 
 use astrelis_core::geometry::LogicalSize;
@@ -24,6 +25,7 @@ use astrelis_ui_core::{
     OverlayOptions, OverlaySide, Padding, Positioning, RoutedEventKind, Row, SemanticRole, Ui,
     UiError, Visibility, WidgetStyle,
 };
+use rxui_app::{DeliveryPolicy, RuntimeSnapshot, SubscriptionKind, TaskKind};
 use rxui_widgets::{
     CommandButton, IconButton, IconView, TreeAction, TreeView, TreeViewOptions,
     foundation::{Menu, MenuItem},
@@ -44,6 +46,14 @@ const INSPECTOR_Z: i32 = 20_000;
 const TREE_ROW_EXTENT: f32 = 24.0;
 const INFO_TAG_HEIGHT: f32 = 20.0;
 
+fn format_elapsed(duration: Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{:.1} s", duration.as_secs_f64())
+    } else {
+        format!("{} ms", duration.as_millis())
+    }
+}
+
 /// Where the inspector panel mounts relative to application content.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InspectorDock {
@@ -57,6 +67,16 @@ pub enum InspectorDock {
     /// Floats over the right edge without reflowing content — the panel
     /// behavior of releases before 0.6.
     Overlay,
+}
+
+/// Content shown in the inspector panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InspectorView {
+    /// Retained element tree, selection, and properties.
+    #[default]
+    Ui,
+    /// Runner-owned active tasks and subscriptions.
+    Runtime,
 }
 
 /// Configuration for an in-application UI inspector.
@@ -102,6 +122,8 @@ pub enum InspectorAction {
     Open,
     /// Close the details panel.
     Close,
+    /// Switch between retained-UI and runtime inspection.
+    SetView(InspectorView),
     /// Start or stop selecting an application element with the pointer.
     SetPicking(bool),
     /// Invert the current picking state.
@@ -181,6 +203,11 @@ pub struct UiInspector<Message> {
     info_tag: ElementHandle<Label>,
     pick: ElementHandle<CommandButton<Message>>,
     body: ElementHandle<Column>,
+    ui_tab: ElementHandle<CommandButton<Message>>,
+    runtime_tab: ElementHandle<CommandButton<Message>>,
+    ui_content: ElementHandle<Column>,
+    runtime_content: ElementHandle<Padding>,
+    runtime_details: ElementHandle<Column>,
     resizer: ElementHandle<PanelResizer<Message>>,
     tree: TreeView<ElementId, Message>,
     details_pad: ElementHandle<Padding>,
@@ -192,6 +219,7 @@ pub struct UiInspector<Message> {
     open_state: Rc<Cell<bool>>,
     hover_cell: Rc<Cell<Option<ElementId>>>,
     open: bool,
+    view: InspectorView,
     dock: InspectorDock,
     panel_width: f32,
     panel_height: f32,
@@ -207,6 +235,7 @@ pub struct UiInspector<Message> {
     last_crumbs: Option<Option<ElementId>>,
     show_launcher: bool,
     allow_editing: bool,
+    runtime_snapshot: RuntimeSnapshot,
     map_action: Rc<dyn Fn(InspectorAction) -> Message>,
 }
 
@@ -439,8 +468,45 @@ where
             },
         )?;
 
-        let search_pad = ui.add_padding(
+        let tabs_pad = ui.add_padding(
             body,
+            Insets {
+                left: spacing_sm,
+                top: 0.0,
+                right: spacing_sm,
+                bottom: spacing_sm,
+            },
+        )?;
+        let tabs = ui.add_row(tabs_pad)?;
+        ui.set_flex(tabs, spacing_sm, Alignment::Center)?;
+        let ui_tab = ui.add_widget(
+            tabs,
+            CommandButton::new(
+                "UI",
+                (map_action)(InspectorAction::SetView(InspectorView::Ui)),
+            ),
+        )?;
+        let runtime_tab = ui.add_widget(
+            tabs,
+            CommandButton::new(
+                "Runtime",
+                (map_action)(InspectorAction::SetView(InspectorView::Runtime)),
+            ),
+        )?;
+
+        let ui_content = ui.add_column(body)?;
+        ui.set_layout(
+            ui_content,
+            LayoutStyle {
+                grow: 1.0,
+                basis: Length::Px(0.0),
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+
+        let search_pad = ui.add_padding(
+            ui_content,
             Insets {
                 left: spacing_sm,
                 top: 0.0,
@@ -472,7 +538,7 @@ where
         let map = map_action.clone();
         let mut tree = TreeView::with_options(
             ui,
-            body,
+            ui_content,
             TreeViewOptions {
                 row_extent: TREE_ROW_EXTENT,
                 indent_guides: true,
@@ -501,7 +567,7 @@ where
             context.emit(map(InspectorAction::Refresh));
         })?;
 
-        let divider = ui.add_column(body)?;
+        let divider = ui.add_column(ui_content)?;
         ui.set_layout(
             divider,
             LayoutStyle {
@@ -519,7 +585,7 @@ where
             },
         )?;
 
-        let details_scroll = ui.add_scroll_view(body)?;
+        let details_scroll = ui.add_scroll_view(ui_content)?;
         ui.set_layout(
             details_scroll,
             LayoutStyle {
@@ -547,7 +613,7 @@ where
             },
         )?;
 
-        let crumb_divider = ui.add_column(body)?;
+        let crumb_divider = ui.add_column(ui_content)?;
         ui.set_layout(
             crumb_divider,
             LayoutStyle {
@@ -564,7 +630,7 @@ where
                 ..WidgetStyle::default()
             },
         )?;
-        let crumb_bar = ui.add_row(body)?;
+        let crumb_bar = ui.add_row(ui_content)?;
         ui.set_flex(crumb_bar, 0.0, Alignment::Center)?;
         ui.set_layout(
             crumb_bar,
@@ -576,6 +642,33 @@ where
             },
         )?;
         let crumbs = ui.add_row(crumb_bar)?;
+
+        let runtime_content = ui.add_padding(
+            body,
+            Insets {
+                left: 10.0,
+                top: 6.0,
+                right: 10.0,
+                bottom: 10.0,
+            },
+        )?;
+        ui.set_layout(
+            runtime_content,
+            LayoutStyle {
+                grow: 1.0,
+                basis: Length::Px(0.0),
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        let runtime_details = ui.add_column(runtime_content)?;
+        ui.set_layout(
+            runtime_details,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
 
         let map = map_action.clone();
         let resizer = ui.add_widget(
@@ -667,6 +760,11 @@ where
             info_tag,
             pick,
             body,
+            ui_tab,
+            runtime_tab,
+            ui_content,
+            runtime_content,
+            runtime_details,
             resizer,
             tree,
             details_pad,
@@ -678,6 +776,7 @@ where
             open_state,
             hover_cell,
             open: options.initially_open,
+            view: InspectorView::Ui,
             dock: options.dock,
             panel_width,
             panel_height,
@@ -693,9 +792,15 @@ where
             last_crumbs: None,
             show_launcher: options.show_launcher,
             allow_editing: options.allow_editing,
+            runtime_snapshot: RuntimeSnapshot::default(),
             map_action,
         };
+        ui.update_widget(inspector.ui_tab, |button| button.sync("UI", true, true))?;
+        ui.update_widget(inspector.runtime_tab, |button| {
+            button.sync("Runtime", true, false)
+        })?;
         inspector.update_visibility(ui)?;
+        inspector.rebuild_runtime(ui)?;
         inspector.sync(ui)?;
         Ok(inspector)
     }
@@ -718,6 +823,13 @@ where
             InspectorAction::Close => {
                 self.open = false;
                 self.set_picking(false);
+            }
+            InspectorAction::SetView(view) => {
+                self.open = true;
+                self.view = view;
+                if view == InspectorView::Runtime {
+                    self.set_picking(false);
+                }
             }
             InspectorAction::SetPicking(value) => {
                 self.open = true;
@@ -821,8 +933,27 @@ where
         self.open_state.set(self.open);
         let picking = self.picking.get();
         ui.update_widget(self.pick, |button| button.sync("Pick", true, picking))?;
+        ui.update_widget(self.ui_tab, |button| {
+            button.sync("UI", true, self.view == InspectorView::Ui)
+        })?;
+        ui.update_widget(self.runtime_tab, |button| {
+            button.sync("Runtime", true, self.view == InspectorView::Runtime)
+        })?;
         self.update_visibility(ui)?;
         self.sync(ui)
+    }
+
+    /// Rebuilds the Runtime tab from one explicit runner snapshot.
+    ///
+    /// Call this after task or subscription lifecycle changes. Automatic
+    /// streaming is intentionally deferred to runtime instrumentation.
+    pub fn sync_runtime(
+        &mut self,
+        ui: &mut Ui<Message>,
+        snapshot: &RuntimeSnapshot,
+    ) -> Result<(), UiError> {
+        self.runtime_snapshot = snapshot.clone();
+        self.rebuild_runtime(ui)
     }
 
     /// Rebuilds the tree and selected-element details from current retained state.
@@ -1031,6 +1162,126 @@ where
                         foreground: Some(muted),
                         ..WidgetStyle::default()
                     },
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn rebuild_runtime(&mut self, ui: &mut Ui<Message>) -> Result<(), UiError> {
+        ui.remove(self.runtime_details)?;
+        self.runtime_details = ui.add_column(self.runtime_content)?;
+        ui.set_layout(
+            self.runtime_details,
+            LayoutStyle {
+                width: Length::Percent(1.0),
+                ..LayoutStyle::default()
+            },
+        )?;
+        let heading = ui.theme().type_scale.heading;
+        let heading_weight = ui.theme().type_scale.heading_weight;
+        let caption = ui.theme().type_scale.caption;
+        let muted = ui.theme().muted_foreground;
+
+        let tasks = ui.add_label(
+            self.runtime_details,
+            format!("Tasks ({})", self.runtime_snapshot.active_tasks().len()),
+        )?;
+        ui.set_widget_style(
+            tasks,
+            WidgetStyle {
+                font_size: Some(heading),
+                font_weight: Some(heading_weight),
+                ..WidgetStyle::default()
+            },
+        )?;
+        if self.runtime_snapshot.active_tasks().is_empty() {
+            let empty = ui.add_label(self.runtime_details, "No active tasks")?;
+            ui.set_widget_style(
+                empty,
+                WidgetStyle {
+                    foreground: Some(muted),
+                    font_size: Some(caption),
+                    ..WidgetStyle::default()
+                },
+            )?;
+        } else {
+            for task in self.runtime_snapshot.active_tasks() {
+                let kind = match task.kind() {
+                    TaskKind::External => "external",
+                    TaskKind::Blocking => "blocking",
+                    _ => "task",
+                };
+                ui.add_label(
+                    self.runtime_details,
+                    format!(
+                        "{} — #{} · {} · {}",
+                        task.name(),
+                        task.id().raw(),
+                        kind,
+                        format_elapsed(task.elapsed())
+                    ),
+                )?;
+            }
+        }
+
+        let subscriptions = ui.add_label(
+            self.runtime_details,
+            format!(
+                "Subscriptions ({})",
+                self.runtime_snapshot.active_subscriptions().len()
+            ),
+        )?;
+        ui.set_layout(
+            subscriptions,
+            LayoutStyle {
+                margin: Edges {
+                    top: Length::Px(12.0),
+                    ..Edges::default()
+                },
+                ..LayoutStyle::default()
+            },
+        )?;
+        ui.set_widget_style(
+            subscriptions,
+            WidgetStyle {
+                font_size: Some(heading),
+                font_weight: Some(heading_weight),
+                ..WidgetStyle::default()
+            },
+        )?;
+        if self.runtime_snapshot.active_subscriptions().is_empty() {
+            let empty = ui.add_label(self.runtime_details, "No active subscriptions")?;
+            ui.set_widget_style(
+                empty,
+                WidgetStyle {
+                    foreground: Some(muted),
+                    font_size: Some(caption),
+                    ..WidgetStyle::default()
+                },
+            )?;
+        } else {
+            for subscription in self.runtime_snapshot.active_subscriptions() {
+                let kind = match subscription.kind() {
+                    SubscriptionKind::Interval => {
+                        format!("every {}", format_elapsed(subscription.interval()))
+                    }
+                    _ => "subscription".into(),
+                };
+                let delivery = match subscription.delivery_policy() {
+                    DeliveryPolicy::Latest => "latest",
+                    DeliveryPolicy::Every => "every event",
+                };
+                ui.add_label(
+                    self.runtime_details,
+                    format!(
+                        "{}#{} — {} · {} · started {}×",
+                        subscription.id().namespace(),
+                        subscription.id().instance(),
+                        kind,
+                        delivery,
+                        subscription.starts()
+                    ),
                 )?;
             }
         }
@@ -1257,7 +1508,23 @@ where
         )?;
         ui.set_visibility(
             self.highlight_overlay,
-            if self.open {
+            if self.open && self.view == InspectorView::Ui {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            },
+        )?;
+        ui.set_visibility(
+            self.ui_content,
+            if self.view == InspectorView::Ui {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            },
+        )?;
+        ui.set_visibility(
+            self.runtime_content,
+            if self.view == InspectorView::Runtime {
                 Visibility::Visible
             } else {
                 Visibility::Hidden
@@ -1383,6 +1650,40 @@ mod tests {
         );
         drop(inspector);
         let _ = sibling;
+    }
+
+    #[test]
+    fn runtime_view_renders_explicit_task_and_subscription_snapshots() {
+        use rxui_app::{ActiveSubscriptionSnapshot, ActiveTaskSnapshot, SubscriptionId, TaskId};
+
+        let (mut ui, _button) = harness();
+        let mut inspector =
+            UiInspector::new(&mut ui, InspectorOptions::default(), Message::Inspector).unwrap();
+        let snapshot = RuntimeSnapshot::new(
+            vec![ActiveTaskSnapshot::new(
+                TaskId::from_raw(9),
+                "Load preview".into(),
+                TaskKind::Blocking,
+                Duration::from_millis(250),
+            )],
+            vec![ActiveSubscriptionSnapshot::new(
+                SubscriptionId::singleton("preview.live"),
+                SubscriptionKind::Interval,
+                DeliveryPolicy::Latest,
+                Duration::from_millis(120),
+                Duration::from_secs(2),
+                1,
+            )],
+        );
+        inspector.sync_runtime(&mut ui, &snapshot).unwrap();
+        inspector
+            .apply(&mut ui, InspectorAction::SetView(InspectorView::Runtime))
+            .unwrap();
+        let semantics = ui.semantic_tree().unwrap();
+        let mut labels = Vec::new();
+        collect_labels(&semantics, &mut labels);
+        assert!(labels.iter().any(|label| label.contains("Load preview")));
+        assert!(labels.iter().any(|label| label.contains("preview.live#0")));
     }
 
     #[test]
