@@ -19,6 +19,9 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   engine semantic roles for platform accessibility adapters.
 - Docking can turn floating drops into native viewport requests, backed by a
   serializable multi-viewport layout with globally unique panel ownership.
+- **WIP:** Dock tabs expose transferable drag sessions intended for dropping
+  panels onto targets in another native viewport. Native cross-window pointer
+  capture is not handled yet, so live previews and drops are not reliable.
 
 - A high-level application runner: implement `rxui::prelude::App`
   (`build`/`update` plus optional hooks) and start with `rxui::app::run`; the

@@ -4,10 +4,10 @@ use astrelis_core::geometry::{LogicalPoint, LogicalRect, LogicalSize, Size};
 use astrelis_paint::{Brush, Painter, StrokeStyle};
 use astrelis_platform::{CursorIcon, DeviceId, ElementState, Key, NamedKey, PointerButton};
 use astrelis_ui_core::{
-    Column, ControlState, DragOperations, DragOptions, DragPayload, DropOperation, Edges,
-    ElementHandle, ElementId, EventFilter, EventPhase, Insets, LayoutStyle, Length, ListenerId,
-    Positioning, RoutedEventKind, SemanticAction, SemanticActionKind, SemanticRole, Theme, Ui,
-    UiError, Visibility, Widget, WidgetContainerStyle,
+    Column, ControlState, DragOperations, DragOptions, DragPayload, DragSessionId, DropOperation,
+    Edges, ElementHandle, ElementId, EventFilter, EventPhase, Insets, LayoutStyle, Length,
+    ListenerId, Positioning, RoutedEventKind, SemanticAction, SemanticActionKind, SemanticRole,
+    Theme, Ui, UiError, Visibility, Widget, WidgetContainerStyle,
 };
 use astrelis_ui_widgets::{SplitAxis, SplitPane, SplitPaneOptions};
 
@@ -28,6 +28,15 @@ pub enum SplitBranch {
 /// Typed request emitted by docking UI interactions.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DockAction {
+    /// A tab drag became active and may cross into another native viewport.
+    BeginViewportDrag {
+        /// Retained drag identity shared with destination UI trees.
+        session: DragSessionId,
+        /// Pointer device driving the drag.
+        device_id: DeviceId,
+        /// Panel being moved.
+        panel: PanelId,
+    },
     /// Activate and focus a panel.
     Activate(PanelId),
     /// Close a panel if its descriptor permits it.
@@ -647,8 +656,15 @@ impl<Message: 'static> Widget<Message> for DockTab<Message> {
                 context.prevent_default();
                 context.request_paint();
             }
-            RoutedEventKind::DragStarted { .. } => {
+            RoutedEventKind::DragStarted {
+                session, device_id, ..
+            } => {
                 self.dragging = true;
+                context.emit((self.map_action)(DockAction::BeginViewportDrag {
+                    session: *session,
+                    device_id: *device_id,
+                    panel: self.panel.clone(),
+                }));
                 context.request_paint();
             }
             RoutedEventKind::DragEnded { .. } => {
@@ -1097,6 +1113,7 @@ impl<Message: 'static> DockWorkspace<Message> {
         action: DockAction,
     ) -> Result<DockOutcome, DockError> {
         match action {
+            DockAction::BeginViewportDrag { .. } => Ok(DockOutcome::default()),
             DockAction::Activate(panel) => {
                 self.layout.activate(&panel)?;
                 self.sync_active_state(ui)?;

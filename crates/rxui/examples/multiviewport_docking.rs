@@ -1,8 +1,9 @@
-//! Native multi-viewport docking.
+//! Native multi-viewport docking (WIP).
 //!
 //! Drag the Inspector tab into empty workspace space to detach it into a
-//! native window. Closing that secondary window docks the panel back into the
-//! primary viewport.
+//! native window. Closing a secondary window docks its panel back into the
+//! primary one. Cross-window drag previews and drops are not reliable yet
+//! because native pointer capture routing is still pending in Astrelis.
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
@@ -13,8 +14,8 @@ use astrelis_platform::WindowAttributes;
 use rxui::{
     editor::{
         DockAction, DockFloatingMode, DockLayout, DockNode, DockPlacement, DockSide, DockStyle,
-        DockTabs, DockViewport, DockViewportId, DockWorkspace, MultiViewportDockLayout,
-        PanelDescriptor, PanelId, PreferredPlacement,
+        DockTabs, DockViewport, DockViewportDrag, DockViewportDragEvent, DockViewportId,
+        DockWorkspace, MultiViewportDockLayout, PanelDescriptor, PanelId, PreferredPlacement,
     },
     prelude::*,
 };
@@ -57,6 +58,7 @@ struct MultiViewportExample {
     layout: MultiViewportDockLayout,
     windows: BTreeMap<WindowId, HostedViewport>,
     next_viewport: u64,
+    drag: Option<DockViewportDrag>,
 }
 
 impl MultiViewportExample {
@@ -66,6 +68,7 @@ impl MultiViewportExample {
             layout: MultiViewportDockLayout::new(primary),
             windows: BTreeMap::new(),
             next_viewport: 1,
+            drag: None,
         }
     }
 
@@ -103,14 +106,14 @@ impl MultiViewportExample {
             },
             Message::Dock,
         )?;
-        for panel_id in viewport.layout.panels() {
+        for panel_id in [panel("scene"), panel("inspector")] {
             let content = ui.add_column(root)?;
             match panel_id.as_str() {
                 "scene" => {
                     ui.add_label(content, "Scene viewport")?;
                     ui.add_label(
                         content,
-                        "Drag the Inspector tab into empty workspace space to detach it.",
+                        "Detach Inspector, then drag tabs between the native windows.",
                     )?;
                 }
                 "inspector" => {
@@ -180,18 +183,87 @@ impl App for MultiViewportExample {
             .source_window()
             .ok_or_else(|| rxui::Error::msg("docking message has no source window"))?;
         let Message::Dock(action) = message;
+        if let DockAction::BeginViewportDrag {
+            session,
+            device_id,
+            panel,
+        } = &action
+        {
+            self.drag = Some(DockViewportDrag::new(
+                window,
+                *session,
+                *device_id,
+                panel.clone(),
+            ));
+            return Ok(());
+        }
+
+        let cross_window_move = match (&self.drag, &action) {
+            (Some(drag), DockAction::Place { panel, placement })
+                if drag.source() != window && drag.panel() == panel =>
+            {
+                let placement = if matches!(placement, DockPlacement::Floating(_)) {
+                    DockPlacement::Root { index: usize::MAX }
+                } else {
+                    placement.clone()
+                };
+                Some((drag.source(), panel.clone(), placement))
+            }
+            _ => None,
+        };
+        let applied_action = cross_window_move.as_ref().map_or_else(
+            || action.clone(),
+            |(_, panel, placement)| DockAction::Place {
+                panel: panel.clone(),
+                placement: placement.clone(),
+            },
+        );
         let (logical, current_layout, native_request) = {
             let hosted = self
                 .windows
                 .get_mut(&window)
                 .ok_or_else(|| rxui::Error::msg("docking source window is no longer open"))?;
-            let outcome = hosted.workspace.apply(cx.ui(window)?, action)?;
+            let outcome = hosted.workspace.apply(cx.ui(window)?, applied_action)?;
             (
                 hosted.logical.clone(),
                 hosted.workspace.layout().clone(),
                 outcome.native_viewport,
             )
         };
+
+        if let Some((source_window, panel_id, placement)) = cross_window_move {
+            let source_logical = self
+                .windows
+                .get(&source_window)
+                .map(|hosted| hosted.logical.clone())
+                .ok_or_else(|| rxui::Error::msg("dock drag source viewport closed"))?;
+            let source_layout = {
+                let source = self
+                    .windows
+                    .get_mut(&source_window)
+                    .expect("source checked above");
+                source
+                    .workspace
+                    .apply(cx.ui(source_window)?, DockAction::Close(panel_id.clone()))?;
+                source.workspace.layout().clone()
+            };
+            self.layout.place_panel(panel_id, &logical, placement)?;
+            self.layout
+                .viewport_mut(&logical)
+                .expect("target viewport exists")
+                .layout = current_layout;
+            self.layout
+                .viewport_mut(&source_logical)
+                .expect("source viewport exists")
+                .layout = source_layout.clone();
+            if source_logical != *self.layout.primary() && source_layout.panels().is_empty() {
+                cx.close_window(source_window)?;
+                self.windows.remove(&source_window);
+                self.layout.remove_empty_viewport(&source_logical)?;
+            }
+            self.drag = None;
+            return Ok(());
+        }
 
         if let Some(request) = native_request {
             let detached = DockViewportId::new(format!("detached-{}", self.next_viewport))?;
@@ -218,6 +290,23 @@ impl App for MultiViewportExample {
                 .viewport_mut(&logical)
                 .expect("source viewport exists")
                 .layout = current_layout;
+        }
+        Ok(())
+    }
+
+    fn window_event(
+        &mut self,
+        cx: &mut AppCx<'_, Message>,
+        window: WindowId,
+        event: &WindowEvent,
+    ) -> rxui::Result<()> {
+        let Some(drag) = &mut self.drag else {
+            return Ok(());
+        };
+        let scale_factor = cx.window(window)?.scale_factor() as f32;
+        let outcome = drag.handle_window_event(cx.ui(window)?, window, scale_factor, event)?;
+        if outcome == DockViewportDragEvent::Ended {
+            self.drag = None;
         }
         Ok(())
     }

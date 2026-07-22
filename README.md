@@ -119,8 +119,10 @@ Try native multi-viewport docking:
 cargo run -p rxui --example multiviewport_docking
 ```
 
-Drag the Inspector tab into empty workspace space to create a second native
-window. Closing that window docks the panel back into the primary viewport.
+> **WIP:** Dragging the Inspector into empty workspace space creates a second
+> native window, and closing it docks the panel back into the primary viewport.
+> Live dragging and docking previews between native windows are not reliable
+> until Astrelis provides native cross-window drag routing.
 
 Run the native/browser visual workflow showcase:
 
