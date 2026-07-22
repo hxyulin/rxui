@@ -17,6 +17,8 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   re-exports of the Astrelis widget implementations.
 - Radio options, combo boxes, and numeric fields expose their specific
   engine semantic roles for platform accessibility adapters.
+- Docking can turn floating drops into native viewport requests, backed by a
+  serializable multi-viewport layout with globally unique panel ownership.
 
 - A high-level application runner: implement `rxui::prelude::App`
   (`build`/`update` plus optional hooks) and start with `rxui::app::run`; the

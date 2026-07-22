@@ -40,7 +40,8 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
   decimation;
 - serializable node graphs with ports, routed edges, selection, keyboard
   editing, and pan/zoom;
-- an RXUI-owned dockable editor workspace with backward-compatible named layouts;
+- an RXUI-owned dockable editor workspace with backward-compatible named
+  layouts and optional native multi-viewport floating panels;
 - virtualized, accessible tree and sortable/resizable table views;
 - typed text, number, boolean, and enum property inspection;
 - a keyboard-first command palette over the shared command registry;
@@ -111,6 +112,15 @@ The reference editor synchronizes selection across its hierarchy, entity table,
 rendered 2D scene, and property inspector. Drag or resize docked panels, pan and
 zoom the scene, invoke commands from the palette, edit undoable properties, and
 save or restore the named workspace layout.
+
+Try native multi-viewport docking:
+
+```sh
+cargo run -p rxui --example multiviewport_docking
+```
+
+Drag the Inspector tab into empty workspace space to create a second native
+window. Closing that window docks the panel back into the primary viewport.
 
 Run the native/browser visual workflow showcase:
 

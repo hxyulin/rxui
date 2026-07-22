@@ -66,6 +66,29 @@ pub struct DockOutcome {
     pub structure_changed: bool,
     /// Panel activated by the operation, when applicable.
     pub active_panel: Option<PanelId>,
+    /// Native viewport requested by a floating drop, when enabled.
+    pub native_viewport: Option<NativeViewportRequest>,
+}
+
+/// Request for the application shell to host a dock panel in a native window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeViewportRequest {
+    /// Panel removed from the source workspace.
+    pub panel: PanelId,
+    /// Suggested logical client width derived from the floating size.
+    pub width: u32,
+    /// Suggested logical client height derived from the floating size.
+    pub height: u32,
+}
+
+/// Presentation policy for panels dropped into floating workspace space.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DockFloatingMode {
+    /// Keep floating groups inside the current native window.
+    #[default]
+    InWindow,
+    /// Ask the application shell to create a separate native window.
+    NativeViewport,
 }
 
 /// Configurable logical dimensions for a docking workspace.
@@ -87,6 +110,8 @@ pub struct DockStyle {
     pub float_border: f32,
     /// Width of the dedicated floating-group movement grip.
     pub move_grip_width: f32,
+    /// How newly floated panels are presented.
+    pub floating_mode: DockFloatingMode,
 }
 
 impl Default for DockStyle {
@@ -100,6 +125,7 @@ impl Default for DockStyle {
             reachable_title: 48.0,
             float_border: 8.0,
             move_grip_width: 30.0,
+            floating_mode: DockFloatingMode::InWindow,
         }
     }
 }
@@ -1078,6 +1104,7 @@ impl<Message: 'static> DockWorkspace<Message> {
                     layout_changed: true,
                     structure_changed: false,
                     active_panel: Some(panel),
+                    ..Default::default()
                 })
             }
             DockAction::Close(panel) => {
@@ -1093,16 +1120,36 @@ impl<Message: 'static> DockWorkspace<Message> {
                     layout_changed: true,
                     structure_changed: true,
                     active_panel: None,
+                    ..Default::default()
                 })
             }
             DockAction::Place { panel, placement } => {
                 self.descriptor(&panel)?;
+                if let DockPlacement::Floating(bounds) = placement
+                    && self.style.floating_mode == DockFloatingMode::NativeViewport
+                {
+                    let changed = self.layout.remove_panel(&panel);
+                    if changed {
+                        self.reconcile(ui)?;
+                    }
+                    return Ok(DockOutcome {
+                        layout_changed: changed,
+                        structure_changed: changed,
+                        active_panel: None,
+                        native_viewport: Some(NativeViewportRequest {
+                            panel,
+                            width: bounds.width.max(1.0).round() as u32,
+                            height: bounds.height.max(1.0).round() as u32,
+                        }),
+                    });
+                }
                 self.layout.place_panel(panel.clone(), placement)?;
                 self.reconcile(ui)?;
                 Ok(DockOutcome {
                     layout_changed: true,
                     structure_changed: true,
                     active_panel: Some(panel),
+                    ..Default::default()
                 })
             }
             DockAction::SetSplitRatio { path, ratio } => {
@@ -1898,6 +1945,53 @@ mod tests {
             workspace.layout().root,
             Some(DockNode::Split { .. })
         ));
+    }
+
+    #[test]
+    fn native_viewport_mode_removes_and_requests_floating_panel() {
+        let mut ui: Ui<DockAction> = Ui::new(FontDatabase::default(), Theme::default());
+        ui.set_viewport(Size::new(900.0, 600.0), 1.0);
+        let root = ui.root();
+        let content = ui.add_column(root).unwrap();
+        let mut workspace = DockWorkspace::new(
+            &mut ui,
+            root,
+            DockStyle {
+                floating_mode: DockFloatingMode::NativeViewport,
+                ..DockStyle::default()
+            },
+            |action| action,
+        )
+        .unwrap();
+        workspace
+            .register_panel(&mut ui, PanelDescriptor::new(id("tools"), "Tools"), content)
+            .unwrap();
+        let initial = DockLayout {
+            root: Some(DockNode::Tabs(DockTabs::new(vec![id("tools")]).unwrap())),
+            floating: Vec::new(),
+        };
+        workspace
+            .restore(&mut ui, initial.clone(), initial)
+            .unwrap();
+        let bounds = FloatingRect::new(20.0, 30.0, 320.0, 240.0);
+        let outcome = workspace
+            .apply(
+                &mut ui,
+                DockAction::Place {
+                    panel: id("tools"),
+                    placement: DockPlacement::Floating(bounds),
+                },
+            )
+            .unwrap();
+        assert!(workspace.layout().panels().is_empty());
+        assert_eq!(
+            outcome.native_viewport,
+            Some(NativeViewportRequest {
+                panel: id("tools"),
+                width: 320,
+                height: 240,
+            })
+        );
     }
 
     #[test]
