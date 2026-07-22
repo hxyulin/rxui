@@ -8,7 +8,8 @@ use astrelis_ui_host::WindowHost;
 
 use crate::Result;
 use crate::runner::{
-    AppCx, Clipboard, MessageProxy, Monitor, RuntimePolicy, TimerId, WindowConfig, WindowId,
+    AppCx, Clipboard, MessageKey, MessageProxy, Monitor, RuntimePolicy, TimerId, WindowConfig,
+    WindowId,
 };
 
 /// A cheap, retained mapping from a feature-local message to an application's
@@ -183,6 +184,11 @@ impl<'a, Local: 'static, Root: 'static> MappedAppCx<'a, Local, Root> {
         self.root.post(self.mapper.map(message));
     }
 
+    /// Queues or replaces one pending mapped latest-value message.
+    pub fn post_latest(&mut self, key: MessageKey, message: Local) {
+        self.root.post_latest(key, self.mapper.map(message));
+    }
+
     /// Returns a thread-safe proxy that accepts local messages.
     ///
     /// ```compile_fail
@@ -208,6 +214,17 @@ impl<'a, Local: 'static, Root: 'static> MappedAppCx<'a, Local, Root> {
     /// Schedules one mapped local message after a delay.
     pub fn set_timeout(&mut self, delay: Duration, message: Local) -> TimerId {
         self.root.set_timeout(delay, self.mapper.map(message))
+    }
+
+    /// Schedules one mapped local message produced after a delay.
+    pub fn set_timeout_with(
+        &mut self,
+        delay: Duration,
+        factory: impl FnOnce() -> Local + 'static,
+    ) -> TimerId {
+        let mapper = self.mapper.clone();
+        self.root
+            .set_timeout_with(delay, move || mapper.map(factory()))
     }
 
     /// Schedules one cloneable local message repeatedly at an interval.

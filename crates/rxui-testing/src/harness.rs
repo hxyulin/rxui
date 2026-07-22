@@ -10,7 +10,7 @@
 //! is an in-memory buffer, so tests are deterministic and run headlessly.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -22,8 +22,8 @@ use astrelis_platform::{
 use astrelis_ui_core::{SemanticAction, SemanticNode, SemanticRole};
 use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database};
 use rxui_app::{
-    App, AppBackend, AppCx, Clipboard, CloseResponse, Error, MessageProxy, Monitor, ProxyClosed,
-    Result, RuntimePolicy, Theme, TimerId, Ui, WindowConfig, WindowHost, WindowId,
+    App, AppBackend, AppCx, Clipboard, CloseResponse, Error, MessageKey, MessageProxy, Monitor,
+    ProxyClosed, Result, RuntimePolicy, Theme, TimerId, Ui, WindowConfig, WindowHost, WindowId,
 };
 
 use crate::deterministic_theme;
@@ -31,10 +31,6 @@ use crate::deterministic_theme;
 /// Maximum passes over messages posted from [`App::update`] before the
 /// harness defers the remainder to the next operation, mirroring the runner.
 const MAX_POSTED_PASSES: usize = 8;
-
-/// Maximum timer deliveries in one [`AppHarness::advance`] call before the
-/// harness reports a scheduling livelock.
-const MAX_TIMER_FIRINGS: usize = 10_000;
 
 /// Default logical viewport applied to windows opened without an explicit
 /// size, matching [`UiHarness`]'s conventional deterministic viewport.
@@ -66,8 +62,8 @@ impl platform_backend::Clipboard for MemoryClipboard {
 
 /// Payload of one scheduled virtual timer.
 enum TimerKind<M> {
-    /// One message delivered once.
-    Timeout(M),
+    /// One delayed message factory.
+    Timeout(Box<dyn FnOnce() -> M>),
     /// A factory invoked on every elapsed period.
     Interval {
         period: Duration,
@@ -82,6 +78,62 @@ struct TimerEntry<M> {
     kind: TimerKind<M>,
 }
 
+struct PostedMessage<M> {
+    message: M,
+    source: Option<WindowId>,
+}
+
+struct PostedQueue<M> {
+    entries: VecDeque<PostedMessage<M>>,
+    keyed: HashMap<MessageKey, usize>,
+    replacements: u64,
+}
+
+impl<M> Default for PostedQueue<M> {
+    fn default() -> Self {
+        Self {
+            entries: VecDeque::new(),
+            keyed: HashMap::new(),
+            replacements: 0,
+        }
+    }
+}
+
+impl<M> PostedQueue<M> {
+    fn post(&mut self, message: M, source: Option<WindowId>) {
+        self.entries.push_back(PostedMessage { message, source });
+    }
+
+    fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
+        if let Some(index) = self.keyed.get(&key).copied() {
+            let entry = self
+                .entries
+                .get_mut(index)
+                .expect("pending keyed-message index stays valid until the batch is drained");
+            entry.message = message;
+            entry.source = source;
+            self.replacements = self.replacements.saturating_add(1);
+            return;
+        }
+
+        let index = self.entries.len();
+        self.entries.push_back(PostedMessage { message, source });
+        self.keyed.insert(key, index);
+    }
+
+    fn take(&mut self) -> Vec<(M, Option<WindowId>)> {
+        self.keyed.clear();
+        self.entries
+            .drain(..)
+            .map(|entry| (entry.message, entry.source))
+            .collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// Headless [`AppBackend`] used by [`AppHarness`].
 ///
 /// Windows are bare [`Ui`] trees with a viewport; there are no platform
@@ -90,7 +142,7 @@ struct TimerEntry<M> {
 struct HeadlessBackend<M: 'static> {
     theme: Theme,
     slots: Vec<(WindowId, Ui<M>)>,
-    posted: VecDeque<M>,
+    posted: PostedQueue<M>,
     proxied: Arc<Mutex<VecDeque<M>>>,
     timers: Vec<TimerEntry<M>>,
     now: Duration,
@@ -108,7 +160,7 @@ impl<M: 'static> HeadlessBackend<M> {
         Self {
             theme: deterministic_theme(),
             slots: Vec::new(),
-            posted: VecDeque::new(),
+            posted: PostedQueue::default(),
             proxied: Arc::new(Mutex::new(VecDeque::new())),
             timers: Vec::new(),
             now: Duration::ZERO,
@@ -134,17 +186,6 @@ impl<M: 'static> HeadlessBackend<M> {
         let timer = TimerId::from_raw(self.next_timer);
         self.next_timer += 1;
         timer
-    }
-
-    /// Returns the index of the next timer due at or before `target`,
-    /// ordering equal deadlines by creation.
-    fn next_due(&self, target: Duration) -> Option<usize> {
-        self.timers
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.due <= target)
-            .min_by_key(|(_, entry)| (entry.due, entry.id.raw()))
-            .map(|(index, _)| index)
     }
 }
 
@@ -203,12 +244,20 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
 
     fn invalidate_all(&mut self) {}
 
-    fn post(&mut self, message: M) {
-        self.posted.push_back(message);
+    fn post(&mut self, message: M, source: Option<WindowId>) {
+        self.posted.post(message, source);
     }
 
-    fn take_posted(&mut self) -> Vec<M> {
-        self.posted.drain(..).collect()
+    fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
+        self.posted.post_latest(key, message, source);
+    }
+
+    fn take_posted(&mut self) -> Vec<(M, Option<WindowId>)> {
+        self.posted.take()
+    }
+
+    fn has_posted(&self) -> bool {
+        !self.posted.is_empty()
     }
 
     fn proxy(&self) -> MessageProxy<M>
@@ -222,17 +271,18 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
         })
     }
 
-    fn set_timeout(&mut self, delay: Duration, message: M) -> TimerId {
+    fn set_timeout(&mut self, delay: Duration, factory: Box<dyn FnOnce() -> M>) -> TimerId {
         let timer = self.alloc_timer();
         self.timers.push(TimerEntry {
             id: timer,
             due: self.now + delay,
-            kind: TimerKind::Timeout(message),
+            kind: TimerKind::Timeout(factory),
         });
         timer
     }
 
     fn set_interval(&mut self, interval: Duration, factory: Box<dyn FnMut() -> M>) -> TimerId {
+        assert!(!interval.is_zero(), "timer interval must be non-zero");
         let timer = self.alloc_timer();
         self.timers.push(TimerEntry {
             id: timer,
@@ -278,19 +328,15 @@ impl<M: 'static> AppBackend<M> for HeadlessBackend<M> {
 
 /// Drains messages posted with [`AppCx::post`] through [`App::update`],
 /// mirroring the runner's bounded re-drain: up to [`MAX_POSTED_PASSES`]
-/// passes, with any surplus requeued for the next harness operation. In
+/// passes, with any surplus retained for the next harness operation. In
 /// debug builds an exhausted re-drain panics, exactly like the runner.
-fn flush_posted<A: App>(
-    app: &mut A,
-    backend: &mut HeadlessBackend<A::Message>,
-    source: Option<WindowId>,
-) -> Result<()> {
+fn flush_posted<A: App>(app: &mut A, backend: &mut HeadlessBackend<A::Message>) -> Result<()> {
     for _ in 0..MAX_POSTED_PASSES {
-        let batch: Vec<_> = backend.posted.drain(..).collect();
+        let batch = backend.posted.take();
         if batch.is_empty() {
             return Ok(());
         }
-        for message in batch {
+        for (message, source) in batch {
             app.update(&mut AppCx::new(backend, source), message)?;
         }
     }
@@ -315,7 +361,7 @@ fn dispatch_batch<A: App>(
     for message in messages {
         app.update(&mut AppCx::new(backend, source), message)?;
     }
-    flush_posted(app, backend, source)?;
+    flush_posted(app, backend)?;
     if backend.exit_on_last_window_close && had_windows && backend.slots.is_empty() {
         backend.exited = true;
     }
@@ -379,7 +425,7 @@ impl<A: App> AppHarness<A> {
         harness
             .app
             .build(&mut AppCx::new(&mut harness.backend, None))?;
-        flush_posted(&mut harness.app, &mut harness.backend, None)?;
+        flush_posted(&mut harness.app, &mut harness.backend)?;
         harness.pump_proxied()?;
         Ok(harness)
     }
@@ -403,6 +449,21 @@ impl<A: App> AppHarness<A> {
     /// [`AppCx::exit`] or the exit-on-last-window-close policy.
     pub fn exited(&self) -> bool {
         self.backend.exited
+    }
+
+    /// Returns the number of messages currently waiting in the application
+    /// posted-message queue.
+    ///
+    /// Messages waiting in a [`MessageProxy`] or scheduled timer are not
+    /// included.
+    pub fn pending_posted_count(&self) -> usize {
+        self.backend.posted.entries.len()
+    }
+
+    /// Returns the cumulative number of pending messages replaced by keyed
+    /// latest-value posts since this harness was created.
+    pub fn coalesced_replacement_count(&self) -> u64 {
+        self.backend.posted.replacements
     }
 
     /// Returns a window's retained UI tree for direct inspection or setup.
@@ -473,7 +534,7 @@ impl<A: App> AppHarness<A> {
             self.app
                 .window_closed(&mut AppCx::new(&mut self.backend, Some(window)), window)?;
         }
-        flush_posted(&mut self.app, &mut self.backend, Some(window))?;
+        flush_posted(&mut self.app, &mut self.backend)?;
         if self.backend.exit_on_last_window_close && self.backend.slots.is_empty() {
             self.backend.exited = true;
         }
@@ -484,50 +545,59 @@ impl<A: App> AppHarness<A> {
     ///
     /// Timers fire in deadline order (creation order between equal
     /// deadlines) and their messages dispatch through [`App::update`] with no
-    /// source window, like the runner's native timers. Intervals refire every
-    /// elapsed period within the advance; a zero-period interval fires once
-    /// per call. `advance(Duration::ZERO)` fires nothing but still pumps
-    /// queued [`MessageProxy`] messages.
+    /// source window, like the runner's native timers. A repeating timer fires
+    /// at most once per call; missed periods are coalesced and its next
+    /// deadline advances past the target time. Timers scheduled by a callback
+    /// wait for a subsequent call, including zero-delay timeouts.
+    /// `advance(Duration::ZERO)` therefore acts as one deterministic
+    /// event-loop turn and also pumps queued [`MessageProxy`] messages.
     pub fn advance(&mut self, duration: Duration) -> Result<()> {
         let target = self.backend.now + duration;
-        let mut fired = 0usize;
-        while let Some(index) = self.backend.next_due(target) {
-            fired += 1;
-            if fired > MAX_TIMER_FIRINGS {
-                return Err(Error::msg(format!(
-                    "more than {MAX_TIMER_FIRINGS} timer deliveries in one `advance`; a \
-                     handler is rescheduling zero-delay timers on every delivery"
-                )));
-            }
+        self.backend.now = target;
+        let mut due: Vec<_> = self
+            .backend
+            .timers
+            .iter()
+            .filter(|entry| entry.due <= target)
+            .map(|entry| (entry.due, entry.id))
+            .collect();
+        due.sort_by_key(|(deadline, id)| (*deadline, id.raw()));
+
+        for (deadline, timer) in due {
+            let Some(index) = self
+                .backend
+                .timers
+                .iter()
+                .position(|entry| entry.id == timer && entry.due == deadline)
+            else {
+                // A preceding callback cancelled this due timer.
+                continue;
+            };
             let entry = self.backend.timers.remove(index);
-            self.backend.now = entry.due;
             match entry.kind {
-                TimerKind::Timeout(message) => {
-                    dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
+                TimerKind::Timeout(factory) => {
+                    dispatch_batch(&mut self.app, &mut self.backend, None, vec![factory()])?;
                 }
                 TimerKind::Interval {
                     period,
                     mut factory,
                 } => {
                     let message = factory();
-                    let due = if period.is_zero() {
-                        // Never due again within this advance.
-                        target + Duration::from_nanos(1)
-                    } else {
-                        entry.due + period
-                    };
+                    let mut next_due = entry.due + period;
+                    while next_due <= target {
+                        next_due += period;
+                    }
                     // Reschedule before dispatching so the handler can cancel
                     // the interval through `AppCx::cancel_timer`.
                     self.backend.timers.push(TimerEntry {
                         id: entry.id,
-                        due,
+                        due: next_due,
                         kind: TimerKind::Interval { period, factory },
                     });
                     dispatch_batch(&mut self.app, &mut self.backend, None, vec![message])?;
                 }
             }
         }
-        self.backend.now = target;
         self.pump_proxied()
     }
 
@@ -809,17 +879,17 @@ mod tests {
     }
 
     #[test]
-    fn interval_refires_every_elapsed_period() {
+    fn missed_interval_periods_coalesce_per_advance() {
         let mut harness = harness();
         harness.post(Msg::ScheduleInterval).expect("post succeeds");
         harness
             .advance(Duration::from_secs(3))
             .expect("advance succeeds");
-        assert_eq!(harness.app().ticks, 3);
+        assert_eq!(harness.app().ticks, 1);
         harness
             .advance(Duration::from_secs(1))
             .expect("advance succeeds");
-        assert_eq!(harness.app().ticks, 4);
+        assert_eq!(harness.app().ticks, 2);
     }
 
     #[test]
@@ -856,13 +926,17 @@ mod tests {
         Activated,
         Posted,
         ScheduleTimeout,
+        ScheduleTimeoutFactory,
         ScheduleCancelledTimeout,
         Timeout,
+        FactoryTimeout,
         ScheduleFixedInterval,
         FixedTick,
         ScheduleFactoryInterval,
         FactoryTick(u32),
         ScheduleNested,
+        ScheduleLatestBurst,
+        Latest(u32),
         Child(ChildMsg),
         GrabProxy,
         Proxied,
@@ -911,12 +985,18 @@ mod tests {
                 LocalMsg::ScheduleTimeout => {
                     cx.set_timeout(Duration::from_secs(1), LocalMsg::Timeout);
                 }
+                LocalMsg::ScheduleTimeoutFactory => {
+                    cx.set_timeout_with(Duration::from_secs(1), || LocalMsg::FactoryTimeout);
+                }
                 LocalMsg::ScheduleCancelledTimeout => {
                     let timer = cx.set_timeout(Duration::from_secs(1), LocalMsg::Timeout);
                     let cancelled = cx.cancel_timer(timer);
                     self.log.push((format!("cancelled:{cancelled}"), source));
                 }
                 LocalMsg::Timeout => self.log.push(("timeout".into(), source)),
+                LocalMsg::FactoryTimeout => {
+                    self.log.push(("factory-timeout".into(), source));
+                }
                 LocalMsg::ScheduleFixedInterval => {
                     cx.set_interval(Duration::from_secs(1), LocalMsg::FixedTick);
                 }
@@ -934,6 +1014,15 @@ mod tests {
                 LocalMsg::ScheduleNested => {
                     let mut child = cx.map_messages(MessageMapper::new(LocalMsg::Child));
                     child.post(ChildMsg::Ping);
+                }
+                LocalMsg::ScheduleLatestBurst => {
+                    let key = MessageKey::singleton("testing.latest");
+                    for value in 1..=1_000 {
+                        cx.post_latest(key, LocalMsg::Latest(value));
+                    }
+                }
+                LocalMsg::Latest(value) => {
+                    self.log.push((format!("latest:{value}"), source));
                 }
                 LocalMsg::Child(ChildMsg::Ping) => self.log.push(("child".into(), source)),
                 LocalMsg::GrabProxy => self.proxy = Some(cx.proxy()),
@@ -990,6 +1079,10 @@ mod tests {
         fixed
             .advance(Duration::from_secs(2))
             .expect("fixed interval advances");
+        assert_eq!(fixed.app().log, [("fixed".into(), None)]);
+        fixed
+            .advance(Duration::from_secs(1))
+            .expect("fixed interval advances again");
         assert_eq!(
             fixed.app().log,
             [("fixed".into(), None), ("fixed".into(), None)]
@@ -1002,10 +1095,41 @@ mod tests {
         factory
             .advance(Duration::from_secs(2))
             .expect("factory interval advances");
+        assert_eq!(factory.app().log, [("factory:1".into(), None)]);
+        factory
+            .advance(Duration::from_secs(1))
+            .expect("factory interval advances again");
         assert_eq!(
             factory.app().log,
             [("factory:1".into(), None), ("factory:2".into(), None)]
         );
+    }
+
+    #[test]
+    fn mapped_timeout_factory_runs_at_the_deadline() {
+        let mut harness = mapped_harness();
+        harness
+            .post(RootMsg::Feature(LocalMsg::ScheduleTimeoutFactory))
+            .expect("factory timeout schedules");
+        harness
+            .advance(Duration::from_millis(999))
+            .expect("clock advances before deadline");
+        assert!(harness.app().log.is_empty());
+        harness
+            .advance(Duration::from_millis(1))
+            .expect("clock reaches deadline");
+        assert_eq!(harness.app().log, [("factory-timeout".into(), None)]);
+    }
+
+    #[test]
+    fn mapped_latest_posts_collapse_a_large_burst() {
+        let mut harness = mapped_harness();
+        harness
+            .post(RootMsg::Feature(LocalMsg::ScheduleLatestBurst))
+            .expect("latest burst posts");
+        assert_eq!(harness.app().log, [("latest:1000".into(), None)]);
+        assert_eq!(harness.pending_posted_count(), 0);
+        assert_eq!(harness.coalesced_replacement_count(), 999);
     }
 
     #[test]
@@ -1018,6 +1142,107 @@ mod tests {
             .advance(Duration::from_secs(2))
             .expect("clock advances beyond cancelled timeout");
         assert_eq!(harness.app().log, [("cancelled:true".into(), None)]);
+    }
+
+    enum FactoryMsg {
+        Schedule,
+        ScheduleCancelled,
+        ScheduleZeroTimeout,
+        ScheduleZeroInterval,
+        Fired(u32),
+    }
+
+    struct FactoryFixture {
+        calls: Rc<std::cell::Cell<u32>>,
+        delivered: Vec<u32>,
+    }
+
+    impl App for FactoryFixture {
+        type Message = FactoryMsg;
+
+        fn build(&mut self, _cx: &mut AppCx<'_, FactoryMsg>) -> Result<()> {
+            Ok(())
+        }
+
+        fn update(&mut self, cx: &mut AppCx<'_, FactoryMsg>, message: FactoryMsg) -> Result<()> {
+            match message {
+                FactoryMsg::Schedule => {
+                    let calls = Rc::clone(&self.calls);
+                    cx.set_timeout_with(Duration::from_secs(1), move || {
+                        calls.set(calls.get() + 1);
+                        FactoryMsg::Fired(7)
+                    });
+                }
+                FactoryMsg::ScheduleCancelled => {
+                    let calls = Rc::clone(&self.calls);
+                    let timer = cx.set_timeout_with(Duration::from_secs(1), move || {
+                        calls.set(calls.get() + 1);
+                        FactoryMsg::Fired(8)
+                    });
+                    assert!(cx.cancel_timer(timer));
+                }
+                FactoryMsg::ScheduleZeroTimeout => {
+                    cx.set_timeout_with(Duration::ZERO, || FactoryMsg::Fired(9));
+                }
+                FactoryMsg::ScheduleZeroInterval => {
+                    cx.set_interval_with(Duration::ZERO, || FactoryMsg::Fired(10));
+                }
+                FactoryMsg::Fired(value) => self.delivered.push(value),
+            }
+            Ok(())
+        }
+    }
+
+    fn factory_harness() -> (AppHarness<FactoryFixture>, Rc<std::cell::Cell<u32>>) {
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let harness = AppHarness::new(FactoryFixture {
+            calls: Rc::clone(&calls),
+            delivered: Vec::new(),
+        })
+        .expect("factory fixture builds");
+        (harness, calls)
+    }
+
+    #[test]
+    fn non_clone_timeout_factory_runs_once_and_cancellation_drops_it() {
+        let (mut fired, fired_calls) = factory_harness();
+        fired.post(FactoryMsg::Schedule).expect("timeout schedules");
+        assert_eq!(fired_calls.get(), 0);
+        fired
+            .advance(Duration::from_secs(1))
+            .expect("timeout fires");
+        assert_eq!(fired_calls.get(), 1);
+        assert_eq!(fired.app().delivered, [7]);
+
+        let (mut cancelled, cancelled_calls) = factory_harness();
+        cancelled
+            .post(FactoryMsg::ScheduleCancelled)
+            .expect("timeout schedules and cancels");
+        cancelled
+            .advance(Duration::from_secs(2))
+            .expect("clock advances");
+        assert_eq!(cancelled_calls.get(), 0);
+        assert!(cancelled.app().delivered.is_empty());
+    }
+
+    #[test]
+    fn callback_scheduled_zero_timeout_waits_for_the_next_turn() {
+        let (mut harness, _) = factory_harness();
+        harness
+            .post(FactoryMsg::ScheduleZeroTimeout)
+            .expect("zero timeout schedules");
+        assert!(harness.app().delivered.is_empty());
+        harness
+            .advance(Duration::ZERO)
+            .expect("next event-loop turn runs");
+        assert_eq!(harness.app().delivered, [9]);
+    }
+
+    #[test]
+    #[should_panic(expected = "timer interval must be non-zero")]
+    fn zero_interval_is_rejected_like_the_runtime() {
+        let (mut harness, _) = factory_harness();
+        let _ = harness.post(FactoryMsg::ScheduleZeroInterval);
     }
 
     #[test]

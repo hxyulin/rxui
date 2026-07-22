@@ -14,6 +14,9 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   runner owns window hosting, message routing, redraw scheduling, timers,
   cross-thread message proxies, and shutdown. Direct `astrelis_app::App`
   implementations remain supported.
+- Hierarchical feature-message mapping, keyed latest-value queue coalescing,
+  delayed timeout factories, and deterministic timer behavior shared by the
+  native/browser runners and headless application harness.
 - An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
   error, removing `map_err` glue from application code.
 - Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,

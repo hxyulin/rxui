@@ -31,10 +31,10 @@ pub mod prelude {
     pub use rxui_app::{
         App, AppConfig, AppCx, CloseResponse, Command, CommandId, CommandRegistry, CommandRouter,
         GraphicsContext, HostStatus, Instant, JsonStateStore, MainResult, MappedAppCx, Menu,
-        MenuBar, MenuEntry, MenuRole, MessageMapper, MessageProxy, Shortcut, TimerId, UndoAction,
-        UndoStack, UpdateInfo, WindowConfig, WindowEvent, WindowHost, WindowHostOptions, WindowId,
-        WindowPlacement, WindowPlacementTracker, redo_command_id, sync_undo_commands,
-        undo_command_id,
+        MenuBar, MenuEntry, MenuRole, MessageKey, MessageMapper, MessageProxy, Shortcut, TimerId,
+        UndoAction, UndoStack, UpdateInfo, WindowConfig, WindowEvent, WindowHost,
+        WindowHostOptions, WindowId, WindowPlacement, WindowPlacementTracker, redo_command_id,
+        sync_undo_commands, undo_command_id,
     };
     #[cfg(not(target_arch = "wasm32"))]
     pub use rxui_app::{run, run_with};

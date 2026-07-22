@@ -17,7 +17,8 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 
 - an idle-efficient native/browser UI window host with asynchronous WebGPU startup;
 - a high-level application runner (`App`, `run`) with typed messages,
-  multi-window hosting, timers, and thread-safe message proxies;
+  multi-window hosting, timers, keyed latest-value posting, and thread-safe
+  message proxies;
 - composable feature-local message mapping with scoped application contexts;
 - typed commands, shortcut routing, and application menu models;
 - native global menus on macOS and per-window menus on Windows;
@@ -80,6 +81,9 @@ Explore hierarchical messages with two independent feature instances:
 ```sh
 cargo run -p rxui --example message_architecture
 ```
+
+Each counter also queues a 1,000-value preview burst to demonstrate that
+instance-scoped `post_latest` delivery keeps only the final pending value.
 
 Run the application shell:
 

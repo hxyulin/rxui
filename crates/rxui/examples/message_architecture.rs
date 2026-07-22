@@ -26,6 +26,8 @@ enum CounterMessage {
     ResetLater,
     CancelReset,
     ResetNow,
+    QueuePreviewBurst,
+    PreviewValue(i32),
 }
 
 struct CounterFeature {
@@ -34,7 +36,9 @@ struct CounterFeature {
     value: i32,
     value_label: Option<ElementHandle<Label>>,
     reset_status: Option<ElementHandle<Label>>,
+    preview_status: Option<ElementHandle<Label>>,
     reset_timer: Option<TimerId>,
+    preview_message: &'static str,
 }
 
 impl CounterFeature {
@@ -45,7 +49,9 @@ impl CounterFeature {
             value: 0,
             value_label: None,
             reset_status: None,
+            preview_status: None,
             reset_timer: None,
+            preview_message: "No preview burst queued",
         }
     }
 
@@ -113,10 +119,17 @@ impl CounterFeature {
             reset_messages.emit(event, CounterMessage::ResetLater);
         });
         let cancel = ui.button(reset_actions, "Cancel reset").finish();
+        let cancel_messages = messages.clone();
         ui.on_click(cancel, move |event| {
-            messages.emit(event, CounterMessage::CancelReset);
+            cancel_messages.emit(event, CounterMessage::CancelReset);
         });
         self.reset_status = Some(ui.label(card, "No reset scheduled").finish());
+
+        let preview = ui.button(card, "Queue 1,000 previews").finish();
+        ui.on_click(preview, move |event| {
+            messages.emit(event, CounterMessage::QueuePreviewBurst);
+        });
+        self.preview_status = Some(ui.label(card, self.preview_message).finish());
     }
 
     fn update(
@@ -143,6 +156,17 @@ impl CounterFeature {
                 self.reset_timer = None;
                 self.value = 0;
             }
+            CounterMessage::QueuePreviewBurst => {
+                let key = MessageKey::new("counter.preview", u64::from(self.id.0));
+                for value in 1..=1_000 {
+                    cx.post_latest(key, CounterMessage::PreviewValue(value));
+                }
+                self.preview_message = "Queued 1,000 preview values";
+            }
+            CounterMessage::PreviewValue(value) => {
+                self.value = value;
+                self.preview_message = "Delivered final preview (999 replaced)";
+            }
         }
         self.sync(cx)
     }
@@ -150,6 +174,7 @@ impl CounterFeature {
     fn sync(&self, cx: &mut MappedAppCx<'_, CounterMessage, Message>) -> rxui::Result<()> {
         let value = self.value_label.expect("value label exists");
         let status = self.reset_status.expect("reset status exists");
+        let preview_status = self.preview_status.expect("preview status exists");
         let reset_status = if self.reset_timer.is_some() {
             "Reset scheduled"
         } else {
@@ -158,6 +183,7 @@ impl CounterFeature {
         let ui = cx.source_ui()?;
         ui.set_label_text(value, self.value.to_string())?;
         ui.set_label_text(status, reset_status)?;
+        ui.set_label_text(preview_status, self.preview_message)?;
         Ok(())
     }
 }
@@ -223,7 +249,7 @@ impl App for MessageArchitecture {
         }
 
         cx.open_window(
-            WindowConfig::new("RXUI message architecture").size(760.0, 460.0),
+            WindowConfig::new("RXUI message architecture").size(760.0, 520.0),
             ui,
         )?;
         Ok(())

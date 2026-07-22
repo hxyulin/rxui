@@ -173,6 +173,53 @@ made while handling them, retain the originating window. In a multi-window
 application, put the target window or feature ID in externally delivered
 messages rather than relying on `source_window()`.
 
+## Coalesce replaceable previews
+
+Ordinary `post` preserves every message in FIFO order. When only the newest
+pending observation matters, use a stable `MessageKey` with `post_latest`:
+
+```rust
+let key = MessageKey::new("counter.preview", u64::from(self.id.0));
+for value in 1..=1_000 {
+    cx.post_latest(key, CounterMessage::PreviewValue(value));
+}
+```
+
+The first post reserves a queue position. Later posts with the same key replace
+its payload in place, so this example delivers one `PreviewValue(1000)` without
+moving it past unrelated messages. The newest source-window metadata also wins.
+Once the entry has been removed for dispatch it is no longer replaceable; a
+reentrant `post_latest` starts a new pending entry and remains subject to the
+normal bounded re-drain guard.
+
+Use descriptive static namespaces and stable instance IDs. Two counter
+instances can both use `"counter.preview"` because their numeric IDs keep the
+keys distinct. `MessageKey::singleton("window.resize")` is convenient when
+there is only one producer in the application.
+
+Latest-value posting fits pointer or resize previews, chart viewports,
+progress, and invalidation notifications. Do not use it for button actions,
+undo commits, transactions, file results, or anything whose count and complete
+ordering carry meaning. Coalescing is limited to queued posts; direct widget
+emissions and cross-thread `MessageProxy` deliveries remain ordinary messages.
+
+## Create timeout messages when they fire
+
+`set_timeout` retains a message immediately. Use `set_timeout_with` when the
+message should be constructed on the UI thread at the deadline:
+
+```rust
+cx.set_timeout_with(Duration::from_millis(250), || {
+    CounterMessage::PreviewValue(expensive_snapshot())
+});
+```
+
+The factory runs exactly once. Cancelling the returned `TimerId` drops it
+without invoking it, and neither the message nor the factory needs to be
+`Clone` or `Send`. The deterministic harness coalesces missed interval periods
+the same way as the production event loop: one interval delivery per
+`advance`, followed by a deadline strictly after the advanced time.
+
 ## Choose the smallest architecture that works
 
 Feature enums and mapped contexts are optional. Keep a single root `match`

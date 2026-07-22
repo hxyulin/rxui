@@ -35,6 +35,96 @@ pub use astrelis_ui_core::{Theme, Ui};
 /// defers the remainder to the next event-loop turn.
 const MAX_POSTED_PASSES: usize = 8;
 
+/// A runner-local identity used to replace an older pending message with its
+/// newest value.
+///
+/// Namespaces should describe the coalesced event, such as
+/// `"chart.viewport"`. Use the instance component to distinguish repeated
+/// feature instances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MessageKey {
+    namespace: &'static str,
+    instance: u64,
+}
+
+impl MessageKey {
+    /// Creates a key in a static namespace for one stable feature instance.
+    pub const fn new(namespace: &'static str, instance: u64) -> Self {
+        Self {
+            namespace,
+            instance,
+        }
+    }
+
+    /// Creates a key for an application-wide singleton event.
+    pub const fn singleton(namespace: &'static str) -> Self {
+        Self::new(namespace, 0)
+    }
+
+    /// Returns the descriptive static namespace.
+    pub const fn namespace(self) -> &'static str {
+        self.namespace
+    }
+
+    /// Returns the stable feature-instance component.
+    pub const fn instance(self) -> u64 {
+        self.instance
+    }
+}
+
+struct PostedMessage<M> {
+    message: M,
+    source: Option<WindowId>,
+}
+
+struct PostedQueue<M> {
+    entries: VecDeque<PostedMessage<M>>,
+    keyed: HashMap<MessageKey, usize>,
+}
+
+impl<M> Default for PostedQueue<M> {
+    fn default() -> Self {
+        Self {
+            entries: VecDeque::new(),
+            keyed: HashMap::new(),
+        }
+    }
+}
+
+impl<M> PostedQueue<M> {
+    fn post(&mut self, message: M, source: Option<WindowId>) {
+        self.entries.push_back(PostedMessage { message, source });
+    }
+
+    fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
+        if let Some(index) = self.keyed.get(&key).copied() {
+            let entry = self
+                .entries
+                .get_mut(index)
+                .expect("pending keyed-message index stays valid until the batch is drained");
+            entry.message = message;
+            entry.source = source;
+            return;
+        }
+
+        let index = self.entries.len();
+        self.entries.push_back(PostedMessage { message, source });
+        self.keyed.insert(key, index);
+    }
+
+    fn take(&mut self) -> Vec<(M, Option<WindowId>)> {
+        self.keyed.clear();
+        self.entries
+            .drain(..)
+            .map(|entry| (entry.message, entry.source))
+            .collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// A high-level RXUI application.
 ///
 /// Implementations describe UI in [`build`](Self::build) and react to typed
@@ -375,18 +465,24 @@ pub trait AppBackend<M: 'static> {
     fn invalidate_all(&mut self);
 
     /// Queues a message for dispatch after the current update.
-    fn post(&mut self, message: M);
+    fn post(&mut self, message: M, source: Option<WindowId>);
 
-    /// Takes every queued posted message.
-    fn take_posted(&mut self) -> Vec<M>;
+    /// Queues or replaces one pending latest-value message.
+    fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>);
+
+    /// Takes every queued posted message and its source window.
+    fn take_posted(&mut self) -> Vec<(M, Option<WindowId>)>;
+
+    /// Returns whether any posted messages remain queued.
+    fn has_posted(&self) -> bool;
 
     /// Returns a thread-safe message posting handle.
     fn proxy(&self) -> MessageProxy<M>
     where
         M: Send;
 
-    /// Schedules a message delivered once after a delay.
-    fn set_timeout(&mut self, delay: Duration, message: M) -> TimerId;
+    /// Schedules a one-shot message factory after a delay.
+    fn set_timeout(&mut self, delay: Duration, factory: Box<dyn FnOnce() -> M>) -> TimerId;
 
     /// Schedules messages produced by a factory at an interval.
     fn set_interval(&mut self, interval: Duration, factory: Box<dyn FnMut() -> M>) -> TimerId;
@@ -528,7 +624,16 @@ impl<'a, M: 'static> AppCx<'a, M> {
     /// Queues a message dispatched through [`App::update`] after the current
     /// callback completes.
     pub fn post(&mut self, message: M) {
-        self.backend.post(message);
+        self.backend.post(message, self.source);
+    }
+
+    /// Queues a latest-value message after the current callback completes.
+    ///
+    /// If a pending message has the same key, its payload and source window
+    /// are replaced without changing its queue position. Use ordinary
+    /// [`post`](Self::post) when every delivery is meaningful.
+    pub fn post_latest(&mut self, key: MessageKey, message: M) {
+        self.backend.post_latest(key, message, self.source);
     }
 
     /// Returns a cloneable handle that posts messages from any thread.
@@ -541,7 +646,19 @@ impl<'a, M: 'static> AppCx<'a, M> {
 
     /// Schedules a message delivered once after a delay.
     pub fn set_timeout(&mut self, delay: Duration, message: M) -> TimerId {
-        self.backend.set_timeout(delay, message)
+        self.set_timeout_with(delay, move || message)
+    }
+
+    /// Schedules a message produced once after a delay.
+    ///
+    /// The factory runs on the application event-loop thread when the timeout
+    /// fires. Cancelling the timer drops the factory without invoking it.
+    pub fn set_timeout_with(
+        &mut self,
+        delay: Duration,
+        factory: impl FnOnce() -> M + 'static,
+    ) -> TimerId {
+        self.backend.set_timeout(delay, Box::new(factory))
     }
 
     /// Schedules a message delivered repeatedly at an interval.
@@ -702,7 +819,7 @@ struct Shell<M: 'static> {
     theme: Theme,
     exit_on_last_window_close: bool,
     hosts: Vec<(WindowId, WindowHost<M>)>,
-    posted: VecDeque<M>,
+    posted: PostedQueue<M>,
     timers: HashMap<u64, NativeTimerId>,
     next_timer: u64,
     built: bool,
@@ -716,7 +833,7 @@ impl<M: 'static> Shell<M> {
             theme: config.theme,
             exit_on_last_window_close: config.exit_on_last_window_close,
             hosts: Vec::new(),
-            posted: VecDeque::new(),
+            posted: PostedQueue::default(),
             timers: HashMap::new(),
             next_timer: 1,
             built: false,
@@ -759,7 +876,7 @@ impl<A: App> RunnerCore<A> {
         message: A::Message,
     ) -> std::result::Result<(), DynAppError> {
         if !self.shell.built {
-            self.shell.posted.push_back(message);
+            self.shell.posted.post(message, None);
             return Ok(());
         }
         let exit_on_last = self.shell.exit_on_last_window_close;
@@ -784,7 +901,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         let mut backend = RuntimeBackend { context, shell };
         user.build(&mut AppCx::new(&mut backend, None))
             .map_err(DynAppError)?;
-        flush_posted(user, &mut backend, None).map_err(DynAppError)?;
+        flush_posted(user, &mut backend).map_err(DynAppError)?;
         invalidate_dirty(&mut backend);
         Ok(())
     }
@@ -802,7 +919,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         user.window_event(&mut AppCx::new(&mut backend, Some(window)), window, &event)
             .map_err(DynAppError)?;
         let Some(host) = backend.shell.host_mut(window) else {
-            flush_posted(user, &mut backend, Some(window)).map_err(DynAppError)?;
+            flush_posted(user, &mut backend).map_err(DynAppError)?;
             invalidate_dirty(&mut backend);
             return Ok(());
         };
@@ -828,7 +945,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         let had_windows = !backend.windows().is_empty();
         user.tick(&mut AppCx::new(&mut backend, None), info)
             .map_err(DynAppError)?;
-        flush_posted(user, &mut backend, None).map_err(DynAppError)?;
+        flush_posted(user, &mut backend).map_err(DynAppError)?;
         invalidate_dirty(&mut backend);
         if exit_on_last && had_windows && backend.windows().is_empty() {
             backend.exit();
@@ -848,7 +965,7 @@ impl<A: App> astrelis_app::App for RunnerCore<A> {
         let mut backend = RuntimeBackend { context, shell };
         user.render(&mut AppCx::new(&mut backend, Some(window)), window)
             .map_err(DynAppError)?;
-        if flush_posted(user, &mut backend, Some(window)).map_err(DynAppError)? {
+        if flush_posted(user, &mut backend).map_err(DynAppError)? {
             invalidate_dirty(&mut backend);
         }
         Ok(())
@@ -943,12 +1060,20 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         self.context.invalidate_all();
     }
 
-    fn post(&mut self, message: A::Message) {
-        self.shell.posted.push_back(message);
+    fn post(&mut self, message: A::Message, source: Option<WindowId>) {
+        self.shell.posted.post(message, source);
     }
 
-    fn take_posted(&mut self) -> Vec<A::Message> {
-        self.shell.posted.drain(..).collect()
+    fn post_latest(&mut self, key: MessageKey, message: A::Message, source: Option<WindowId>) {
+        self.shell.posted.post_latest(key, message, source);
+    }
+
+    fn take_posted(&mut self) -> Vec<(A::Message, Option<WindowId>)> {
+        self.shell.posted.take()
+    }
+
+    fn has_posted(&self) -> bool {
+        !self.shell.posted.is_empty()
     }
 
     fn proxy(&self) -> MessageProxy<A::Message>
@@ -965,16 +1090,20 @@ impl<A: App> AppBackend<A::Message> for RuntimeBackend<'_, '_, '_, A> {
         })
     }
 
-    fn set_timeout(&mut self, delay: Duration, message: A::Message) -> TimerId {
+    fn set_timeout(
+        &mut self,
+        delay: Duration,
+        factory: Box<dyn FnOnce() -> A::Message>,
+    ) -> TimerId {
         let timer = self.shell.alloc_timer();
         let raw = timer.raw();
-        let mut slot = Some(message);
+        let mut slot = Some(factory);
         let native = self
             .context
             .set_timeout(delay, move |core: &mut RunnerCore<A>, context| {
                 core.shell.timers.remove(&raw);
                 match slot.take() {
-                    Some(message) => core.dispatch_queued(context, message),
+                    Some(factory) => core.dispatch_queued(context, factory()),
                     None => Ok(()),
                 }
             });
@@ -1056,7 +1185,7 @@ fn process_host_update<A: App>(
             user.update(&mut AppCx::new(&mut *backend, Some(window)), message)?;
         }
     }
-    flush_posted(user, backend, Some(window))?;
+    flush_posted(user, backend)?;
     if !closed && update.redraw && backend.windows().contains(&window) {
         backend.invalidate(window);
     }
@@ -1076,7 +1205,7 @@ fn dispatch_external<A: App>(
 ) -> Result<()> {
     let had_windows = !backend.windows().is_empty();
     user.update(&mut AppCx::new(&mut *backend, None), message)?;
-    flush_posted(user, backend, None)?;
+    flush_posted(user, backend)?;
     invalidate_dirty(backend);
     if exit_on_last_window_close && had_windows && backend.windows().is_empty() {
         backend.exit();
@@ -1087,14 +1216,10 @@ fn dispatch_external<A: App>(
 /// Drains messages posted with [`AppCx::post`] through [`App::update`].
 ///
 /// Updates may post further messages, so draining repeats up to
-/// [`MAX_POSTED_PASSES`] times; any surplus is requeued for the next
+/// [`MAX_POSTED_PASSES`] times; any surplus remains queued for the next
 /// event-loop turn rather than looping forever. Returns whether any message
 /// was dispatched.
-fn flush_posted<A: App>(
-    user: &mut A,
-    backend: &mut dyn AppBackend<A::Message>,
-    source: Option<WindowId>,
-) -> Result<bool> {
+fn flush_posted<A: App>(user: &mut A, backend: &mut dyn AppBackend<A::Message>) -> Result<bool> {
     let mut processed = false;
     for _ in 0..MAX_POSTED_PASSES {
         let batch = backend.take_posted();
@@ -1102,15 +1227,11 @@ fn flush_posted<A: App>(
             return Ok(processed);
         }
         processed = true;
-        for message in batch {
+        for (message, source) in batch {
             user.update(&mut AppCx::new(&mut *backend, source), message)?;
         }
     }
-    let overflow = backend.take_posted();
-    if !overflow.is_empty() {
-        for message in overflow {
-            backend.post(message);
-        }
+    if backend.has_posted() {
         debug_assert!(
             false,
             "posted-message re-drain exceeded {MAX_POSTED_PASSES} passes; an `update` \
@@ -1146,6 +1267,7 @@ mod tests {
         Step(u32),
         Posted(u32),
         Spam,
+        LatestSpam,
         CloseSource,
     }
 
@@ -1172,6 +1294,10 @@ mod tests {
                 }
                 Msg::Posted(value) => self.log.push(format!("posted:{value}")),
                 Msg::Spam => cx.post(Msg::Spam),
+                Msg::LatestSpam => cx.post_latest(
+                    MessageKey::singleton("testing.latest-spam"),
+                    Msg::LatestSpam,
+                ),
                 Msg::CloseSource => {
                     self.log.push("close-source".into());
                     let window = cx.source_window().expect("source window recorded");
@@ -1215,7 +1341,7 @@ mod tests {
 
     struct MockBackend<M: 'static> {
         uis: Vec<(WindowId, Ui<M>)>,
-        posted: VecDeque<M>,
+        posted: PostedQueue<M>,
         proxy_sink: Arc<Mutex<Vec<M>>>,
         invalidated: Vec<WindowId>,
         closed: Vec<WindowId>,
@@ -1231,7 +1357,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 uis: Vec::new(),
-                posted: VecDeque::new(),
+                posted: PostedQueue::default(),
                 proxy_sink: Arc::new(Mutex::new(Vec::new())),
                 invalidated: Vec::new(),
                 closed: Vec::new(),
@@ -1306,12 +1432,20 @@ mod tests {
             self.invalidated.extend(windows);
         }
 
-        fn post(&mut self, message: M) {
-            self.posted.push_back(message);
+        fn post(&mut self, message: M, source: Option<WindowId>) {
+            self.posted.post(message, source);
         }
 
-        fn take_posted(&mut self) -> Vec<M> {
-            self.posted.drain(..).collect()
+        fn post_latest(&mut self, key: MessageKey, message: M, source: Option<WindowId>) {
+            self.posted.post_latest(key, message, source);
+        }
+
+        fn take_posted(&mut self) -> Vec<(M, Option<WindowId>)> {
+            self.posted.take()
+        }
+
+        fn has_posted(&self) -> bool {
+            !self.posted.is_empty()
         }
 
         fn proxy(&self) -> MessageProxy<M>
@@ -1325,7 +1459,7 @@ mod tests {
             })
         }
 
-        fn set_timeout(&mut self, _delay: Duration, _message: M) -> TimerId {
+        fn set_timeout(&mut self, _delay: Duration, _factory: Box<dyn FnOnce() -> M>) -> TimerId {
             let timer = TimerId::from_raw(self.next_timer);
             self.next_timer += 1;
             timer
@@ -1390,6 +1524,41 @@ mod tests {
     }
 
     #[test]
+    fn keyed_posts_replace_in_place_with_the_latest_source() {
+        let first = WindowId(11);
+        let second = WindowId(22);
+        let viewport = MessageKey::new("chart.viewport", 7);
+        let progress = MessageKey::singleton("load.progress");
+        assert_eq!(viewport.namespace(), "chart.viewport");
+        assert_eq!(viewport.instance(), 7);
+
+        let mut queue = PostedQueue::default();
+        queue.post_latest(viewport, Msg::Step(1), Some(first));
+        queue.post(Msg::Posted(9), None);
+        queue.post_latest(progress, Msg::Step(2), Some(first));
+        queue.post_latest(viewport, Msg::Step(3), Some(second));
+
+        assert_eq!(
+            queue.take(),
+            [
+                (Msg::Step(3), Some(second)),
+                (Msg::Posted(9), None),
+                (Msg::Step(2), Some(first)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_drained_key_starts_a_new_pending_entry() {
+        let key = MessageKey::singleton("testing.preview");
+        let mut queue = PostedQueue::default();
+        queue.post_latest(key, Msg::Step(1), None);
+        assert_eq!(queue.take(), [(Msg::Step(1), None)]);
+        queue.post_latest(key, Msg::Step(2), None);
+        assert_eq!(queue.take(), [(Msg::Step(2), None)]);
+    }
+
+    #[test]
     #[should_panic(expected = "re-drain")]
     fn posted_message_re_drain_is_bounded() {
         let mut app = TestApp::default();
@@ -1401,6 +1570,22 @@ mod tests {
             window,
             HostUpdate::default(),
             vec![Msg::Spam],
+            true,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "re-drain")]
+    fn keyed_post_re_drain_is_bounded() {
+        let mut app = TestApp::default();
+        let mut backend = MockBackend::new();
+        let window = backend.open();
+        let _ = process_host_update(
+            &mut app,
+            &mut backend,
+            window,
+            HostUpdate::default(),
+            vec![Msg::LatestSpam],
             true,
         );
     }

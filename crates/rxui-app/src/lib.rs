@@ -20,7 +20,7 @@ pub use message::{MappedAppCx, MessageMapper};
 pub use runner::spawn_on_canvas;
 pub use runner::{
     App, AppBackend, AppConfig, AppCx, Clipboard, CloseResponse, FixedStep, FontDatabaseOptions,
-    Instant, MainResult, MessageProxy, Monitor, ProxyClosed, RunError, RuntimeConfig,
+    Instant, MainResult, MessageKey, MessageProxy, Monitor, ProxyClosed, RunError, RuntimeConfig,
     RuntimePolicy, Theme, TimerId, Ui, UpdateInfo, WindowAttributes, WindowConfig, WindowEvent,
     WindowId,
 };
