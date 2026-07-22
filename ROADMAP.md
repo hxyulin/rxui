@@ -37,6 +37,22 @@ missing hooks belong in Astrelis; application and editor policy stays in RXUI.
 Every interactive feature must ship with keyboard behavior, focus handling,
 semantic coverage, deterministic tests, and correct idle invalidation.
 
+## Post-RC message runtime follow-ups
+
+The typed message architecture, queue control, timers, cancellable tasks,
+declarative interval/filesystem subscriptions, and bounded runtime diagnostics
+are complete for the first release candidate. Later releases may add:
+
+- UI layout, semantic, and paint invalidation attribution to message traces,
+  after defining a clean diagnostics boundary between RXUI and Astrelis;
+- declarative receiver or stream subscriptions with explicit ownership and
+  bounded delivery semantics;
+- keyed task start policies such as keep-existing and replace-existing;
+- opt-in message replay with explicit serialization, versioning, and treatment
+  of external nondeterminism;
+- latest-value coalescing for direct UI emissions and cross-thread proxies,
+  where call sites can state the policy explicitly.
+
 ## Added for 0.1.0-rc.1
 
 - Debounced native filesystem watching and portable browser file-content
