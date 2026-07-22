@@ -19,10 +19,10 @@ pub enum DockViewportDragEvent {
 ///
 /// # Work in progress
 ///
-/// This coordinator depends on the destination window receiving pointer
-/// events during a source-window drag. Native platforms commonly keep pointer
-/// capture in the source window, so cross-window previews and drops are not
-/// reliable until Astrelis provides native drag routing.
+/// This coordinator accepts either destination-window events or events
+/// translated from captured source-window coordinates. The latter requires
+/// the application shell to query client-area desktop positions; it remains
+/// unavailable on backends such as Wayland that do not expose them.
 ///
 /// Construct this from `DockAction::BeginViewportDrag`, retain it in the
 /// application shell, and pass raw window events to
@@ -69,6 +69,19 @@ impl DockViewportDrag {
     /// Returns the retained drag identity.
     pub const fn session(&self) -> DragSessionId {
         self.session
+    }
+
+    /// Returns the pointer device that owns the drag.
+    pub const fn device_id(&self) -> DeviceId {
+        self.device_id
+    }
+
+    /// Returns the native destination currently receiving the drag.
+    pub const fn target(&self) -> Option<WindowId> {
+        match self.target {
+            Some((window, _)) => Some(window),
+            None => None,
+        }
     }
 
     /// Routes one raw event for `window` into external drag events when needed.

@@ -2,15 +2,15 @@
 //!
 //! Drag the Inspector tab into empty workspace space to detach it into a
 //! native window. Closing a secondary window docks its panel back into the
-//! primary one. Cross-window drag previews and drops are not reliable yet
-//! because native pointer capture routing is still pending in Astrelis.
+//! primary one. On desktop backends that expose client-area positions, captured
+//! source-window motion is translated into the viewport under the pointer.
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 use std::collections::BTreeMap;
 
-use astrelis_core::geometry::Size;
-use astrelis_platform::WindowAttributes;
+use astrelis_core::geometry::{Physical, Point, Size};
+use astrelis_platform::{ElementState, PointerButton, WindowAttributes};
 use rxui::{
     editor::{
         DockAction, DockFloatingMode, DockLayout, DockNode, DockPlacement, DockSide, DockStyle,
@@ -168,6 +168,43 @@ impl MultiViewportExample {
             .insert(window, HostedViewport { logical, workspace });
         Ok(window)
     }
+
+    fn viewport_under_pointer(
+        &self,
+        cx: &AppCx<'_, Message>,
+        source: WindowId,
+        source_position: Point<Physical, f64>,
+    ) -> rxui::Result<Option<(WindowId, Point<Physical, f64>)>> {
+        let Ok(source_origin) = cx.window(source)?.inner_position() else {
+            return Ok(None);
+        };
+        let desktop = Point::<Physical, f64>::new(
+            f64::from(source_origin.x) + source_position.x,
+            f64::from(source_origin.y) + source_position.y,
+        );
+        for target in self.windows.keys().rev().copied() {
+            if target == source {
+                continue;
+            }
+            let window = cx.window(target)?;
+            let Ok(origin) = window.inner_position() else {
+                continue;
+            };
+            let size = window.inner_size()?;
+            let local = Point::<Physical, f64>::new(
+                desktop.x - f64::from(origin.x),
+                desktop.y - f64::from(origin.y),
+            );
+            if local.x >= 0.0
+                && local.y >= 0.0
+                && local.x < f64::from(size.width)
+                && local.y < f64::from(size.height)
+            {
+                return Ok(Some((target, local)));
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl App for MultiViewportExample {
@@ -300,11 +337,87 @@ impl App for MultiViewportExample {
         window: WindowId,
         event: &WindowEvent,
     ) -> rxui::Result<()> {
-        let Some(drag) = &mut self.drag else {
+        let Some(active) = self.drag.as_ref() else {
             return Ok(());
         };
+        let source = active.source();
+        let device_id = active.device_id();
+
+        if window == source {
+            let destination = match event {
+                WindowEvent::PointerMoved {
+                    device_id: event_device,
+                    position,
+                } if *event_device == device_id => {
+                    self.viewport_under_pointer(cx, source, *position)?
+                }
+                _ => None,
+            };
+            if matches!(event, WindowEvent::PointerMoved { device_id: event_device, .. } if *event_device == device_id)
+            {
+                let previous = self.drag.as_ref().and_then(DockViewportDrag::target);
+                let next = destination.map(|(target, _)| target);
+                if previous != next
+                    && let Some(previous) = previous
+                {
+                    let leave = WindowEvent::PointerLeft { device_id };
+                    let scale = cx.window(previous)?.scale_factor() as f32;
+                    self.drag
+                        .as_mut()
+                        .expect("drag is active")
+                        .handle_window_event(cx.ui(previous)?, previous, scale, &leave)?;
+                    cx.invalidate(previous);
+                }
+                if let Some((target, position)) = destination {
+                    let moved = WindowEvent::PointerMoved {
+                        device_id,
+                        position,
+                    };
+                    let scale = cx.window(target)?.scale_factor() as f32;
+                    self.drag
+                        .as_mut()
+                        .expect("drag is active")
+                        .handle_window_event(cx.ui(target)?, target, scale, &moved)?;
+                    cx.invalidate(target);
+                }
+                return Ok(());
+            }
+
+            if matches!(event, WindowEvent::PointerButton {
+                device_id: event_device,
+                button: PointerButton::Primary,
+                state: ElementState::Released,
+            } if *event_device == device_id)
+            {
+                let target = self.drag.as_ref().and_then(DockViewportDrag::target);
+                let outcome = if let Some(target) = target {
+                    let scale = cx.window(target)?.scale_factor() as f32;
+                    let outcome = self
+                        .drag
+                        .as_mut()
+                        .expect("drag is active")
+                        .handle_window_event(cx.ui(target)?, target, scale, event)?;
+                    let messages = cx.host(target)?.drain_messages().collect::<Vec<_>>();
+                    for message in messages {
+                        cx.post_from_window(target, message);
+                    }
+                    outcome
+                } else {
+                    DockViewportDragEvent::Ended
+                };
+                if outcome == DockViewportDragEvent::Ended {
+                    self.drag = None;
+                }
+                return Ok(());
+            }
+        }
+
         let scale_factor = cx.window(window)?.scale_factor() as f32;
-        let outcome = drag.handle_window_event(cx.ui(window)?, window, scale_factor, event)?;
+        let outcome = self
+            .drag
+            .as_mut()
+            .expect("drag is active")
+            .handle_window_event(cx.ui(window)?, window, scale_factor, event)?;
         if outcome == DockViewportDragEvent::Ended {
             self.drag = None;
         }

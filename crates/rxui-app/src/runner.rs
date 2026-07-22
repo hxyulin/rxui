@@ -1053,6 +1053,14 @@ impl<'a, M: 'static> AppCx<'a, M> {
         self.backend.post(message, self.source);
     }
 
+    /// Queues a message attributed to a specific window.
+    ///
+    /// This is useful when one native window callback routes retained input
+    /// into another window's UI tree, such as a captured cross-window drag.
+    pub fn post_from_window(&mut self, window: WindowId, message: M) {
+        self.backend.post(message, Some(window));
+    }
+
     /// Queues a latest-value message after the current callback completes.
     ///
     /// If a pending message has the same key, its payload and source window
@@ -2897,6 +2905,15 @@ mod tests {
                 (Msg::Step(2), Some(first)),
             ]
         );
+    }
+
+    #[test]
+    fn post_from_window_preserves_the_routed_source() {
+        let source = WindowId(42);
+        let mut backend = MockBackend::new();
+        AppCx::new(&mut backend, Some(WindowId(7))).post_from_window(source, Msg::Step(1));
+        let (message, actual_source, _) = backend.take_posted().pop().unwrap().into_parts();
+        assert_eq!((message, actual_source), (Msg::Step(1), Some(source)));
     }
 
     #[test]

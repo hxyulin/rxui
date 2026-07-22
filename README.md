@@ -120,9 +120,9 @@ cargo run -p rxui --example multiviewport_docking
 ```
 
 > **WIP:** Dragging the Inspector into empty workspace space creates a second
-> native window, and closing it docks the panel back into the primary viewport.
-> Live dragging and docking previews between native windows are not reliable
-> until Astrelis provides native cross-window drag routing.
+> native window. On macOS and other backends exposing client-area desktop
+> positions, captured pointer motion is routed between windows for live docking
+> previews and drops. Wayland still requires platform-native drag-and-drop.
 
 Run the native/browser visual workflow showcase:
 
