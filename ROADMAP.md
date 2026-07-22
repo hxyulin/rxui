@@ -28,18 +28,22 @@ missing hooks belong in Astrelis; application and editor policy stays in RXUI.
   but operating-system assistive technologies cannot consume them yet.
 - Multiline and rich/code text editing with line navigation, large-document
   virtualization, syntax spans, and undo integration.
-- Filesystem watching (open/save dialogs, URL/file launching, recent
-  documents, and external file drag and drop shipped in `rxui-services` and
-  the platform event stream; watching remains).
-- Browser-side file dialogs; `rxui-services` dialogs currently report
-  unsupported on wasm.
-- A supported image decoding/loading widget path above external GPU images.
-- Charting for line, bar, and scatter plots with axes, legends, zooming, and
-  large-data decimation.
-- Node-graph editing with ports, routed edges, box selection, keyboard editing,
-  pan/zoom, and serialization.
+- Browser folder selection; portable file-content opening and byte downloads
+  are available, but browsers cannot expose native `PathBuf` values or native
+  filesystem watchers.
 - Later hardening for localization and RTL layout, high contrast, reduced
   motion, and animation/transitions.
 
 Every interactive feature must ship with keyboard behavior, focus handling,
 semantic coverage, deterministic tests, and correct idle invalidation.
+
+## Added for 0.1.0-rc.1
+
+- Debounced native filesystem watching and portable browser file-content
+  open/save services.
+- PNG/JPEG/WebP decoding and retained image presentation.
+- Line, bar, and scatter charts with axes, compact legends, axis-specific
+  pan/zoom, viewport clamping, live latest-X following, keyboard selection,
+  and deterministic decimation.
+- Versioned serializable node graphs with ports, routed edges, box selection,
+  keyboard editing, connection gestures, and pan/zoom.

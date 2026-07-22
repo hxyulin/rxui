@@ -28,6 +28,14 @@ RXUI `0.1.0-rc.1` is the first public preview and includes:
 - atomic versioned JSON state and monitor-safe window placement restoration;
 - message-driven native file dialogs, URL and path launching, and persisted
   recent-document tracking;
+- portable byte-oriented browser file opening/downloads and debounced native
+  filesystem watching;
+- decoded PNG/JPEG/WebP images with contain, cover, fill, and pixel-size fitting;
+- interactive line, bar, and scatter charts with axis-specific navigation,
+  clamped viewports, live latest-data following, and deterministic large-data
+  decimation;
+- serializable node graphs with ports, routed edges, selection, keyboard
+  editing, and pan/zoom;
 - a coherent dockable editor workspace with backward-compatible named layouts;
 - virtualized, accessible tree and sortable/resizable table views;
 - typed text, number, boolean, and enum property inspection;
@@ -87,6 +95,18 @@ rendered 2D scene, and property inspector. Drag or resize docked panels, pan and
 zoom the scene, invoke commands from the palette, edit undoable properties, and
 save or restore the named workspace layout.
 
+Run the native/browser visual workflow showcase:
+
+```sh
+cargo run -p rxui --example workflow_studio
+```
+
+Workflow Studio combines an editable node graph, horizontally scrollable live
+chart with a fixed vertical range, decoded image preview, portable graph/image
+import, graph export, and native automatic reload when an imported file
+changes. Use **Toggle live data** to append samples and **Follow latest** to
+resume automatic scrolling after inspecting history.
+
 Inspect a live retained tree (press F12, Command-Option-I, or use the launcher):
 
 ```sh
@@ -133,14 +153,24 @@ The script installs the wasm target and the pinned `wasm-bindgen-cli` if
 missing, then builds the example and runs `wasm-bindgen`; see the script for
 the underlying commands.
 
+Build Workflow Studio for the browser with:
+
+```sh
+scripts/build-web-demo.sh workflow_studio
+```
+
+Then open `http://localhost:8000/workflow_studio.html` from the same server.
+
 Then open `http://localhost:8000/robot_arm.html`. The generated package is
 `crates/rxui/web/pkg`. Startup looks up `#rxui-canvas`, starts the browser
 event loop on that canvas, and completes adapter/device creation asynchronously;
 the host reports `HostStatus::Initializing` until WebGPU is ready.
 
-Web intentionally reports native menus, filesystem-backed JSON state, and
-permission-gated clipboard operations as unavailable. Browser support assumes a
-modern WebGPU implementation and a secure context (localhost is accepted).
+Web intentionally reports native menus, filesystem-backed JSON state,
+filesystem watching, folder selection, and permission-gated clipboard
+operations as unavailable. File-content opening and byte downloads are
+supported. Browser support assumes a modern WebGPU implementation and a secure
+context (localhost is accepted).
 
 ## Development
 

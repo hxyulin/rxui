@@ -1,8 +1,17 @@
 //! Native desktop backend backed by `rfd` dialogs and the `open` crate.
 
-use std::{path::Path, thread};
+use std::{path::Path, sync::Arc, thread};
 
-use crate::{DeliverFile, DeliverFiles, FileDialogOptions, ServiceBackend, ServiceError};
+use notify_debouncer_full::{
+    new_debouncer,
+    notify::{RecursiveMode, event::ModifyKind},
+};
+
+use crate::{
+    DeliverFile, DeliverFiles, DeliverSavedFile, DeliverSelectedFile, DeliverSelectedFiles,
+    DeliverWatch, FileDialogOptions, FileWatchEvent, FileWatchKind, FileWatchOptions, FileWatcher,
+    SavedFile, SelectedFile, ServiceBackend, ServiceError,
+};
 
 /// Native [`ServiceBackend`] for desktop targets.
 ///
@@ -71,6 +80,129 @@ impl ServiceBackend for NativeBackend {
             let handle = pollster::block_on(build_dialog(&options).save_file());
             deliver(handle.map(|file| file.path().to_path_buf()));
         });
+    }
+
+    fn pick_file_contents(&self, options: FileDialogOptions, deliver: DeliverSelectedFile) {
+        thread::spawn(move || {
+            let Some(handle) = pollster::block_on(build_dialog(&options).pick_file()) else {
+                deliver(Ok(None));
+                return;
+            };
+            let path = handle.path().to_path_buf();
+            let result = std::fs::read(&path)
+                .map(|bytes| {
+                    Some(SelectedFile {
+                        name: handle.file_name(),
+                        bytes: bytes.into(),
+                        path: Some(path),
+                    })
+                })
+                .map_err(ServiceError::from_display);
+            deliver(result);
+        });
+    }
+
+    fn pick_files_contents(&self, options: FileDialogOptions, deliver: DeliverSelectedFiles) {
+        thread::spawn(move || {
+            let Some(handles) = pollster::block_on(build_dialog(&options).pick_files()) else {
+                deliver(Ok(None));
+                return;
+            };
+            let result = handles
+                .into_iter()
+                .map(|handle| {
+                    let path = handle.path().to_path_buf();
+                    std::fs::read(&path)
+                        .map(|bytes| SelectedFile {
+                            name: handle.file_name(),
+                            bytes: bytes.into(),
+                            path: Some(path),
+                        })
+                        .map_err(ServiceError::from_display)
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some);
+            deliver(result);
+        });
+    }
+
+    fn save_bytes(&self, options: FileDialogOptions, bytes: Arc<[u8]>, deliver: DeliverSavedFile) {
+        thread::spawn(move || {
+            let Some(handle) = pollster::block_on(build_dialog(&options).save_file()) else {
+                deliver(Ok(None));
+                return;
+            };
+            let path = handle.path().to_path_buf();
+            let result = std::fs::write(&path, bytes.as_ref())
+                .map(|()| {
+                    Some(SavedFile {
+                        name: handle.file_name(),
+                        path: Some(path),
+                    })
+                })
+                .map_err(ServiceError::from_display);
+            deliver(result);
+        });
+    }
+
+    fn watch(
+        &self,
+        options: FileWatchOptions,
+        mut deliver: DeliverWatch,
+    ) -> Result<FileWatcher, ServiceError> {
+        let mut debouncer = new_debouncer(
+            options.debounce,
+            None,
+            move |result: notify_debouncer_full::DebounceEventResult| match result {
+                Ok(events) => {
+                    for event in events {
+                        let kind = if event.need_rescan() {
+                            FileWatchKind::Rescan
+                        } else {
+                            match event.kind {
+                                notify_debouncer_full::notify::EventKind::Create(_) => {
+                                    FileWatchKind::Created
+                                }
+                                notify_debouncer_full::notify::EventKind::Modify(
+                                    ModifyKind::Name(_),
+                                ) => FileWatchKind::Renamed,
+                                notify_debouncer_full::notify::EventKind::Modify(_) => {
+                                    FileWatchKind::Modified
+                                }
+                                notify_debouncer_full::notify::EventKind::Remove(_) => {
+                                    FileWatchKind::Removed
+                                }
+                                _ => FileWatchKind::Other,
+                            }
+                        };
+                        deliver(Ok(FileWatchEvent {
+                            paths: event.paths.clone(),
+                            kind,
+                        }));
+                    }
+                }
+                Err(errors) => {
+                    let message = errors
+                        .into_iter()
+                        .map(|error| error.to_string())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    deliver(Err(ServiceError::Backend(message)));
+                }
+            },
+        )
+        .map_err(ServiceError::from_display)?;
+        debouncer
+            .watch(
+                &options.path,
+                if options.recursive {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                },
+            )
+            .map_err(ServiceError::from_display)?;
+        Ok(FileWatcher::from_guard(debouncer))
     }
 
     fn open_url(&self, url: &str) -> Result<(), ServiceError> {

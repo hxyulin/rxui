@@ -5,18 +5,26 @@
 use astrelis_ui_core::{ElementHandle, Ui, UiError};
 use astrelis_ui_widgets::{Menu, MenuItem};
 
+mod chart;
 mod controls;
 mod icon;
+mod image;
 mod palette;
 mod shell;
 mod validation;
 mod views;
 
+pub use chart::{
+    AxisOptions, ChartAction, ChartAxes, ChartError, ChartInteractionOptions, ChartOptions,
+    ChartPoint, ChartSelection, ChartSeries, ChartSeriesKind, ChartView, ChartViewport,
+    decimate_line,
+};
 pub use controls::{
     ComboBox, ComboBoxBuilder, ComboBoxItem, FormSection, NumericField, NumericFieldBuilder,
     NumericFieldOptions, RadioGroup, RadioGroupBuilder, RadioOption,
 };
 pub use icon::{CommandButton, Icon, IconButton, IconError, IconView, icons};
+pub use image::{ImageAlignment, ImageDecodeError, ImageFit, ImageView, decode_image};
 pub use palette::{CommandPalette, CommandPaletteEvent, CommandPaletteState};
 pub use shell::{
     DialogAction, DialogActionRole, DialogError, DialogHost, DialogOptions, Toast, ToastAction,

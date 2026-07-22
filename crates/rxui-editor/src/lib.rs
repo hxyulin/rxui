@@ -5,8 +5,14 @@
 use astrelis_ui_docking::DockLayout;
 use serde::{Deserialize, Serialize};
 
+mod node_graph;
 mod property;
 
+pub use node_graph::{
+    GraphEdge, GraphEndpoint, GraphInteractionPhase, GraphNode, GraphPoint, GraphPort,
+    GraphPortDirection, GraphSize, GraphViewport, NODE_GRAPH_FORMAT_VERSION, NodeGraphAction,
+    NodeGraphDocument, NodeGraphError, NodeGraphOptions, NodeGraphSelection, NodeGraphView,
+};
 pub use property::{PropertyAction, PropertyField, PropertyGrid, PropertySection, PropertyValue};
 
 /// Re-exports of Astrelis's retained docking implementation.

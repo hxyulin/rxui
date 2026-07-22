@@ -3,10 +3,30 @@
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-use crate::{DeliverFile, DeliverFiles, FileDialogOptions, ServiceBackend, ServiceError};
+use crate::{
+    DeliverFile, DeliverFiles, DeliverSavedFile, DeliverSelectedFile, DeliverSelectedFiles,
+    DeliverWatch, FileDialogOptions, FileWatchEvent, FileWatchOptions, FileWatcher, SavedFile,
+    SelectedFile, ServiceBackend, ServiceError,
+};
+
+struct WatchSink {
+    active: Arc<AtomicBool>,
+    deliver: DeliverWatch,
+}
+
+struct FakeWatchGuard(Arc<AtomicBool>);
+
+impl Drop for FakeWatchGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 /// Deterministic [`ServiceBackend`] for tests; never shows OS dialogs.
 ///
@@ -17,12 +37,24 @@ use crate::{DeliverFile, DeliverFiles, FileDialogOptions, ServiceBackend, Servic
 /// empty queue delivers `None` (cancellation). Every dialog request and
 /// launch call is recorded for assertions via
 /// [`requests`](Self::requests) and [`launches`](Self::launches).
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FakeBackend {
     files: Mutex<VecDeque<Option<PathBuf>>>,
     file_lists: Mutex<VecDeque<Option<Vec<PathBuf>>>>,
     requests: Mutex<Vec<FileDialogOptions>>,
     launches: Mutex<Vec<String>>,
+    selected: Mutex<VecDeque<Result<Option<SelectedFile>, ServiceError>>>,
+    selected_lists: Mutex<VecDeque<Result<Option<Vec<SelectedFile>>, ServiceError>>>,
+    saves: Mutex<Vec<(FileDialogOptions, Arc<[u8]>)>>,
+    watchers: Mutex<Vec<WatchSink>>,
+}
+
+impl std::fmt::Debug for FakeBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FakeBackend")
+            .finish_non_exhaustive()
+    }
 }
 
 impl FakeBackend {
@@ -47,6 +79,41 @@ impl FakeBackend {
             .lock()
             .expect("FakeBackend poisoned")
             .push_back(result);
+    }
+
+    /// Queues a portable file-content result.
+    pub fn push_selected_file(&self, result: Result<Option<SelectedFile>, ServiceError>) {
+        self.selected
+            .lock()
+            .expect("FakeBackend poisoned")
+            .push_back(result);
+    }
+
+    /// Queues a portable multi-file content result.
+    pub fn push_selected_files(&self, result: Result<Option<Vec<SelectedFile>>, ServiceError>) {
+        self.selected_lists
+            .lock()
+            .expect("FakeBackend poisoned")
+            .push_back(result);
+    }
+
+    /// Returns byte-oriented save requests in call order.
+    pub fn saves(&self) -> Vec<(FileDialogOptions, Arc<[u8]>)> {
+        self.saves.lock().expect("FakeBackend poisoned").clone()
+    }
+
+    /// Delivers one event to every active fake watcher.
+    pub fn emit_watch(&self, event: FileWatchEvent) {
+        for sink in self
+            .watchers
+            .lock()
+            .expect("FakeBackend poisoned")
+            .iter_mut()
+        {
+            if sink.active.load(Ordering::Acquire) {
+                (sink.deliver)(Ok(event.clone()));
+            }
+        }
     }
 
     /// Returns every dialog request received so far, in call order.
@@ -101,6 +168,56 @@ impl ServiceBackend for FakeBackend {
     fn save_file(&self, options: FileDialogOptions, deliver: DeliverFile) {
         self.record_request(options);
         deliver(self.next_file());
+    }
+
+    fn pick_file_contents(&self, options: FileDialogOptions, deliver: DeliverSelectedFile) {
+        self.record_request(options);
+        let result = self
+            .selected
+            .lock()
+            .expect("FakeBackend poisoned")
+            .pop_front()
+            .unwrap_or(Ok(None));
+        deliver(result);
+    }
+
+    fn pick_files_contents(&self, options: FileDialogOptions, deliver: DeliverSelectedFiles) {
+        self.record_request(options);
+        let result = self
+            .selected_lists
+            .lock()
+            .expect("FakeBackend poisoned")
+            .pop_front()
+            .unwrap_or(Ok(None));
+        deliver(result);
+    }
+
+    fn save_bytes(&self, options: FileDialogOptions, bytes: Arc<[u8]>, deliver: DeliverSavedFile) {
+        self.record_request(options.clone());
+        self.saves
+            .lock()
+            .expect("FakeBackend poisoned")
+            .push((options.clone(), bytes));
+        deliver(Ok(Some(SavedFile {
+            name: options.file_name_ref().unwrap_or("download").to_owned(),
+            path: None,
+        })));
+    }
+
+    fn watch(
+        &self,
+        _options: FileWatchOptions,
+        deliver: DeliverWatch,
+    ) -> Result<FileWatcher, ServiceError> {
+        let active = Arc::new(AtomicBool::new(true));
+        self.watchers
+            .lock()
+            .expect("FakeBackend poisoned")
+            .push(WatchSink {
+                active: active.clone(),
+                deliver,
+            });
+        Ok(FileWatcher::from_guard(FakeWatchGuard(active)))
     }
 
     fn open_url(&self, url: &str) -> Result<(), ServiceError> {

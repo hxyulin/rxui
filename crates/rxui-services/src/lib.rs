@@ -46,6 +46,7 @@ pub mod fake;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod recent;
+mod watch;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
@@ -54,6 +55,7 @@ pub use fake::FakeBackend;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::NativeBackend;
 pub use recent::RecentDocuments;
+pub use watch::{DeliverWatch, FileWatchEvent, FileWatchKind, FileWatchOptions, FileWatcher};
 #[cfg(target_arch = "wasm32")]
 pub use web::WebBackend;
 
@@ -63,6 +65,36 @@ pub type DeliverFile = Box<dyn FnOnce(Option<PathBuf>) + Send>;
 /// One-shot delivery of a multi-selection dialog result; `None` means
 /// cancelled.
 pub type DeliverFiles = Box<dyn FnOnce(Option<Vec<PathBuf>>) + Send>;
+
+/// A selected file whose contents are portable across native and browser targets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedFile {
+    /// User-visible file name.
+    pub name: String,
+    /// Entire selected file contents.
+    pub bytes: Arc<[u8]>,
+    /// Native path when the platform exposes one; browsers return `None`.
+    pub path: Option<PathBuf>,
+}
+
+/// Result of a completed byte-oriented save operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedFile {
+    /// User-visible saved file name.
+    pub name: String,
+    /// Native destination when the platform exposes one; browsers return `None`.
+    pub path: Option<PathBuf>,
+}
+
+/// Delivery of one portable selected file; `Ok(None)` means cancellation.
+pub type DeliverSelectedFile = Box<dyn FnOnce(Result<Option<SelectedFile>, ServiceError>) + Send>;
+
+/// Delivery of portable selected files; `Ok(None)` means cancellation.
+pub type DeliverSelectedFiles =
+    Box<dyn FnOnce(Result<Option<Vec<SelectedFile>>, ServiceError>) + Send>;
+
+/// Delivery of a byte-oriented save; `Ok(None)` means cancellation.
+pub type DeliverSavedFile = Box<dyn FnOnce(Result<Option<SavedFile>, ServiceError>) + Send>;
 
 /// Platform implementation behind [`DesktopServices`].
 ///
@@ -80,6 +112,35 @@ pub trait ServiceBackend: Send + Sync {
 
     /// Shows a save-file dialog.
     fn save_file(&self, options: FileDialogOptions, deliver: DeliverFile);
+
+    /// Selects and reads one file on any supported target.
+    fn pick_file_contents(&self, _options: FileDialogOptions, deliver: DeliverSelectedFile) {
+        deliver(Err(ServiceError::UnsupportedPlatform));
+    }
+
+    /// Selects and reads multiple files on any supported target.
+    fn pick_files_contents(&self, _options: FileDialogOptions, deliver: DeliverSelectedFiles) {
+        deliver(Err(ServiceError::UnsupportedPlatform));
+    }
+
+    /// Chooses a destination and writes the supplied bytes.
+    fn save_bytes(
+        &self,
+        _options: FileDialogOptions,
+        _bytes: Arc<[u8]>,
+        deliver: DeliverSavedFile,
+    ) {
+        deliver(Err(ServiceError::UnsupportedPlatform));
+    }
+
+    /// Starts watching one native path.
+    fn watch(
+        &self,
+        _options: FileWatchOptions,
+        _deliver: DeliverWatch,
+    ) -> Result<FileWatcher, ServiceError> {
+        Err(ServiceError::UnsupportedPlatform)
+    }
 
     /// Opens a URL with the user's default handler (usually the browser).
     fn open_url(&self, url: &str) -> Result<(), ServiceError>;
@@ -169,6 +230,45 @@ impl DesktopServices {
         deliver: impl FnOnce(Option<PathBuf>) + Send + 'static,
     ) {
         self.backend.save_file(options, Box::new(deliver));
+    }
+
+    /// Selects and reads one file, returning bytes on native and browser targets.
+    pub fn pick_file_contents(
+        &self,
+        options: FileDialogOptions,
+        deliver: impl FnOnce(Result<Option<SelectedFile>, ServiceError>) + Send + 'static,
+    ) {
+        self.backend.pick_file_contents(options, Box::new(deliver));
+    }
+
+    /// Selects and reads multiple files, returning bytes on native and browser targets.
+    pub fn pick_files_contents(
+        &self,
+        options: FileDialogOptions,
+        deliver: impl FnOnce(Result<Option<Vec<SelectedFile>>, ServiceError>) + Send + 'static,
+    ) {
+        self.backend.pick_files_contents(options, Box::new(deliver));
+    }
+
+    /// Chooses a destination and writes bytes without exposing a browser path.
+    pub fn save_bytes(
+        &self,
+        options: FileDialogOptions,
+        bytes: impl Into<Arc<[u8]>>,
+        deliver: impl FnOnce(Result<Option<SavedFile>, ServiceError>) + Send + 'static,
+    ) {
+        self.backend
+            .save_bytes(options, bytes.into(), Box::new(deliver));
+    }
+
+    /// Starts a debounced filesystem watcher. Native backends support this;
+    /// browser backends return [`ServiceError::UnsupportedPlatform`].
+    pub fn watch(
+        &self,
+        options: FileWatchOptions,
+        deliver: impl FnMut(Result<FileWatchEvent, ServiceError>) + Send + 'static,
+    ) -> Result<FileWatcher, ServiceError> {
+        self.backend.watch(options, Box::new(deliver))
     }
 
     /// Opens a URL with the user's default handler.
@@ -325,6 +425,96 @@ mod tests {
         });
         assert_eq!(*seen.lock().unwrap(), Some(Some(PathBuf::from("/shared"))));
         assert_eq!(backend.requests().len(), 1);
+    }
+
+    #[test]
+    fn portable_content_dialogs_preserve_bytes_and_errors() {
+        let (services, backend) = services();
+        backend.push_selected_file(Ok(Some(SelectedFile {
+            name: "scene.json".into(),
+            bytes: Arc::from(&b"{}"[..]),
+            path: None,
+        })));
+        let selected = Arc::new(std::sync::Mutex::new(None));
+        let sink = selected.clone();
+        services.pick_file_contents(FileDialogOptions::new(), move |result| {
+            *sink.lock().unwrap() = Some(result);
+        });
+        let selected = selected.lock().unwrap().take().unwrap().unwrap().unwrap();
+        assert_eq!(selected.name, "scene.json");
+        assert_eq!(selected.bytes.as_ref(), b"{}");
+
+        let saved = Arc::new(std::sync::Mutex::new(None));
+        let sink = saved.clone();
+        services.save_bytes(
+            FileDialogOptions::new().file_name("scene.json"),
+            &b"payload"[..],
+            move |result| *sink.lock().unwrap() = Some(result),
+        );
+        assert_eq!(backend.saves()[0].1.as_ref(), b"payload");
+        assert_eq!(
+            saved.lock().unwrap().take().unwrap().unwrap().unwrap().name,
+            "scene.json"
+        );
+    }
+
+    #[test]
+    fn fake_watcher_stops_delivering_after_drop() {
+        let (services, backend) = services();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let watcher = services
+            .watch(FileWatchOptions::new("/tmp"), move |event| {
+                sink.lock().unwrap().push(event.unwrap());
+            })
+            .unwrap();
+        let event = FileWatchEvent {
+            paths: vec![PathBuf::from("/tmp/a")],
+            kind: FileWatchKind::Modified,
+        };
+        backend.emit_watch(event.clone());
+        assert_eq!(*events.lock().unwrap(), vec![event]);
+        drop(watcher);
+        backend.emit_watch(FileWatchEvent {
+            paths: vec![PathBuf::from("/tmp/b")],
+            kind: FileWatchKind::Created,
+        });
+        assert_eq!(events.lock().unwrap().len(), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_watcher_observes_a_temporary_file_change() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("watched.txt");
+        std::fs::write(&path, b"before").unwrap();
+        let services = DesktopServices::native();
+        let (send, receive) = mpsc::channel();
+        let _watcher = services
+            .watch(
+                FileWatchOptions::new(&path).debounce(Duration::from_millis(20)),
+                move |event| {
+                    let _ = send.send(event);
+                },
+            )
+            .unwrap();
+        std::fs::write(&path, b"after").unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let observed = loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = receive.recv_timeout(remaining).unwrap().unwrap();
+            if event
+                .paths
+                .iter()
+                .any(|changed| changed.file_name() == path.file_name())
+            {
+                break event;
+            }
+        };
+        assert!(!observed.paths.is_empty());
     }
 
     #[test]

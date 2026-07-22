@@ -41,20 +41,27 @@ pub mod prelude {
     pub use rxui_devtools::{InspectorAction, InspectorOptions, UiInspector};
     #[cfg(feature = "editor")]
     pub use rxui_editor::{
-        PropertyAction, PropertyField, PropertyGrid, PropertySection, PropertyValue, SavedLayout,
-        SavedLayoutError, WorkspaceState,
+        GraphEdge, GraphEndpoint, GraphInteractionPhase, GraphNode, GraphPoint, GraphPort,
+        GraphPortDirection, GraphSize, GraphViewport, NodeGraphAction, NodeGraphDocument,
+        NodeGraphError, NodeGraphOptions, NodeGraphSelection, NodeGraphView, PropertyAction,
+        PropertyField, PropertyGrid, PropertySection, PropertyValue, SavedLayout, SavedLayoutError,
+        WorkspaceState,
     };
     pub use rxui_native_menu::{ApplicationMenu, NativeMenuError, NativeMenuEvent};
     pub use rxui_services::{
-        DesktopServices, FileDialogOptions, FileFilter, RecentDocuments, ServiceError,
+        DesktopServices, FileDialogOptions, FileFilter, FileWatchEvent, FileWatchKind,
+        FileWatchOptions, FileWatcher, RecentDocuments, SavedFile, SelectedFile, ServiceError,
     };
     pub use rxui_widgets::{
+        AxisOptions, ChartAction, ChartAxes, ChartError, ChartInteractionOptions, ChartOptions,
+        ChartPoint, ChartSelection, ChartSeries, ChartSeriesKind, ChartView, ChartViewport,
         ComboBox, ComboBoxItem, CommandButton, CommandPalette, CommandPaletteEvent,
         CommandPaletteState, DialogAction, DialogActionRole, DialogHost, DialogOptions,
-        FieldValidation, FormSection, FormValidation, Icon, IconButton, IconView, NumericField,
-        NumericFieldOptions, RadioGroup, RadioOption, SortDirection, TableAction, TableColumn,
-        TableRow, TableSort, TableView, ThemePreference, ThemeSet, Toast, ToastAction, ToastHost,
-        ToastId, ToastLevel, ToastQueue, Toolbar, ToolbarItem, ToolbarOptions, TreeAction,
-        TreeNode, TreeView, ValidationIssue, ValidationResult, ValidationSeverity, icons,
+        FieldValidation, FormSection, FormValidation, Icon, IconButton, IconView, ImageAlignment,
+        ImageDecodeError, ImageFit, ImageView, NumericField, NumericFieldOptions, RadioGroup,
+        RadioOption, SortDirection, TableAction, TableColumn, TableRow, TableSort, TableView,
+        ThemePreference, ThemeSet, Toast, ToastAction, ToastHost, ToastId, ToastLevel, ToastQueue,
+        Toolbar, ToolbarItem, ToolbarOptions, TreeAction, TreeNode, TreeView, ValidationIssue,
+        ValidationResult, ValidationSeverity, decode_image, icons,
     };
 }

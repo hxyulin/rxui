@@ -21,9 +21,8 @@ astrelis-ui = { workspace = true }
 astrelis-ui-core = { workspace = true }
 astrelis-ui-widgets = { workspace = true }
 astrelis-platform = { workspace = true }
-
-[dev-dependencies]
 astrelis-text = { workspace = true }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [lints]
 workspace = true

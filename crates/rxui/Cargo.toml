@@ -44,6 +44,7 @@ astrelis-text = { workspace = true }
 astrelis-ui-core = { workspace = true }
 astrelis-ui-testing = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen = { workspace = true }

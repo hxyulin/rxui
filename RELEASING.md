@@ -1,6 +1,6 @@
 # Releasing RXUI
 
-RXUI uses one synchronized version for its seven-crate graph. The first public
+RXUI uses one synchronized version for its eight-package graph. The first public
 candidate is `0.1.0-rc.1` and requires Astrelis `=0.3.0-rc.1`.
 
 ## Preparation
@@ -12,6 +12,9 @@ cargo fmt --all --check
 cargo test --workspace --all-features --all-targets
 cargo clippy --workspace --all-features --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+cargo check --workspace --all-features --target wasm32-unknown-unknown
+cargo run --release -p rxui --example visual_features_perf -- --check
+./scripts/build-web-demo.sh workflow_studio
 ./scripts/release-rxui.sh package
 ```
 
@@ -33,6 +36,6 @@ confirmation between layers. An upload error stops immediately and is never
 retried automatically; rerun the command after rate limits or registry
 propagation delays.
 
-After all seven packages are visible, test a fresh crates.io-only consumer.
+After all eight packages are visible, test a fresh crates.io-only consumer.
 Then tag the published commit as `v0.1.0-rc.1` and create the matching GitHub
 prerelease. Never tag before the complete registry graph succeeds.

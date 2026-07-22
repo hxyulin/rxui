@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Builds the robot_arm WebGPU demo into crates/rxui/web/pkg for a no-bundler
+# Builds an RXUI WebGPU demo into crates/rxui/web/pkg for a no-bundler
 # browser page. Requires the wasm32-unknown-unknown target and pins the
 # wasm-bindgen CLI to the workspace's wasm-bindgen version.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 WASM_BINDGEN_VERSION="0.2.126"
+example="${1:-robot_arm}"
+case "${example}" in
+  robot_arm|workflow_studio) ;;
+  *) echo "usage: $0 [robot_arm|workflow_studio]" >&2; exit 2 ;;
+esac
 
 rustup target list --installed | grep -q '^wasm32-unknown-unknown$' ||
   rustup target add wasm32-unknown-unknown
@@ -15,10 +20,10 @@ if [[ "${installed}" != "${WASM_BINDGEN_VERSION}" ]]; then
   cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
 fi
 
-cargo build --release -p rxui --example robot_arm --target wasm32-unknown-unknown
-wasm-bindgen --target web --out-dir crates/rxui/web/pkg --out-name robot_arm \
-  target/wasm32-unknown-unknown/release/examples/robot_arm.wasm
+cargo build --release -p rxui --example "${example}" --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir crates/rxui/web/pkg --out-name "${example}" \
+  "target/wasm32-unknown-unknown/release/examples/${example}.wasm"
 
 echo "Built crates/rxui/web/pkg. Serve it with:"
 echo "  python3 -m http.server --directory crates/rxui/web 8000"
-echo "then open http://localhost:8000/robot_arm.html"
+echo "then open http://localhost:8000/${example}.html"

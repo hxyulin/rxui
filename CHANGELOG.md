@@ -21,6 +21,14 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
   constructors.
 - Desktop services: native file open/save dialogs, URL and file launching,
   and a persisted recent-documents list.
+- Portable byte-oriented browser open/save dialogs and debounced native
+  filesystem watching.
+- PNG/JPEG/WebP image decoding plus retained image fitting and sampling.
+- Interactive line, bar, and scatter charts with axes, legends, axis-specific
+  pan/zoom, viewport clamping, live latest-X following, selection, and
+  deterministic large-data decimation.
+- Versioned serializable node-graph editing with ports, routed edges, box
+  selection, connection gestures, keyboard editing, and pan/zoom.
 - Native and browser UI hosting with idle-efficient scheduling.
 - Typed commands, shortcuts, native menus, undo/redo, state persistence, and
   application-shell conventions.
@@ -40,5 +48,5 @@ framework for desktop applications and editors, powered by Astrelis 0.3.
 ### Known gaps
 
 - Native screen-reader adapters are not implemented yet.
-- Multiline/rich text, filesystem watching, image loading, charts, and node
-  graphs remain future work; file dialogs are native-only for now.
+- Multiline/rich text and browser folder selection remain future work; native
+  accessibility adapters are also not implemented yet.

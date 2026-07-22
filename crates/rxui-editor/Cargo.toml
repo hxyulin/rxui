@@ -18,6 +18,11 @@ rxui-app = { workspace = true }
 rxui-widgets = { workspace = true }
 astrelis-ui-docking = { workspace = true }
 astrelis-ui-widgets = { workspace = true }
+astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-text = { workspace = true }
+astrelis-ui-core = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
