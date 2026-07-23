@@ -5,8 +5,9 @@ use astrelis_platform::{
     DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey, PhysicalKey,
 };
 use rxui_next::{
-    Component, ComponentContext, ComponentHost, ComponentWithProps, PropertyField, Theme, button,
-    checkbox, column, component, label, property_grid, slider, stack, text_field,
+    CommandItem, CommandPaletteNavigation, Component, ComponentContext, ComponentHost,
+    ComponentWithProps, PropertyField, Theme, button, checkbox, column, command_palette, component,
+    label, property_grid, slider, stack, text_field,
 };
 
 #[derive(Clone)]
@@ -555,4 +556,98 @@ fn focus_scope_autofocuses_restores_and_routes_escape() {
             .into_iter()
             .any(|node| node.data.label == "Open" && node.focused)
     );
+}
+
+#[derive(Clone)]
+enum PaletteAction {
+    Query(String),
+    Previous,
+    Next,
+    Invoke(u8),
+    Dismiss,
+}
+
+struct Palette {
+    selected: usize,
+    invoked: Option<u8>,
+}
+
+impl Component for Palette {
+    type Action = PaletteAction;
+    type Effect = ();
+
+    fn update(&mut self, action: Self::Action, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            PaletteAction::Query(query) => {
+                let _ = query;
+                self.selected = 0;
+            }
+            PaletteAction::Previous | PaletteAction::Next => {
+                self.selected = (self.selected + 1) % 2;
+            }
+            PaletteAction::Invoke(command) => self.invoked = Some(command),
+            PaletteAction::Dismiss => {}
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+        command_palette(
+            true,
+            "",
+            &[
+                CommandItem {
+                    id: "one".into(),
+                    label: "One".into(),
+                    description: None,
+                    action: PaletteAction::Invoke(1),
+                    enabled: true,
+                },
+                CommandItem {
+                    id: "two".into(),
+                    label: "Two".into(),
+                    description: None,
+                    action: PaletteAction::Invoke(2),
+                    enabled: true,
+                },
+            ],
+            self.selected,
+            PaletteAction::Query,
+            CommandPaletteNavigation {
+                dismiss: PaletteAction::Dismiss,
+                previous: PaletteAction::Previous,
+                next: PaletteAction::Next,
+            },
+        )
+    }
+}
+
+#[test]
+fn command_palette_navigation_bubbles_through_the_search_field() {
+    let mut host = ComponentHost::new(
+        Palette {
+            selected: 0,
+            invoked: None,
+        },
+        LogicalSize::new(640.0, 480.0),
+        Theme::dark(),
+    )
+    .unwrap();
+    for key in [NamedKey::Other("ArrowDown".into()), NamedKey::Enter] {
+        host.input(rxui_next::core::UiInput::Keyboard {
+            input: KeyboardInput {
+                device_id: DeviceId(1),
+                physical_key: PhysicalKey::Unidentified,
+                logical_key: Key::Named(key),
+                text: None,
+                location: KeyLocation::Standard,
+                state: ElementState::Pressed,
+                repeat: false,
+                synthetic: false,
+            },
+            modifiers: Modifiers::default(),
+        })
+        .unwrap();
+    }
+    assert_eq!(host.component().selected, 1);
+    assert_eq!(host.component().invoked, Some(2));
 }

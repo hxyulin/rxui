@@ -9,11 +9,11 @@ use astrelis_core::{
 use astrelis_platform::WindowAttributes;
 use rxui_next::{
     ButtonVariant, ChartAction, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec, Choice,
-    CommandItem, Component, ComponentContext, ContainerStyle, DialogAction, DockAxis, DockNode,
-    DockPane, FrameStyle, GraphEdge, GraphNode, NodeGraphAction, NodeGraphSpec, Space, StackStyle,
-    Theme, Toast, ToastLevel, ToolbarItem, View, WindowHostOptions, chart, command_palette, dialog,
-    dock_workspace, form_section, node_graph, radio_group, run_component, stack_with, toasts,
-    toolbar,
+    CommandItem, CommandPaletteNavigation, Component, ComponentContext, ContainerStyle,
+    DialogAction, DockAxis, DockNode, DockPane, FrameStyle, GraphEdge, GraphNode, NodeGraphAction,
+    NodeGraphSpec, Space, StackStyle, Theme, Toast, ToastLevel, ToolbarItem, View,
+    WindowHostOptions, chart, command_palette, dialog, dock_workspace, form_section, node_graph,
+    radio_group, run_component, stack_with, toasts, toolbar,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +32,8 @@ enum Action {
     OpenDialog,
     CloseDialog,
     TogglePalette,
+    PreviousCommand,
+    NextCommand,
     Query(String),
     Save,
     ClearToast,
@@ -44,6 +46,7 @@ struct Workbench {
     mode: String,
     dialog_open: bool,
     palette_open: bool,
+    selected_command: usize,
     query: String,
     toast: Option<Toast<Action>>,
 }
@@ -79,6 +82,7 @@ impl Workbench {
             mode: "Edit".into(),
             dialog_open: false,
             palette_open: false,
+            selected_command: 0,
             query: String::new(),
             toast: None,
         }
@@ -109,8 +113,20 @@ impl Component for Workbench {
                 self.palette_open = false;
             }
             Action::CloseDialog => self.dialog_open = false,
-            Action::TogglePalette => self.palette_open = !self.palette_open,
-            Action::Query(query) => self.query = query,
+            Action::TogglePalette => {
+                self.palette_open = !self.palette_open;
+                self.selected_command = 0;
+            }
+            Action::PreviousCommand => {
+                self.selected_command = (self.selected_command + 1) % 2;
+            }
+            Action::NextCommand => {
+                self.selected_command = (self.selected_command + 1) % 2;
+            }
+            Action::Query(query) => {
+                self.query = query;
+                self.selected_command = 0;
+            }
             Action::Save => {
                 self.dialog_open = false;
                 self.palette_open = false;
@@ -265,9 +281,13 @@ impl Component for Workbench {
             self.palette_open,
             &self.query,
             &palette_items,
-            0,
+            self.selected_command,
             Action::Query,
-            Action::TogglePalette,
+            CommandPaletteNavigation {
+                dismiss: Action::TogglePalette,
+                previous: Action::PreviousCommand,
+                next: Action::NextCommand,
+            },
         );
         let toast_items = self.toast.iter().cloned().collect::<Vec<_>>();
         stack_with(

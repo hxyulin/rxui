@@ -171,6 +171,22 @@ impl<Action: 'static> AnyView<Action> {
             }),
         }
     }
+
+    /// Handles list navigation and submission after focused-child bubbling.
+    pub fn command_navigation(self, previous: Action, next: Action, submit: Action) -> Self
+    where
+        Action: Clone,
+    {
+        AnyView {
+            key: self.key.clone(),
+            inner: Box::new(CommandNavigationView {
+                child: self,
+                previous,
+                next,
+                submit,
+            }),
+        }
+    }
 }
 
 /// Explicit sizing and flex-growth options.
@@ -427,7 +443,7 @@ impl<Action: 'static> ViewHost<Action> {
 
 /// Creates a text view.
 pub fn label<Action: 'static>(text: impl Into<String>) -> AnyView<Action> {
-    label_with_width(text, None)
+    label_with_style(text, LabelStyle::default())
 }
 
 /// Creates a shaped text view with an optional preferred width.
@@ -435,13 +451,67 @@ pub fn label_with_width<Action: 'static>(
     text: impl Into<String>,
     width: impl Into<Option<f32>>,
 ) -> AnyView<Action> {
+    label_with_style(text, LabelStyle::default().width(width.into()))
+}
+
+/// Typed label presentation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LabelStyle {
+    /// Logical font size.
+    pub font_size: f32,
+    /// Semantic text color.
+    pub role: ColorRole,
+    /// Optional preferred width.
+    pub width: Option<f32>,
+}
+
+impl LabelStyle {
+    /// Creates standard body-label presentation.
+    pub const fn standard() -> Self {
+        Self {
+            font_size: 14.0,
+            role: ColorRole::Text,
+            width: None,
+        }
+    }
+
+    /// Selects the logical font size.
+    pub const fn font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    /// Selects a semantic text color.
+    pub const fn role(mut self, role: ColorRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// Selects an optional preferred width.
+    pub const fn width(mut self, width: Option<f32>) -> Self {
+        self.width = width;
+        self
+    }
+}
+
+impl Default for LabelStyle {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+/// Creates a text view with typed presentation.
+pub fn label_with_style<Action: 'static>(
+    text: impl Into<String>,
+    style: LabelStyle,
+) -> AnyView<Action> {
     AnyView {
         key: None,
         inner: Box::new(LabelView {
             text: text.into(),
-            font_size: 14.0,
-            role: ColorRole::Text,
-            width: width.into(),
+            font_size: style.font_size.max(1.0),
+            role: style.role,
+            width: style.width,
         }),
     }
 }
@@ -1052,6 +1122,111 @@ impl<Action: Clone + 'static> DynView<Action> for EscapeView<Action> {
             .ui
             .update(state.handle, Invalidation::empty(), |listener| {
                 listener.set_escape(move || action_sink(action.clone()));
+            })?;
+        let mut child_context = context.reborrow(state.handle.id());
+        if state.child.kind == self.child.kind() {
+            self.child
+                .inner
+                .rebuild(&mut state.child, &mut child_context)?;
+        } else {
+            child_context.ui.remove(state.child.node)?;
+            state.child = self
+                .child
+                .inner
+                .build(self.child.key.clone(), &mut child_context)?;
+        }
+        Ok(())
+    }
+}
+
+struct CommandNavigationView<Action: Clone + 'static> {
+    child: AnyView<Action>,
+    previous: Action,
+    next: Action,
+    submit: Action,
+}
+
+struct CommandNavigationState<Action: Clone + 'static> {
+    handle: NodeHandle<KeyListener>,
+    child: MountedView<Action>,
+}
+
+impl<Action: Clone + 'static> MountedState<Action> for CommandNavigationState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.child.state.route(action, context)
+    }
+}
+
+impl<Action: Clone + 'static> DynView<Action> for CommandNavigationView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let previous = self.previous.clone();
+        let next = self.next.clone();
+        let submit = self.submit.clone();
+        let previous_sink = context.action_sink.clone();
+        let next_sink = context.action_sink.clone();
+        let submit_sink = context.action_sink.clone();
+        let handle = context.ui.append(
+            context.parent,
+            KeyListener::command_navigation(
+                move || previous_sink(previous.clone()),
+                move || next_sink(next.clone()),
+                move || submit_sink(submit.clone()),
+            ),
+        )?;
+        let mut child_context = context.reborrow(handle.id());
+        let child = self
+            .child
+            .inner
+            .build(self.child.key.clone(), &mut child_context)?;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(CommandNavigationState { handle, child }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<CommandNavigationState<Action>>()
+            .expect("view kind and state agree");
+        let previous = self.previous;
+        let next = self.next;
+        let submit = self.submit;
+        let previous_sink = context.action_sink.clone();
+        let next_sink = context.action_sink.clone();
+        let submit_sink = context.action_sink.clone();
+        context
+            .ui
+            .update(state.handle, Invalidation::empty(), |listener| {
+                listener.set_command_navigation(
+                    move || previous_sink(previous.clone()),
+                    move || next_sink(next.clone()),
+                    move || submit_sink(submit.clone()),
+                );
             })?;
         let mut child_context = context.reborrow(state.handle.id());
         if state.child.kind == self.child.kind() {

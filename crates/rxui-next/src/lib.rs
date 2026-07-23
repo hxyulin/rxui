@@ -14,6 +14,7 @@ mod native;
 mod node_graph;
 mod specialized;
 mod style;
+mod validation;
 mod view;
 mod workspace;
 
@@ -26,6 +27,7 @@ pub use native::*;
 pub use node_graph::*;
 pub use specialized::*;
 pub use style::*;
+pub use validation::*;
 pub use view::*;
 pub use workspace::*;
 

@@ -332,6 +332,17 @@ pub struct CommandItem<Action> {
     pub enabled: bool,
 }
 
+/// Controlled keyboard actions for a command palette.
+#[derive(Clone)]
+pub struct CommandPaletteNavigation<Action> {
+    /// Close the palette without invoking a command.
+    pub dismiss: Action,
+    /// Select the previous visible command.
+    pub previous: Action,
+    /// Select the next visible command.
+    pub next: Action,
+}
+
 /// Builds a controlled keyboard-first command palette surface.
 pub fn command_palette<Action: Clone + 'static>(
     open: bool,
@@ -339,7 +350,7 @@ pub fn command_palette<Action: Clone + 'static>(
     commands: &[CommandItem<Action>],
     selected: usize,
     on_query: impl Fn(String) -> Action + 'static,
-    on_dismiss: Action,
+    navigation: CommandPaletteNavigation<Action>,
 ) -> View<Action> {
     let query_lower = query.trim().to_lowercase();
     let matches = commands
@@ -354,6 +365,12 @@ pub fn command_palette<Action: Clone + 'static>(
         })
         .take(12)
         .collect::<Vec<_>>();
+    let selected = selected.min(matches.len().saturating_sub(1));
+    let submit = matches
+        .get(selected)
+        .filter(|command| command.enabled)
+        .map(|command| command.action.clone())
+        .unwrap_or_else(|| navigation.dismiss.clone());
     column_with(
         ContainerStyle::new()
             .gap(Space::Sm)
@@ -384,6 +401,7 @@ pub fn command_palette<Action: Clone + 'static>(
     )
     .visible(open)
     .focus_scope(open)
-    .dismiss_on_escape(on_dismiss)
+    .command_navigation(navigation.previous, navigation.next, submit)
+    .dismiss_on_escape(navigation.dismiss)
     .aligned(Alignment::Top, Space::Xl)
 }
