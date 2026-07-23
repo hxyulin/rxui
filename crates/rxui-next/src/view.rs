@@ -16,8 +16,9 @@ use astrelis_core::{
     geometry::{LogicalPoint, LogicalSize},
 };
 use astrelis_ui_next::{
-    Axis, BoxElement, Button, Checkbox, Element, Flex, Frame, Invalidation, Label, NodeHandle,
-    NodeId, Scroll, ScrollAxis, SemanticData, Slider, Stack, TextField, UiError, UiRoot,
+    Align, Alignment, Axis, BoxElement, Button, Checkbox, Element, Flex, Frame, Invalidation,
+    KeyListener, Label, NodeHandle, NodeId, Scroll, ScrollAxis, SemanticData, Slider, SplitPane,
+    Stack, TextField, UiError, UiRoot,
 };
 
 use crate::{
@@ -131,6 +132,43 @@ impl<Action: 'static> AnyView<Action> {
         AnyView {
             key: self.key.clone(),
             inner: Box::new(FrameView { child: self, style }),
+        }
+    }
+
+    /// Expands to available space and positions this view within it.
+    pub fn aligned(self, alignment: Alignment, padding: Space) -> Self {
+        AnyView {
+            key: self.key.clone(),
+            inner: Box::new(AlignView {
+                child: self,
+                alignment,
+                padding,
+            }),
+        }
+    }
+
+    /// Autofocuses this subtree while active and restores prior focus on exit.
+    pub fn focus_scope(self, active: bool) -> Self {
+        AnyView {
+            key: self.key.clone(),
+            inner: Box::new(FocusScopeView {
+                child: self,
+                active,
+            }),
+        }
+    }
+
+    /// Handles Escape after an unhandled key event bubbles from this subtree.
+    pub fn dismiss_on_escape(self, action: Action) -> Self
+    where
+        Action: Clone,
+    {
+        AnyView {
+            key: self.key.clone(),
+            inner: Box::new(EscapeView {
+                child: self,
+                action,
+            }),
         }
     }
 }
@@ -439,7 +477,7 @@ impl ButtonStyle {
     pub const fn standard() -> Self {
         Self {
             variant: ButtonVariant::Standard,
-            size: LogicalSize::new(120.0, 30.0),
+            size: LogicalSize::new(0.0, 30.0),
         }
     }
 
@@ -845,6 +883,291 @@ struct EnabledView<Action: 'static> {
 struct FrameView<Action: 'static> {
     child: AnyView<Action>,
     style: FrameStyle,
+}
+
+struct FocusScopeView<Action: 'static> {
+    child: AnyView<Action>,
+    active: bool,
+}
+
+struct FocusScopeState<Action: 'static> {
+    child: MountedView<Action>,
+    active: bool,
+    previous: Option<NodeId>,
+}
+
+impl<Action: 'static> MountedState<Action> for FocusScopeState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.child.state.route(action, context)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for FocusScopeView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let previous = self
+            .active
+            .then(|| context.ui.focused().or_else(|| context.ui.last_focused()))
+            .flatten();
+        let child = self.child.inner.build(self.child.key.clone(), context)?;
+        if self.active {
+            context.ui.focus_first_in_subtree(child.node)?;
+        }
+        let node = child.node;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node,
+            state: Box::new(FocusScopeState {
+                child,
+                active: self.active,
+                previous,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<FocusScopeState<Action>>()
+            .expect("view kind and state agree");
+        let activating = !state.active && self.active;
+        let deactivating = state.active && !self.active;
+        let previous = activating
+            .then(|| context.ui.focused().or_else(|| context.ui.last_focused()))
+            .flatten();
+        if state.child.kind == self.child.kind() {
+            self.child.inner.rebuild(&mut state.child, context)?;
+        } else {
+            context.ui.remove(state.child.node)?;
+            state.child = self.child.inner.build(self.child.key.clone(), context)?;
+            mounted.node = state.child.node;
+        }
+        if activating {
+            state.previous = previous;
+            context.ui.focus_first_in_subtree(state.child.node)?;
+        } else if deactivating {
+            let restored = state
+                .previous
+                .filter(|previous| context.ui.contains(*previous))
+                .is_some_and(|previous| context.ui.set_focus(Some(previous)).is_ok());
+            if !restored {
+                context.ui.set_focus(None)?;
+            }
+            state.previous = None;
+        }
+        state.active = self.active;
+        Ok(())
+    }
+}
+
+struct EscapeView<Action: Clone + 'static> {
+    child: AnyView<Action>,
+    action: Action,
+}
+
+struct EscapeState<Action: Clone + 'static> {
+    handle: NodeHandle<KeyListener>,
+    child: MountedView<Action>,
+}
+
+impl<Action: Clone + 'static> MountedState<Action> for EscapeState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.child.state.route(action, context)
+    }
+}
+
+impl<Action: Clone + 'static> DynView<Action> for EscapeView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let action = self.action.clone();
+        let action_sink = context.action_sink.clone();
+        let handle = context.ui.append(
+            context.parent,
+            KeyListener::on_escape(move || action_sink(action.clone())),
+        )?;
+        let mut child_context = context.reborrow(handle.id());
+        let child = self
+            .child
+            .inner
+            .build(self.child.key.clone(), &mut child_context)?;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(EscapeState { handle, child }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<EscapeState<Action>>()
+            .expect("view kind and state agree");
+        let action = self.action;
+        let action_sink = context.action_sink.clone();
+        context
+            .ui
+            .update(state.handle, Invalidation::empty(), |listener| {
+                listener.set_escape(move || action_sink(action.clone()));
+            })?;
+        let mut child_context = context.reborrow(state.handle.id());
+        if state.child.kind == self.child.kind() {
+            self.child
+                .inner
+                .rebuild(&mut state.child, &mut child_context)?;
+        } else {
+            child_context.ui.remove(state.child.node)?;
+            state.child = self
+                .child
+                .inner
+                .build(self.child.key.clone(), &mut child_context)?;
+        }
+        Ok(())
+    }
+}
+
+struct AlignView<Action: 'static> {
+    child: AnyView<Action>,
+    alignment: Alignment,
+    padding: Space,
+}
+
+struct AlignState<Action: 'static> {
+    handle: NodeHandle<Align>,
+    child: MountedView<Action>,
+    alignment: Alignment,
+    padding: f32,
+}
+
+impl<Action: 'static> MountedState<Action> for AlignState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.child.state.route(action, context)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for AlignView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let padding = context.theme.space(self.padding);
+        let handle = context.ui.append(
+            context.parent,
+            Align {
+                alignment: self.alignment,
+                padding,
+            },
+        )?;
+        let mut child_context = context.reborrow(handle.id());
+        let child = self
+            .child
+            .inner
+            .build(self.child.key.clone(), &mut child_context)?;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(AlignState {
+                handle,
+                child,
+                alignment: self.alignment,
+                padding,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<AlignState<Action>>()
+            .expect("view kind and state agree");
+        let padding = context.theme.space(self.padding);
+        if state.alignment != self.alignment || state.padding != padding {
+            context
+                .ui
+                .update(state.handle, Invalidation::LAYOUT_ALL, |align| {
+                    align.alignment = self.alignment;
+                    align.padding = padding;
+                })?;
+        }
+        let mut child_context = context.reborrow(state.handle.id());
+        if state.child.kind == self.child.kind() {
+            self.child
+                .inner
+                .rebuild(&mut state.child, &mut child_context)?;
+        } else {
+            child_context.ui.remove(state.child.node)?;
+            state.child = self
+                .child
+                .inner
+                .build(self.child.key.clone(), &mut child_context)?;
+        }
+        state.alignment = self.alignment;
+        state.padding = padding;
+        Ok(())
+    }
 }
 
 struct FrameState<Action: 'static> {
@@ -1361,6 +1684,25 @@ pub fn flex<Action: 'static>(
     children: impl IntoChildren<Action>,
 ) -> AnyView<Action> {
     container(axis, ContainerStyle::new().gap(gap), children)
+}
+
+/// Creates a two-child pane with a dedicated draggable divider.
+pub fn split_pane<Action: 'static>(
+    axis: Axis,
+    ratio: f32,
+    first: View<Action>,
+    second: View<Action>,
+    on_resize: impl Fn(f32) -> Action + 'static,
+) -> View<Action> {
+    AnyView {
+        key: None,
+        inner: Box::new(SplitPaneView {
+            axis,
+            ratio: ratio.clamp(0.05, 0.95),
+            on_resize: Arc::new(on_resize),
+            children: vec![first, second],
+        }),
+    }
 }
 
 struct LabelView {
@@ -1913,6 +2255,107 @@ struct FlexView<Action: 'static> {
     padding: Space,
     background: Option<ColorRole>,
     children: Vec<AnyView<Action>>,
+}
+
+struct SplitPaneView<Action: 'static> {
+    axis: Axis,
+    ratio: f32,
+    on_resize: Arc<dyn Fn(f32) -> Action>,
+    children: Vec<AnyView<Action>>,
+}
+
+struct SplitPaneState<Action: 'static> {
+    handle: NodeHandle<SplitPane>,
+    axis: Axis,
+    ratio: f32,
+    children: Vec<MountedView<Action>>,
+}
+
+impl<Action: 'static> MountedState<Action> for SplitPaneState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        let mut output = Vec::new();
+        for child in &mut self.children {
+            output.extend(child.state.route(action, context)?);
+            if action.is_none() {
+                break;
+            }
+        }
+        Ok(output)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for SplitPaneView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        validate_keys(&self.children)?;
+        let on_resize = self.on_resize.clone();
+        let action_sink = context.action_sink.clone();
+        let handle = context.ui.append(
+            context.parent,
+            SplitPane::new(self.axis, self.ratio, move |ratio| {
+                action_sink(on_resize(ratio))
+            }),
+        )?;
+        let mut child_context = context.reborrow(handle.id());
+        let mut children = Vec::with_capacity(self.children.len());
+        for child in self.children {
+            children.push(child.inner.build(child.key, &mut child_context)?);
+        }
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(SplitPaneState {
+                handle,
+                axis: self.axis,
+                ratio: self.ratio,
+                children,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        validate_keys(&self.children)?;
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<SplitPaneState<Action>>()
+            .expect("view kind and state agree");
+        let on_resize = self.on_resize.clone();
+        let action_sink = context.action_sink.clone();
+        context
+            .ui
+            .update(state.handle, Invalidation::LAYOUT_ALL, |split| {
+                split.axis = self.axis;
+                split.ratio = self.ratio;
+                split.set_changed(move |ratio| action_sink(on_resize(ratio)));
+            })?;
+        let mut child_context = context.reborrow(state.handle.id());
+        reconcile_children(&mut state.children, self.children, &mut child_context)?;
+        state.axis = self.axis;
+        state.ratio = self.ratio;
+        Ok(())
+    }
 }
 
 struct StackView<Action: 'static> {

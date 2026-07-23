@@ -7,8 +7,10 @@ use astrelis_core::{
     geometry::{LogicalPoint, LogicalRect, LogicalSize},
 };
 use astrelis_paint::{Brush, Painter, Path, StrokeStyle};
+use astrelis_platform::CursorIcon;
 use astrelis_ui_next::{
-    Constraints, Element, EventResult, LayoutContext, SemanticData, SemanticRole, UiError, UiInput,
+    Constraints, Element, EventResult, Invalidation, LayoutContext, SemanticData, SemanticRole,
+    UiError, UiInput,
 };
 
 use crate::{ActionEmitter, RetainedSpec, View, retained};
@@ -88,6 +90,7 @@ pub struct ChartElement<Action: 'static> {
     series: Vec<ChartSeries>,
     options: ChartOptions,
     size: LogicalSize,
+    hovered: Option<(u64, usize)>,
     emitter: ActionEmitter<Action>,
     map_action: Arc<dyn Fn(ChartAction) -> Action>,
 }
@@ -115,9 +118,14 @@ impl<Action: 'static> ChartElement<Action> {
         };
         let x_span = (max_x - min_x).max(f64::EPSILON);
         let y_span = (max_y - min_y).max(f64::EPSILON);
+        let inset = 12.0f32
+            .min(self.size.width * 0.1)
+            .min(self.size.height * 0.1);
+        let width = (self.size.width - inset * 2.0).max(0.0);
+        let height = (self.size.height - inset * 2.0).max(0.0);
         LogicalPoint::new(
-            ((point.x - min_x) / x_span) as f32 * self.size.width,
-            self.size.height - ((point.y - min_y) / y_span) as f32 * self.size.height,
+            inset + ((point.x - min_x) / x_span) as f32 * width,
+            inset + height - ((point.y - min_y) / y_span) as f32 * height,
         )
     }
 
@@ -161,39 +169,55 @@ impl<Action: 'static> Element for ChartElement<Action> {
         painter: &mut Painter,
         size: LogicalSize,
     ) -> Result<(), astrelis_paint::PaintError> {
-        painter.fill_rect(
-            LogicalRect::from_xywh(0.0, 0.0, size.width, size.height),
-            Brush::Solid(self.options.background),
-        )?;
-        for series in &self.series {
-            match series.kind {
-                ChartSeriesKind::Line if series.points.len() > 1 => {
-                    let mut builder = Path::builder();
-                    builder.move_to(self.project(series.points[0]))?;
-                    for point in &series.points[1..] {
-                        builder.line_to(self.project(*point))?;
-                    }
-                    painter.stroke_path(
-                        &builder.finish(),
-                        StrokeStyle {
-                            width: self.options.stroke_width.max(0.5),
-                            ..StrokeStyle::default()
-                        },
-                        Brush::Solid(series.color),
-                    )?;
-                }
-                _ => {
-                    for point in &series.points {
-                        let point = self.project(*point);
-                        painter.fill_rect(
-                            LogicalRect::from_xywh(point.x - 2.0, point.y - 2.0, 4.0, 4.0),
+        painter.with_save(|painter| {
+            painter.clip_rect(LogicalRect::from_xywh(0.0, 0.0, size.width, size.height))?;
+            painter.fill_rect(
+                LogicalRect::from_xywh(0.0, 0.0, size.width, size.height),
+                Brush::Solid(self.options.background),
+            )?;
+            for series in &self.series {
+                match series.kind {
+                    ChartSeriesKind::Line if series.points.len() > 1 => {
+                        let mut builder = Path::builder();
+                        builder.move_to(self.project(series.points[0]))?;
+                        for point in &series.points[1..] {
+                            builder.line_to(self.project(*point))?;
+                        }
+                        painter.stroke_path(
+                            &builder.finish(),
+                            StrokeStyle {
+                                width: self.options.stroke_width.max(0.5),
+                                ..StrokeStyle::default()
+                            },
                             Brush::Solid(series.color),
                         )?;
                     }
+                    _ => {
+                        for point in &series.points {
+                            let point = self.project(*point);
+                            painter.fill_rect(
+                                LogicalRect::from_xywh(point.x - 2.0, point.y - 2.0, 4.0, 4.0),
+                                Brush::Solid(series.color),
+                            )?;
+                        }
+                    }
                 }
             }
-        }
-        Ok(())
+            if let Some((series_id, point_index)) = self.hovered
+                && let Some(point) = self
+                    .series
+                    .iter()
+                    .find(|series| series.id == series_id)
+                    .and_then(|series| series.points.get(point_index))
+            {
+                let point = self.project(*point);
+                painter.fill_rect(
+                    LogicalRect::from_xywh(point.x - 4.0, point.y - 4.0, 8.0, 8.0),
+                    Brush::Solid(Color::WHITE),
+                )?;
+            }
+            Ok(())
+        })
     }
 
     fn accessibility(&self) -> Option<SemanticData> {
@@ -206,24 +230,56 @@ impl<Action: 'static> Element for ChartElement<Action> {
     }
 
     fn event(&mut self, input: UiInput) -> EventResult {
-        let UiInput::PointerReleased(position) = input else {
-            return EventResult::default();
-        };
-        let action = self
-            .nearest(position)
-            .map_or(ChartAction::Clear, |(series, point)| ChartAction::Select {
-                series,
-                point,
-            });
-        EventResult {
-            action: Some(self.emitter.emit((self.map_action)(action))),
-            handled: true,
-            ..EventResult::default()
+        match input {
+            UiInput::HoverChanged(false) => {
+                let changed = self.hovered.take().is_some();
+                EventResult {
+                    invalidation: if changed {
+                        Invalidation::PAINT
+                    } else {
+                        Invalidation::empty()
+                    },
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            UiInput::PointerMoved(position) => {
+                let hovered = self.nearest(position);
+                let changed = hovered != self.hovered;
+                self.hovered = hovered;
+                EventResult {
+                    invalidation: if changed {
+                        Invalidation::PAINT
+                    } else {
+                        Invalidation::empty()
+                    },
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            UiInput::PointerReleased(position) => {
+                let action =
+                    self.nearest(position)
+                        .map_or(ChartAction::Clear, |(series, point)| ChartAction::Select {
+                            series,
+                            point,
+                        });
+                EventResult {
+                    action: Some(self.emitter.emit((self.map_action)(action))),
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            _ => EventResult::default(),
         }
     }
 
     fn hit_testable(&self) -> bool {
         true
+    }
+
+    fn cursor_icon(&self) -> CursorIcon {
+        CursorIcon::Crosshair
     }
 }
 
@@ -274,6 +330,7 @@ impl<Action: 'static> RetainedSpec<Action> for ChartSpec<Action> {
             series: self.series.clone(),
             options: self.options,
             size: LogicalSize::ZERO,
+            hovered: None,
             emitter,
             map_action: self.map_action.clone(),
         }

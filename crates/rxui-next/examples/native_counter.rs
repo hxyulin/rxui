@@ -2,16 +2,12 @@
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
-use std::io;
-
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
 use astrelis_core::geometry::Size;
-use astrelis_platform::{WindowAttributes, WindowEvent, WindowId};
-use astrelis_ui_host::{GraphicsContext, WindowHostOptions};
+use astrelis_platform::WindowAttributes;
 use rxui_next::{
-    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ComponentWindow,
-    ContainerStyle, Space, Theme, View, button, button_with, checkbox, column_with, label, row,
-    slider_with_step,
+    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ContainerStyle, Space,
+    Theme, View, WindowHostOptions, button, button_with, checkbox, column_with, label, row,
+    run_component, slider_with_step,
 };
 
 #[derive(Clone)]
@@ -68,95 +64,24 @@ impl Component for Counter {
     }
 }
 
-struct NativeCounter {
-    graphics: GraphicsContext,
-    window: Option<ComponentWindow<Counter>>,
-}
-
-impl NativeCounter {
-    fn new() -> Self {
-        Self {
-            graphics: GraphicsContext::new(),
-            window: None,
-        }
-    }
-}
-
-impl App for NativeCounter {
-    type Error = io::Error;
-
-    fn resumed(&mut self, context: &mut AppContext<'_, '_, Self>) -> Result<(), Self::Error> {
-        if self.window.is_some() {
-            return Ok(());
-        }
-        let window = ComponentWindow::open(
-            context,
-            &self.graphics,
-            Counter {
-                value: 0,
-                enabled: true,
-                scale: 1.0,
-            },
-            Theme::dark(),
-            WindowHostOptions {
-                window: WindowAttributes {
-                    title: "RXUI Next counter".into(),
-                    inner_size: Some(Size::new(420.0, 180.0)),
-                    ..WindowAttributes::default()
-                },
-                ..WindowHostOptions::default()
-            },
-        )
-        .map_err(io::Error::other)?;
-        context.invalidate_window(window.window().id());
-        self.window = Some(window);
-        Ok(())
-    }
-
-    fn window_event(
-        &mut self,
-        context: &mut AppContext<'_, '_, Self>,
-        id: WindowId,
-        event: WindowEvent,
-    ) -> Result<(), Self::Error> {
-        let Some(window) = &mut self.window else {
-            return Ok(());
-        };
-        if window.window().id() != id {
-            return Ok(());
-        }
-        let update = window.handle_event(&event).map_err(io::Error::other)?;
-        if update.close_requested {
-            self.window = None;
-            context.unregister_window(id);
-            context.exit();
-        } else if update.redraw {
-            context.invalidate_window(id);
-        }
-        Ok(())
-    }
-
-    fn redraw(
-        &mut self,
-        _context: &mut AppContext<'_, '_, Self>,
-        id: WindowId,
-    ) -> Result<(), Self::Error> {
-        if let Some(window) = &mut self.window
-            && window.window().id() == id
-        {
-            window.redraw().map_err(io::Error::other)?;
-        }
-        Ok(())
-    }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
-        NativeCounter::new(),
-        RuntimeConfig::default(),
-    )))
-    .map(|_| ())
+fn main() -> Result<(), astrelis_app::RuntimeError<std::io::Error>> {
+    run_component(
+        Counter {
+            value: 0,
+            enabled: true,
+            scale: 1.0,
+        },
+        Theme::dark(),
+        WindowHostOptions {
+            window: WindowAttributes {
+                title: "RXUI Next counter".into(),
+                inner_size: Some(Size::new(420.0, 180.0)),
+                ..WindowAttributes::default()
+            },
+            ..WindowHostOptions::default()
+        },
+    )
 }
 
 #[cfg(target_arch = "wasm32")]

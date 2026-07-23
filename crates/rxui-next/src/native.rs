@@ -1,13 +1,18 @@
 //! Native component window integration.
 
 use astrelis_app::{App, AppContext};
+#[cfg(not(target_arch = "wasm32"))]
+use astrelis_app::{Runtime, RuntimeConfig, RuntimeError};
 use astrelis_compositor::{CompositionStats, ViewOptions, ViewRenderTarget};
 use astrelis_core::geometry::LogicalSize;
 use astrelis_paint::CompositorViewId;
 use astrelis_paint_gpu::ExternalImage;
 use astrelis_paint_gpu::RenderStats;
+#[cfg(not(target_arch = "wasm32"))]
+use astrelis_platform::WindowId;
 use astrelis_platform::{Window, WindowEvent};
-use astrelis_ui_host::{GraphicsContext, HostError, HostUpdate, NextWindowHost, WindowHostOptions};
+pub use astrelis_ui_host::{GraphicsContext, WindowHostOptions};
+use astrelis_ui_host::{HostError, HostUpdate, NextWindowHost};
 use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiRoot};
 
 use crate::{Component, ComponentRuntime, Theme};
@@ -128,4 +133,105 @@ impl<C: Component> ComponentWindow<C> {
     {
         self.host.redraw_composited(view_options, render_view)
     }
+}
+
+/// Minimal native application wrapper for a single effect-free component.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct ComponentApplication<C: Component<Effect = ()>> {
+    graphics: GraphicsContext,
+    component: Option<C>,
+    theme: Option<Theme>,
+    options: Option<WindowHostOptions>,
+    window: Option<ComponentWindow<C>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<C: Component<Effect = ()>> ComponentApplication<C> {
+    /// Creates a single-window component application.
+    pub fn new(component: C, theme: Theme, options: WindowHostOptions) -> Self {
+        Self {
+            graphics: GraphicsContext::new(),
+            component: Some(component),
+            theme: Some(theme),
+            options: Some(options),
+            window: None,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<C: Component<Effect = ()>> App for ComponentApplication<C> {
+    type Error = std::io::Error;
+
+    fn resumed(&mut self, context: &mut AppContext<'_, '_, Self>) -> Result<(), Self::Error> {
+        if self.window.is_none() {
+            let component = self
+                .component
+                .take()
+                .ok_or_else(|| std::io::Error::other("component was already mounted"))?;
+            let theme = self
+                .theme
+                .take()
+                .ok_or_else(|| std::io::Error::other("component theme is unavailable"))?;
+            let options = self
+                .options
+                .take()
+                .ok_or_else(|| std::io::Error::other("window options are unavailable"))?;
+            let window = ComponentWindow::open(context, &self.graphics, component, theme, options)
+                .map_err(std::io::Error::other)?;
+            context.invalidate_window(window.window().id());
+            self.window = Some(window);
+        }
+        Ok(())
+    }
+
+    fn window_event(
+        &mut self,
+        context: &mut AppContext<'_, '_, Self>,
+        id: WindowId,
+        event: WindowEvent,
+    ) -> Result<(), Self::Error> {
+        let Some(window) = &mut self.window else {
+            return Ok(());
+        };
+        if window.window().id() != id {
+            return Ok(());
+        }
+        let update = window.handle_event(&event).map_err(std::io::Error::other)?;
+        if update.close_requested {
+            self.window = None;
+            context.unregister_window(id);
+            context.exit();
+        } else if update.redraw {
+            context.invalidate_window(id);
+        }
+        Ok(())
+    }
+
+    fn redraw(
+        &mut self,
+        _context: &mut AppContext<'_, '_, Self>,
+        id: WindowId,
+    ) -> Result<(), Self::Error> {
+        if let Some(window) = &mut self.window
+            && window.window().id() == id
+        {
+            window.redraw().map_err(std::io::Error::other)?;
+        }
+        Ok(())
+    }
+}
+
+/// Runs one effect-free component in a native window.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_component<C: Component<Effect = ()>>(
+    component: C,
+    theme: Theme,
+    options: WindowHostOptions,
+) -> Result<(), RuntimeError<std::io::Error>> {
+    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
+        ComponentApplication::new(component, theme, options),
+        RuntimeConfig::default(),
+    )))
+    .map(|_| ())
 }

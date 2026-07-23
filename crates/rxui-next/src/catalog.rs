@@ -3,11 +3,12 @@
 use std::{fmt::Display, str::FromStr};
 
 use astrelis_core::geometry::LogicalSize;
+use astrelis_ui_next::Alignment;
 
 use crate::{
-    ButtonStyle, ButtonVariant, ColorRole, ContainerStyle, Space, StackStyle, View, button,
-    button_with, column, column_with, label, panel, row, row_with, spacer, stack_with, text_field,
-    views,
+    ButtonStyle, ButtonVariant, ColorRole, ContainerStyle, FrameStyle, Space, StackStyle, View,
+    button, button_with, column, column_with, label, panel, row, row_with, spacer, stack_with,
+    text_field, views,
 };
 
 /// One controlled radio-group option.
@@ -219,6 +220,7 @@ pub fn dialog<Action: Clone + 'static>(
     title: impl Into<String>,
     background: View<Action>,
     content: View<Action>,
+    on_dismiss: Action,
     actions: &[DialogAction<Action>],
 ) -> View<Action> {
     let modal = column_with(
@@ -239,10 +241,21 @@ pub fn dialog<Action: Clone + 'static>(
             }))),
         ),
     )
-    .visible(open);
+    .frame(
+        FrameStyle::new()
+            .max(LogicalSize::new(560.0, 640.0))
+            .min(LogicalSize::new(360.0, 0.0)),
+    )
+    .visible(open)
+    .focus_scope(open)
+    .dismiss_on_escape(on_dismiss)
+    .aligned(Alignment::Center, Space::Xl);
     stack_with(
         StackStyle::new().background(ColorRole::Background),
-        (background.enabled(!open), modal),
+        (
+            background.enabled(!open).frame(FrameStyle::new().grow(1.0)),
+            modal,
+        ),
     )
 }
 
@@ -300,6 +313,8 @@ pub fn toasts<Action: Clone + 'static>(items: &[Toast<Action>]) -> View<Action> 
             .key(toast.id)
         })),
     )
+    .frame(FrameStyle::new().max(LogicalSize::new(360.0, 640.0)))
+    .aligned(Alignment::TopTrailing, Space::Md)
 }
 
 /// One command-palette result.
@@ -319,10 +334,12 @@ pub struct CommandItem<Action> {
 
 /// Builds a controlled keyboard-first command palette surface.
 pub fn command_palette<Action: Clone + 'static>(
+    open: bool,
     query: &str,
     commands: &[CommandItem<Action>],
     selected: usize,
     on_query: impl Fn(String) -> Action + 'static,
+    on_dismiss: Action,
 ) -> View<Action> {
     let query_lower = query.trim().to_lowercase();
     let matches = commands
@@ -360,4 +377,13 @@ pub fn command_palette<Action: Clone + 'static>(
             ))),
         ),
     )
+    .frame(
+        FrameStyle::new()
+            .min(LogicalSize::new(420.0, 0.0))
+            .max(LogicalSize::new(640.0, 560.0)),
+    )
+    .visible(open)
+    .focus_scope(open)
+    .dismiss_on_escape(on_dismiss)
+    .aligned(Alignment::Top, Space::Xl)
 }

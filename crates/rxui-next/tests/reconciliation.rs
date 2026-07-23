@@ -2,11 +2,11 @@
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_platform::{
-    DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, PhysicalKey,
+    DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey, PhysicalKey,
 };
 use rxui_next::{
     Component, ComponentContext, ComponentHost, ComponentWithProps, PropertyField, Theme, button,
-    checkbox, column, component, label, property_grid, slider, text_field,
+    checkbox, column, component, label, property_grid, slider, stack, text_field,
 };
 
 #[derive(Clone)]
@@ -476,4 +476,83 @@ fn enabled_modifier_controls_a_retained_subtree_without_recreation() {
     assert!(after.enabled);
     activate_conditional(&mut host);
     assert_eq!(host.component().activations, 1);
+}
+
+#[derive(Clone)]
+enum OverlayAction {
+    Toggle,
+}
+
+struct Overlay {
+    open: bool,
+}
+
+impl Component for Overlay {
+    type Action = OverlayAction;
+    type Effect = ();
+
+    fn update(&mut self, action: Self::Action, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            OverlayAction::Toggle => self.open = !self.open,
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+        stack((
+            button("Open", OverlayAction::Toggle).enabled(!self.open),
+            button("Close", OverlayAction::Toggle)
+                .visible(self.open)
+                .focus_scope(self.open)
+                .dismiss_on_escape(OverlayAction::Toggle),
+        ))
+    }
+}
+
+#[test]
+fn focus_scope_autofocuses_restores_and_routes_escape() {
+    let mut host = ComponentHost::new(
+        Overlay { open: false },
+        LogicalSize::new(300.0, 100.0),
+        Theme::dark(),
+    )
+    .unwrap();
+    let root = host.ui().root();
+    host.ui_mut().focus_first_in_subtree(root).unwrap();
+    host.ui_mut().update_passes().unwrap();
+    assert!(
+        host.ui()
+            .semantic_snapshot()
+            .into_iter()
+            .any(|node| node.data.label == "Open" && node.focused)
+    );
+
+    host.dispatch(OverlayAction::Toggle).unwrap();
+    assert!(
+        host.ui()
+            .semantic_snapshot()
+            .into_iter()
+            .any(|node| node.data.label == "Close" && node.focused)
+    );
+
+    host.input(rxui_next::core::UiInput::Keyboard {
+        input: KeyboardInput {
+            device_id: DeviceId(1),
+            physical_key: PhysicalKey::Unidentified,
+            logical_key: Key::Named(NamedKey::Escape),
+            text: None,
+            location: KeyLocation::Standard,
+            state: ElementState::Pressed,
+            repeat: false,
+            synthetic: false,
+        },
+        modifiers: Modifiers::default(),
+    })
+    .unwrap();
+    assert!(!host.component().open);
+    assert!(
+        host.ui()
+            .semantic_snapshot()
+            .into_iter()
+            .any(|node| node.data.label == "Open" && node.focused)
+    );
 }
