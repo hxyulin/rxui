@@ -56,14 +56,23 @@ controlled application state through bounded `UndoHistory<T>` snapshots.
 ## Clean replacement after merge
 
 The merge can remain non-breaking while applications migrate through
-`rxui::next`. Once every shipped example and downstream application is on the
-new API, perform the public cutover as one mechanical commit:
+`rxui::next`. The `next-default` feature already switches `rxui::*` and
+`rxui::prelude::*` to the component API, while `rxui::legacy` preserves explicit
+access to the retained application and widget crates. CI can validate both
+facades before changing defaults:
 
-1. Re-export `rxui_next::*` from `rxui` and switch `rxui::prelude` to the new
-   component/view types.
-2. Move the current legacy re-exports under `rxui::legacy` for one deprecation
-   window.
-3. Run the workspace examples and compatibility compile tests.
+```sh
+cargo test -p rxui --test next_facade
+cargo test -p rxui --no-default-features --features next-default --test next_facade
+cargo run -p rxui --no-default-features --features next-default --example next_counter
+```
+
+Once every shipped example and downstream application is on the new API,
+perform the public cutover as one mechanical commit:
+
+1. Add `next-default` to the facade's default feature set.
+2. Run the workspace examples and both compatibility modes above.
+3. Keep `rxui::legacy` for one deprecation window.
 4. Remove `rxui::legacy` and the old implementation crates in a separate
    deletion-only commit.
 
