@@ -13,3 +13,4 @@ cargo run -p rxui-next --example editor_vertical_slice --offline
 ```
 
 See [`docs/rfcs/ui-next.md`](../../docs/rfcs/ui-next.md).
+The migration-facing contract is documented in [`API.md`](API.md).

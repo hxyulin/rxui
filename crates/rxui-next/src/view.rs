@@ -56,7 +56,18 @@ pub struct AnyView<Action: 'static> {
     inner: Box<dyn DynView<Action>>,
 }
 
+/// Application-facing lightweight view description.
+///
+/// The `AnyView` name remains available for low-level integrations, while
+/// component APIs use this alias to avoid exposing the erasure strategy.
+pub type View<Action> = AnyView<Action>;
+
 impl<Action: 'static> AnyView<Action> {
+    /// Assigns stable identity for reconciliation inside a dynamic sequence.
+    pub fn key(self, key: impl Into<ViewKey>) -> Self {
+        self.keyed(key)
+    }
+
     /// Assigns stable identity for reconciliation inside a dynamic sequence.
     pub fn keyed(mut self, key: impl Into<ViewKey>) -> Self {
         self.key = Some(key.into());
@@ -81,6 +92,66 @@ impl<Action: 'static> AnyView<Action> {
         }
     }
 }
+
+/// Converts static or collected child views into a container's child list.
+pub trait IntoChildren<Action: 'static> {
+    /// Produces child views in paint and focus order.
+    fn into_children(self) -> Vec<AnyView<Action>>;
+}
+
+impl<Action: 'static> IntoChildren<Action> for Vec<AnyView<Action>> {
+    fn into_children(self) -> Vec<AnyView<Action>> {
+        self
+    }
+}
+
+impl<Action: 'static, const N: usize> IntoChildren<Action> for [AnyView<Action>; N] {
+    fn into_children(self) -> Vec<AnyView<Action>> {
+        Vec::from(self)
+    }
+}
+
+/// Collected dynamic children created by [`views`].
+pub struct DynamicViews<Action: 'static>(Vec<AnyView<Action>>);
+
+impl<Action: 'static> IntoChildren<Action> for DynamicViews<Action> {
+    fn into_children(self) -> Vec<AnyView<Action>> {
+        self.0
+    }
+}
+
+/// Collects an iterator of dynamic views for use in a container.
+pub fn views<Action: 'static>(
+    children: impl IntoIterator<Item = AnyView<Action>>,
+) -> DynamicViews<Action> {
+    DynamicViews(children.into_iter().collect())
+}
+
+macro_rules! impl_tuple_children {
+    ($($view:ident),+ $(,)?) => {
+        impl<Action: 'static> IntoChildren<Action> for (
+            $(impl_tuple_children!(@type $view Action),)+
+        ) {
+            #[allow(non_snake_case)]
+            fn into_children(self) -> Vec<AnyView<Action>> {
+                let ($($view,)+) = self;
+                vec![$($view),+]
+            }
+        }
+    };
+    (@type $view:ident $action:ident) => {
+        AnyView<$action>
+    };
+}
+
+impl_tuple_children!(A);
+impl_tuple_children!(A, B);
+impl_tuple_children!(A, B, C);
+impl_tuple_children!(A, B, C, D);
+impl_tuple_children!(A, B, C, D, E);
+impl_tuple_children!(A, B, C, D, E, F);
+impl_tuple_children!(A, B, C, D, E, F, G);
+impl_tuple_children!(A, B, C, D, E, F, G, H);
 
 trait DynView<Action: 'static>: 'static {
     fn kind(&self) -> TypeId;
@@ -315,12 +386,12 @@ impl<Child: 'static, Parent: 'static> DynView<Parent> for MapActionView<Child, P
 }
 
 /// Creates a vertical flex view.
-pub fn column<Action: 'static>(children: Vec<AnyView<Action>>) -> AnyView<Action> {
+pub fn column<Action: 'static>(children: impl IntoChildren<Action>) -> AnyView<Action> {
     flex(Axis::Vertical, Space::Sm, children)
 }
 
 /// Creates a horizontal flex view.
-pub fn row<Action: 'static>(children: Vec<AnyView<Action>>) -> AnyView<Action> {
+pub fn row<Action: 'static>(children: impl IntoChildren<Action>) -> AnyView<Action> {
     flex(Axis::Horizontal, Space::Sm, children)
 }
 
@@ -328,7 +399,7 @@ pub fn row<Action: 'static>(children: Vec<AnyView<Action>>) -> AnyView<Action> {
 pub fn flex<Action: 'static>(
     axis: Axis,
     gap: Space,
-    children: Vec<AnyView<Action>>,
+    children: impl IntoChildren<Action>,
 ) -> AnyView<Action> {
     AnyView {
         key: None,
@@ -337,7 +408,7 @@ pub fn flex<Action: 'static>(
             gap,
             padding: Space::None,
             background: None,
-            children,
+            children: children.into_children(),
         }),
     }
 }

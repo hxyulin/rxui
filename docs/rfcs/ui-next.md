@@ -20,7 +20,7 @@ A component defines local `Action` and parent-facing `Effect` types:
 
 ```rust
 trait Component {
-    type Action: Clone + 'static;
+    type Action: 'static;
     type Effect: 'static;
 
     fn update(
@@ -32,6 +32,11 @@ trait Component {
     fn view(&self, theme: &Theme) -> AnyView<Self::Action>;
 }
 ```
+
+The migration candidate names the erased implementation simply
+`View<Action>`. Static children use tuples, dynamic children use
+`views(iterator)`, and `.key(domain_id)` declares retained identity. See
+`crates/rxui-next/API.md` for the complete authoring contract.
 
 The runtime owns the component and mounted view state. A local action runs its
 reducer and reconciles that component. Effects leave the local action channel

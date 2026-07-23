@@ -39,7 +39,7 @@ impl Component for Properties {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::AnyView<Action> {
+    fn view(&self, _theme: &Theme) -> rxui_next::View<Action> {
         column(vec![
             label("Inspector").keyed("title"),
             property_grid(&self.fields).keyed("properties"),
@@ -119,7 +119,7 @@ fn duplicate_keys_fail_deterministically() {
 
         fn update(&mut self, _action: (), _context: &mut ComponentContext<'_, ()>) {}
 
-        fn view(&self, _theme: &Theme) -> rxui_next::AnyView<()> {
+        fn view(&self, _theme: &Theme) -> rxui_next::View<()> {
             column(vec![label("a").keyed("same"), label("b").keyed("same")])
         }
     }
@@ -150,7 +150,7 @@ impl Component for Form {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::AnyView<FormAction> {
+    fn view(&self, _theme: &Theme) -> rxui_next::View<FormAction> {
         text_field("Name", self.name.clone(), FieldAction::Changed).map_action(FormAction::Field)
     }
 }

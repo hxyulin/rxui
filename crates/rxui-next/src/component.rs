@@ -5,12 +5,12 @@ use std::any::Any;
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiInput, UiRoot};
 
-use crate::{AnyView, Theme, ViewHost};
+use crate::{Theme, View, ViewHost};
 
 /// Typed component with ordinary Rust state and local actions.
 pub trait Component: 'static {
     /// Local interaction type.
-    type Action: Clone + 'static;
+    type Action: 'static;
     /// Parent/application-facing effect type.
     type Effect: 'static;
 
@@ -18,7 +18,7 @@ pub trait Component: 'static {
     fn update(&mut self, action: Self::Action, context: &mut ComponentContext<'_, Self::Effect>);
 
     /// Produces the current lightweight view.
-    fn view(&self, theme: &Theme) -> AnyView<Self::Action>;
+    fn view(&self, theme: &Theme) -> View<Self::Action>;
 }
 
 /// Services available while reducing a component action.

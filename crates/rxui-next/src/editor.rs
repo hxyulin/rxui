@@ -5,7 +5,7 @@ use std::ops::Range;
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::{SemanticData, SemanticRole};
 
-use crate::{AnyView, ColorRole, column, label, label_with_width, panel, row, text_field};
+use crate::{AnyView, ColorRole, column, label, label_with_width, panel, row, text_field, views};
 
 /// Controlled property field.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,28 +20,23 @@ pub struct PropertyField {
 
 /// Builds a keyed reconciled property grid.
 pub fn property_grid<Action: 'static>(fields: &[PropertyField]) -> AnyView<Action> {
-    column(
-        fields
-            .iter()
-            .map(|field| {
-                row(vec![
-                    label(field.label.clone()).keyed("label"),
-                    panel(
-                        LogicalSize::new(160.0, 28.0),
-                        ColorRole::Surface,
-                        Some(SemanticData {
-                            role: SemanticRole::Field,
-                            label: field.label.clone(),
-                            value: Some(field.value.clone()),
-                            ..SemanticData::default()
-                        }),
-                    )
-                    .keyed("value"),
-                ])
-                .keyed(field.id)
-            })
-            .collect(),
-    )
+    column(views(fields.iter().map(|field| {
+        row((
+            label(field.label.clone()).key("label"),
+            panel(
+                LogicalSize::new(160.0, 28.0),
+                ColorRole::Surface,
+                Some(SemanticData {
+                    role: SemanticRole::Field,
+                    label: field.label.clone(),
+                    value: Some(field.value.clone()),
+                    ..SemanticData::default()
+                }),
+            )
+            .key("value"),
+        ))
+        .key(field.id)
+    })))
 }
 
 /// Builds a keyed controlled property grid with real editable text controls.
@@ -49,23 +44,18 @@ pub fn editable_property_grid<Action: 'static>(
     fields: &[PropertyField],
     on_changed: impl Fn(u64, String) -> Action + Clone + 'static,
 ) -> AnyView<Action> {
-    column(
-        fields
-            .iter()
-            .map(|field| {
-                let id = field.id;
-                let on_changed = on_changed.clone();
-                row(vec![
-                    label(field.label.clone()).keyed("label"),
-                    text_field(field.label.clone(), field.value.clone(), move |value| {
-                        on_changed(id, value)
-                    })
-                    .keyed("value"),
-                ])
-                .keyed(id)
+    column(views(fields.iter().map(|field| {
+        let id = field.id;
+        let on_changed = on_changed.clone();
+        row((
+            label(field.label.clone()).key("label"),
+            text_field(field.label.clone(), field.value.clone(), move |value| {
+                on_changed(id, value)
             })
-            .collect(),
-    )
+            .key("value"),
+        ))
+        .key(id)
+    })))
 }
 
 /// One flattened tree row.
@@ -87,32 +77,27 @@ pub fn virtual_tree<Action: 'static>(
 ) -> AnyView<Action> {
     let end = visible.end.min(rows.len());
     let start = visible.start.min(end);
-    column(
-        rows[start..end]
-            .iter()
-            .map(|item| {
-                row(vec![
-                    panel(
-                        LogicalSize::new(8.0 + item.depth as f32 * 12.0, 24.0),
-                        if selected == Some(item.id) {
-                            ColorRole::Accent
-                        } else {
-                            ColorRole::Surface
-                        },
-                        Some(SemanticData {
-                            role: SemanticRole::Row,
-                            label: item.label.clone(),
-                            selected: Some(selected == Some(item.id)),
-                            ..SemanticData::default()
-                        }),
-                    )
-                    .keyed("selection"),
-                    label(item.label.clone()).keyed("label"),
-                ])
-                .keyed(item.id)
-            })
-            .collect(),
-    )
+    column(views(rows[start..end].iter().map(|item| {
+        row((
+            panel(
+                LogicalSize::new(8.0 + item.depth as f32 * 12.0, 24.0),
+                if selected == Some(item.id) {
+                    ColorRole::Accent
+                } else {
+                    ColorRole::Surface
+                },
+                Some(SemanticData {
+                    role: SemanticRole::Row,
+                    label: item.label.clone(),
+                    selected: Some(selected == Some(item.id)),
+                    ..SemanticData::default()
+                }),
+            )
+            .key("selection"),
+            label(item.label.clone()).key("label"),
+        ))
+        .key(item.id)
+    })))
 }
 
 /// One controlled table row.
@@ -142,23 +127,12 @@ pub fn virtual_table_with_widths<Action: 'static>(
 ) -> AnyView<Action> {
     let end = visible.end.min(rows.len());
     let start = visible.start.min(end);
-    column(
-        rows[start..end]
-            .iter()
-            .map(|item| {
-                row(item
-                    .cells
-                    .iter()
-                    .enumerate()
-                    .map(|(index, cell)| {
-                        label_with_width(cell.clone(), widths.get(index).copied())
-                            .keyed(index as u64)
-                    })
-                    .collect())
-                .keyed(item.id)
-            })
-            .collect(),
-    )
+    column(views(rows[start..end].iter().map(|item| {
+        row(views(item.cells.iter().enumerate().map(|(index, cell)| {
+            label_with_width(cell.clone(), widths.get(index).copied()).key(index as u64)
+        })))
+        .key(item.id)
+    })))
 }
 
 /// Builds a retained placeholder for an application-rendered viewport.

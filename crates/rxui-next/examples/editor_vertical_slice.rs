@@ -50,16 +50,16 @@ impl Component for Editor {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::AnyView<Action> {
-        column(vec![
-            virtual_tree(&self.tree, 0..40, Some(self.selected)).keyed("tree"),
+    fn view(&self, _theme: &Theme) -> rxui_next::View<Action> {
+        column((
+            virtual_tree(&self.tree, 0..40, Some(self.selected)).key("tree"),
             virtual_table_with_widths(&self.table, 0..30, Some(self.selected), &self.table_widths)
-                .keyed("table"),
+                .key("table"),
             editable_property_grid(&self.fields, InspectorAction::SetProperty)
                 .map_action(Action::Inspector)
-                .keyed("properties"),
-            render_view("Scene").keyed("scene"),
-        ])
+                .key("properties"),
+            render_view("Scene").key("scene"),
+        ))
     }
 }
 
