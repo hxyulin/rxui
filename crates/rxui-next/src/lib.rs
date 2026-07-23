@@ -7,11 +7,13 @@
 
 mod component;
 mod editor;
+mod native;
 mod style;
 mod view;
 
 pub use component::*;
 pub use editor::*;
+pub use native::*;
 pub use style::*;
 pub use view::*;
 

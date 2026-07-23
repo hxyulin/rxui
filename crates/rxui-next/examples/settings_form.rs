@@ -2,8 +2,8 @@
 
 use astrelis_core::geometry::LogicalSize;
 use rxui_next::{
-    Component, ComponentContext, ComponentHost, PropertyField, Theme, View, button, column,
-    editable_property_grid, label, row,
+    Component, ComponentContext, ComponentHost, ComponentWithProps, PropertyField, Theme, View,
+    button, column, component, editable_property_grid, label, row,
 };
 
 #[derive(Clone)]
@@ -11,13 +11,51 @@ enum FieldAction {
     Changed(u64, String),
 }
 
-fn graphics_fields(fields: &[PropertyField]) -> View<FieldAction> {
-    editable_property_grid(fields, FieldAction::Changed)
+enum FieldEffect {
+    Changed(u64, String),
+}
+
+#[derive(Clone, PartialEq)]
+struct GraphicsProps {
+    fields: Vec<PropertyField>,
+}
+
+struct GraphicsFields {
+    fields: Vec<PropertyField>,
+}
+
+impl Component for GraphicsFields {
+    type Action = FieldAction;
+    type Effect = FieldEffect;
+
+    fn update(&mut self, action: FieldAction, context: &mut ComponentContext<'_, FieldEffect>) {
+        match action {
+            FieldAction::Changed(id, value) => context.emit(FieldEffect::Changed(id, value)),
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> View<FieldAction> {
+        editable_property_grid(&self.fields, FieldAction::Changed)
+    }
+}
+
+impl ComponentWithProps for GraphicsFields {
+    type Props = GraphicsProps;
+
+    fn create(props: &GraphicsProps) -> Self {
+        Self {
+            fields: props.fields.clone(),
+        }
+    }
+
+    fn changed(&mut self, props: &GraphicsProps) {
+        self.fields.clone_from(&props.fields);
+    }
 }
 
 #[derive(Clone)]
 enum Action {
-    Field(FieldAction),
+    FieldChanged(u64, String),
     Apply,
     Reset,
 }
@@ -57,7 +95,7 @@ impl Component for Settings {
 
     fn update(&mut self, action: Action, context: &mut ComponentContext<'_, Effect>) {
         match action {
-            Action::Field(FieldAction::Changed(id, value)) => {
+            Action::FieldChanged(id, value) => {
                 if let Some(field) = self.fields.iter_mut().find(|field| field.id == id) {
                     field.value = value;
                 }
@@ -73,9 +111,15 @@ impl Component for Settings {
     fn view(&self, _theme: &Theme) -> View<Action> {
         column((
             label("Graphics").key("title"),
-            graphics_fields(&self.fields)
-                .map_action(Action::Field)
-                .key("fields"),
+            component::<GraphicsFields, Action>(
+                GraphicsProps {
+                    fields: self.fields.clone(),
+                },
+                |effect| match effect {
+                    FieldEffect::Changed(id, value) => Action::FieldChanged(id, value),
+                },
+            )
+            .key("fields"),
             row((
                 button("Reset", Action::Reset).key("reset"),
                 button("Apply", Action::Apply).key("apply"),
@@ -94,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Theme::dark(),
     )?;
 
-    host.dispatch(Action::Field(FieldAction::Changed(2, "1920×1080".into())))?;
+    host.dispatch(Action::FieldChanged(2, "1920×1080".into()))?;
     host.dispatch(Action::Apply)?;
 
     assert_eq!(

@@ -13,8 +13,14 @@ publish = false
 
 [dependencies]
 astrelis-core = { path = "../../../astrelis/crates/astrelis-core", version = "=0.3.0-rc.1" }
+astrelis-app = { path = "../../../astrelis/crates/astrelis-app", version = "=0.3.0-rc.1" }
 astrelis-platform = { path = "../../../astrelis/crates/astrelis-platform", version = "=0.3.0-rc.1" }
+astrelis-paint-gpu = { path = "../../../astrelis/crates/astrelis-paint-gpu", version = "=0.3.0-rc.1" }
+astrelis-ui-host = { path = "../../../astrelis/crates/astrelis-ui-host", version = "=0.3.0-rc.1" }
 astrelis-ui-next = { path = "../../../astrelis/crates/astrelis-ui-next", version = "=0.3.0-rc.1" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+astrelis-platform-winit = { path = "../../../astrelis/crates/astrelis-platform-winit", version = "=0.3.0-rc.1" }
 
 [lints]
 workspace = true

@@ -5,6 +5,8 @@ use astrelis_core::color::Color;
 /// Semantic color role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ColorRole {
+    /// Fully transparent paint used by layout-only regions.
+    Transparent,
     /// Window background.
     Background,
     /// Raised panel surface.
@@ -86,6 +88,7 @@ impl Theme {
     /// Resolves a semantic color role.
     pub const fn color(&self, role: ColorRole) -> Color {
         match role {
+            ColorRole::Transparent => Color::TRANSPARENT,
             ColorRole::Background => self.background,
             ColorRole::Surface => self.surface,
             ColorRole::Text => self.text,

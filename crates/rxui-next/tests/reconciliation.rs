@@ -5,8 +5,8 @@ use astrelis_platform::{
     DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, PhysicalKey,
 };
 use rxui_next::{
-    Component, ComponentContext, ComponentHost, PropertyField, Theme, column, label, property_grid,
-    text_field,
+    Component, ComponentContext, ComponentHost, ComponentWithProps, PropertyField, Theme, button,
+    checkbox, column, component, label, property_grid, slider, text_field,
 };
 
 #[derive(Clone)]
@@ -201,4 +201,279 @@ fn mapped_local_field_action_edits_and_reconciles_without_recreation() {
         .unwrap();
     assert_eq!(after.id, id);
     assert_eq!(after.data.value.as_deref(), Some("Astrelis!"));
+}
+
+#[derive(Clone, PartialEq)]
+struct CounterProps {
+    step: i32,
+}
+
+#[derive(Clone)]
+enum CounterAction {
+    Increment,
+}
+
+enum CounterEffect {
+    Changed(i32),
+}
+
+struct ChildCounter {
+    step: i32,
+    value: i32,
+}
+
+impl Component for ChildCounter {
+    type Action = CounterAction;
+    type Effect = CounterEffect;
+
+    fn update(&mut self, action: CounterAction, context: &mut ComponentContext<'_, CounterEffect>) {
+        match action {
+            CounterAction::Increment => {
+                self.value += self.step;
+                context.emit(CounterEffect::Changed(self.value));
+            }
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui_next::View<CounterAction> {
+        button("Increment", CounterAction::Increment)
+    }
+}
+
+impl ComponentWithProps for ChildCounter {
+    type Props = CounterProps;
+
+    fn create(props: &CounterProps) -> Self {
+        Self {
+            step: props.step,
+            value: 0,
+        }
+    }
+
+    fn changed(&mut self, props: &CounterProps) {
+        self.step = props.step;
+    }
+}
+
+#[derive(Clone)]
+enum ParentAction {
+    ChildChanged(i32),
+    SetStep(i32),
+}
+
+struct Parent {
+    step: i32,
+    child_value: i32,
+}
+
+impl Component for Parent {
+    type Action = ParentAction;
+    type Effect = ();
+
+    fn update(&mut self, action: ParentAction, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            ParentAction::ChildChanged(value) => self.child_value = value,
+            ParentAction::SetStep(step) => self.step = step,
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui_next::View<ParentAction> {
+        component::<ChildCounter, ParentAction>(CounterProps { step: self.step }, |effect| {
+            match effect {
+                CounterEffect::Changed(value) => ParentAction::ChildChanged(value),
+            }
+        })
+    }
+}
+
+fn activate_increment(host: &mut ComponentHost<Parent>) {
+    let button = host
+        .ui()
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Increment")
+        .unwrap();
+    let point = astrelis_core::geometry::LogicalPoint::new(
+        button.bounds.origin.x + 5.0,
+        button.bounds.origin.y + 5.0,
+    );
+    host.input(rxui_next::core::UiInput::PointerPressed(point))
+        .unwrap();
+    host.input(rxui_next::core::UiInput::PointerReleased(point))
+        .unwrap();
+}
+
+#[test]
+fn nested_component_preserves_local_state_and_maps_effects() {
+    let mut host = ComponentHost::new(
+        Parent {
+            step: 1,
+            child_value: 0,
+        },
+        LogicalSize::new(400.0, 100.0),
+        Theme::dark(),
+    )
+    .unwrap();
+
+    activate_increment(&mut host);
+    assert_eq!(host.component().child_value, 1);
+
+    host.dispatch(ParentAction::SetStep(2)).unwrap();
+    activate_increment(&mut host);
+    assert_eq!(
+        host.component().child_value,
+        3,
+        "prop updates must not recreate child-local state"
+    );
+}
+
+#[derive(Clone)]
+enum ControlsAction {
+    Checked(bool),
+    Value(f32),
+}
+
+struct Controls {
+    checked: bool,
+    value: f32,
+}
+
+impl Component for Controls {
+    type Action = ControlsAction;
+    type Effect = ();
+
+    fn update(&mut self, action: ControlsAction, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            ControlsAction::Checked(checked) => self.checked = checked,
+            ControlsAction::Value(value) => self.value = value,
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui_next::View<ControlsAction> {
+        column((
+            checkbox("Visible", self.checked, ControlsAction::Checked),
+            slider("Opacity", self.value, 0.0..=1.0, ControlsAction::Value),
+        ))
+    }
+}
+
+#[test]
+fn controlled_checkbox_and_slider_route_values() {
+    let mut host = ComponentHost::new(
+        Controls {
+            checked: false,
+            value: 0.0,
+        },
+        LogicalSize::new(300.0, 100.0),
+        Theme::dark(),
+    )
+    .unwrap();
+    let semantics = host.ui().semantic_snapshot();
+    let checkbox = semantics
+        .iter()
+        .find(|node| node.data.label == "Visible")
+        .unwrap();
+    let point = astrelis_core::geometry::LogicalPoint::new(
+        checkbox.bounds.origin.x + 5.0,
+        checkbox.bounds.origin.y + 5.0,
+    );
+    host.input(rxui_next::core::UiInput::PointerPressed(point))
+        .unwrap();
+    host.input(rxui_next::core::UiInput::PointerReleased(point))
+        .unwrap();
+    assert!(host.component().checked);
+
+    let slider = host
+        .ui()
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Opacity")
+        .unwrap();
+    let point = astrelis_core::geometry::LogicalPoint::new(
+        slider.bounds.origin.x + slider.bounds.size.width * 0.5,
+        slider.bounds.origin.y + slider.bounds.size.height * 0.5,
+    );
+    host.input(rxui_next::core::UiInput::PointerPressed(point))
+        .unwrap();
+    host.input(rxui_next::core::UiInput::PointerReleased(point))
+        .unwrap();
+    assert!((host.component().value - 0.5).abs() < 0.01);
+}
+
+#[derive(Clone)]
+enum EnabledAction {
+    Activate,
+    SetEnabled(bool),
+}
+
+struct EnabledControl {
+    enabled: bool,
+    activations: usize,
+}
+
+impl Component for EnabledControl {
+    type Action = EnabledAction;
+    type Effect = ();
+
+    fn update(&mut self, action: Self::Action, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            EnabledAction::Activate => self.activations += 1,
+            EnabledAction::SetEnabled(enabled) => self.enabled = enabled,
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+        button("Conditional", EnabledAction::Activate).enabled(self.enabled)
+    }
+}
+
+fn activate_conditional(host: &mut ComponentHost<EnabledControl>) {
+    let button = host
+        .ui()
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Conditional")
+        .unwrap();
+    let point = astrelis_core::geometry::LogicalPoint::new(
+        button.bounds.origin.x + 5.0,
+        button.bounds.origin.y + 5.0,
+    );
+    host.input(rxui_next::core::UiInput::PointerPressed(point))
+        .unwrap();
+    host.input(rxui_next::core::UiInput::PointerReleased(point))
+        .unwrap();
+}
+
+#[test]
+fn enabled_modifier_controls_a_retained_subtree_without_recreation() {
+    let mut host = ComponentHost::new(
+        EnabledControl {
+            enabled: false,
+            activations: 0,
+        },
+        LogicalSize::new(300.0, 100.0),
+        Theme::dark(),
+    )
+    .unwrap();
+    let before = host
+        .ui()
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Conditional")
+        .unwrap();
+    assert!(!before.enabled);
+    activate_conditional(&mut host);
+    assert_eq!(host.component().activations, 0);
+
+    host.dispatch(EnabledAction::SetEnabled(true)).unwrap();
+    let after = host
+        .ui()
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Conditional")
+        .unwrap();
+    assert_eq!(after.id, before.id);
+    assert!(after.enabled);
+    activate_conditional(&mut host);
+    assert_eq!(host.component().activations, 1);
 }

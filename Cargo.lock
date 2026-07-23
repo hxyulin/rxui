@@ -316,6 +316,7 @@ dependencies = [
  "astrelis-paint-gpu",
  "astrelis-platform",
  "astrelis-ui-core",
+ "astrelis-ui-next",
  "futures-util",
  "pollster",
  "wasm-bindgen-futures",
@@ -3037,8 +3038,12 @@ dependencies = [
 name = "rxui-next"
 version = "0.1.0-rc.1"
 dependencies = [
+ "astrelis-app",
  "astrelis-core",
+ "astrelis-paint-gpu",
  "astrelis-platform",
+ "astrelis-platform-winit",
+ "astrelis-ui-host",
  "astrelis-ui-next",
 ]
 

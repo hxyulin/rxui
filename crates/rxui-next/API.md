@@ -86,22 +86,23 @@ inspector(&self.inspector)
 `map_action` changes only action routing. It does not introduce a new
 state-owning component instance.
 
-The production nested-component primitive will add independent state,
-lifecycle, effects, tasks, and focus restoration. Its intended surface is:
+Components which need independent state implement `ComponentWithProps` and
+mount through `component`:
 
-```rust,ignore
-component(
-    Inspector::new,
+```rust
+component::<Inspector, EditorAction>(
     InspectorProps {
         selection: self.selection,
     },
+    EditorAction::Inspector,
 )
 .key("inspector")
-.map_effect(EditorAction::Inspector)
 ```
 
-This primitive is intentionally not emulated with hidden global state during
-the initial migration.
+The instance retains its reducer state and subtree identity. Changed props call
+`changed` without recreating local state. Child actions reduce locally; typed
+effects are mapped into parent actions. Component-owned tasks belong to the
+later async-runtime migration stage.
 
 ## Effects
 
@@ -121,11 +122,37 @@ Views use semantic typed roles. Themes resolve roles into concrete retained
 properties:
 
 ```rust
-panel(size, ColorRole::Surface, semantics)
+column_with(
+    ContainerStyle::new()
+        .gap(Space::Md)
+        .padding(Space::Lg)
+        .background(ColorRole::Surface),
+    (
+        label("Preferences"),
+        button_with(
+            "Apply",
+            Action::Apply,
+            ButtonStyle::standard().variant(ButtonVariant::Primary),
+        ),
+    ),
+)
 ```
 
 There are no selectors, string classes, specificity rules, or implicit CSS
-cascade. Widget-specific builders will expose typed variants and metrics.
+cascade. Compact defaults retain the short `column`, `row`, and `button`
+forms. Typed option values extend controls without long positional argument
+lists.
+
+## Native hosting
+
+`ComponentWindow<C>` connects the same component runtime to an Astrelis
+window, normalized input, incremental retained passes, and GPU presentation.
+Headless tests use `ComponentHost<C>`; native applications use
+`ComponentWindow<C>` and keep service/effect coordination in their `App`.
+
+Tab and Shift-Tab follow retained tree order. Pointer focus, Enter/Space
+activation, IME text input, and semantic Focus/Activate/SetValue/SetText
+operations all enter through the same normalized control path.
 
 ## Retained escape hatch
 
@@ -133,9 +160,9 @@ Most application and editor code returns views. Specialized surfaces such as
 node graphs, timelines, code editors, virtual collections, and render
 viewports may implement retained `Element` behavior directly.
 
-Application code must not choose invalidation flags. Before the retained core
-becomes public, raw `update(handle, flags, closure)` calls will be confined to
-framework internals and replaced by property-aware setters.
+Application code does not choose invalidation flags. Reconciliation uses
+property-aware setters; raw `update(handle, flags, closure)` remains only as a
+low-level framework escape hatch.
 
 ## Migration rules
 
@@ -149,4 +176,3 @@ framework internals and replaced by property-aware setters.
   boundaries.
 - Keep imperative adapters for workloads that do not benefit from view
   reconciliation.
-

@@ -43,12 +43,11 @@ reducer and reconciles that component. Effects leave the local action channel
 for document coordination, commands, services, and other windows. Internally
 erased event payloads are downcast at the component boundary.
 
-The prototype implements root component instances and nested typed action
-scopes. `AnyView<LocalAction>::map_action` lets a reusable editor subtree keep
-its local action vocabulary while the mounted control emits the parent action
-directly. Production still needs nested state-owning instances with stable
-`ComponentId`s: actions target their owner, props invoke `changed`, effects map
-into the parent, and component-owned tasks/timers cancel on unmount.
+The implementation supports root components, lightweight typed action scopes,
+and state-owning nested components with stable runtime identities. Nested
+actions target their owner, changed props invoke `changed` without discarding
+local state, and typed effects map into the parent. The component runtime can
+own a headless tree or connect to the production window/GPU host.
 
 ## View reconciliation
 
@@ -86,10 +85,11 @@ placement, selection, keyboard editing, IME, focus, controlled reconciliation,
 and mapped local-to-parent actions. Ordinary view code retains no
 `ElementHandle`s and calls no `sync`.
 
-Before adoption, the slice must add native nested component hosting, real
-compositor-view painting, complete routed keyboard navigation and focus
-restoration, semantic actions, clipboard/undo policy, and
-GPU-upload/allocation instrumentation.
+The migration host now covers native windows, normalized pointer/keyboard/IME
+input, tree-order focus traversal, semantic actions, incremental passes, and
+GPU presentation. Remaining adoption work is real compositor-view painting,
+clipboard/undo policy, component-owned async tasks, platform accessibility
+adapters, and GPU-upload/allocation instrumentation.
 
 Release measurements on the development machine:
 
@@ -106,10 +106,11 @@ different surface. They validate affected-slice scaling, not replacement.
 
 ## Compatibility and rollout
 
-`rxui-next` is unpublished and does not change RXUI 0.1. If performance and
-behavior gates pass, publish a migration RFC, stabilize Astrelis interfaces,
-port controls by workload with imperative adapters, migrate examples/testing,
-and remove old authoring APIs only in an announced breaking release.
+`rxui-next` remains unpublished and does not remove RXUI 0.1. Migration now
+proceeds control-by-control with imperative adapters for specialized
+workloads. Existing APIs remain available until application examples,
+accessibility integration, and the editor catalog have crossed the behavior
+gates; removal is reserved for an announced breaking release.
 
 Mobile, game-first HUD policy, selector styling, pervasive signals, macros,
 partial surface damage, and a complete widget-catalog port are out of scope.
