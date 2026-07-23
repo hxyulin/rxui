@@ -338,6 +338,7 @@ struct MountedView<Action: 'static> {
 pub(crate) struct RouteContext<'a> {
     pub(crate) ui: &'a mut UiRoot,
     pub(crate) theme: &'a Theme,
+    pub(crate) services: &'a mut Vec<crate::ComponentServiceRequest>,
 }
 
 pub(crate) trait MountedState<Action: 'static>: Any {
@@ -434,8 +435,13 @@ impl<Action: 'static> ViewHost<Action> {
         ui: &mut UiRoot,
         theme: &Theme,
         action: crate::RoutedComponentAction,
+        services: &mut Vec<crate::ComponentServiceRequest>,
     ) -> Result<Vec<Action>, UiError> {
-        let mut context = RouteContext { ui, theme };
+        let mut context = RouteContext {
+            ui,
+            theme,
+            services,
+        };
         let output = self.mounted.state.route(&mut Some(action), &mut context)?;
         Ok(output)
     }
@@ -838,12 +844,12 @@ impl<C: ComponentWithProps, Parent: 'static> ComponentState<C, Parent> {
         })
     }
 
-    fn rebuild_child(&mut self, context: &mut RouteContext<'_>) -> Result<(), UiError> {
-        let view = self.component.view(context.theme);
+    fn rebuild_child(&mut self, ui: &mut UiRoot, theme: &Theme) -> Result<(), UiError> {
+        let view = self.component.view(theme);
         let mut child_context = ViewContext {
-            ui: context.ui,
+            ui,
             parent: self.parent.id(),
-            theme: context.theme,
+            theme,
             action_sink: Self::action_sink(self.id),
             marker: std::marker::PhantomData,
         };
@@ -866,10 +872,22 @@ impl<C: ComponentWithProps, Parent: 'static> ComponentState<C, Parent> {
         }
         let mut effects = Vec::new();
         for action in actions {
-            self.component
-                .update(action, &mut ComponentContext::new(&mut effects));
+            let id = self.id;
+            self.component.update(
+                action,
+                &mut ComponentContext::new(
+                    &mut effects,
+                    context.services,
+                    Arc::new(move |payload| {
+                        Box::new(RoutedComponentAction {
+                            target: id,
+                            payload,
+                        })
+                    }),
+                ),
+            );
         }
-        self.rebuild_child(context)?;
+        self.rebuild_child(context.ui, context.theme)?;
         Ok(effects
             .into_iter()
             .map(|effect| (self.map_effect)(effect))
@@ -956,10 +974,7 @@ impl<C: ComponentWithProps, Parent: 'static> DynView<Parent> for ComponentView<C
             state.component.changed(&self.props);
             state.props = self.props;
         }
-        state.rebuild_child(&mut RouteContext {
-            ui: context.ui,
-            theme: context.theme,
-        })
+        state.rebuild_child(context.ui, context.theme)
     }
 }
 

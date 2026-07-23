@@ -38,13 +38,20 @@ window; new application surfaces should use the component API.
 | Icons and validation | Native Next views and form presentation | Implemented vertical slice |
 | Docking and node graph | Imperative retained escape hatch with component shell | Implemented vertical slice |
 | Devtools/testing | Semantic snapshots and component-host drivers | Implemented vertical slice |
-| Clipboard, undo, async tasks | Host/component services | Pending |
+| Clipboard, undo, async tasks | Host/component services | Implemented vertical slice |
 | Platform accessibility bridge | Semantic delta/action adapter | Pending |
 
 Legacy APIs are removed only after their application examples and behavior
 tests have migrated. Specialized retained elements are intentionally preserved;
 the migration replaces authoring and state plumbing, not every retained
 workload with a virtual tree.
+
+Component reducers request clipboard reads/writes and typed background work
+through `ComponentContext`. Native coordinators drain
+`ComponentServiceRequest` values, execute platform work, and return completion
+actions through `ComponentWindow::complete_service`. `ComponentHost` supplies a
+deterministic synchronous executor and `MemoryClipboard` for tests. Undo remains
+controlled application state through bounded `UndoHistory<T>` snapshots.
 
 ## Clean replacement after merge
 

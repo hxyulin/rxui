@@ -1,11 +1,14 @@
 //! Typed component reducer and host.
 
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::{Flex, FrameUpdate, NodeId, SemanticAction, UiError, UiInput, UiRoot};
 
-use crate::{Theme, View, ViewHost};
+use crate::{
+    BackgroundTaskRequest, Clipboard, ClipboardReadRequest, ComponentServiceRequest, ServiceAction,
+    Theme, View, ViewHost,
+};
 
 pub(crate) struct RoutedComponentAction {
     pub(crate) target: u64,
@@ -41,6 +44,8 @@ pub trait ComponentWithProps: Component {
 /// Services available while reducing a component action.
 pub struct ComponentContext<'a, Effect> {
     effects: &'a mut Vec<Effect>,
+    services: &'a mut Vec<ComponentServiceRequest>,
+    route_action: Arc<dyn Fn(Box<dyn Any>) -> ServiceAction>,
 }
 
 impl<Effect> ComponentContext<'_, Effect> {
@@ -49,8 +54,48 @@ impl<Effect> ComponentContext<'_, Effect> {
         self.effects.push(effect);
     }
 
-    pub(crate) fn new(effects: &mut Vec<Effect>) -> ComponentContext<'_, Effect> {
-        ComponentContext { effects }
+    /// Requests replacement of host clipboard text.
+    pub fn write_clipboard(&mut self, text: impl Into<String>) {
+        self.services
+            .push(ComponentServiceRequest::ClipboardWrite(text.into()));
+    }
+
+    /// Requests clipboard text and maps it back into a local action.
+    pub fn read_clipboard<Action: 'static>(
+        &mut self,
+        then: impl FnOnce(Option<String>) -> Action + 'static,
+    ) {
+        let route_action = self.route_action.clone();
+        self.services.push(ComponentServiceRequest::ClipboardRead(
+            ClipboardReadRequest::new(move |contents| route_action(Box::new(then(contents)))),
+        ));
+    }
+
+    /// Requests background work and maps its result back on the UI thread.
+    pub fn spawn<Result, Action>(
+        &mut self,
+        work: impl FnOnce() -> Result + Send + 'static,
+        then: impl FnOnce(Result) -> Action + 'static,
+    ) where
+        Result: Send + 'static,
+        Action: 'static,
+    {
+        let route_action = self.route_action.clone();
+        self.services.push(ComponentServiceRequest::BackgroundTask(
+            BackgroundTaskRequest::new(work, move |result| route_action(Box::new(then(result)))),
+        ));
+    }
+
+    pub(crate) fn new<'a>(
+        effects: &'a mut Vec<Effect>,
+        services: &'a mut Vec<ComponentServiceRequest>,
+        route_action: Arc<dyn Fn(Box<dyn Any>) -> ServiceAction>,
+    ) -> ComponentContext<'a, Effect> {
+        ComponentContext {
+            effects,
+            services,
+            route_action,
+        }
     }
 }
 
@@ -60,6 +105,7 @@ pub struct ComponentRuntime<C: Component> {
     views: ViewHost<C::Action>,
     theme: Theme,
     effects: Vec<C::Effect>,
+    services: Vec<ComponentServiceRequest>,
 }
 
 impl<C: Component> ComponentRuntime<C> {
@@ -72,6 +118,7 @@ impl<C: Component> ComponentRuntime<C> {
             views,
             theme,
             effects: Vec::new(),
+            services: Vec::new(),
         })
     }
 
@@ -83,9 +130,11 @@ impl<C: Component> ComponentRuntime<C> {
     ) -> Result<FrameUpdate<'a>, UiError> {
         self.component.update(
             action,
-            &mut ComponentContext {
-                effects: &mut self.effects,
-            },
+            &mut ComponentContext::new(
+                &mut self.effects,
+                &mut self.services,
+                Arc::new(|action| action),
+            ),
         );
         self.views
             .rebuild(ui, &self.theme, self.component.view(&self.theme))?;
@@ -115,13 +164,17 @@ impl<C: Component> ComponentRuntime<C> {
             let action = *action
                 .downcast::<RoutedComponentAction>()
                 .expect("type was checked");
-            let parent_actions = self.views.route(ui, &self.theme, action)?;
+            let parent_actions = self
+                .views
+                .route(ui, &self.theme, action, &mut self.services)?;
             for action in parent_actions {
                 self.component.update(
                     action,
-                    &mut ComponentContext {
-                        effects: &mut self.effects,
-                    },
+                    &mut ComponentContext::new(
+                        &mut self.effects,
+                        &mut self.services,
+                        Arc::new(|action| action),
+                    ),
                 );
             }
         } else {
@@ -130,9 +183,11 @@ impl<C: Component> ComponentRuntime<C> {
                 .map_err(|_| UiError::new("component action type mismatch"))?;
             self.component.update(
                 *action,
-                &mut ComponentContext {
-                    effects: &mut self.effects,
-                },
+                &mut ComponentContext::new(
+                    &mut self.effects,
+                    &mut self.services,
+                    Arc::new(|action| action),
+                ),
             );
         }
         self.views
@@ -160,6 +215,11 @@ impl<C: Component> ComponentRuntime<C> {
     /// Drains parent/application effects.
     pub fn drain_effects(&mut self) -> impl Iterator<Item = C::Effect> + '_ {
         self.effects.drain(..)
+    }
+
+    /// Drains host services requested by root or nested components.
+    pub fn drain_service_requests(&mut self) -> impl Iterator<Item = ComponentServiceRequest> + '_ {
+        self.services.drain(..)
     }
 
     /// Reads component state.
@@ -210,6 +270,41 @@ impl<C: Component> ComponentHost<C> {
     /// Drains parent/application effects.
     pub fn drain_effects(&mut self) -> impl Iterator<Item = C::Effect> + '_ {
         self.runtime.drain_effects()
+    }
+
+    /// Drains host services requested by root or nested components.
+    pub fn drain_service_requests(&mut self) -> impl Iterator<Item = ComponentServiceRequest> + '_ {
+        self.runtime.drain_service_requests()
+    }
+
+    /// Executes pending services synchronously for deterministic headless use.
+    pub fn run_pending_services(
+        &mut self,
+        clipboard: &mut impl Clipboard,
+    ) -> Result<usize, UiError> {
+        let mut completed = 0;
+        loop {
+            let requests = self.runtime.drain_service_requests().collect::<Vec<_>>();
+            if requests.is_empty() {
+                return Ok(completed);
+            }
+            for request in requests {
+                let action = match request {
+                    ComponentServiceRequest::ClipboardWrite(text) => {
+                        clipboard.write_text(text);
+                        None
+                    }
+                    ComponentServiceRequest::ClipboardRead(request) => {
+                        Some(request.complete(clipboard.read_text()))
+                    }
+                    ComponentServiceRequest::BackgroundTask(request) => Some(request.run()),
+                };
+                if let Some(action) = action {
+                    self.runtime.dispatch_erased(&mut self.ui, action)?;
+                }
+                completed += 1;
+            }
+        }
     }
 
     /// Reads component state.

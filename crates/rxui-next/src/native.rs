@@ -15,7 +15,7 @@ pub use astrelis_ui_host::{GraphicsContext, WindowHostOptions};
 use astrelis_ui_host::{HostError, HostUpdate, NextWindowHost};
 use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiRoot};
 
-use crate::{Component, ComponentRuntime, Theme};
+use crate::{Component, ComponentRuntime, ComponentServiceRequest, Theme};
 
 /// State-owning component runtime connected to one native window.
 pub struct ComponentWindow<C: Component> {
@@ -97,6 +97,19 @@ impl<C: Component> ComponentWindow<C> {
     /// Drains effects emitted by the root or nested components.
     pub fn drain_effects(&mut self) -> impl Iterator<Item = C::Effect> + '_ {
         self.runtime.drain_effects()
+    }
+
+    /// Drains clipboard and background-work requests for application coordination.
+    pub fn drain_service_requests(&mut self) -> impl Iterator<Item = ComponentServiceRequest> + '_ {
+        self.runtime.drain_service_requests()
+    }
+
+    /// Routes a completed host-service action back to its owning component.
+    pub fn complete_service(
+        &mut self,
+        action: crate::ServiceAction,
+    ) -> Result<FrameUpdate<'_>, UiError> {
+        self.runtime.dispatch_erased(self.host.ui_mut(), action)
     }
 
     /// Generates and presents one component UI frame.
