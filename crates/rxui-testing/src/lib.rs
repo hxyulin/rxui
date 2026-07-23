@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 mod harness;
+pub mod next;
 
 pub use astrelis_ui_core::{SemanticAction, SemanticRole};
 pub use astrelis_ui_testing::{SnapshotBundle, UiHarness, deterministic_font_database};

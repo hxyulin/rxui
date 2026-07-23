@@ -11,10 +11,13 @@ use std::{
     },
 };
 
-use astrelis_core::{color::Color, geometry::LogicalSize};
+use astrelis_core::{
+    color::Color,
+    geometry::{LogicalPoint, LogicalSize},
+};
 use astrelis_ui_next::{
-    Axis, BoxElement, Button, Checkbox, Flex, Invalidation, Label, NodeHandle, NodeId,
-    SemanticData, Slider, Stack, TextField, UiError, UiRoot,
+    Axis, BoxElement, Button, Checkbox, Element, Flex, Frame, Invalidation, Label, NodeHandle,
+    NodeId, Scroll, ScrollAxis, SemanticData, Slider, Stack, TextField, UiError, UiRoot,
 };
 
 use crate::{
@@ -110,6 +113,89 @@ impl<Action: 'static> AnyView<Action> {
                 enabled,
             }),
         }
+    }
+
+    /// Controls retained visibility without discarding subtree state.
+    pub fn visible(self, visible: bool) -> Self {
+        AnyView {
+            key: self.key.clone(),
+            inner: Box::new(VisibleView {
+                child: self,
+                visible,
+            }),
+        }
+    }
+
+    /// Wraps this view in an explicit sizing and flex-growth boundary.
+    pub fn frame(self, style: FrameStyle) -> Self {
+        AnyView {
+            key: self.key.clone(),
+            inner: Box::new(FrameView { child: self, style }),
+        }
+    }
+}
+
+/// Explicit sizing and flex-growth options.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameStyle {
+    /// Optional preferred width.
+    pub width: Option<f32>,
+    /// Optional preferred height.
+    pub height: Option<f32>,
+    /// Minimum size.
+    pub min: LogicalSize,
+    /// Optional maximum size.
+    pub max: Option<LogicalSize>,
+    /// Relative share of remaining flex space.
+    pub grow: f32,
+}
+
+impl FrameStyle {
+    /// Creates an unconstrained, non-growing frame.
+    pub const fn new() -> Self {
+        Self {
+            width: None,
+            height: None,
+            min: LogicalSize::ZERO,
+            max: None,
+            grow: 0.0,
+        }
+    }
+
+    /// Selects preferred width.
+    pub const fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// Selects preferred height.
+    pub const fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+
+    /// Selects relative main-axis growth.
+    pub const fn grow(mut self, grow: f32) -> Self {
+        self.grow = grow;
+        self
+    }
+
+    /// Selects minimum size.
+    pub const fn min(mut self, min: LogicalSize) -> Self {
+        self.min = min;
+        self
+    }
+
+    /// Selects maximum size.
+    pub const fn max(mut self, max: LogicalSize) -> Self {
+        self.max = Some(max);
+        self
+    }
+}
+
+impl Default for FrameStyle {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -478,6 +564,125 @@ where
     }
 }
 
+/// Typed action bridge supplied to custom retained-element specifications.
+pub struct ActionEmitter<Action: 'static> {
+    sink: Arc<dyn Fn(Action) -> Box<dyn Any>>,
+}
+
+impl<Action: 'static> Clone for ActionEmitter<Action> {
+    fn clone(&self) -> Self {
+        Self {
+            sink: self.sink.clone(),
+        }
+    }
+}
+
+impl<Action: 'static> ActionEmitter<Action> {
+    /// Erases one typed action for routing to its owning component.
+    pub fn emit(&self, action: Action) -> Box<dyn Any> {
+        (self.sink)(action)
+    }
+}
+
+/// Configuration contract for a specialized retained element.
+///
+/// This is the escape hatch for charts, render viewports, docking surfaces,
+/// and other workloads whose interaction state should remain imperative.
+pub trait RetainedSpec<Action: 'static>: Clone + 'static {
+    /// Concrete retained element owned by the incremental tree.
+    type Element: Element;
+
+    /// Creates newly mounted retained state.
+    fn create(&self, emitter: ActionEmitter<Action>) -> Self::Element;
+
+    /// Applies changed configuration without discarding interaction state.
+    fn update(&self, element: &mut Self::Element, emitter: ActionEmitter<Action>);
+
+    /// Reports whether retained layout, paint, or semantics may have changed.
+    fn changed(&self, previous: &Self) -> bool;
+}
+
+/// Mounts a specialized retained element behind the reconciled view boundary.
+pub fn retained<Action: 'static, Spec: RetainedSpec<Action>>(spec: Spec) -> View<Action> {
+    AnyView {
+        key: None,
+        inner: Box::new(RetainedView { spec }),
+    }
+}
+
+struct RetainedView<Spec> {
+    spec: Spec,
+}
+
+struct RetainedState<Spec: RetainedSpec<Action>, Action: 'static> {
+    handle: NodeHandle<Spec::Element>,
+    spec: Spec,
+    marker: std::marker::PhantomData<fn() -> Action>,
+}
+
+impl<Spec: RetainedSpec<Action>, Action: 'static> MountedState<Action>
+    for RetainedState<Spec, Action>
+{
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl<Spec: RetainedSpec<Action>, Action: 'static> DynView<Action> for RetainedView<Spec> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let emitter = ActionEmitter {
+            sink: context.action_sink.clone(),
+        };
+        let handle = context
+            .ui
+            .append(context.parent, self.spec.create(emitter))?;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(RetainedState::<Spec, Action> {
+                handle,
+                spec: self.spec,
+                marker: std::marker::PhantomData,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<RetainedState<Spec, Action>>()
+            .expect("view kind and state agree");
+        let invalidation = if self.spec.changed(&state.spec) {
+            Invalidation::ALL
+        } else {
+            Invalidation::empty()
+        };
+        let emitter = ActionEmitter {
+            sink: context.action_sink.clone(),
+        };
+        context.ui.update(state.handle, invalidation, |element| {
+            self.spec.update(element, emitter);
+        })?;
+        state.spec = self.spec;
+        Ok(())
+    }
+}
+
 struct ComponentView<C: ComponentWithProps, Parent: 'static> {
     props: C::Props,
     map_effect: Arc<dyn Fn(C::Effect) -> Parent>,
@@ -635,6 +840,179 @@ struct MapActionView<Child: 'static, Parent: 'static> {
 struct EnabledView<Action: 'static> {
     child: AnyView<Action>,
     enabled: bool,
+}
+
+struct FrameView<Action: 'static> {
+    child: AnyView<Action>,
+    style: FrameStyle,
+}
+
+struct FrameState<Action: 'static> {
+    handle: NodeHandle<Frame>,
+    child: MountedView<Action>,
+    style: FrameStyle,
+}
+
+impl<Action: 'static> MountedState<Action> for FrameState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.child.state.route(action, context)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for FrameView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let handle = context.ui.append(
+            context.parent,
+            Frame {
+                width: self.style.width,
+                height: self.style.height,
+                min: self.style.min,
+                max: self.style.max,
+                grow: self.style.grow,
+            },
+        )?;
+        let mut child_context = context.reborrow(handle.id());
+        let child = self
+            .child
+            .inner
+            .build(self.child.key.clone(), &mut child_context)?;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(FrameState {
+                handle,
+                child,
+                style: self.style,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<FrameState<Action>>()
+            .expect("view kind and state agree");
+        if state.style != self.style {
+            context.ui.edit(state.handle).set_frame(
+                self.style.width,
+                self.style.height,
+                self.style.min,
+                self.style.max,
+                self.style.grow,
+            )?;
+        }
+        let mut child_context = context.reborrow(state.handle.id());
+        if state.child.kind == self.child.kind() {
+            self.child
+                .inner
+                .rebuild(&mut state.child, &mut child_context)?;
+        } else {
+            child_context.ui.remove(state.child.node)?;
+            state.child = self
+                .child
+                .inner
+                .build(self.child.key.clone(), &mut child_context)?;
+        }
+        state.style = self.style;
+        Ok(())
+    }
+}
+
+struct VisibleView<Action: 'static> {
+    child: AnyView<Action>,
+    visible: bool,
+}
+
+struct VisibleState<Action: 'static> {
+    child: MountedView<Action>,
+    visible: bool,
+}
+
+impl<Action: 'static> MountedState<Action> for VisibleState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.child.state.route(action, context)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for VisibleView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        let child = self.child.inner.build(self.child.key.clone(), context)?;
+        context.ui.set_visible(child.node, self.visible)?;
+        let node = child.node;
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node,
+            state: Box::new(VisibleState {
+                child,
+                visible: self.visible,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<VisibleState<Action>>()
+            .expect("view kind and state agree");
+        if state.child.kind == self.child.kind() {
+            self.child.inner.rebuild(&mut state.child, context)?;
+        } else {
+            context.ui.remove(state.child.node)?;
+            state.child = self.child.inner.build(self.child.key.clone(), context)?;
+            mounted.node = state.child.node;
+        }
+        if state.visible != self.visible {
+            context.ui.set_visible(state.child.node, self.visible)?;
+        }
+        state.visible = self.visible;
+        Ok(())
+    }
 }
 
 struct EnabledState<Action: 'static> {
@@ -930,6 +1308,30 @@ pub fn stack_with<Action: 'static>(
         inner: Box::new(StackView {
             padding: style.padding,
             background: style.background,
+            children: children.into_children(),
+        }),
+    }
+}
+
+/// Creates a clipped viewport with retained wheel offset.
+pub fn scroll<Action: 'static>(
+    axis: ScrollAxis,
+    children: impl IntoChildren<Action>,
+) -> AnyView<Action> {
+    scroll_at(axis, LogicalPoint::ZERO, children)
+}
+
+/// Creates a clipped viewport with an explicit initial or controlled offset.
+pub fn scroll_at<Action: 'static>(
+    axis: ScrollAxis,
+    offset: LogicalPoint,
+    children: impl IntoChildren<Action>,
+) -> AnyView<Action> {
+    AnyView {
+        key: None,
+        inner: Box::new(ScrollView {
+            axis,
+            offset,
             children: children.into_children(),
         }),
     }
@@ -1517,6 +1919,97 @@ struct StackView<Action: 'static> {
     padding: Space,
     background: Option<ColorRole>,
     children: Vec<AnyView<Action>>,
+}
+
+struct ScrollView<Action: 'static> {
+    axis: ScrollAxis,
+    offset: LogicalPoint,
+    children: Vec<AnyView<Action>>,
+}
+
+struct ScrollState<Action: 'static> {
+    handle: NodeHandle<Scroll>,
+    axis: ScrollAxis,
+    requested_offset: LogicalPoint,
+    children: Vec<MountedView<Action>>,
+}
+
+impl<Action: 'static> MountedState<Action> for ScrollState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        let mut output = Vec::new();
+        for child in &mut self.children {
+            output.extend(child.state.route(action, context)?);
+            if action.is_none() {
+                break;
+            }
+        }
+        Ok(output)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for ScrollView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        validate_keys(&self.children)?;
+        let handle = context.ui.append(context.parent, Scroll::new(self.axis))?;
+        context.ui.edit(handle).set_scroll(self.axis, self.offset)?;
+        let mut child_context = context.reborrow(handle.id());
+        let mut children = Vec::with_capacity(self.children.len());
+        for child in self.children {
+            children.push(child.inner.build(child.key, &mut child_context)?);
+        }
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(ScrollState {
+                handle,
+                axis: self.axis,
+                requested_offset: self.offset,
+                children,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        validate_keys(&self.children)?;
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<ScrollState<Action>>()
+            .expect("view kind and state agree");
+        if state.axis != self.axis || state.requested_offset != self.offset {
+            context
+                .ui
+                .edit(state.handle)
+                .set_scroll(self.axis, self.offset)?;
+        }
+        let mut child_context = context.reborrow(state.handle.id());
+        reconcile_children(&mut state.children, self.children, &mut child_context)?;
+        state.axis = self.axis;
+        state.requested_offset = self.offset;
+        Ok(())
+    }
 }
 
 struct StackState<Action: 'static> {

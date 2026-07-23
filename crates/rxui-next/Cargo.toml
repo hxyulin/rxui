@@ -14,6 +14,9 @@ publish = false
 [dependencies]
 astrelis-core = { path = "../../../astrelis/crates/astrelis-core", version = "=0.3.0-rc.1" }
 astrelis-app = { path = "../../../astrelis/crates/astrelis-app", version = "=0.3.0-rc.1" }
+astrelis-compositor = { path = "../../../astrelis/crates/astrelis-compositor", version = "=0.3.0-rc.1" }
+astrelis-gpu = { path = "../../../astrelis/crates/astrelis-gpu", version = "=0.3.0-rc.1" }
+astrelis-paint = { path = "../../../astrelis/crates/astrelis-paint", version = "=0.3.0-rc.1" }
 astrelis-platform = { path = "../../../astrelis/crates/astrelis-platform", version = "=0.3.0-rc.1" }
 astrelis-paint-gpu = { path = "../../../astrelis/crates/astrelis-paint-gpu", version = "=0.3.0-rc.1" }
 astrelis-ui-host = { path = "../../../astrelis/crates/astrelis-ui-host", version = "=0.3.0-rc.1" }

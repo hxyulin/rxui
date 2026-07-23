@@ -3040,7 +3040,10 @@ name = "rxui-next"
 version = "0.1.0-rc.1"
 dependencies = [
  "astrelis-app",
+ "astrelis-compositor",
  "astrelis-core",
+ "astrelis-gpu",
+ "astrelis-paint",
  "astrelis-paint-gpu",
  "astrelis-platform",
  "astrelis-platform-winit",
@@ -3074,6 +3077,7 @@ dependencies = [
  "astrelis-ui-core",
  "astrelis-ui-testing",
  "rxui-app",
+ "rxui-next",
 ]
 
 [[package]]

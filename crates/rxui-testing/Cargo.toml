@@ -15,6 +15,7 @@ publish.workspace = true
 
 [dependencies]
 rxui-app = { workspace = true }
+rxui-next = { workspace = true }
 astrelis-core = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-text = { workspace = true }

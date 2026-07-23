@@ -5,15 +5,21 @@
 
 #![warn(missing_docs)]
 
+mod catalog;
+mod chart;
 mod component;
 mod editor;
 mod native;
+mod specialized;
 mod style;
 mod view;
 
+pub use catalog::*;
+pub use chart::*;
 pub use component::*;
 pub use editor::*;
 pub use native::*;
+pub use specialized::*;
 pub use style::*;
 pub use view::*;
 

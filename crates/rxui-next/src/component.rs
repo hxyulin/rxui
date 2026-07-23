@@ -3,7 +3,7 @@
 use std::any::Any;
 
 use astrelis_core::geometry::LogicalSize;
-use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiInput, UiRoot};
+use astrelis_ui_next::{Flex, FrameUpdate, NodeId, SemanticAction, UiError, UiInput, UiRoot};
 
 use crate::{Theme, View, ViewHost};
 
@@ -235,5 +235,19 @@ impl<C: Component> ComponentHost<C> {
     /// Downcasts an externally supplied erased action and dispatches it.
     pub fn dispatch_erased(&mut self, action: Box<dyn Any>) -> Result<FrameUpdate<'_>, UiError> {
         self.runtime.dispatch_erased(&mut self.ui, action)
+    }
+
+    /// Applies one semantic operation and routes any resulting component action.
+    pub fn semantic_action(
+        &mut self,
+        target: NodeId,
+        action: SemanticAction,
+    ) -> Result<FrameUpdate<'_>, UiError> {
+        let action = self.ui.perform_semantic_action(target, action)?;
+        if let Some(action) = action {
+            self.runtime.dispatch_erased(&mut self.ui, action)
+        } else {
+            self.ui.update_passes()
+        }
     }
 }

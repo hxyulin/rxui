@@ -1,7 +1,10 @@
 //! Native component window integration.
 
 use astrelis_app::{App, AppContext};
+use astrelis_compositor::{CompositionStats, ViewOptions, ViewRenderTarget};
 use astrelis_core::geometry::LogicalSize;
+use astrelis_paint::CompositorViewId;
+use astrelis_paint_gpu::ExternalImage;
 use astrelis_paint_gpu::RenderStats;
 use astrelis_platform::{Window, WindowEvent};
 use astrelis_ui_host::{GraphicsContext, HostError, HostUpdate, NextWindowHost, WindowHostOptions};
@@ -94,5 +97,35 @@ impl<C: Component> ComponentWindow<C> {
     /// Generates and presents one component UI frame.
     pub fn redraw(&mut self) -> Result<Option<RenderStats>, HostError> {
         self.host.redraw()
+    }
+
+    /// Registers an application-owned texture sampled by retained paint.
+    pub fn register_external_image(
+        &mut self,
+        image: &ExternalImage,
+        view: astrelis_gpu::TextureView,
+    ) -> Result<(), HostError> {
+        self.host.register_external_image(image, view)
+    }
+
+    /// Removes a previously registered retained-paint image.
+    pub fn unregister_external_image(&mut self, image: &ExternalImage) -> bool {
+        self.host.unregister_external_image(image)
+    }
+
+    /// Presents a frame with application-rendered compositor views.
+    pub fn redraw_composited<E>(
+        &mut self,
+        view_options: impl FnMut(CompositorViewId) -> ViewOptions,
+        render_view: impl FnMut(
+            CompositorViewId,
+            &mut astrelis_gpu::CommandEncoder,
+            ViewRenderTarget,
+        ) -> Result<(), E>,
+    ) -> Result<Option<CompositionStats>, HostError>
+    where
+        E: std::fmt::Display,
+    {
+        self.host.redraw_composited(view_options, render_view)
     }
 }
