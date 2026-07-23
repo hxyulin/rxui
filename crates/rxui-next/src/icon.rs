@@ -10,13 +10,14 @@ use astrelis_core::{
 use astrelis_paint::{Brush, FillRule, Painter, Path, PathVerb};
 use astrelis_ui_next::{Constraints, Element, LayoutContext, SemanticData, SemanticRole, UiError};
 
-use crate::{ActionEmitter, RetainedSpec, View, retained};
+use crate::{ActionEmitter, ButtonStyle, RetainedSpec, View, retained};
 
 /// Validated immutable monochrome vector icon.
 #[derive(Clone, Debug)]
 pub struct Icon {
-    view_box: LogicalSize,
-    path: Path,
+    pub(crate) view_box: LogicalSize,
+    pub(crate) path: Path,
+    pub(crate) fill_rule: FillRule,
 }
 
 impl Icon {
@@ -34,7 +35,11 @@ impl Icon {
         if path.is_empty() {
             return Err(IconError::new("icon paths cannot be empty"));
         }
-        Ok(Self { view_box, path })
+        Ok(Self {
+            view_box,
+            path,
+            fill_rule: FillRule::NonZero,
+        })
     }
 
     /// Builds an icon from path verbs.
@@ -64,6 +69,17 @@ impl Icon {
     /// Returns the immutable vector path.
     pub const fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Returns the path winding interpretation.
+    pub const fn fill_rule(&self) -> FillRule {
+        self.fill_rule
+    }
+
+    /// Selects path winding interpretation.
+    pub const fn with_fill_rule(mut self, fill_rule: FillRule) -> Self {
+        self.fill_rule = fill_rule;
+        self
     }
 }
 
@@ -176,7 +192,11 @@ impl Element for IconElement {
                 Affine2::from_translation(Vec2::new(offset.x, offset.y))
                     * Affine2::from_scale(Vec2::splat(scale)),
             )?;
-            painter.fill_path(&self.icon.path, FillRule::NonZero, Brush::Solid(self.color))
+            painter.fill_path(
+                &self.icon.path,
+                self.icon.fill_rule,
+                Brush::Solid(self.color),
+            )
         })
     }
 
@@ -211,6 +231,7 @@ impl<Action: 'static> RetainedSpec<Action> for IconSpec {
     fn changed(&self, previous: &Self) -> bool {
         self.icon.path.cache_id() != previous.icon.path.cache_id()
             || self.icon.view_box != previous.icon.view_box
+            || self.icon.fill_rule != previous.icon.fill_rule
             || self.size != previous.size
             || self.color != previous.color
             || self.label != previous.label
@@ -222,10 +243,75 @@ pub fn icon<Action: 'static>(spec: IconSpec) -> View<Action> {
     retained(spec)
 }
 
+/// Presentation for an icon-backed button.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IconButtonStyle {
+    /// Standard button geometry and semantic variant.
+    pub button: ButtonStyle,
+    /// Logical glyph edge.
+    pub icon_size: f32,
+    /// Whether the accessible label is also painted beside the glyph.
+    pub show_label: bool,
+}
+
+impl IconButtonStyle {
+    /// Creates a compact icon-only button.
+    pub const fn compact() -> Self {
+        Self {
+            button: ButtonStyle::standard().size(LogicalSize::new(30.0, 30.0)),
+            icon_size: 16.0,
+            show_label: false,
+        }
+    }
+
+    /// Selects standard button presentation.
+    pub const fn button(mut self, button: ButtonStyle) -> Self {
+        self.button = button;
+        self
+    }
+
+    /// Selects logical glyph size.
+    pub const fn icon_size(mut self, icon_size: f32) -> Self {
+        self.icon_size = icon_size;
+        self
+    }
+
+    /// Selects whether the label is painted as well as exposed semantically.
+    pub const fn show_label(mut self, show_label: bool) -> Self {
+        self.show_label = show_label;
+        self
+    }
+}
+
+impl Default for IconButtonStyle {
+    fn default() -> Self {
+        Self::compact()
+    }
+}
+
+/// Creates a compact icon-only button with an accessible label.
+pub fn icon_button<Action: Clone + 'static>(
+    icon: Icon,
+    label: impl Into<String>,
+    action: Action,
+) -> View<Action> {
+    icon_button_with(icon, label, action, IconButtonStyle::compact())
+}
+
+/// Creates an icon-backed button with typed presentation.
+pub fn icon_button_with<Action: Clone + 'static>(
+    icon: Icon,
+    label: impl Into<String>,
+    action: Action,
+    style: IconButtonStyle,
+) -> View<Action> {
+    crate::view::icon_button_view(icon, label.into(), action, style)
+}
+
 /// Common editor glyphs.
 pub mod icons {
     use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-    use astrelis_paint::{Path, PathVerb};
+    use astrelis_paint::{FillRule, Path, PathVerb};
 
     use super::Icon;
 
@@ -317,7 +403,95 @@ pub mod icons {
         )
         .unwrap();
         path.close().unwrap();
+        path.move_to(LogicalPoint::new(10.0, 6.0)).unwrap();
+        path.cubic_to(
+            LogicalPoint::new(12.2, 6.0),
+            LogicalPoint::new(14.0, 7.8),
+            LogicalPoint::new(14.0, 10.0),
+        )
+        .unwrap();
+        path.cubic_to(
+            LogicalPoint::new(14.0, 12.2),
+            LogicalPoint::new(12.2, 14.0),
+            LogicalPoint::new(10.0, 14.0),
+        )
+        .unwrap();
+        path.cubic_to(
+            LogicalPoint::new(7.8, 14.0),
+            LogicalPoint::new(6.0, 12.2),
+            LogicalPoint::new(6.0, 10.0),
+        )
+        .unwrap();
+        path.cubic_to(
+            LogicalPoint::new(6.0, 7.8),
+            LogicalPoint::new(7.8, 6.0),
+            LogicalPoint::new(10.0, 6.0),
+        )
+        .unwrap();
+        path.close().unwrap();
         Icon::new(LogicalSize::new(24.0, 24.0), path.finish())
             .expect("built-in icon paths are valid")
+            .with_fill_rule(FillRule::EvenOdd)
+    }
+
+    /// Save glyph.
+    pub fn save() -> Icon {
+        icon([
+            PathVerb::MoveTo(LogicalPoint::new(4.0, 3.0)),
+            PathVerb::LineTo(LogicalPoint::new(17.0, 3.0)),
+            PathVerb::LineTo(LogicalPoint::new(21.0, 7.0)),
+            PathVerb::LineTo(LogicalPoint::new(21.0, 21.0)),
+            PathVerb::LineTo(LogicalPoint::new(3.0, 21.0)),
+            PathVerb::LineTo(LogicalPoint::new(3.0, 3.0)),
+            PathVerb::Close,
+            PathVerb::MoveTo(LogicalPoint::new(7.0, 4.0)),
+            PathVerb::LineTo(LogicalPoint::new(16.0, 4.0)),
+            PathVerb::LineTo(LogicalPoint::new(16.0, 10.0)),
+            PathVerb::LineTo(LogicalPoint::new(7.0, 10.0)),
+            PathVerb::Close,
+            PathVerb::MoveTo(LogicalPoint::new(7.0, 14.0)),
+            PathVerb::LineTo(LogicalPoint::new(17.0, 14.0)),
+            PathVerb::LineTo(LogicalPoint::new(17.0, 20.0)),
+            PathVerb::LineTo(LogicalPoint::new(7.0, 20.0)),
+            PathVerb::Close,
+        ])
+        .with_fill_rule(FillRule::EvenOdd)
+    }
+
+    /// Settings glyph.
+    pub fn settings() -> Icon {
+        icon([
+            PathVerb::MoveTo(LogicalPoint::new(10.0, 2.0)),
+            PathVerb::LineTo(LogicalPoint::new(14.0, 2.0)),
+            PathVerb::LineTo(LogicalPoint::new(15.0, 5.0)),
+            PathVerb::LineTo(LogicalPoint::new(18.0, 6.0)),
+            PathVerb::LineTo(LogicalPoint::new(21.0, 5.0)),
+            PathVerb::LineTo(LogicalPoint::new(23.0, 9.0)),
+            PathVerb::LineTo(LogicalPoint::new(20.0, 11.0)),
+            PathVerb::LineTo(LogicalPoint::new(20.0, 14.0)),
+            PathVerb::LineTo(LogicalPoint::new(23.0, 16.0)),
+            PathVerb::LineTo(LogicalPoint::new(21.0, 20.0)),
+            PathVerb::LineTo(LogicalPoint::new(18.0, 19.0)),
+            PathVerb::LineTo(LogicalPoint::new(15.0, 20.0)),
+            PathVerb::LineTo(LogicalPoint::new(14.0, 23.0)),
+            PathVerb::LineTo(LogicalPoint::new(10.0, 23.0)),
+            PathVerb::LineTo(LogicalPoint::new(9.0, 20.0)),
+            PathVerb::LineTo(LogicalPoint::new(6.0, 19.0)),
+            PathVerb::LineTo(LogicalPoint::new(3.0, 20.0)),
+            PathVerb::LineTo(LogicalPoint::new(1.0, 16.0)),
+            PathVerb::LineTo(LogicalPoint::new(4.0, 14.0)),
+            PathVerb::LineTo(LogicalPoint::new(4.0, 11.0)),
+            PathVerb::LineTo(LogicalPoint::new(1.0, 9.0)),
+            PathVerb::LineTo(LogicalPoint::new(3.0, 5.0)),
+            PathVerb::LineTo(LogicalPoint::new(6.0, 6.0)),
+            PathVerb::LineTo(LogicalPoint::new(9.0, 5.0)),
+            PathVerb::Close,
+            PathVerb::MoveTo(LogicalPoint::new(9.0, 9.0)),
+            PathVerb::LineTo(LogicalPoint::new(15.0, 9.0)),
+            PathVerb::LineTo(LogicalPoint::new(15.0, 15.0)),
+            PathVerb::LineTo(LogicalPoint::new(9.0, 15.0)),
+            PathVerb::Close,
+        ])
+        .with_fill_rule(FillRule::EvenOdd)
     }
 }

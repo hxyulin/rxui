@@ -6,9 +6,9 @@ use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::Alignment;
 
 use crate::{
-    ButtonStyle, ButtonVariant, ColorRole, ContainerStyle, FrameStyle, Space, StackStyle, View,
-    button, button_with, column, column_with, label, panel, row, row_with, spacer, stack_with,
-    text_field, views,
+    ButtonStyle, ButtonVariant, ColorRole, ContainerStyle, FrameStyle, Icon, IconButtonStyle,
+    Space, StackStyle, View, button, button_with, column, column_with, icon_button_with, label,
+    panel, row, row_with, spacer, stack_with, text_field, views,
 };
 
 /// One controlled radio-group option.
@@ -167,6 +167,19 @@ pub enum ToolbarItem<Action> {
         /// Semantic presentation.
         variant: ButtonVariant,
     },
+    /// Vector-icon command with compact or labeled presentation.
+    IconCommand {
+        /// Monochrome vector glyph.
+        icon: Icon,
+        /// Accessible label, optionally also painted.
+        label: String,
+        /// Typed action.
+        action: Action,
+        /// Whether the command accepts interaction.
+        enabled: bool,
+        /// Icon-button presentation.
+        style: IconButtonStyle,
+    },
     /// Visual separator.
     Separator,
     /// Fixed logical spacing.
@@ -193,6 +206,14 @@ pub fn toolbar<Action: Clone + 'static>(items: &[ToolbarItem<Action>]) -> View<A
                     ButtonStyle::standard().variant(*variant),
                 )
                 .enabled(*enabled),
+                ToolbarItem::IconCommand {
+                    icon,
+                    label,
+                    action,
+                    enabled,
+                    style,
+                } => icon_button_with(icon.clone(), label.clone(), action.clone(), *style)
+                    .enabled(*enabled),
                 ToolbarItem::Separator => {
                     panel(LogicalSize::new(1.0, 24.0), ColorRole::Muted, None)
                 }

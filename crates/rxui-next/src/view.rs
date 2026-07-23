@@ -16,14 +16,14 @@ use astrelis_core::{
     geometry::{LogicalPoint, LogicalSize},
 };
 use astrelis_ui_next::{
-    Align, Alignment, Axis, BoxElement, Button, Checkbox, Element, Flex, Frame, Invalidation,
-    KeyListener, Label, NodeHandle, NodeId, Scroll, ScrollAxis, SemanticData, Slider, SplitPane,
-    Stack, TextField, UiError, UiRoot,
+    Align, Alignment, Axis, BoxElement, Button, ButtonIcon, Checkbox, Element, Flex, Frame,
+    Invalidation, KeyListener, Label, NodeHandle, NodeId, Scroll, ScrollAxis, SemanticData, Slider,
+    SplitPane, Stack, TextField, UiError, UiRoot,
 };
 
 use crate::{
-    ButtonVariant, ColorRole, ComponentContext, ComponentWithProps, RoutedComponentAction, Space,
-    Theme,
+    ButtonVariant, ColorRole, ComponentContext, ComponentWithProps, Icon, IconButtonStyle,
+    RoutedComponentAction, Space, Theme,
 };
 
 static NEXT_COMPONENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -588,6 +588,29 @@ pub fn button_with<Action: Clone + 'static>(
             action,
             variant: style.variant,
             size: style.size,
+            icon: None,
+            icon_size: 0.0,
+            show_label: true,
+        }),
+    }
+}
+
+pub(crate) fn icon_button_view<Action: Clone + 'static>(
+    icon: Icon,
+    label: String,
+    action: Action,
+    style: IconButtonStyle,
+) -> View<Action> {
+    AnyView {
+        key: None,
+        inner: Box::new(ButtonView {
+            text: label,
+            action,
+            variant: style.button.variant,
+            size: style.button.size,
+            icon: Some(icon),
+            icon_size: style.icon_size,
+            show_label: style.show_label,
         }),
     }
 }
@@ -2050,6 +2073,9 @@ struct ButtonView<Action> {
     action: Action,
     variant: ButtonVariant,
     size: LogicalSize,
+    icon: Option<Icon>,
+    icon_size: f32,
+    show_label: bool,
 }
 
 struct ButtonState {
@@ -2058,6 +2084,8 @@ struct ButtonState {
     variant: ButtonVariant,
     size: LogicalSize,
     colors: (Color, Color),
+    icon: Option<(u64, LogicalSize, f32, astrelis_paint::FillRule)>,
+    show_label: bool,
 }
 
 leaf_mounted_state!(ButtonState);
@@ -2075,16 +2103,33 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
         let colors = context.theme.button(self.variant);
         let action = self.action.clone();
         let action_sink = context.action_sink.clone();
-        let handle = context.ui.append(
-            context.parent,
-            Button::with_action_factory(
-                self.text.clone(),
-                self.size,
-                colors.0,
-                colors.1,
-                move || action_sink(action.clone()),
-            ),
-        )?;
+        let icon_state = self.icon.as_ref().map(|icon| {
+            (
+                icon.path.cache_id(),
+                icon.view_box,
+                if self.icon_size.is_finite() {
+                    self.icon_size.max(1.0)
+                } else {
+                    16.0
+                },
+                icon.fill_rule,
+            )
+        });
+        let mut button = Button::with_action_factory(
+            self.text.clone(),
+            self.size,
+            colors.0,
+            colors.1,
+            move || action_sink(action.clone()),
+        )
+        .with_label_visible(self.show_label);
+        if let (Some(icon), Some((_, _, icon_size, fill_rule))) = (&self.icon, icon_state) {
+            button = button.with_icon(
+                ButtonIcon::new(icon.path.clone(), icon.view_box, icon_size)
+                    .with_fill_rule(fill_rule),
+            );
+        }
+        let handle = context.ui.append(context.parent, button)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -2095,6 +2140,8 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
                 variant: self.variant,
                 size: self.size,
                 colors,
+                icon: icon_state,
+                show_label: self.show_label,
             }),
             marker: std::marker::PhantomData,
         })
@@ -2111,9 +2158,25 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
             .downcast_mut::<ButtonState>()
             .expect("view kind and state agree");
         let colors = context.theme.button(self.variant);
+        let icon_state = self.icon.as_ref().map(|icon| {
+            (
+                icon.path.cache_id(),
+                icon.view_box,
+                if self.icon_size.is_finite() {
+                    self.icon_size.max(1.0)
+                } else {
+                    16.0
+                },
+                icon.fill_rule,
+            )
+        });
         let action = self.action.clone();
         let action_sink = context.action_sink.clone();
-        let invalidation = if state.size != self.size || state.text != self.text {
+        let invalidation = if state.size != self.size
+            || state.text != self.text
+            || state.icon != icon_state
+            || state.show_label != self.show_label
+        {
             Invalidation::LAYOUT_ALL
         } else if state.colors != colors {
             Invalidation::PAINT
@@ -2128,6 +2191,25 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
                 colors.1,
             )?;
         }
+        if state.icon != icon_state {
+            context
+                .ui
+                .edit(state.handle)
+                .set_icon(self.icon.as_ref().map(|icon| {
+                    ButtonIcon::new(
+                        icon.path.clone(),
+                        icon.view_box,
+                        icon_state.map(|(_, _, size, _)| size).unwrap_or(16.0),
+                    )
+                    .with_fill_rule(icon.fill_rule)
+                }))?;
+        }
+        if state.show_label != self.show_label {
+            context
+                .ui
+                .edit(state.handle)
+                .set_label_visible(self.show_label)?;
+        }
         context
             .ui
             .edit(state.handle)
@@ -2136,6 +2218,8 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
         state.variant = self.variant;
         state.size = self.size;
         state.colors = colors;
+        state.icon = icon_state;
+        state.show_label = self.show_label;
         Ok(())
     }
 }

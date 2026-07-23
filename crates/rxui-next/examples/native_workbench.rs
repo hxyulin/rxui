@@ -8,12 +8,12 @@ use astrelis_core::{
 };
 use astrelis_platform::WindowAttributes;
 use rxui_next::{
-    ButtonVariant, ChartAction, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec, Choice,
-    CommandItem, CommandPaletteNavigation, Component, ComponentContext, ContainerStyle,
-    DialogAction, DockAxis, DockNode, DockPane, FrameStyle, GraphEdge, GraphNode, NodeGraphAction,
-    NodeGraphSpec, Space, StackStyle, Theme, Toast, ToastLevel, ToolbarItem, View,
-    WindowHostOptions, chart, command_palette, dialog, dock_workspace, form_section, node_graph,
-    radio_group, run_component, stack_with, toasts, toolbar,
+    ButtonStyle, ButtonVariant, ChartAction, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec,
+    Choice, CommandItem, CommandPaletteNavigation, Component, ComponentContext, ContainerStyle,
+    DialogAction, DockAxis, DockNode, DockPane, FrameStyle, GraphEdge, GraphNode, IconButtonStyle,
+    NodeGraphAction, NodeGraphSpec, Space, StackStyle, Theme, Toast, ToastLevel, ToolbarItem, View,
+    WindowHostOptions, chart, command_palette, dialog, dock_workspace, form_section, icons,
+    node_graph, radio_group, run_component, stack_with, toasts, toolbar,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -201,24 +201,30 @@ impl Component for Workbench {
         };
         let workspace = dock_workspace(&self.layout, render, Action::SelectPane, Action::Resize);
         let commands = vec![
-            ToolbarItem::Command {
+            ToolbarItem::IconCommand {
+                icon: icons::save(),
                 label: "Save".into(),
                 action: Action::Save,
                 enabled: true,
-                variant: ButtonVariant::Primary,
+                style: IconButtonStyle::compact()
+                    .button(ButtonStyle::standard().variant(ButtonVariant::Primary))
+                    .show_label(true),
             },
             ToolbarItem::Separator,
-            ToolbarItem::Command {
+            ToolbarItem::IconCommand {
+                icon: icons::search(),
                 label: "Commands".into(),
                 action: Action::TogglePalette,
                 enabled: true,
-                variant: ButtonVariant::Quiet,
+                style: IconButtonStyle::compact()
+                    .button(ButtonStyle::standard().variant(ButtonVariant::Quiet)),
             },
-            ToolbarItem::Command {
+            ToolbarItem::IconCommand {
+                icon: icons::settings(),
                 label: "Settings".into(),
                 action: Action::OpenDialog,
                 enabled: true,
-                variant: ButtonVariant::Standard,
+                style: IconButtonStyle::compact(),
             },
         ];
         let base = rxui_next::column_with(
