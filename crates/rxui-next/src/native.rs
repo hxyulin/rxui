@@ -11,7 +11,9 @@ use astrelis_paint_gpu::RenderStats;
 #[cfg(not(target_arch = "wasm32"))]
 use astrelis_platform::WindowId;
 use astrelis_platform::{Window, WindowEvent};
-pub use astrelis_ui_host::{GraphicsContext, WindowHostOptions};
+pub use astrelis_ui_host::{
+    GraphicsContext, NextAccessibilityAdapter, NextAccessibilityRequest, WindowHostOptions,
+};
 use astrelis_ui_host::{HostError, HostUpdate, NextWindowHost};
 use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiRoot};
 
@@ -52,6 +54,19 @@ impl<C: Component> ComponentWindow<C> {
     /// Returns the low-level incremental window host for GPU integration.
     pub fn host_mut(&mut self) -> &mut NextWindowHost {
         &mut self.host
+    }
+
+    /// Installs a platform accessibility adapter and publishes the current tree.
+    pub fn set_accessibility_adapter(
+        &mut self,
+        adapter: impl NextAccessibilityAdapter + 'static,
+    ) -> Result<(), HostError> {
+        self.host.set_accessibility_adapter(adapter)
+    }
+
+    /// Removes and returns the platform accessibility adapter.
+    pub fn take_accessibility_adapter(&mut self) -> Option<Box<dyn NextAccessibilityAdapter>> {
+        self.host.take_accessibility_adapter()
     }
 
     /// Reads root component state.

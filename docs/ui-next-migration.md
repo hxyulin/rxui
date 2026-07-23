@@ -39,7 +39,7 @@ window; new application surfaces should use the component API.
 | Docking and node graph | Imperative retained escape hatch with component shell | Implemented vertical slice |
 | Devtools/testing | Semantic snapshots and component-host drivers | Implemented vertical slice |
 | Clipboard, undo, async tasks | Host/component services | Implemented vertical slice |
-| Platform accessibility bridge | Semantic delta/action adapter | Pending |
+| Platform accessibility bridge | Semantic delta/action adapter | Implemented and covered |
 
 Legacy APIs are removed only after their application examples and behavior
 tests have migrated. Specialized retained elements are intentionally preserved;
