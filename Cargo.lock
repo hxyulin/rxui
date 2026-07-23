@@ -322,6 +322,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "astrelis-ui-next"
+version = "0.3.0-rc.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-paint",
+ "astrelis-platform",
+ "astrelis-text",
+ "bitflags 2.13.1",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "astrelis-ui-testing"
 version = "0.3.0-rc.1"
 dependencies = [
@@ -3019,6 +3031,15 @@ dependencies = [
  "muda",
  "raw-window-handle",
  "rxui-app",
+]
+
+[[package]]
+name = "rxui-next"
+version = "0.1.0-rc.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-platform",
+ "astrelis-ui-next",
 ]
 
 [[package]]

@@ -7,6 +7,10 @@ desktop tools and editors. It does not emulate Qt's object model or wrap native
 OS controls. Mobile, game-first HUD tooling, and a declarative reconciler are
 outside the first stable release. Modern WebGPU browsers remain supported.
 
+An unpublished component/reconciler experiment lives in `rxui-next`. It is
+research for a later breaking release and does not change the 0.1 stable scope;
+see `docs/rfcs/ui-next.md`.
+
 Astrelis owns retained tree mechanics and engine primitives. General-purpose
 missing hooks belong in Astrelis; application and editor policy stays in RXUI.
 

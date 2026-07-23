@@ -1,0 +1,20 @@
+[package]
+name = "rxui-next"
+description = "Experimental typed component and view layer for RXUI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+astrelis-core = { path = "../../../astrelis/crates/astrelis-core", version = "=0.3.0-rc.1" }
+astrelis-platform = { path = "../../../astrelis/crates/astrelis-platform", version = "=0.3.0-rc.1" }
+astrelis-ui-next = { path = "../../../astrelis/crates/astrelis-ui-next", version = "=0.3.0-rc.1" }
+
+[lints]
+workspace = true
