@@ -15,6 +15,8 @@ pub use rxui_devtools as devtools;
 pub use rxui_editor as editor;
 /// Native macOS and Windows application menus.
 pub use rxui_native_menu as native_menu;
+/// Typed component, reconciled-view, and incremental native hosting API.
+pub use rxui_next as next;
 /// Desktop services: file dialogs, launching, recent documents.
 pub use rxui_services as services;
 #[cfg(feature = "testing")]

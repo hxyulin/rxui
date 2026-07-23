@@ -14,7 +14,7 @@ use std::{
 use astrelis_core::{color::Color, geometry::LogicalSize};
 use astrelis_ui_next::{
     Axis, BoxElement, Button, Checkbox, Flex, Invalidation, Label, NodeHandle, NodeId,
-    SemanticData, Slider, TextField, UiError, UiRoot,
+    SemanticData, Slider, Stack, TextField, UiError, UiRoot,
 };
 
 use crate::{
@@ -878,6 +878,63 @@ pub fn spacer<Action: 'static>(size: LogicalSize) -> AnyView<Action> {
     panel(size, ColorRole::Transparent, None)
 }
 
+/// Typed presentation options for an overlay stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackStyle {
+    /// Uniform inset around overlaid children.
+    pub padding: Space,
+    /// Optional semantic background fill.
+    pub background: Option<ColorRole>,
+}
+
+impl Default for StackStyle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StackStyle {
+    /// Creates an undecorated stack.
+    pub const fn new() -> Self {
+        Self {
+            padding: Space::None,
+            background: None,
+        }
+    }
+
+    /// Selects uniform semantic padding.
+    pub const fn padding(mut self, padding: Space) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    /// Selects a semantic background role.
+    pub const fn background(mut self, background: ColorRole) -> Self {
+        self.background = Some(background);
+        self
+    }
+}
+
+/// Overlays children in paint order at one shared origin.
+pub fn stack<Action: 'static>(children: impl IntoChildren<Action>) -> AnyView<Action> {
+    stack_with(StackStyle::new(), children)
+}
+
+/// Creates a styled overlay stack.
+pub fn stack_with<Action: 'static>(
+    style: StackStyle,
+    children: impl IntoChildren<Action>,
+) -> AnyView<Action> {
+    AnyView {
+        key: None,
+        inner: Box::new(StackView {
+            padding: style.padding,
+            background: style.background,
+            children: children.into_children(),
+        }),
+    }
+}
+
 fn container<Action: 'static>(
     axis: Axis,
     style: ContainerStyle,
@@ -1454,6 +1511,106 @@ struct FlexView<Action: 'static> {
     padding: Space,
     background: Option<ColorRole>,
     children: Vec<AnyView<Action>>,
+}
+
+struct StackView<Action: 'static> {
+    padding: Space,
+    background: Option<ColorRole>,
+    children: Vec<AnyView<Action>>,
+}
+
+struct StackState<Action: 'static> {
+    handle: NodeHandle<Stack>,
+    padding: f32,
+    background: Option<Color>,
+    children: Vec<MountedView<Action>>,
+}
+
+impl<Action: 'static> MountedState<Action> for StackState<Action> {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn route(
+        &mut self,
+        action: &mut Option<crate::RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        let mut output = Vec::new();
+        for child in &mut self.children {
+            output.extend(child.state.route(action, context)?);
+            if action.is_none() {
+                break;
+            }
+        }
+        Ok(output)
+    }
+}
+
+impl<Action: 'static> DynView<Action> for StackView<Action> {
+    fn kind(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn build(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        validate_keys(&self.children)?;
+        let padding = context.theme.space(self.padding);
+        let background = self.background.map(|role| context.theme.color(role));
+        let handle = context.ui.append(
+            context.parent,
+            Stack {
+                padding,
+                background,
+            },
+        )?;
+        let mut child_context = context.reborrow(handle.id());
+        let mut children = Vec::with_capacity(self.children.len());
+        for child in self.children {
+            children.push(child.inner.build(child.key, &mut child_context)?);
+        }
+        Ok(MountedView {
+            key,
+            kind: TypeId::of::<Self>(),
+            node: handle.id(),
+            state: Box::new(StackState {
+                handle,
+                padding,
+                background,
+                children,
+            }),
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn rebuild(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        validate_keys(&self.children)?;
+        let state = mounted
+            .state
+            .as_any_mut()
+            .downcast_mut::<StackState<Action>>()
+            .expect("view kind and state agree");
+        let padding = context.theme.space(self.padding);
+        let background = self.background.map(|role| context.theme.color(role));
+        if state.padding != padding || state.background != background {
+            context
+                .ui
+                .edit(state.handle)
+                .set_stack(padding, background)?;
+        }
+        let mut child_context = context.reborrow(state.handle.id());
+        reconcile_children(&mut state.children, self.children, &mut child_context)?;
+        state.padding = padding;
+        state.background = background;
+        Ok(())
+    }
 }
 
 struct FlexState<Action: 'static> {

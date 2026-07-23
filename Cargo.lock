@@ -2963,6 +2963,7 @@ dependencies = [
  "rxui-devtools",
  "rxui-editor",
  "rxui-native-menu",
+ "rxui-next",
  "rxui-services",
  "rxui-testing",
  "rxui-widgets",
