@@ -17,7 +17,8 @@ window; new application surfaces should use the component API.
   controlled values, keyed dynamic collections, and mapped action scopes.
 - Labels, panels, rows, columns, overlay stacks, spacers, buttons, text
   fields, checkboxes, sliders, typed theme roles, variants, spacing, padding,
-  backgrounds, and disabled subtrees.
+  backgrounds, disabled subtrees, validated vector icons, and controlled form
+  validation.
 - Tree-order keyboard traversal, keyboard bubbling, modal focus scopes with
   restoration, Escape dismissal, and semantic Focus, Activate, SetText,
   SetSelection, and SetValue operations.
@@ -34,7 +35,7 @@ window; new application surfaces should use the component API.
 | Combo/radio/numeric fields | Controlled composite components | Implemented vertical slice |
 | Command palette | Controlled query/selection with bubbled keyboard ownership | Implemented |
 | Images and charts | Custom retained elements behind `View` adapters | Implemented |
-| Icons and validation | Native Next views and form presentation | In progress |
+| Icons and validation | Native Next views and form presentation | Implemented vertical slice |
 | Docking and node graph | Imperative retained escape hatch with component shell | Implemented vertical slice |
 | Devtools/testing | Semantic snapshots and component-host drivers | Implemented vertical slice |
 | Clipboard, undo, async tasks | Host/component services | Pending |
