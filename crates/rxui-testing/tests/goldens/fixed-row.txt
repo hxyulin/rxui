@@ -1,0 +1,12 @@
+[legacy]
+Button label="One" value=None bounds=(16.00,16.00) 100.00x32.00 enabled=true focused=false
+Button label="Two" value=None bounds=(128.00,16.00) 100.00x32.00 enabled=true focused=false
+Button label="Three" value=None bounds=(240.00,16.00) 100.00x32.00 enabled=true focused=false
+[next]
+Button label="One" value=None bounds=(16.00,16.00) 100.00x32.00 enabled=true focused=false
+Button label="Two" value=None bounds=(128.00,16.00) 100.00x32.00 enabled=true focused=false
+Button label="Three" value=None bounds=(240.00,16.00) 100.00x32.00 enabled=true focused=false
+[delta]
+Button:"One"[0] origin=(0.00,0.00) size=(0.00,0.00)
+Button:"Three"[0] origin=(0.00,0.00) size=(0.00,0.00)
+Button:"Two"[0] origin=(0.00,0.00) size=(0.00,0.00)

@@ -149,7 +149,7 @@ impl<C: Component> ComponentRuntime<C> {
     ) -> Result<Option<FrameUpdate<'a>>, UiError> {
         let action = ui.dispatch(input)?;
         let Some(action) = action else {
-            return Ok(None);
+            return ui.update_passes().map(Some);
         };
         self.dispatch_erased(ui, action).map(Some)
     }

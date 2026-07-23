@@ -1,0 +1,28 @@
+[split 0.25]
+Group label="First pane" value=None bounds=(0.00,0.00) 98.50x240.00 enabled=true focused=false
+Group label="Second pane" value=None bounds=(104.50,0.00) 295.50x240.00 enabled=true focused=false
+[split 0.50]
+Group label="First pane" value=None bounds=(0.00,0.00) 197.00x240.00 enabled=true focused=false
+Group label="Second pane" value=None bounds=(203.00,0.00) 197.00x240.00 enabled=true focused=false
+[split 0.75]
+Group label="First pane" value=None bounds=(0.00,0.00) 295.50x240.00 enabled=true focused=false
+Group label="Second pane" value=None bounds=(301.50,0.00) 98.50x240.00 enabled=true focused=false
+[modal 640x480]
+Button label="Background action" value=None bounds=(0.00,0.00) 640.00x480.00 enabled=false focused=false
+Label label="Synthetic dialog" value=None bounds=(156.00,199.00) 98.84x14.00 enabled=true focused=false
+Label label="Dialog content" value=None bounds=(156.00,225.00) 89.50x14.00 enabled=true focused=false
+Button label="Cancel" value=None bounds=(156.00,251.00) 67.58x30.00 enabled=true focused=true
+Button label="Confirm" value=None bounds=(231.58,251.00) 73.01x30.00 enabled=true focused=false
+[grow 1-2-1]
+Group label="Grow 1a" value=None bounds=(0.00,0.00) 100.00x120.00 enabled=true focused=false
+Group label="Grow 2" value=None bounds=(100.00,0.00) 200.00x120.00 enabled=true focused=false
+Group label="Grow 1b" value=None bounds=(300.00,0.00) 100.00x120.00 enabled=true focused=false
+[stack overlap]
+Button label="Back layer" value=None bounds=(0.00,0.00) 120.00x40.00 enabled=true focused=false
+Button label="Front layer" value=None bounds=(0.00,0.00) 120.00x40.00 enabled=true focused=false
+[modal 320x240]
+Button label="Background action" value=None bounds=(0.00,0.00) 320.00x240.00 enabled=false focused=false
+Label label="Synthetic dialog" value=None bounds=(40.00,79.00) 98.84x14.00 enabled=true focused=false
+Label label="Dialog content" value=None bounds=(40.00,105.00) 89.50x14.00 enabled=true focused=false
+Button label="Cancel" value=None bounds=(40.00,131.00) 67.58x30.00 enabled=true focused=true
+Button label="Confirm" value=None bounds=(115.58,131.00) 73.01x30.00 enabled=true focused=false

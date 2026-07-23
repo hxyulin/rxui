@@ -6,6 +6,8 @@
 
 #![warn(missing_docs)]
 
+pub mod differential;
+pub mod golden;
 mod harness;
 pub mod next;
 
