@@ -5,11 +5,11 @@ layout and interaction regressions without opening a native window.
 
 ## Suites
 
-- `differential_golden` builds equivalent legacy and Next scenes, normalizes
+- `differential_golden` builds equivalent old and component scenes, normalizes
   their labeled semantic geometry, and records both implementations plus
   per-landmark deltas.
-- `next_conformance` covers Next-only primitives and deterministic interaction
-  traces where no faithful legacy equivalent exists.
+- `component_conformance` covers component primitives and deterministic interaction
+  traces where no faithful old-UI equivalent exists.
 
 The initial catalog covers:
 
@@ -33,7 +33,7 @@ Run only the focused suites with failure output:
 
 ```sh
 cargo test -p rxui-testing --test differential_golden -- --nocapture
-cargo test -p rxui-testing --test next_conformance -- --nocapture
+cargo test -p rxui-testing --test component_conformance -- --nocapture
 ```
 
 ## Updating goldens
@@ -43,14 +43,14 @@ intentional layout change:
 
 ```sh
 RXUI_UPDATE_GOLDENS=1 cargo test -p rxui-testing \
-  --test differential_golden --test next_conformance
+  --test differential_golden --test component_conformance
 git diff -- crates/rxui-testing/tests/goldens
 cargo test -p rxui-testing
 ```
 
 Review the diff before committing. A changed delta is not automatically a bug:
-for example, the legacy intrinsic form stretches controls to the available
-width and reports unusually small text/button heights, while Next keeps
+for example, the old intrinsic form stretches controls to the available
+width and reports unusually small text/button heights, while the component UI keeps
 intrinsic widths and usable control heights. Fixed-size scenes that are meant
 to be equivalent additionally use tolerance-based differential assertions, so
 their golden cannot be updated to conceal a parity failure.

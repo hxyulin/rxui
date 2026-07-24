@@ -7,9 +7,8 @@ mode="${1:-package}"
 registry_probe_dir="/tmp/rxui-release-registry-probe"
 
 layers=(
-  "rxui-app"
-  "rxui-widgets rxui-native-menu rxui-services rxui-testing"
-  "rxui-editor rxui-devtools"
+  "rxui-next"
+  "rxui-testing"
   "rxui"
 )
 
@@ -17,9 +16,8 @@ required_astrelis=(
   astrelis-app astrelis-compositor astrelis-core astrelis-gpu
   astrelis-gpu-wgpu astrelis-paint astrelis-paint-gpu astrelis-platform
   astrelis-platform-winit astrelis-profiling astrelis-render
-  astrelis-render-3d astrelis-text astrelis-ui astrelis-ui-core
-  astrelis-ui-docking astrelis-ui-host astrelis-ui-testing
-  astrelis-ui-widgets
+  astrelis-render-3d astrelis-text astrelis-ui-core astrelis-ui-host
+  astrelis-ui-next astrelis-ui-testing
 )
 
 usage() {

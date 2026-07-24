@@ -2,14 +2,8 @@
 resolver = "3"
 members = [
   "crates/rxui",
-  "crates/rxui-app",
-  "crates/rxui-devtools",
-  "crates/rxui-editor",
-  "crates/rxui-native-menu",
   "crates/rxui-next",
-  "crates/rxui-services",
   "crates/rxui-testing",
-  "crates/rxui-widgets",
 ]
 
 [workspace.package]
@@ -26,14 +20,8 @@ categories = ["gui", "development-tools"]
 publish = ["crates-io"]
 
 [workspace.dependencies]
-rxui-app = { path = "crates/rxui-app", version = "=0.1.0-rc.1" }
-rxui-devtools = { path = "crates/rxui-devtools", version = "=0.1.0-rc.1" }
-rxui-editor = { path = "crates/rxui-editor", version = "=0.1.0-rc.1" }
-rxui-native-menu = { path = "crates/rxui-native-menu", version = "=0.1.0-rc.1" }
 rxui-next = { path = "crates/rxui-next", version = "=0.1.0-rc.1" }
-rxui-services = { path = "crates/rxui-services", version = "=0.1.0-rc.1" }
 rxui-testing = { path = "crates/rxui-testing", version = "=0.1.0-rc.1" }
-rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
 
 # Astrelis is pinned so clean clones and CI consume one reviewed engine state.
 # Developers working in the sibling repository can copy
@@ -52,12 +40,10 @@ astrelis-profiling = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a
 astrelis-render = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
 astrelis-render-3d = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
 astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
-astrelis-ui = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
 astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
 astrelis-ui-next = { path = "../astrelis/crates/astrelis-ui-next", version = "=0.3.0-rc.1" }
 astrelis-ui-host = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
 astrelis-ui-testing = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
-astrelis-ui-widgets = { git = "https://github.com/hxyulin/astrelis", rev = "2e84a5e9748cd405beeff3ffd353e0d205b2de3a", version = "=0.3.0-rc.1" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
@@ -80,12 +66,6 @@ all = "warn"
 # dev level as well as dependency overrides.
 [profile.dev]
 opt-level = 1
-
-[profile.dev.package.astrelis-ui-core]
-opt-level = 2
-
-[profile.dev.package.astrelis-ui-widgets]
-opt-level = 2
 
 [profile.dev.package.taffy]
 opt-level = 2

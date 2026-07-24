@@ -4,81 +4,40 @@ All notable public RXUI changes are documented here.
 
 ## 0.1.0-rc.1 — Unreleased
 
-The first public RXUI preview provides a retained, message-driven Rust UI
-framework for desktop applications and editors, powered by Astrelis 0.3.
+### Component API cutover
 
-### Included
+- `rxui::*` and `rxui::prelude::*` now expose the typed component/view API.
+- Components own durable state, reduce typed actions, emit typed effects, and
+  return lightweight reconciled views.
+- Fixed child structure uses tuples; dynamic collections require stable keys.
+- Controls are controlled by component state while retaining transient focus,
+  selection, caret, IME, hover, and pointer-capture state.
+- Typed theme roles and style builders replace the old mutable widget facade.
+- Headless and native component hosts share the same reconciliation and input
+  paths.
+- Clipboard, background work, and undo history use host-executed component
+  service requests.
+- Charts, node graphs, docking workspaces, images, render views, forms,
+  validation, dialogs, toasts, toolbars, and inspection have component-native
+  APIs.
+- Synthetic interaction traces and reviewed semantic-geometry goldens cover
+  layout, hover, focus, text input, splitters, keyed reconciliation, overlays,
+  and specialized retained surfaces.
 
-- RXUI now owns its docking model and retained workspace policy; the public
-  API remains available under `rxui_editor::docking` and the editor façade.
-- The native runner and deterministic harness share one posted-message queue
-  kernel and bounded redrain limit.
-- Generic image presentation and pan/zoom input decoding are compatibility
-  re-exports of the Astrelis widget implementations.
-- Radio options, combo boxes, and numeric fields expose their specific
-  engine semantic roles for platform accessibility adapters.
-- Docking can turn floating drops into native viewport requests, backed by a
-  serializable multi-viewport layout with globally unique panel ownership.
-- **WIP:** Dock tabs expose transferable drag sessions for dropping panels
-  onto targets in another native viewport. The example routes captured source
-  motion using client-area desktop coordinates; Wayland still requires a
-  platform-native drag-and-drop path.
+### Removed
 
-- A high-level application runner: implement `rxui::prelude::App`
-  (`build`/`update` plus optional hooks) and start with `rxui::app::run`; the
-  runner owns window hosting, message routing, redraw scheduling, timers,
-  cross-thread message proxies, and shutdown. Direct `astrelis_app::App`
-  implementations remain supported.
-- Hierarchical feature-message mapping, keyed latest-value queue coalescing,
-  delayed timeout factories, and deterministic timer behavior shared by the
-  native/browser runners and headless application harness.
-- Runtime-neutral cancellable task completions and a configurable, bounded
-  native blocking pool, with deterministic chosen-order task completion in
-  the application harness, optional diagnostic names, and active-task runtime
-  snapshots.
-- Application-scoped declarative interval and filesystem subscriptions with
-  stable identity, bounded latest-value delivery, lifecycle reconciliation,
-  hierarchical mapping, startup-failure messages, and deterministic testing.
-- Opt-in, bounded, payload-free message instrumentation with application-defined
-  names/categories, queue and update timing, delivery origins, coalescing
-  diagnostics, bounded task/subscription lifecycle history, deterministic
-  harness support, observer events, and a scrollable devtools Runtime view with
-  collapsible diagnostic sections and a scope-aware inspector-activity toggle.
-- An opaque `rxui::Error`/`rxui::Result` pair that converts from any standard
-  error, removing `map_err` glue from application code.
-- Fluent `build(...)...finish()` constructors for `RadioGroup`, `ComboBox`,
-  `NumericField`, and `Toolbar` alongside the existing fallible `new(...)`
-  constructors.
-- Desktop services: native file open/save dialogs, URL and file launching,
-  and a persisted recent-documents list.
-- Portable byte-oriented browser open/save dialogs and debounced native
-  filesystem watching with imperative and declarative lifecycle APIs.
-- PNG/JPEG/WebP image decoding plus retained image fitting and sampling.
-- Interactive line, bar, and scatter charts with axes, legends, axis-specific
-  pan/zoom, cursor-anchored native pinch and wheel zoom, two-axis precision
-  scrolling, configurable input bindings, viewport clamping, live latest-X
-  following, selection, and deterministic large-data decimation.
-- Versioned serializable node-graph editing with ports, routed edges, box
-  selection, connection gestures, keyboard editing, and shared gesture-aware
-  pan/zoom navigation.
-- Native and browser UI hosting with idle-efficient scheduling.
-- Typed commands, shortcuts, native menus, undo/redo, state persistence, and
-  application-shell conventions.
-- Theme-aware widgets, forms, validation, dialogs, notifications, and command
-  palettes.
-- Docking, virtualized tree/table views, property editing, and render views.
-- Retained UI and runtime inspection, deterministic semantic testing, native
-  smoke tests, WebAssembly coverage, and editor performance budgets.
+- The transitional `rxui::next`, `rxui::legacy`, and `next-default` surfaces.
+- The old message-application, mutable widget, editor facade, devtools facade,
+  native-menu, and desktop-service packages.
+- Examples and tutorials authored against those removed APIs.
 
-### Naming
-
-- The project and crate family previously developed as Astreon are now RXUI.
-- The framework remains retained and message-driven; “RXUI” does not imply a
-  ReactiveX Observable API.
-- See `docs/migrations/astreon-to-rxui.md` for mechanical source changes.
+The old retained UI remains only as a private test oracle for differential
+layout goldens. It is not part of the public RXUI authoring API.
 
 ### Known gaps
 
 - Native screen-reader adapters are not implemented yet.
-- Multiline/rich text and browser folder selection remain future work; native
-  accessibility adapters are also not implemented yet.
+- Multiline and rich/code text editing remain future work.
+- Native menus, file dialogs, filesystem watching, persistence, and the former
+  message/subscription runtime need component-native replacements before they
+  return to the public framework.

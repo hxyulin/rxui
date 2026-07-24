@@ -1,7 +1,4 @@
-//! Experimental typed component and reconciled-view layer for RXUI.
-//!
-//! The crate is intentionally unpublished. It exercises an ergonomic
-//! component API against `astrelis-ui-next` without changing RXUI 0.1.
+//! Typed component and reconciled-view implementation for RXUI.
 
 #![warn(missing_docs)]
 
