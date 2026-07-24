@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::SemanticAction;
-use rxui_next::{
+use rxui::{
     Component, ComponentContext, ComponentHost, ComponentWithProps, MemoryClipboard, Theme,
     UndoHistory, View, button, component,
 };

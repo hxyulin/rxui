@@ -1,10 +1,10 @@
-//! Normalized semantic geometry for legacy/Next differential tests.
+//! Normalized semantic geometry for old/component differential tests.
 
 use std::{collections::BTreeMap, fmt::Write};
 
 use astrelis_core::geometry::LogicalRect;
 use astrelis_ui_core::SemanticNode as LegacySemanticNode;
-use rxui_next::core::SemanticNode as NextSemanticNode;
+use rxui::core::SemanticNode as ComponentSemanticNode;
 
 /// One accessible landmark normalized across both UI implementations.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,8 +60,8 @@ impl SemanticScene {
         Self { landmarks }.sorted()
     }
 
-    /// Normalizes a Next flat semantic snapshot.
-    pub fn from_next(nodes: &[NextSemanticNode]) -> Self {
+    /// Normalizes a component UI flat semantic snapshot.
+    pub fn from_component(nodes: &[ComponentSemanticNode]) -> Self {
         Self {
             landmarks: nodes
                 .iter()
@@ -110,11 +110,11 @@ impl SemanticScene {
     }
 }
 
-/// Side-by-side legacy and Next scene output with geometry deltas.
+/// Side-by-side old and component scene output with geometry deltas.
 pub fn differential_snapshot(legacy: &SemanticScene, next: &SemanticScene) -> String {
-    let mut output = String::from("[legacy]\n");
+    let mut output = String::from("[old]\n");
     output.push_str(&legacy.snapshot());
-    output.push_str("[next]\n");
+    output.push_str("[component]\n");
     output.push_str(&next.snapshot());
     output.push_str("[delta]\n");
 
@@ -136,10 +136,10 @@ pub fn differential_snapshot(legacy: &SemanticScene, next: &SemanticScene) -> St
                 );
             }
             (Some(_), None) => {
-                let _ = writeln!(output, "{key} missing=next");
+                let _ = writeln!(output, "{key} missing=component");
             }
             (None, Some(_)) => {
-                let _ = writeln!(output, "{key} missing=legacy");
+                let _ = writeln!(output, "{key} missing=old");
             }
             (None, None) => {}
         }
@@ -158,7 +158,7 @@ pub fn compare_geometry(
     let mut failures = Vec::new();
     for (key, legacy) in &legacy {
         let Some(next) = next.get(key) else {
-            failures.push(format!("{key}: missing from Next"));
+            failures.push(format!("{key}: missing from component UI"));
             continue;
         };
         for (property, left, right) in [
@@ -169,7 +169,7 @@ pub fn compare_geometry(
         ] {
             if (left - right).abs() > tolerance {
                 failures.push(format!(
-                    "{key}: {property} legacy={} next={} tolerance={}",
+                    "{key}: {property} old={} component={} tolerance={}",
                     number(left),
                     number(right),
                     number(tolerance)
@@ -179,7 +179,7 @@ pub fn compare_geometry(
     }
     for key in next.keys() {
         if !legacy.contains_key(key) {
-            failures.push(format!("{key}: missing from legacy"));
+            failures.push(format!("{key}: missing from old UI"));
         }
     }
     if failures.is_empty() {

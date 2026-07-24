@@ -52,6 +52,14 @@ specialized elements. The former message-application and mutable widget-tree
 APIs have been removed; `rxui::*` and `rxui::prelude::*` expose only the
 component API.
 
+Internally, the implementation is split by responsibility:
+
+- `rxui-core` owns components, reconciliation, styles, icons, and services;
+- `rxui-controls` owns composite controls and validation;
+- `rxui-workbench` owns charts, node graphs, docking, and editor surfaces;
+- `rxui-native` owns native window/runtime integration;
+- `rxui` is the stable aggregate facade application code should depend on.
+
 ## Examples
 
 Run the headless examples:
@@ -78,10 +86,9 @@ native rendering.
 
 ## Development
 
-For joint RXUI/Astrelis development:
+The migration branch currently requires Astrelis checked out beside RXUI:
 
 ```sh
-cp .cargo/config.toml.example .cargo/config.toml
 cargo test --workspace --all-targets
 ```
 

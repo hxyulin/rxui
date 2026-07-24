@@ -1,7 +1,7 @@
 //! Controlled validation behavior.
 
 use astrelis_core::geometry::LogicalSize;
-use rxui_next::{
+use rxui::{
     Component, ComponentContext, ComponentHost, FormValidation, Theme, ValidationIssue,
     ValidationResult, validated_text_field,
 };
@@ -34,7 +34,7 @@ impl Component for ValidatedForm {
 
     fn update(&mut self, _action: Self::Action, _context: &mut ComponentContext<'_, ()>) {}
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+    fn view(&self, _theme: &Theme) -> rxui::View<Self::Action> {
         validated_text_field(
             "Name",
             "",

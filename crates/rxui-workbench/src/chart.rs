@@ -13,7 +13,7 @@ use astrelis_ui_next::{
     UiError, UiInput,
 };
 
-use crate::{ActionEmitter, RetainedSpec, View, retained};
+use rxui_core::{ActionEmitter, RetainedSpec, View, retained};
 
 /// One chart-domain point.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

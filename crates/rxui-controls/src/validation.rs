@@ -5,7 +5,7 @@ use std::{
     hash::Hash,
 };
 
-use crate::{
+use rxui_core::{
     ColorRole, ContainerStyle, LabelStyle, Space, View, column_with, label_with_style, text_field,
     views,
 };

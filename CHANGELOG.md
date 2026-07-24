@@ -23,6 +23,9 @@ All notable public RXUI changes are documented here.
 - Synthetic interaction traces and reviewed semantic-geometry goldens cover
   layout, hover, focus, text input, splitters, keyed reconciliation, overlays,
   and specialized retained surfaces.
+- The former `rxui-next` monolith is split into acyclic `rxui-core`,
+  `rxui-controls`, `rxui-workbench`, and `rxui-native` implementation crates.
+  Application code continues to depend on the aggregate `rxui` facade.
 
 ### Removed
 

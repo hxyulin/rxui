@@ -1,8 +1,8 @@
-[legacy]
+[old]
 Button label="One" value=None bounds=(16.00,16.00) 100.00x32.00 enabled=true focused=false
 Button label="Two" value=None bounds=(128.00,16.00) 100.00x32.00 enabled=true focused=false
 Button label="Three" value=None bounds=(240.00,16.00) 100.00x32.00 enabled=true focused=false
-[next]
+[component]
 Button label="One" value=None bounds=(16.00,16.00) 100.00x32.00 enabled=true focused=false
 Button label="Two" value=None bounds=(128.00,16.00) 100.00x32.00 enabled=true focused=false
 Button label="Three" value=None bounds=(240.00,16.00) 100.00x32.00 enabled=true focused=false

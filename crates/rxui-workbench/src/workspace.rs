@@ -2,7 +2,7 @@
 
 use astrelis_ui_next::Axis;
 
-use crate::{FrameStyle, View, button, column, label, row, split_pane, views};
+use rxui_core::{FrameStyle, View, button, column, label, row, split_pane, views};
 
 /// Dock split direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

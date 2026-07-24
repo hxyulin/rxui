@@ -1,6 +1,6 @@
 [package]
-name = "rxui-testing"
-description = "Deterministic UI and command testing helpers for RXUI"
+name = "rxui-workbench"
+description = "Charts, node graphs, docking, and editor surfaces for RXUI"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,16 +9,15 @@ repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
 rust-version.workspace = true
-keywords.workspace = true
-categories.workspace = true
 publish.workspace = true
 
 [dependencies]
-rxui = { path = "../rxui", version = "=0.1.0-rc.1" }
+rxui-core = { workspace = true }
 astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
 astrelis-platform = { workspace = true }
-astrelis-ui-core = { workspace = true }
-astrelis-ui-testing = { workspace = true }
+astrelis-text = { workspace = true }
+astrelis-ui-next = { workspace = true }
 
 [lints]
 workspace = true

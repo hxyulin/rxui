@@ -13,7 +13,8 @@ application surfaces, and testing conventions.
 - **0.1.0-rc.1:** complete the component API cutover, validate the native
   examples, and keep reviewed semantic/layout/interaction goldens green.
 - **0.1 stable:** finish public API review, publish clean consumer crates, and
-  validate Windows, macOS, Linux, and Web builds.
+  validate Windows, macOS, Linux, and Web builds. Publishing is gated on the
+  retained component engine becoming a published Astrelis crate.
 - **1.0 desktop:** native accessibility adapters, mature window/application
   coordination, and a documented compatibility policy.
 

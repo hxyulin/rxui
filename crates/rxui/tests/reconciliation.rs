@@ -4,7 +4,7 @@ use astrelis_core::geometry::LogicalSize;
 use astrelis_platform::{
     DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey, PhysicalKey,
 };
-use rxui_next::{
+use rxui::{
     CommandItem, CommandPaletteNavigation, Component, ComponentContext, ComponentHost,
     ComponentWithProps, PropertyField, Theme, button, checkbox, column, command_palette, component,
     label, property_grid, slider, stack, text_field,
@@ -40,7 +40,7 @@ impl Component for Properties {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<Action> {
+    fn view(&self, _theme: &Theme) -> rxui::View<Action> {
         column(vec![
             label("Inspector").keyed("title"),
             property_grid(&self.fields).keyed("properties"),
@@ -120,7 +120,7 @@ fn duplicate_keys_fail_deterministically() {
 
         fn update(&mut self, _action: (), _context: &mut ComponentContext<'_, ()>) {}
 
-        fn view(&self, _theme: &Theme) -> rxui_next::View<()> {
+        fn view(&self, _theme: &Theme) -> rxui::View<()> {
             column(vec![label("a").keyed("same"), label("b").keyed("same")])
         }
     }
@@ -151,7 +151,7 @@ impl Component for Form {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<FormAction> {
+    fn view(&self, _theme: &Theme) -> rxui::View<FormAction> {
         text_field("Name", self.name.clone(), FieldAction::Changed).map_action(FormAction::Field)
     }
 }
@@ -177,9 +177,9 @@ fn mapped_local_field_action_edits_and_reconciles_without_recreation() {
         semantic.bounds.origin.x + semantic.bounds.size.width - 10.0,
         semantic.bounds.origin.y + 10.0,
     );
-    host.input(rxui_next::core::UiInput::PointerPressed(point))
+    host.input(rxui::core::UiInput::PointerPressed(point))
         .unwrap();
-    host.input(rxui_next::core::UiInput::Keyboard {
+    host.input(rxui::core::UiInput::Keyboard {
         input: KeyboardInput {
             device_id: DeviceId(1),
             physical_key: PhysicalKey::Unidentified,
@@ -236,7 +236,7 @@ impl Component for ChildCounter {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<CounterAction> {
+    fn view(&self, _theme: &Theme) -> rxui::View<CounterAction> {
         button("Increment", CounterAction::Increment)
     }
 }
@@ -278,7 +278,7 @@ impl Component for Parent {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<ParentAction> {
+    fn view(&self, _theme: &Theme) -> rxui::View<ParentAction> {
         component::<ChildCounter, ParentAction>(CounterProps { step: self.step }, |effect| {
             match effect {
                 CounterEffect::Changed(value) => ParentAction::ChildChanged(value),
@@ -298,9 +298,9 @@ fn activate_increment(host: &mut ComponentHost<Parent>) {
         button.bounds.origin.x + 5.0,
         button.bounds.origin.y + 5.0,
     );
-    host.input(rxui_next::core::UiInput::PointerPressed(point))
+    host.input(rxui::core::UiInput::PointerPressed(point))
         .unwrap();
-    host.input(rxui_next::core::UiInput::PointerReleased(point))
+    host.input(rxui::core::UiInput::PointerReleased(point))
         .unwrap();
 }
 
@@ -350,7 +350,7 @@ impl Component for Controls {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<ControlsAction> {
+    fn view(&self, _theme: &Theme) -> rxui::View<ControlsAction> {
         column((
             checkbox("Visible", self.checked, ControlsAction::Checked),
             slider("Opacity", self.value, 0.0..=1.0, ControlsAction::Value),
@@ -378,9 +378,9 @@ fn controlled_checkbox_and_slider_route_values() {
         checkbox.bounds.origin.x + 5.0,
         checkbox.bounds.origin.y + 5.0,
     );
-    host.input(rxui_next::core::UiInput::PointerPressed(point))
+    host.input(rxui::core::UiInput::PointerPressed(point))
         .unwrap();
-    host.input(rxui_next::core::UiInput::PointerReleased(point))
+    host.input(rxui::core::UiInput::PointerReleased(point))
         .unwrap();
     assert!(host.component().checked);
 
@@ -394,9 +394,9 @@ fn controlled_checkbox_and_slider_route_values() {
         slider.bounds.origin.x + slider.bounds.size.width * 0.5,
         slider.bounds.origin.y + slider.bounds.size.height * 0.5,
     );
-    host.input(rxui_next::core::UiInput::PointerPressed(point))
+    host.input(rxui::core::UiInput::PointerPressed(point))
         .unwrap();
-    host.input(rxui_next::core::UiInput::PointerReleased(point))
+    host.input(rxui::core::UiInput::PointerReleased(point))
         .unwrap();
     assert!((host.component().value - 0.5).abs() < 0.01);
 }
@@ -423,7 +423,7 @@ impl Component for EnabledControl {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+    fn view(&self, _theme: &Theme) -> rxui::View<Self::Action> {
         button("Conditional", EnabledAction::Activate).enabled(self.enabled)
     }
 }
@@ -439,9 +439,9 @@ fn activate_conditional(host: &mut ComponentHost<EnabledControl>) {
         button.bounds.origin.x + 5.0,
         button.bounds.origin.y + 5.0,
     );
-    host.input(rxui_next::core::UiInput::PointerPressed(point))
+    host.input(rxui::core::UiInput::PointerPressed(point))
         .unwrap();
-    host.input(rxui_next::core::UiInput::PointerReleased(point))
+    host.input(rxui::core::UiInput::PointerReleased(point))
         .unwrap();
 }
 
@@ -498,7 +498,7 @@ impl Component for Overlay {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+    fn view(&self, _theme: &Theme) -> rxui::View<Self::Action> {
         stack((
             button("Open", OverlayAction::Toggle).enabled(!self.open),
             button("Close", OverlayAction::Toggle)
@@ -535,7 +535,7 @@ fn focus_scope_autofocuses_restores_and_routes_escape() {
             .any(|node| node.data.label == "Close" && node.focused)
     );
 
-    host.input(rxui_next::core::UiInput::Keyboard {
+    host.input(rxui::core::UiInput::Keyboard {
         input: KeyboardInput {
             device_id: DeviceId(1),
             physical_key: PhysicalKey::Unidentified,
@@ -590,7 +590,7 @@ impl Component for Palette {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<Self::Action> {
+    fn view(&self, _theme: &Theme) -> rxui::View<Self::Action> {
         command_palette(
             true,
             "",
@@ -633,7 +633,7 @@ fn command_palette_navigation_bubbles_through_the_search_field() {
     )
     .unwrap();
     for key in [NamedKey::Other("ArrowDown".into()), NamedKey::Enter] {
-        host.input(rxui_next::core::UiInput::Keyboard {
+        host.input(rxui::core::UiInput::Keyboard {
             input: KeyboardInput {
                 device_id: DeviceId(1),
                 physical_key: PhysicalKey::Unidentified,

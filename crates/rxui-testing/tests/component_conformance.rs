@@ -1,12 +1,12 @@
-//! Next-only synthetic scene goldens and interaction traces.
+//! Component synthetic scene goldens and interaction traces.
 
 use astrelis_core::geometry::{LogicalPoint, LogicalSize};
 use astrelis_platform::{
     CursorIcon, DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey,
     PhysicalKey,
 };
-use rxui_next::core::{Axis, SemanticData, SemanticRole, UiInput};
-use rxui_next::{
+use rxui::core::{Axis, SemanticData, SemanticRole, UiInput};
+use rxui::{
     ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ComponentHost,
     ContainerStyle, DialogAction, FrameStyle, Space, Theme, View, button, button_with, dialog,
     label, panel, row_with, split_pane, stack,
@@ -39,7 +39,7 @@ impl Component for SplitScene {
             self.ratio,
             panel(
                 LogicalSize::new(1.0, 1.0),
-                rxui_next::ColorRole::Surface,
+                rxui::ColorRole::Surface,
                 Some(SemanticData {
                     role: SemanticRole::Group,
                     label: "First pane".into(),
@@ -48,7 +48,7 @@ impl Component for SplitScene {
             ),
             panel(
                 LogicalSize::new(1.0, 1.0),
-                rxui_next::ColorRole::Background,
+                rxui::ColorRole::Background,
                 Some(SemanticData {
                     role: SemanticRole::Group,
                     label: "Second pane".into(),
@@ -185,11 +185,11 @@ impl Component for StackScene {
 
 fn scene<C: Component>(component: C, viewport: LogicalSize) -> SemanticScene {
     let host = ComponentHost::new(component, viewport, Theme::dark()).unwrap();
-    SemanticScene::from_next(&host.ui().semantic_snapshot())
+    SemanticScene::from_component(&host.ui().semantic_snapshot())
 }
 
 #[test]
-fn synthetic_next_layouts_match_reviewed_golden() {
+fn synthetic_component_layouts_match_reviewed_golden() {
     let mut snapshot = String::new();
     for ratio in [0.25, 0.5, 0.75] {
         snapshot.push_str(&format!("[split {ratio:.2}]\n"));
@@ -295,7 +295,7 @@ fn modal_disables_background_autofocuses_and_dismisses_on_escape() {
     assert!(!background.enabled);
     assert!(cancel.focused);
 
-    host.semantic_action(background.id, rxui_next::core::SemanticAction::Activate)
+    host.semantic_action(background.id, rxui::core::SemanticAction::Activate)
         .unwrap();
     assert_eq!(host.component().background_activations, 0);
 

@@ -1,9 +1,9 @@
-//! Deterministic component testing and legacy/Next differential goldens.
+//! Deterministic component testing and old/component differential goldens.
 
 #![warn(missing_docs)]
 
+mod component;
 pub mod differential;
 pub mod golden;
-mod next;
 
-pub use next::ComponentHarness;
+pub use component::ComponentHarness;

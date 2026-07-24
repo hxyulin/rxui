@@ -1,7 +1,7 @@
 //! Deterministic driver for component-native RXUI trees.
 
 use astrelis_core::geometry::LogicalSize;
-use rxui_next::{
+use rxui::{
     Component, ComponentHost, Theme,
     core::{SemanticAction, SemanticNode, SemanticRole, UiError},
 };

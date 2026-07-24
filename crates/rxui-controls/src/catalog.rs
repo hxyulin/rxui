@@ -5,7 +5,7 @@ use std::{fmt::Display, str::FromStr};
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::Alignment;
 
-use crate::{
+use rxui_core::{
     ButtonStyle, ButtonVariant, ColorRole, ContainerStyle, FrameStyle, Icon, IconButtonStyle,
     Space, StackStyle, View, button, button_with, column, column_with, icon_button_with, label,
     panel, row, row_with, spacer, stack_with, text_field, views,

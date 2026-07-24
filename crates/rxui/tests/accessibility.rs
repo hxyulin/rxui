@@ -2,7 +2,7 @@
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::{SemanticAction, SemanticActionKind, SemanticRole};
-use rxui_next::{
+use rxui::{
     Component, ComponentContext, ComponentHost, Theme, View, button, checkbox, column, slider,
     text_field,
 };

@@ -2128,15 +2128,39 @@ version = "0.1.0-rc.1"
 dependencies = [
  "astrelis-app",
  "astrelis-core",
+ "astrelis-paint",
  "astrelis-platform",
  "astrelis-platform-winit",
- "rxui-next",
+ "astrelis-ui-next",
+ "rxui-controls",
+ "rxui-core",
+ "rxui-native",
+ "rxui-workbench",
  "wasm-bindgen",
  "web-sys",
 ]
 
 [[package]]
-name = "rxui-next"
+name = "rxui-controls"
+version = "0.1.0-rc.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-ui-next",
+ "rxui-core",
+]
+
+[[package]]
+name = "rxui-core"
+version = "0.1.0-rc.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-paint",
+ "astrelis-platform",
+ "astrelis-ui-next",
+]
+
+[[package]]
+name = "rxui-native"
 version = "0.1.0-rc.1"
 dependencies = [
  "astrelis-app",
@@ -2147,9 +2171,9 @@ dependencies = [
  "astrelis-paint-gpu",
  "astrelis-platform",
  "astrelis-platform-winit",
- "astrelis-text",
  "astrelis-ui-host",
  "astrelis-ui-next",
+ "rxui-core",
 ]
 
 [[package]]
@@ -2160,7 +2184,19 @@ dependencies = [
  "astrelis-platform",
  "astrelis-ui-core",
  "astrelis-ui-testing",
- "rxui-next",
+ "rxui",
+]
+
+[[package]]
+name = "rxui-workbench"
+version = "0.1.0-rc.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-paint",
+ "astrelis-platform",
+ "astrelis-text",
+ "astrelis-ui-next",
+ "rxui-core",
 ]
 
 [[package]]

@@ -2,7 +2,7 @@
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_paint::Path;
-use rxui_next::{
+use rxui::{
     Component, ComponentContext, ComponentHost, Icon, IconSpec, Theme, icon, icon_button, icons,
 };
 
@@ -20,7 +20,7 @@ impl Component for SearchIcon {
 
     fn update(&mut self, _action: (), _context: &mut ComponentContext<'_, ()>) {}
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<()> {
+    fn view(&self, _theme: &Theme) -> rxui::View<()> {
         icon(IconSpec::new(icons::search()).size(20.0).label("Search"))
     }
 }
@@ -46,7 +46,7 @@ impl Component for SearchButton {
 
     fn update(&mut self, _action: (), _context: &mut ComponentContext<'_, ()>) {}
 
-    fn view(&self, _theme: &Theme) -> rxui_next::View<()> {
+    fn view(&self, _theme: &Theme) -> rxui::View<()> {
         icon_button(icons::search(), "Search", ())
     }
 }

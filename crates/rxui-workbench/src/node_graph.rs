@@ -14,7 +14,7 @@ use astrelis_ui_next::{
     UiError, UiInput,
 };
 
-use crate::{ActionEmitter, RetainedSpec, View, retained};
+use rxui_core::{ActionEmitter, RetainedSpec, View, retained};
 
 /// One positioned graph node.
 #[derive(Clone, Debug, PartialEq)]

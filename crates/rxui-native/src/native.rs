@@ -17,7 +17,7 @@ pub use astrelis_ui_host::{
 use astrelis_ui_host::{HostError, HostUpdate, NextWindowHost};
 use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiRoot};
 
-use crate::{Component, ComponentRuntime, ComponentServiceRequest, Theme};
+use rxui_core::{Component, ComponentRuntime, ComponentServiceRequest, Theme};
 
 /// State-owning component runtime connected to one native window.
 pub struct ComponentWindow<C: Component> {
@@ -122,7 +122,7 @@ impl<C: Component> ComponentWindow<C> {
     /// Routes a completed host-service action back to its owning component.
     pub fn complete_service(
         &mut self,
-        action: crate::ServiceAction,
+        action: rxui_core::ServiceAction,
     ) -> Result<FrameUpdate<'_>, UiError> {
         self.runtime.dispatch_erased(self.host.ui_mut(), action)
     }

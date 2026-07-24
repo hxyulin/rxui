@@ -1,11 +1,11 @@
-//! Reviewed legacy/Next synthetic layout goldens.
+//! Reviewed old/component synthetic layout goldens.
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_core::{
     Alignment as LegacyAlignment, Insets, LayoutStyle, Length, Theme as LegacyTheme, Ui as LegacyUi,
 };
 use astrelis_ui_testing::{UiHarness, deterministic_font_database};
-use rxui_next::{
+use rxui::{
     ButtonStyle, Component, ComponentContext, ComponentHost, ContainerStyle, Space, Theme, View,
     button, button_with, checkbox, column_with, label, row_with, slider, text_field,
 };
@@ -99,15 +99,15 @@ fn legacy_scene(mut harness: UiHarness<()>) -> SemanticScene {
     SemanticScene::from_legacy(&harness.semantics().unwrap())
 }
 
-fn next_scene<C: Component>(component: C, viewport: LogicalSize) -> SemanticScene {
+fn component_scene<C: Component>(component: C, viewport: LogicalSize) -> SemanticScene {
     let host = ComponentHost::new(component, viewport, Theme::dark()).unwrap();
-    SemanticScene::from_next(&host.ui().semantic_snapshot())
+    SemanticScene::from_component(&host.ui().semantic_snapshot())
 }
 
 #[test]
 fn fixed_row_matches_legacy_geometry_and_reviewed_golden() {
     let legacy = legacy_scene(legacy_fixed_row());
-    let next = next_scene(FixedRow, FIXED_VIEWPORT);
+    let next = component_scene(FixedRow, FIXED_VIEWPORT);
     compare_geometry(&legacy, &next, 0.75).unwrap_or_else(|differences| {
         panic!("{differences}\n\n{}", differential_snapshot(&legacy, &next))
     });
@@ -121,7 +121,7 @@ fn fixed_row_matches_legacy_geometry_and_reviewed_golden() {
 #[test]
 fn intrinsic_form_has_a_reviewed_cross_implementation_golden() {
     let legacy = legacy_scene(legacy_form());
-    let next = next_scene(Form, FORM_VIEWPORT);
+    let next = component_scene(Form, FORM_VIEWPORT);
     assert_text_golden(
         &differential_snapshot(&legacy, &next),
         include_str!("goldens/intrinsic-form.txt"),
@@ -133,8 +133,8 @@ fn intrinsic_form_has_a_reviewed_cross_implementation_golden() {
 }
 
 #[test]
-fn next_intrinsic_form_keeps_controls_usable_non_overlapping_and_on_screen() {
-    let next = next_scene(Form, FORM_VIEWPORT);
+fn component_form_keeps_controls_usable_non_overlapping_and_on_screen() {
+    let next = component_scene(Form, FORM_VIEWPORT);
     for landmark in &next.landmarks {
         assert!(landmark.bounds.size.width > 0.0, "{landmark:?}");
         assert!(landmark.bounds.size.height >= 14.0, "{landmark:?}");

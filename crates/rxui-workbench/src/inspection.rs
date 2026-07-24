@@ -3,7 +3,7 @@
 use astrelis_core::geometry::LogicalRect;
 use astrelis_ui_next::{NodeId, PassStats, SemanticRole, UiRoot};
 
-use crate::{ColorRole, ContainerStyle, Space, View, button, column_with, label, views};
+use rxui_core::{ColorRole, ContainerStyle, Space, View, button, column_with, label, views};
 
 /// One flattened retained semantic node.
 #[derive(Clone, Debug, PartialEq)]

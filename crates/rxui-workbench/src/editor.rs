@@ -5,7 +5,9 @@ use std::ops::Range;
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::{SemanticData, SemanticRole};
 
-use crate::{AnyView, ColorRole, column, label, label_with_width, panel, row, text_field, views};
+use rxui_core::{
+    AnyView, ColorRole, column, label, label_with_width, panel, row, text_field, views,
+};
 
 /// Controlled property field.
 #[derive(Clone, Debug, PartialEq, Eq)]
