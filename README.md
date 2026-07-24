@@ -56,7 +56,8 @@ Internally, the implementation is split by responsibility:
 
 - `rxui-core` owns components, reconciliation, styles, icons, and services;
 - `rxui-controls` owns composite controls and validation;
-- `rxui-workbench` owns charts, node graphs, docking, and editor surfaces;
+- `rxui-widgets` owns rich media, node graphs, docking, and editor surfaces;
+- `rxui-charts` owns chart models, rendering, and interaction;
 - `rxui-native` owns native window/runtime integration;
 - `rxui` is the stable aggregate facade application code should depend on.
 

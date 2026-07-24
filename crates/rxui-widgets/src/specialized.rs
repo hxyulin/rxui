@@ -7,7 +7,7 @@ pub use astrelis_paint::{CompositorViewId, ExternalImage, Image, ImageSampling};
 pub use astrelis_ui_next::{ImageAlignment, ImageFit, RenderViewContent};
 use astrelis_ui_next::{ImageElement, RenderView, UiInput};
 
-use crate::{ActionEmitter, RetainedSpec, View, retained};
+use rxui_core::{ActionEmitter, RetainedSpec, View, retained};
 
 /// Controlled raster-image presentation.
 #[derive(Clone)]

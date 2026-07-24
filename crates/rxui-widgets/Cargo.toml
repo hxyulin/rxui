@@ -1,6 +1,6 @@
 [package]
-name = "rxui-workbench"
-description = "Charts, node graphs, docking, and editor surfaces for RXUI"
+name = "rxui-widgets"
+description = "Rich data, editor, media, and workspace widgets for RXUI"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -5,14 +5,12 @@
 mod component;
 mod icon;
 mod services;
-mod specialized;
 mod style;
 mod view;
 
 pub use component::*;
 pub use icon::*;
 pub use services::*;
-pub use specialized::*;
 pub use style::*;
 pub use view::*;
 

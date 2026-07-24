@@ -2132,12 +2132,24 @@ dependencies = [
  "astrelis-platform",
  "astrelis-platform-winit",
  "astrelis-ui-next",
+ "rxui-charts",
  "rxui-controls",
  "rxui-core",
  "rxui-native",
- "rxui-workbench",
+ "rxui-widgets",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "rxui-charts"
+version = "0.1.0-rc.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-paint",
+ "astrelis-platform",
+ "astrelis-ui-next",
+ "rxui-core",
 ]
 
 [[package]]
@@ -2188,7 +2200,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rxui-workbench"
+name = "rxui-widgets"
 version = "0.1.0-rc.1"
 dependencies = [
  "astrelis-core",

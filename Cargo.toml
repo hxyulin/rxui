@@ -2,11 +2,12 @@
 resolver = "3"
 members = [
   "crates/rxui",
+  "crates/rxui-charts",
   "crates/rxui-controls",
   "crates/rxui-core",
   "crates/rxui-native",
   "crates/rxui-testing",
-  "crates/rxui-workbench",
+  "crates/rxui-widgets",
 ]
 
 [workspace.package]
@@ -23,11 +24,12 @@ categories = ["gui", "development-tools"]
 publish = ["crates-io"]
 
 [workspace.dependencies]
+rxui-charts = { path = "crates/rxui-charts", version = "=0.1.0-rc.1" }
 rxui-controls = { path = "crates/rxui-controls", version = "=0.1.0-rc.1" }
 rxui-core = { path = "crates/rxui-core", version = "=0.1.0-rc.1" }
 rxui-native = { path = "crates/rxui-native", version = "=0.1.0-rc.1" }
 rxui-testing = { path = "crates/rxui-testing", version = "=0.1.0-rc.1" }
-rxui-workbench = { path = "crates/rxui-workbench", version = "=0.1.0-rc.1" }
+rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
 
 # The component engine is under joint development in the sibling Astrelis
 # checkout and is not published yet. Pin these paths until that release gate.

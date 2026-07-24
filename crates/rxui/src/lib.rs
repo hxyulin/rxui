@@ -7,15 +7,17 @@
 
 #![warn(missing_docs)]
 
+pub use rxui_charts::*;
 pub use rxui_controls::*;
 pub use rxui_core::*;
 pub use rxui_native::*;
-pub use rxui_workbench::*;
+pub use rxui_widgets::*;
 
 /// Common component, view, catalog, host, and service types.
 pub mod prelude {
+    pub use rxui_charts::*;
     pub use rxui_controls::*;
     pub use rxui_core::*;
     pub use rxui_native::*;
-    pub use rxui_workbench::*;
+    pub use rxui_widgets::*;
 }

@@ -14,10 +14,11 @@ categories.workspace = true
 publish.workspace = true
 
 [dependencies]
+rxui-charts = { workspace = true }
 rxui-controls = { workspace = true }
 rxui-core = { workspace = true }
 rxui-native = { workspace = true }
-rxui-workbench = { workspace = true }
+rxui-widgets = { workspace = true }
 
 [dev-dependencies]
 astrelis-app = { workspace = true }

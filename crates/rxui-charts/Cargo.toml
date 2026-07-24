@@ -1,0 +1,22 @@
+[package]
+name = "rxui-charts"
+description = "Interactive retained charts for RXUI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rxui-core = { workspace = true }
+astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-ui-next = { workspace = true }
+
+[lints]
+workspace = true
