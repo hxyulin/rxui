@@ -366,15 +366,33 @@ impl<Action: 'static> RetainedSpec<Action> for ChartSpec<Action> {
         element.map_action = self.map_action.clone();
     }
 
+    /// Reports the passes each field actually feeds.
+    ///
+    /// The chart's one layout input is `options.size`: `layout` constrains it
+    /// and caches the result, and that is the whole of the pass. The domain
+    /// extents are *not* a layout product, however much they look like axis
+    /// geometry - `bounds` recomputes them from `series` inside `paint` on every
+    /// frame - so new data is a repaint, not a re-measure. `accessibility`
+    /// announces the series count and nothing finer, so it only cares when the
+    /// count moves.
+    ///
+    /// Hover and selection do not appear here at all. They live in the element
+    /// as `hovered`, are driven by `event`, and are reported through
+    /// `EventResult::invalidation`, which already asks for `PAINT` alone. No
+    /// controlled hover field would improve on that, and adding one would put
+    /// the pointer's position through the component reducer.
     fn changed(&self, previous: &Self) -> Invalidation {
-        // Narrowing this is a per-widget judgement about which passes each field
-        // feeds, and it moves the engine's `PassStats`; the protocol change only
-        // makes it expressible.
-        if self.series != previous.series || self.options != previous.options {
-            Invalidation::ALL
-        } else {
-            Invalidation::empty()
+        let mut invalidation = Invalidation::empty();
+        if self.options.size != previous.options.size {
+            invalidation |= Invalidation::LAYOUT;
         }
+        if self.series.len() != previous.series.len() {
+            invalidation |= Invalidation::ACCESSIBILITY;
+        }
+        if self.series != previous.series || self.options != previous.options {
+            invalidation |= Invalidation::PAINT;
+        }
+        invalidation
     }
 }
 
