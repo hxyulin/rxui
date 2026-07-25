@@ -7,7 +7,7 @@ use astrelis_ui_next::{Flex, FrameUpdate, NodeId, SemanticAction, UiError, UiInp
 
 use crate::{
     BackgroundTaskRequest, Clipboard, ClipboardReadRequest, ComponentServiceRequest, ServiceAction,
-    Theme, View, ViewHost,
+    Theme, View, ViewHost, diagnostics::ViewStats,
 };
 
 pub(crate) struct RoutedComponentAction {
@@ -111,6 +111,8 @@ pub struct ComponentRuntime<C: Component> {
 impl<C: Component> ComponentRuntime<C> {
     /// Mounts a component into an existing incremental retained root.
     pub fn mount(component: C, ui: &mut UiRoot, theme: Theme) -> Result<Self, UiError> {
+        // `component_views`: the root component's initial view build.
+        ViewStats::record_component_view();
         let views = ViewHost::mount(ui, &theme, component.view(&theme))?;
         ui.update_passes()?;
         Ok(Self {
@@ -136,6 +138,9 @@ impl<C: Component> ComponentRuntime<C> {
                 Arc::new(|action| action),
             ),
         );
+        // `component_views`: the unconditional root re-render after a local
+        // action. Nested components re-render again inside this rebuild.
+        ViewStats::record_component_view();
         self.views
             .rebuild(ui, &self.theme, self.component.view(&self.theme))?;
         ui.update_passes()
@@ -190,6 +195,10 @@ impl<C: Component> ComponentRuntime<C> {
                 ),
             );
         }
+        // `component_views`: the unconditional root re-render that follows
+        // routing an erased action, including actions already reduced by a
+        // nested component that rebuilt its own subtree.
+        ViewStats::record_component_view();
         self.views
             .rebuild(ui, &self.theme, self.component.view(&self.theme))?;
         ui.update_passes()
@@ -197,6 +206,9 @@ impl<C: Component> ComponentRuntime<C> {
 
     /// Reconciles after an application-owned mutation.
     pub fn refresh<'a>(&mut self, ui: &'a mut UiRoot) -> Result<FrameUpdate<'a>, UiError> {
+        // `component_views`: the root re-render driven by an application-owned
+        // mutation or a theme change.
+        ViewStats::record_component_view();
         self.views
             .rebuild(ui, &self.theme, self.component.view(&self.theme))?;
         ui.update_passes()

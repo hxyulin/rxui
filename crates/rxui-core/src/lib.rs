@@ -2,6 +2,8 @@
 
 #![warn(missing_docs)]
 
+pub mod diagnostics;
+
 mod component;
 mod icon;
 mod services;
