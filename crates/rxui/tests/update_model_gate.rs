@@ -1,22 +1,28 @@
-//! Update-model gate: a recorded baseline of per-interaction framework work.
+//! Update-model gate: the ratchet on per-interaction framework work.
 //!
-//! The framework currently does full work on every interaction. A nested
-//! component's action rebuilds that component's own subtree, and then the root
-//! view is rebuilt unconditionally and the whole shadow tree is diffed. The
-//! engine's `PassStats` cannot see any of that, because it measures layout,
-//! paint, and accessibility work *below* the component boundary.
+//! Reducing an action no longer rebuilds anything. It updates component state
+//! and records which components went stale; the runtime then rebuilds the root
+//! only if the root's own state changed, and drains the remaining stale
+//! components in depth order. At each component boundary, a subtree is rebuilt
+//! only when its props, its theme revision, or its own dirty flag says its
+//! output can have changed. The engine's `PassStats` cannot see any of that,
+//! because it measures layout, paint, and accessibility work *below* the
+//! component boundary.
 //!
-//! Every number asserted here is a measurement of today's behavior, not a
-//! target. `ViewStats` counters are deterministic — no timing, no sampling —
-//! so each is asserted with exact equality and confirmed stable across
-//! repeated serial and parallel runs. A later update-isolation phase is
-//! expected to ratchet them down; a change in either direction should force a
-//! deliberate edit here.
+//! `ViewStats` counters are deterministic — no timing, no sampling — so each is
+//! asserted with exact equality and confirmed stable across repeated serial and
+//! parallel runs. A change in either direction should force a deliberate edit
+//! here, with a comment explaining the new number.
+//!
+//! The load-bearing property is in
+//! [`one_action_into_one_panel_is_independent_of_sibling_count`]: one action
+//! into one of N sibling components costs byte-identical `ViewStats` at N = 4
+//! and N = 64.
 //!
 //! Every scenario ends in [`assert_incremental_matches_fresh`], which compares
 //! the incrementally updated tree against a second host mounted fresh from the
-//! same final state. That is what stops a future counter "win" from being
-//! bought by leaving retained state stale.
+//! same final state. That is what stops a counter "win" from being bought by
+//! leaving retained state stale.
 
 mod support;
 
@@ -320,7 +326,7 @@ fn hover_over_a_control_does_no_view_work() {
 }
 
 #[test]
-fn keystroke_into_a_nested_child_field_rebuilds_the_whole_root() {
+fn keystroke_into_a_nested_child_field_rebuilds_only_the_root_and_that_child() {
     let mut host = mount_workspace(Theme::dark());
     let point = trailing_edge(&find(&host, "Note"));
     host.input(UiInput::PointerPressed(point)).expect("focus");
@@ -332,28 +338,32 @@ fn keystroke_into_a_nested_child_field_rebuilds_the_whole_root() {
 
     assert_eq!(host.component().note, "!");
 
-    // This is the headline case. One character typed into a field owned by a
-    // nested child costs three user `view()` calls:
-    //   1. the child reduces its own action and rebuilds its own subtree
-    //      (`ComponentState::rebuild_child` from the routing pass);
-    //   2. the root re-renders unconditionally in `dispatch_erased`;
-    //   3. that root rebuild reconciles the child's `ComponentView`, which
-    //      calls `rebuild_child` a *second* time for the same keystroke.
-    // Update isolation should reduce this to 1.
-    assert_eq!(view.component_views, 3);
+    // This is the headline case, and the floor for it is 2 rather than 1.
+    // Routing no longer rebuilds: the child reduces its own action, marks
+    // itself dirty, and emits `NoteEffect::Changed`, which the root reduces
+    // into `self.note`. That is a genuine change to root state, so:
+    //   1. the root re-renders once, in `flush`;
+    //   2. reconciling the child's `ComponentView` sees changed props and
+    //      rebuilds the child once — which also clears the child's own dirty
+    //      entry, so the depth-ordered drain finds nothing left to do.
+    // The third call is gone: the child's subtree is now diffed once per
+    // keystroke instead of twice. Reaching 1 would require the root *not* to
+    // re-render, which cannot be correct while `Workspace::note` mirrors the
+    // child's text.
+    assert_eq!(view.component_views, 2);
     // 0 = retained identity is fully preserved; nothing is remounted.
     assert_eq!(view.nodes_built, 0);
-    // 48 = 45 view nodes below the root, diffed by the full root rebuild,
-    // plus the child's 3 nodes (column, caption, field) diffed a second time
-    // by the routing pass that ran before it.
-    assert_eq!(view.nodes_rebuilt, 48);
-    // 17 = 16 containers in the tree (outer column, toolbar row, list column,
-    // 12 keyed rows, the child's column) plus the child's column again from
-    // the routing pass.
-    assert_eq!(view.containers_reconciled, 17);
-    // Equal to `containers_reconciled`: today every reconciliation pass
-    // republishes its child list even when the order is unchanged.
-    assert_eq!(view.set_children_calls, 17);
+    // 45 = every view node below the root, diffed exactly once. Was 48, which
+    // was 45 plus the child's 3 nodes diffed a second time by the routing pass.
+    assert_eq!(view.nodes_rebuilt, 45);
+    // 16 = every container in the tree, each reconciled once. Was 17, which
+    // double-counted the child's column.
+    assert_eq!(view.containers_reconciled, 16);
+    // 0 = no container's child order changed, and `MountedChildren` now
+    // compares against the order it last published instead of republishing it.
+    // Every `set_children` call carried `Invalidation::ALL`, so this is the
+    // largest single reduction in retained work in the whole change.
+    assert_eq!(view.set_children_calls, 0);
     assert_no_memo_or_row_activity("keystroke", view);
 
     // For contrast, the engine's own view of the same keystroke is nearly
@@ -384,7 +394,7 @@ fn keystroke_into_a_nested_child_field_rebuilds_the_whole_root() {
 }
 
 #[test]
-fn selection_change_rebuilds_the_whole_tree() {
+fn selection_change_rebuilds_the_root_and_skips_the_nested_editor() {
     let mut host = mount_workspace(Theme::dark());
 
     let ((), view) = ViewStats::measure(|| {
@@ -392,24 +402,28 @@ fn selection_change_rebuilds_the_whole_tree() {
     });
     let pass = host.ui().stats();
 
-    // 2 = the root re-render, plus the nested editor re-rendering because the
-    // root rebuild walks through its `ComponentView` — even though selection
-    // cannot affect the editor at all.
-    assert_eq!(view.component_views, 2);
+    // 1 = the root re-render only. The nested editor's props and theme
+    // revision are both unchanged and it reduced nothing, so its
+    // `ComponentView` is skipped outright. Was 2.
+    assert_eq!(view.component_views, 1);
     // 0 = keyed rows keep their retained identity across the selection move.
     assert_eq!(view.nodes_built, 0);
-    // 45 = every view node below the root, for a change that affects 2 of
-    // them (the previously and newly selected marks).
-    assert_eq!(view.nodes_rebuilt, 45);
-    // 16 = every container in the tree.
-    assert_eq!(view.containers_reconciled, 16);
-    assert_eq!(view.set_children_calls, 16);
+    // 41 = 45 minus the 4 nodes behind the skipped editor boundary (the
+    // boundary itself, its column, its caption, and its field).
+    assert_eq!(view.nodes_rebuilt, 41);
+    // 15 = 16 minus the skipped editor's column.
+    assert_eq!(view.containers_reconciled, 15);
+    // 0 = no child order moved.
+    assert_eq!(view.set_children_calls, 0);
     assert_no_memo_or_row_activity("selection", view);
 
-    // The engine correctly localizes the same change: 7 = the two changed
-    // marks and their ancestors, 2 fragments repainted, 44 reused, 2
-    // accessibility nodes changed (selected went false/true), no re-shaping.
-    assert_eq!(pass.layout_elements, 7);
+    // 0 = a selection mark only changes its color and its `selected` flag, so
+    // exact invalidation bits now ask for paint and accessibility without
+    // layout. Was 7, because `set_box` discarded the correct bits the view had
+    // already computed and asked for `LAYOUT_ALL`.
+    assert_eq!(pass.layout_elements, 0);
+    // Unchanged: the same 2 fragments repaint, 44 are reused, and the same 2
+    // accessibility nodes change (selected went false/true).
     assert_eq!(pass.rebuilt_fragments, 2);
     assert_eq!(pass.reused_fragments, 44);
     assert_eq!(pass.accessibility_nodes, 2);
@@ -438,16 +452,27 @@ fn theme_change_rebuilds_and_repaints_the_whole_tree() {
     // one scenario where rebuilding everything is legitimate, so these
     // numbers are the natural floor rather than waste — they are recorded so
     // that update isolation can be shown *not* to break global invalidation.
+    //
+    // This is the assertion that proves `Theme::revision` is load-bearing: the
+    // editor's props are identical across the switch, so the *only* reason it
+    // re-renders is that the revision it last rendered at no longer matches.
     assert_eq!(view.component_views, 2);
     assert_eq!(view.nodes_built, 0);
     assert_eq!(view.nodes_rebuilt, 45);
     assert_eq!(view.containers_reconciled, 16);
-    assert_eq!(view.set_children_calls, 16);
+    // 0 = a theme switch changes colors, not structure, so no container's child
+    // order moves. Was 16.
+    assert_eq!(view.set_children_calls, 0);
     assert_no_memo_or_row_activity("theme", view);
 
-    // Unlike every other scenario, the engine does real work here: 46 = every
-    // element re-measures and 28 of 46 fragments repaint.
-    assert_eq!(pass.layout_elements, 46);
+    // 31 = the 13 labels and 1 text field whose glyph color changed, plus every
+    // ancestor on their paths. Was 46 (literally every element), because a
+    // box or button whose fill changed asked for `LAYOUT_ALL`. Text is the only
+    // thing here that genuinely must relayout, because the shaper bakes the
+    // brush into glyph runs and re-shaping happens during layout.
+    assert_eq!(pass.layout_elements, 31);
+    // Unchanged at 28 of 46: exactly the elements rxui touched repaint, and it
+    // touches the same set as before — only the bits it asks for narrowed.
     assert_eq!(pass.rebuilt_fragments, 28);
     assert_eq!(pass.reused_fragments, 18);
     // 14 = text whose glyph color actually changed must re-shape, because the
@@ -613,44 +638,45 @@ fn bump_first_panel(panels: usize) -> (ViewStats, PassStats) {
 }
 
 #[test]
-fn one_action_into_one_panel_is_not_independent_of_sibling_count() {
+fn one_action_into_one_panel_is_independent_of_sibling_count() {
     let (small, small_pass) = bump_first_panel(4);
     let (large, large_pass) = bump_first_panel(64);
 
-    // THE ASSERTION THAT MATTERS. Bumping one panel is logically independent
-    // of how many siblings exist, so once update isolation lands these two
-    // `ViewStats` must be *equal*, and this test should become
-    // `assert_eq!(small, large)`.
-    //
-    // Today they are not, because the routed action's own subtree rebuild is
-    // followed by an unconditional root re-render that walks and re-renders
-    // every sibling panel. The measured values below are recorded reality.
-    assert_ne!(
+    // THE ASSERTION THAT MATTERS. Bumping one panel is logically independent of
+    // how many siblings exist, and every view counter now says so: a 16x change
+    // in sibling count produces byte-identical `ViewStats`. This replaces the
+    // `assert_ne!` the measurement phase recorded here.
+    assert_eq!(
         small, large,
-        "if this now passes, update isolation landed: replace this whole \
-         block with assert_eq!(small, large)"
+        "one action into one panel must cost the same at any sibling count"
     );
 
-    // component_views = N + 2:
-    //   1 for the bumped panel reducing its own action and rebuilding itself,
-    //   1 for the root re-render,
-    //   N for every panel re-rendered by that root rebuild (including the
-    //     bumped one, for the second time).
-    assert_eq!(small.component_views, 6); // 4 + 2
-    assert_eq!(large.component_views, 66); // 64 + 2
+    // 2, independent of N:
+    //   1 for the root re-render — `BoardAction::Bumped` really does change
+    //     `PanelBoard::counts`, so the root's view is genuinely stale;
+    //   1 for the bumped panel, whose props changed.
+    // Every other panel's props compare equal, its theme revision is unchanged,
+    // and it reduced nothing, so its `ComponentView` is skipped. The bumped
+    // panel's own dirty entry is cleared by the same pass, so the depth-ordered
+    // drain that follows has nothing left to do. Was N + 2.
+    assert_eq!(small.component_views, 2);
+    assert_eq!(large.component_views, 2);
 
-    // nodes_rebuilt = 5N + 5: the root column plus, per panel, its component
-    // boundary and its row of three children (4N + 1 + N), plus the bumped
-    // panel's own 4-node subtree diffed again by the routing pass.
-    assert_eq!(small.nodes_rebuilt, 25); // 5 * 4 + 5
-    assert_eq!(large.nodes_rebuilt, 325); // 5 * 64 + 5
+    // 6, independent of N: the root column, the bumped panel's boundary, its
+    // row, and its three children. Skipped boundaries deliberately record
+    // nothing — see `ComponentView::rebuild_counted` — because a boundary that
+    // reconciles neither its own state nor its subtree is not a rebuilt node,
+    // and counting it would reintroduce the dependence on N. Was 5N + 5.
+    assert_eq!(small.nodes_rebuilt, 6);
+    assert_eq!(large.nodes_rebuilt, 6);
 
-    // containers_reconciled = N + 2: the root column, every panel's row, and
-    // the bumped panel's row a second time.
-    assert_eq!(small.containers_reconciled, 6);
-    assert_eq!(large.containers_reconciled, 66);
-    assert_eq!(small.set_children_calls, 6);
-    assert_eq!(large.set_children_calls, 66);
+    // 2, independent of N: the root column and the bumped panel's row. Was
+    // N + 2, which included every sibling's row plus the bumped row twice.
+    assert_eq!(small.containers_reconciled, 2);
+    assert_eq!(large.containers_reconciled, 2);
+    // 0: neither child order moved, so neither list is republished. Was N + 2.
+    assert_eq!(small.set_children_calls, 0);
+    assert_eq!(large.set_children_calls, 0);
 
     // Nothing is remounted at either size.
     assert_eq!(small.nodes_built, 0);
@@ -658,11 +684,10 @@ fn one_action_into_one_panel_is_not_independent_of_sibling_count() {
     assert_no_memo_or_row_activity("panels N=4", small);
     assert_no_memo_or_row_activity("panels N=64", large);
 
-    // The engine, by contrast, already *is* independent of sibling count:
-    // identical layout, paint, accessibility, and shaping work at both sizes.
-    // Only `reused_fragments` grows, and only because there are more
-    // untouched fragments to reuse. This is the shape the view counters above
-    // should eventually take.
+    // The engine was already independent of sibling count: identical layout,
+    // paint, accessibility, and shaping work at both sizes. Only
+    // `reused_fragments` grows, and only because there are more untouched
+    // fragments to reuse. The view counters above now have the same shape.
     assert_eq!(small_pass.layout_elements, 5);
     assert_eq!(large_pass.layout_elements, 5);
     assert_eq!(small_pass.rebuilt_fragments, 1);
@@ -673,6 +698,168 @@ fn one_action_into_one_panel_is_not_independent_of_sibling_count() {
     assert_eq!(large_pass.shaped_text, 1);
     assert_eq!(small_pass.reused_fragments, 21); // 5 * 4 + 1
     assert_eq!(large_pass.reused_fragments, 321); // 5 * 64 + 1
+}
+
+// ------------------------------------------------------- coalesced dispatch
+
+#[test]
+fn a_batch_of_actions_costs_one_root_render() {
+    let mut host = mount_workspace(Theme::dark());
+
+    let ((), view) = ViewStats::measure(|| {
+        host.dispatch_all([
+            WorkspaceAction::Select(1),
+            WorkspaceAction::Select(2),
+            WorkspaceAction::Select(3),
+        ])
+        .expect("batch");
+    });
+
+    assert_eq!(host.component().selected, 3);
+    // 1, not 3. Every action is reduced first and the tree is reconciled once.
+    // Looping `dispatch` instead would cost one full rebuild per action, which
+    // is what a window host used to pay for every event it drained.
+    assert_eq!(view.component_views, 1);
+    // Only the marks for rows 0 and 3 differ from the mounted state, and the
+    // two intermediate selections never reach the retained tree at all.
+    assert_eq!(view.nodes_built, 0);
+    assert_no_memo_or_row_activity("batch", view);
+
+    assert_incremental_matches_fresh(
+        "batch",
+        &host,
+        workspace("", 3),
+        VIEWPORT,
+        Theme::dark(),
+        |_| {},
+    );
+}
+
+// ------------------------------------------------------------- shared state
+
+/// State a child renders but does not own, reached through interior mutability.
+///
+/// This is the component shape update isolation breaks: the parent's edit changes
+/// no props on the child's boundary, so nothing about the child's inputs tells
+/// the framework its output moved.
+#[derive(Clone, PartialEq, Eq)]
+struct MirrorProps {
+    title: std::rc::Rc<std::cell::RefCell<String>>,
+}
+
+struct Mirror {
+    title: std::rc::Rc<std::cell::RefCell<String>>,
+}
+
+impl Component for Mirror {
+    type Action = ();
+    type Effect = ();
+
+    fn update(&mut self, _action: (), _context: &mut ComponentContext<'_, ()>) {}
+
+    fn view(&self, _theme: &Theme) -> View<()> {
+        label(self.title.borrow().clone()).keyed("mirror")
+    }
+}
+
+impl ComponentWithProps for Mirror {
+    type Props = MirrorProps;
+
+    fn create(props: &MirrorProps) -> Self {
+        Self {
+            title: props.title.clone(),
+        }
+    }
+
+    fn changed(&mut self, props: &MirrorProps) {
+        self.title = props.title.clone();
+    }
+}
+
+#[derive(Clone)]
+enum ShellAction {
+    /// Rename without telling the framework the shared value moved.
+    RenameQuietly(&'static str),
+    /// Rename and request a render, which is the documented migration.
+    RenameAndRequestRender(&'static str),
+}
+
+struct Shell {
+    title: std::rc::Rc<std::cell::RefCell<String>>,
+}
+
+impl Component for Shell {
+    type Action = ShellAction;
+    type Effect = ();
+
+    fn update(&mut self, action: ShellAction, context: &mut ComponentContext<'_, ()>) {
+        match action {
+            ShellAction::RenameQuietly(title) => *self.title.borrow_mut() = title.to_owned(),
+            ShellAction::RenameAndRequestRender(title) => {
+                *self.title.borrow_mut() = title.to_owned();
+                context.request_render();
+            }
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> View<ShellAction> {
+        column((component::<Mirror, ShellAction>(
+            MirrorProps {
+                title: self.title.clone(),
+            },
+            |()| ShellAction::RenameQuietly(""),
+        )
+        .keyed("mirror"),))
+    }
+}
+
+fn mirrored_label(host: &ComponentHost<Shell>) -> Option<String> {
+    host.ui()
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.role == SemanticRole::Label)
+        .map(|node| node.data.label)
+}
+
+/// Documents the exact cost of update isolation, and that `request_render` pays it.
+///
+/// The two halves are deliberately in one test: the stale half is only
+/// meaningful next to the fixed half, and separating them invites deleting the
+/// uncomfortable one.
+#[test]
+fn a_child_reading_shared_state_needs_request_render() {
+    let shared = std::rc::Rc::new(std::cell::RefCell::new("before".to_owned()));
+    let mut host = ComponentHost::new(
+        Shell {
+            title: shared.clone(),
+        },
+        VIEWPORT,
+        Theme::dark(),
+    )
+    .expect("shell mounts");
+    assert_eq!(mirrored_label(&host).as_deref(), Some("before"));
+
+    // The props are an `Rc`, so they compare equal by pointer no matter what the
+    // pointee says. The child is skipped and keeps painting the old title.
+    host.dispatch(ShellAction::RenameQuietly("quiet"))
+        .expect("quiet rename");
+    assert_eq!(
+        mirrored_label(&host).as_deref(),
+        Some("before"),
+        "a skipped boundary cannot see through its own props"
+    );
+
+    // `request_render` marks the reducing component stale and disables
+    // props-equality pruning for the flush, so the child refreshes.
+    host.dispatch(ShellAction::RenameAndRequestRender("loud"))
+        .expect("loud rename");
+    assert_eq!(mirrored_label(&host).as_deref(), Some("loud"));
+
+    // `mark_dirty` is the same escape hatch for application-owned mutation.
+    *shared.borrow_mut() = "external".to_owned();
+    host.mark_dirty();
+    host.flush().expect("flush");
+    assert_eq!(mirrored_label(&host).as_deref(), Some("external"));
 }
 
 // ------------------------------------------------------------ future scenarios

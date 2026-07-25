@@ -102,6 +102,12 @@ The instance retains its reducer state and subtree identity. Changed props call
 effects are mapped into parent actions. Component-owned tasks belong to the
 later async-runtime migration stage.
 
+Reconciliation is isolated: a mounted instance's `view` runs only when its props,
+its theme revision, or its own reduced actions say its output can have changed.
+`Props: PartialEq` is therefore load-bearing, and a `view` that reads state the
+framework cannot see needs `cx.request_render()`. See
+[update isolation](update-isolation.md).
+
 ## Effects
 
 Effects leave a component after its reducer has completed:

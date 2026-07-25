@@ -1,6 +1,6 @@
 //! Component-native composite controls and application surfaces.
 
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::Display, str::FromStr, sync::Arc};
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_ui_next::Alignment;
@@ -87,7 +87,7 @@ impl<Value> ComboOption<Value> {
 
 /// Builds a controlled combo box with an inline popup surface.
 pub fn combo_box<Action, Value>(
-    label_text: impl Into<String>,
+    label_text: impl Into<Arc<str>>,
     options: &[ComboOption<Value>],
     selected: Option<&Value>,
     open: bool,
@@ -141,7 +141,7 @@ where
 
 /// A titled form region.
 pub fn form_section<Action: 'static>(
-    title: impl Into<String>,
+    title: impl Into<Arc<str>>,
     content: View<Action>,
 ) -> View<Action> {
     column_with(
@@ -238,7 +238,7 @@ pub struct DialogAction<Action> {
 /// Builds a controlled modal surface over a background view.
 pub fn dialog<Action: Clone + 'static>(
     open: bool,
-    title: impl Into<String>,
+    title: impl Into<Arc<str>>,
     background: View<Action>,
     content: View<Action>,
     on_dismiss: Action,
