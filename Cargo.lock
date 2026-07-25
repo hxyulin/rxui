@@ -127,7 +127,6 @@ dependencies = [
 [[package]]
 name = "astrelis-app"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-platform",
  "astrelis-profiling",
@@ -136,7 +135,6 @@ dependencies = [
 [[package]]
 name = "astrelis-compositor"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-gpu",
@@ -149,7 +147,6 @@ dependencies = [
 [[package]]
 name = "astrelis-core"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "bytemuck",
  "glam",
@@ -160,7 +157,6 @@ dependencies = [
 [[package]]
 name = "astrelis-gpu"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "bitflags 2.13.1",
@@ -170,7 +166,6 @@ dependencies = [
 [[package]]
 name = "astrelis-gpu-wgpu"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-gpu",
  "astrelis-profiling",
@@ -182,7 +177,6 @@ dependencies = [
 [[package]]
 name = "astrelis-paint"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-text",
@@ -191,7 +185,6 @@ dependencies = [
 [[package]]
 name = "astrelis-paint-gpu"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-gpu",
@@ -206,7 +199,6 @@ dependencies = [
 [[package]]
 name = "astrelis-platform"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "raw-window-handle",
@@ -216,7 +208,6 @@ dependencies = [
 [[package]]
 name = "astrelis-platform-winit"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "arboard",
  "astrelis-core",
@@ -231,7 +222,6 @@ dependencies = [
 [[package]]
 name = "astrelis-profiling"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "web-time",
 ]
@@ -239,7 +229,6 @@ dependencies = [
 [[package]]
 name = "astrelis-render"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-gpu",
@@ -248,7 +237,6 @@ dependencies = [
 [[package]]
 name = "astrelis-text"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "parley",
@@ -257,7 +245,6 @@ dependencies = [
 [[package]]
 name = "astrelis-text-gpu"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-gpu",
@@ -269,7 +256,6 @@ dependencies = [
 [[package]]
 name = "astrelis-ui-core"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-paint",
@@ -284,7 +270,6 @@ dependencies = [
 [[package]]
 name = "astrelis-ui-host"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-app",
  "astrelis-compositor",
@@ -304,7 +289,6 @@ dependencies = [
 [[package]]
 name = "astrelis-ui-next"
 version = "0.3.0-rc.1"
-source = "git+https://github.com/hxyulin/astrelis?rev=39ea10f602b825b302433dff5fad1796c0de4727#39ea10f602b825b302433dff5fad1796c0de4727"
 dependencies = [
  "astrelis-core",
  "astrelis-paint",

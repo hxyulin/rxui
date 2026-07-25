@@ -19,6 +19,13 @@
 //! into one of N sibling components costs byte-identical `ViewStats` at N = 4
 //! and N = 64.
 //!
+//! Below the boundary, the counter worth watching is now
+//! `visited_accessibility_nodes` beside `accessibility_skipped_subtrees`. The
+//! engine's accessibility pass used to sweep every arena slot twice per update,
+//! so it was the last pass whose cost was set by tree size rather than by what
+//! changed; the pair records how much of a tree each interaction descends into
+//! and how much it refuses outright.
+//!
 //! Every scenario ends in [`assert_incremental_matches_fresh`], which compares
 //! the incrementally updated tree against a second host mounted fresh from the
 //! same final state. That is what stops a counter "win" from being bought by
@@ -304,6 +311,16 @@ fn hover_over_a_control_does_no_view_work() {
     assert_eq!(pass.reused_fragments, 45);
     // 0 = hover is not an accessibility-visible property here.
     assert_eq!(pass.accessibility_nodes, 0);
+    // (0, 0) = the accessibility pass is not entered at all. Nothing in the tree
+    // carries an accessibility bit, so there is no subtree to even refuse. The
+    // pass used to sweep all 46 arena slots twice per update regardless.
+    assert_eq!(
+        (
+            pass.visited_accessibility_nodes,
+            pass.accessibility_skipped_subtrees
+        ),
+        (0, 0)
+    );
     assert_eq!(pass.shaped_text, 0);
     // 7 = the nodes the pointer walked to reach the button. Hit testing runs in
     // `dispatch`, before the pass, and the engine now carries this counter
@@ -378,6 +395,16 @@ fn keystroke_into_a_nested_child_field_rebuilds_only_the_root_and_that_child() {
     // every pass to keep its height stable, but the engine's per-element
     // shaping memo now serves that from cache, so this was 2 before the memo.
     assert_eq!(pass.shaped_text, 1);
+    // (5, 3) = the field, its four ancestors, and the three sibling subtrees on
+    // that path refused whole. 8 of 46 nodes are touched and only 5 descended
+    // into, against 92 slot visits before the pass learned to prune.
+    assert_eq!(
+        (
+            pass.visited_accessibility_nodes,
+            pass.accessibility_skipped_subtrees
+        ),
+        (5, 3)
+    );
 
     assert_incremental_matches_fresh(
         "keystroke",
@@ -428,6 +455,16 @@ fn selection_change_rebuilds_the_root_and_skips_the_nested_editor() {
     assert_eq!(pass.rebuilt_fragments, 2);
     assert_eq!(pass.reused_fragments, 44);
     assert_eq!(pass.accessibility_nodes, 2);
+    // (7, 14) = the two changed marks and their shared ancestors, plus the 14
+    // sibling rows refused without descending. The two nodes whose `selected`
+    // flag moved are found by touching 21 of 46 nodes.
+    assert_eq!(
+        (
+            pass.visited_accessibility_nodes,
+            pass.accessibility_skipped_subtrees
+        ),
+        (7, 14)
+    );
     assert_eq!(pass.shaped_text, 0);
 
     assert_incremental_matches_fresh(
@@ -697,6 +734,18 @@ fn one_action_into_one_panel_is_independent_of_sibling_count() {
     assert_eq!(large_pass.accessibility_nodes, 1);
     assert_eq!(small_pass.shaped_text, 1);
     assert_eq!(large_pass.shaped_text, 1);
+    // The accessibility pass is the one place where independence is partial, and
+    // the two counters say exactly how. `visited` is 5 at both sizes: the bumped
+    // panel's row, its three children, and the root, descended into and no more.
+    // `skipped` grows with N because each untouched sibling is still *asked*
+    // once - one test against the bits it carries, with no descent. So one bump
+    // costs 10 node touches at N=4 and 70 at N=64, against 42 and 642 slot
+    // visits before the pass could prune. The residual per-sibling scan is what
+    // row virtualization removes, by there being fewer siblings to scan.
+    assert_eq!(small_pass.visited_accessibility_nodes, 5);
+    assert_eq!(large_pass.visited_accessibility_nodes, 5);
+    assert_eq!(small_pass.accessibility_skipped_subtrees, 5);
+    assert_eq!(large_pass.accessibility_skipped_subtrees, 65);
     assert_eq!(small_pass.reused_fragments, 21); // 5 * 4 + 1
     assert_eq!(large_pass.reused_fragments, 321); // 5 * 64 + 1
 }
