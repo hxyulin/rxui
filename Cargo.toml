@@ -32,20 +32,27 @@ rxui-testing = { path = "crates/rxui-testing", version = "=0.1.0-rc.1" }
 rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
 
 # The component engine is under joint development in the sibling Astrelis
-# checkout and is not published yet. Pin these paths until that release gate.
-astrelis-app = { path = "../astrelis/crates/astrelis-app", version = "=0.3.0-rc.1" }
-astrelis-compositor = { path = "../astrelis/crates/astrelis-compositor", version = "=0.3.0-rc.1" }
-astrelis-core = { path = "../astrelis/crates/astrelis-core", version = "=0.3.0-rc.1" }
-astrelis-gpu = { path = "../astrelis/crates/astrelis-gpu", version = "=0.3.0-rc.1" }
-astrelis-paint = { path = "../astrelis/crates/astrelis-paint", version = "=0.3.0-rc.1" }
-astrelis-paint-gpu = { path = "../astrelis/crates/astrelis-paint-gpu", version = "=0.3.0-rc.1" }
-astrelis-platform = { path = "../astrelis/crates/astrelis-platform", version = "=0.3.0-rc.1" }
-astrelis-platform-winit = { path = "../astrelis/crates/astrelis-platform-winit", version = "=0.3.0-rc.1" }
-astrelis-text = { path = "../astrelis/crates/astrelis-text", version = "=0.3.0-rc.1" }
-astrelis-ui-core = { path = "../astrelis/crates/astrelis-ui-core", version = "=0.3.0-rc.1" }
-astrelis-ui-next = { path = "../astrelis/crates/astrelis-ui-next", version = "=0.3.0-rc.1" }
-astrelis-ui-host = { path = "../astrelis/crates/astrelis-ui-host", version = "=0.3.0-rc.1" }
-astrelis-ui-testing = { path = "../astrelis/crates/astrelis-ui-testing", version = "=0.3.0-rc.1" }
+# checkout and is not published yet. Pin an exact revision so CI and every
+# developer resolve the same tree; work against a local sibling checkout by
+# copying `.cargo/config.toml.example` to `.cargo/config.toml`, which patches
+# every crate below to `../astrelis`.
+#
+# `cargo publish` rejects git dependencies. That is not a regression: publishing
+# is separately blocked by `astrelis-ui-next`'s `publish = false`. Swap these
+# for plain `version` requirements when Astrelis publishes. See RELEASING.md.
+astrelis-app = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-compositor = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-ui-next = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-ui-host = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
+astrelis-ui-testing = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }

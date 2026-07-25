@@ -1,4 +1,3 @@
 /target/
 /.cargo/config.toml
-Cargo.lock
 /crates/rxui/web/pkg/

@@ -87,14 +87,24 @@ native rendering.
 
 ## Development
 
-The migration branch currently requires Astrelis checked out beside RXUI:
+RXUI pins Astrelis to an exact git revision, so a plain clone builds without any
+setup. To develop against a sibling Astrelis checkout instead, copy the example
+Cargo configuration, which patches every Astrelis crate to `../astrelis`:
 
 ```sh
-cargo test --workspace --all-targets
+git clone https://github.com/hxyulin/astrelis ../astrelis
+cp .cargo/config.toml.example .cargo/config.toml
+cargo test --workspace --all-features --all-targets
 ```
 
+`.cargo/config.toml` is gitignored, so the patch stays local to your checkout. It
+does make Cargo rewrite `Cargo.lock` to path sources; see
+[CONTRIBUTING.md](CONTRIBUTING.md) before committing that file.
+
 Layout and behavior parity tests are documented in
-[UI conformance goldens](docs/ui-conformance-goldens.md).
+[UI conformance goldens](docs/ui-conformance-goldens.md). `cargo run -p rxui
+--example native_smoke` renders a few frames in a real window and exits, which is
+the cross-platform check that the native path still works.
 
 ## License
 

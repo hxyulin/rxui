@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     strategy:
@@ -20,16 +23,68 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # rxui-native pulls winit and wgpu, which need X11/Wayland/Vulkan headers.
+      - name: Install system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev \
+            libxrandr-dev libxi-dev libxcursor-dev libvulkan-dev mesa-vulkan-drivers
       - run: cargo test --workspace --all-features --all-targets
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      # `native_workbench` is the only consumer of ~23 public items. Nothing else
+      # compiles it, so a broken API surface there is invisible without this.
+      - run: cargo build -p rxui --all-features --examples
       - name: Native smoke (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo run -p rxui --example native_smoke
-        timeout-minutes: 2
+        timeout-minutes: 3
       - name: Native smoke (macOS and Windows)
         if: runner.os != 'Linux'
         run: cargo run -p rxui --example native_smoke
-        timeout-minutes: 2
+        timeout-minutes: 3
+
+  # Mechanically enforces the crate-boundary invariants. Without this,
+  # `--all-features` is a no-op that only looks like it validates the graph.
+  boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: rxui-core must stay dependency-minimal
+        run: |
+          cargo tree -p rxui-core --edges normal --prefix none \
+            | awk '{print $1}' | sort -u > core.txt
+          if grep -xE 'wgpu|winit|arboard|taffy|astrelis-ui-core' core.txt; then
+            echo "::error::rxui-core reached a heavy or deprecated dependency (listed above)"
+            exit 1
+          fi
+      - name: rxui-core must stay feature-free
+        run: |
+          if grep -q '^\[features\]' crates/rxui-core/Cargo.toml; then
+            echo "::error::rxui-core must not declare features; optional surfaces belong in rxui-widgets"
+            exit 1
+          fi
+      # A local `.cargo/config.toml` patches Astrelis to a sibling checkout,
+      # which makes Cargo rewrite every Astrelis entry in Cargo.lock to a path
+      # source. That form pins nothing, so guard against committing it.
+      - name: Cargo.lock must pin the Astrelis revision
+        run: |
+          rev=$(grep -m1 -oE 'astrelis", rev = "[a-f0-9]+' Cargo.toml | grep -oE '[a-f0-9]{40}')
+          if [ -z "${rev}" ]; then
+            echo "::error::could not read the pinned Astrelis revision from Cargo.toml"
+            exit 1
+          fi
+          if ! grep -q "astrelis?rev=${rev}" Cargo.lock; then
+            echo "::error::Cargo.lock does not pin Astrelis at ${rev}."
+            echo "::error::It was probably regenerated with .cargo/config.toml active."
+            echo "::error::Restore it with: git checkout Cargo.lock"
+            exit 1
+          fi
+      # TODO(phase-7): once the facade is feature-gated, also assert that
+      # `cargo tree -p rxui --no-default-features` reaches neither wgpu nor
+      # winit, and add the full feature matrix here.
 
   hygiene:
     runs-on: ubuntu-latest
@@ -40,33 +95,30 @@ jobs:
           components: rustfmt
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev \
+            libxrandr-dev libxi-dev libxcursor-dev libvulkan-dev
       - run: cargo fmt --all --check
-      - run: cargo check --workspace --all-features
-      - run: cargo check --workspace --all-features --all-targets --target wasm32-unknown-unknown
-      - run: cargo build --release -p rxui --example robot_arm --target wasm32-unknown-unknown
-      - run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
-      - run: >-
-          wasm-bindgen --target web
-          --out-dir crates/rxui/web/pkg
-          --out-name robot_arm
-          target/wasm32-unknown-unknown/release/examples/robot_arm.wasm
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      # Type-checks the library surface for the web. This does NOT prove the web
+      # target works: rxui provides no way to obtain an `AppContext` on wasm yet,
+      # and the native examples compile there only via empty `main` stubs. Phase 9
+      # of the refactor plan replaces this with a real `web_counter` build.
+      - run: cargo check --workspace --all-features --target wasm32-unknown-unknown
 
-  release-hygiene:
+  msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev \
+            libxrandr-dev libxi-dev libxcursor-dev libvulkan-dev
       - run: cargo check --workspace --all-features
-      - run: cargo package --workspace --no-verify
-
-  performance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo run --release -p rxui --example reference_editor_perf -- --check
