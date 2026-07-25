@@ -306,9 +306,6 @@ fn a_numeric_field_reports_the_parse_error_instead_of_swallowing_it() {
 }
 
 #[test]
-#[ignore = "TextFieldView::rebuild (rxui-core/src/view.rs:2782) compares the incoming value \
-            against the value the view last declared, not against the element's live text, so a \
-            controlled field can never be reverted to a value it already holds in state"]
 fn a_numeric_field_is_controlled_and_reverts_a_rejected_edit() {
     let mut harness = Harness::new(
         NumericScene {
@@ -325,10 +322,16 @@ fn a_numeric_field_is_controlled_and_reverts_a_rejected_edit() {
     // `Result` in the callback usable at all: the caller decides whether an
     // invalid edit is visible, and doing nothing has to mean it is not.
     assert_eq!(harness.find("Iterations").data.value.as_deref(), Some("12"));
+    // And it stays reverted. The guard that used to compare against the value the
+    // view last declared saw 12 both times and wrote nothing, which made the
+    // divergence permanent rather than merely delayed.
+    harness.refresh();
+    harness.refresh();
+    assert_eq!(harness.find("Iterations").data.value.as_deref(), Some("12"));
 }
 
 #[test]
-fn a_rejected_numeric_edit_currently_survives_every_later_rebuild() {
+fn a_reverted_numeric_field_still_accepts_the_next_edit() {
     let mut harness = Harness::new(
         NumericScene {
             value: 12,
@@ -339,23 +342,41 @@ fn a_rejected_numeric_edit_currently_survives_every_later_rebuild() {
     .expect("the numeric scene mounts");
     click_after_text(&mut harness);
     harness.type_text("x");
-    // Documents the bug `a_numeric_field_is_controlled_and_reverts_a_rejected_edit`
-    // states. The rebuild guard sees the declared value unchanged at 12 and
-    // writes nothing, so the element keeps text its controller never accepted -
-    // and no number of further rebuilds can dislodge it.
+    harness.type_text("4");
+    // Reverting shortened the text under a caret that sat after the rejected
+    // character, so this is where a stale caret or selection would show: an
+    // offset left at 3 in a two-byte value would insert somewhere else entirely,
+    // or clamp to the front and report 412. `TextField::set_text` clamps both the
+    // caret and the anchor, so the caret is back at the end of "12" and the digit
+    // appends.
+    assert_eq!(harness.component().last, Some(Ok(124)));
+    assert_eq!(harness.component().value, 124);
     assert_eq!(
         harness.find("Iterations").data.value.as_deref(),
-        Some("12x"),
+        Some("124"),
     );
+}
+
+#[test]
+fn refreshing_an_edited_numeric_field_does_no_retained_work() {
+    let mut harness = Harness::new(
+        NumericScene {
+            value: 12,
+            last: None,
+        },
+        VIEWPORT,
+    )
+    .expect("the numeric scene mounts");
+    click_after_text(&mut harness);
+    harness.type_text("3");
     harness.refresh();
-    harness.refresh();
-    assert_eq!(
-        harness.find("Iterations").data.value.as_deref(),
-        Some("12x"),
-    );
-    // The same guard is what makes the divergence unrecoverable rather than
-    // merely delayed: only a value the component has not declared before can
-    // reach the element.
-    harness.mutate(|scene| scene.value = 99);
-    assert_eq!(harness.find("Iterations").data.value.as_deref(), Some("99"));
+    let stats = harness.stats();
+    // Comparing against the element's live text has to leave the common path
+    // alone: the controller accepted 123 and the element already holds "123", so
+    // the rebuild writes nothing. Reverting a rejection by writing on every pass
+    // would cost a reshape and a relayout per field per frame, which is the whole
+    // reason the guard exists.
+    assert_eq!(stats.layout_elements, 0);
+    assert_eq!(stats.shaped_text, 0);
+    assert_eq!(stats.rebuilt_fragments, 0);
 }

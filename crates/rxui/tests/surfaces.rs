@@ -5,15 +5,33 @@
 //! what a golden cannot check. Each test below drives one policy decision.
 
 use astrelis_core::geometry::LogicalSize;
+use astrelis_paint::PathVerb;
 use astrelis_platform::NamedKey;
 use rxui::core::{PassStats, SemanticRole};
 use rxui::{
-    ButtonVariant, Component, ComponentContext, DialogAction, IconButtonStyle, Theme, Toast,
+    ButtonVariant, Component, ComponentContext, DialogAction, Icon, IconButtonStyle, Theme, Toast,
     ToastLevel, ToolbarItem, View, dialog, icons, label, toasts, toolbar,
 };
 use rxui_test_support::Harness;
 
 const VIEWPORT: LogicalSize = LogicalSize::new(640.0, 480.0);
+
+/// Asserts a settled frame asked the engine for nothing.
+///
+/// `PassStats::default()` is deliberately not the bar: a settled frame still
+/// reports the fragments the paint pass *reused*, and reuse is the evidence that
+/// nothing was rebuilt. What has to be zero is the work - measurement, shaping,
+/// paint, and the accessibility delta.
+#[track_caller]
+fn assert_no_retained_work(what: &str, stats: PassStats) {
+    assert_eq!(stats.layout_elements, 0, "{what}: re-laid-out");
+    assert_eq!(stats.rebuilt_fragments, 0, "{what}: repainted");
+    assert_eq!(stats.shaped_text, 0, "{what}: re-shaped text");
+    assert_eq!(
+        stats.accessibility_nodes, 0,
+        "{what}: republished semantics",
+    );
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Command {
@@ -25,15 +43,44 @@ enum Command {
 struct ToolbarScene {
     invoked: Vec<Command>,
     icons: bool,
+    /// Replaces the save glyph, for the icon-identity tests.
+    glyph: Option<Icon>,
+    /// Logical edge requested for the save glyph.
+    glyph_size: f32,
 }
 
 impl ToolbarScene {
-    const fn new(icons: bool) -> Self {
+    fn new(icons: bool) -> Self {
         Self {
             invoked: Vec::new(),
             icons,
+            glyph: None,
+            glyph_size: IconButtonStyle::compact().icon_size,
         }
     }
+}
+
+/// Rebuilds an icon's geometry into a separately allocated `Path`.
+fn rebuilt_path(icon: &Icon) -> Icon {
+    Icon::from_verbs(icon.view_box(), icon.path().verbs().iter().copied())
+        .expect("re-recording a valid icon's verbs yields a valid icon")
+        .with_fill_rule(icon.fill_rule())
+}
+
+/// Rebuilds an icon with exactly one of its verbs displaced by a logical unit.
+fn one_verb_moved(icon: &Icon) -> Icon {
+    let mut verbs = icon.path().verbs().to_vec();
+    let point = verbs
+        .iter_mut()
+        .find_map(|verb| match verb {
+            PathVerb::LineTo(point) => Some(point),
+            _ => None,
+        })
+        .expect("the save glyph draws line segments");
+    point.x += 1.0;
+    Icon::from_verbs(icon.view_box(), verbs)
+        .expect("displacing one point keeps the icon valid")
+        .with_fill_rule(icon.fill_rule())
 }
 
 impl Component for ToolbarScene {
@@ -48,11 +95,15 @@ impl Component for ToolbarScene {
         let save = if self.icons {
             ToolbarItem::IconCommand {
                 id: "save".into(),
-                icon: icons::save(),
+                // Left to the default, this allocates a fresh `Path` on every
+                // pass, which is what an unchanged icon button has to survive.
+                icon: self.glyph.clone().unwrap_or_else(icons::save),
                 label: "Save".into(),
                 action: Command::Save,
                 enabled: true,
-                style: IconButtonStyle::compact().show_label(true),
+                style: IconButtonStyle::compact()
+                    .show_label(true)
+                    .icon_size(self.glyph_size),
             }
         } else {
             ToolbarItem::Command {
@@ -136,42 +187,62 @@ fn an_icon_toolbar_command_keeps_button_semantics() {
 }
 
 #[test]
-#[ignore = "ButtonView::rebuild (rxui-core/src/view.rs:2648) folds Path::cache_id into its \
-            change key, and icons::save() allocates a fresh Path per view() call, so an \
-            unchanged icon button re-runs LAYOUT_ALL and repaints every frame"]
 fn refreshing_a_toolbar_of_icon_commands_does_no_retained_work() {
     let mut harness = Harness::new(ToolbarScene::new(true), VIEWPORT).expect("the toolbar mounts");
     harness.refresh();
-    assert_eq!(harness.stats(), PassStats::default());
+    assert_no_retained_work("an icon toolbar", harness.stats());
+}
+
+#[test]
+fn an_icon_command_rebuilt_from_the_same_verbs_does_no_retained_work() {
+    let mut harness = Harness::new(ToolbarScene::new(true), VIEWPORT).expect("the toolbar mounts");
+    harness.mutate(|scene| scene.glyph = Some(rebuilt_path(&icons::save())));
+    // The button compares its glyph by the verbs it records, so a separately
+    // allocated path describing the same picture is not a change. Folding
+    // `Path::cache_id` - a per-allocation counter - into the key instead is what
+    // made every icon button in a toolbar relayout on every frame.
+    assert_no_retained_work("an icon toolbar with a re-recorded path", harness.stats());
+}
+
+#[test]
+fn an_icon_command_with_a_different_glyph_repaints_without_relayout() {
+    let mut harness = Harness::new(ToolbarScene::new(true), VIEWPORT).expect("the toolbar mounts");
+    harness.mutate(|scene| scene.glyph = Some(one_verb_moved(&icons::save())));
+    let stats = harness.stats();
+    assert_eq!(stats.rebuilt_fragments, 1);
+    // `Button::layout` measures the glyph's requested edge, never its verbs: the
+    // path is scaled into the square already reserved for it. So a different
+    // picture at the same edge costs one repaint and no measurement.
+    assert_eq!(stats.layout_elements, 0);
+    assert_eq!(stats.shaped_text, 0);
+}
+
+#[test]
+fn an_icon_command_with_a_larger_glyph_relayouts_the_row() {
+    let mut harness = Harness::new(ToolbarScene::new(true), VIEWPORT).expect("the toolbar mounts");
+    let before = harness.bounds("Save").size;
+    harness.mutate(|scene| scene.glyph_size = 28.0);
+    let stats = harness.stats();
+    // The edge feeds the button's intrinsic size, so this is the one icon change
+    // that has to re-measure: the button, the toolbar row, and the root container
+    // that positions it.
+    assert_eq!(stats.layout_elements, 3);
+    // Two fragments: the button, and the row itself, whose surface background is
+    // drawn to a height the taller button just changed.
+    assert_eq!(stats.rebuilt_fragments, 2);
+    assert!(
+        harness.bounds("Save").size.width > before.width,
+        "a wider glyph has to widen the button that reserves room for it",
+    );
 }
 
 #[test]
 fn refreshing_a_toolbar_of_text_commands_does_no_retained_work() {
     let mut harness = Harness::new(ToolbarScene::new(false), VIEWPORT).expect("the toolbar mounts");
     harness.refresh();
-    let stats = harness.stats();
-    // Text commands compare cleanly, which is what makes the icon result below
-    // a bug rather than a property of toolbars.
-    assert_eq!(stats.shaped_text, 0);
-    assert_eq!(stats.layout_elements, 0);
-    assert_eq!(stats.rebuilt_fragments, 0);
-}
-
-#[test]
-fn refreshing_a_toolbar_of_icon_commands_currently_relayouts_and_repaints() {
-    let mut harness = Harness::new(ToolbarScene::new(true), VIEWPORT).expect("the toolbar mounts");
-    harness.refresh();
-    let stats = harness.stats();
-    // Documents the bug `refreshing_a_toolbar_of_icon_commands_does_no_retained_work`
-    // states. Three layouts: the icon button that declared itself stale, plus
-    // the toolbar row and the root container that have to re-measure it. One
-    // fragment - the button's - is rebuilt while the other six are reused.
-    assert_eq!(stats.layout_elements, 3);
-    assert_eq!(stats.rebuilt_fragments, 1);
-    // Not reshaped, and only because the *engine* memoizes shaping per element
-    // now. The wasted work is layout and paint, and it scales with the number
-    // of icon buttons on screen.
-    assert_eq!(stats.shaped_text, 0);
+    // Text commands compare cleanly, which is the baseline the icon variant above
+    // now meets as well.
+    assert_no_retained_work("a text toolbar", harness.stats());
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -389,8 +460,5 @@ fn reopening_a_dialog_reuses_its_retained_action_buttons() {
 fn refreshing_an_open_dialog_does_no_retained_work() {
     let mut harness = Harness::new(DialogScene::new(true), VIEWPORT).expect("the dialog mounts");
     harness.refresh();
-    let stats = harness.stats();
-    assert_eq!(stats.shaped_text, 0);
-    assert_eq!(stats.layout_elements, 0);
-    assert_eq!(stats.rebuilt_fragments, 0);
+    assert_no_retained_work("an open dialog", harness.stats());
 }

@@ -133,29 +133,45 @@ struct ButtonState<Action: Clone + 'static> {
     variant: ButtonVariant,
     size: LogicalSize,
     colors: (Color, Color),
-    icon: Option<(u64, LogicalSize, f32, astrelis_paint::FillRule)>,
+    icon: Option<(Icon, f32)>,
     show_label: bool,
     action: ActionCell<Action>,
 }
 
 leaf_mounted_state!(ButtonState<Action> where Action: Clone);
 
-/// Normalizes an icon's comparable geometry for one button pass.
-fn button_icon_state(
-    icon: Option<&Icon>,
-    icon_size: f32,
-) -> Option<(u64, LogicalSize, f32, astrelis_paint::FillRule)> {
-    icon.map(|icon| {
-        (
-            icon.path.cache_id(),
-            icon.view_box,
-            if icon_size.is_finite() {
-                icon_size.max(1.0)
-            } else {
-                16.0
-            },
-            icon.fill_rule,
-        )
+/// Pairs a button's glyph with the edge the retained control will resolve.
+///
+/// The `Icon` is compared by its verbs rather than by `Path::cache_id`, which is
+/// a per-allocation counter: keying on the counter made every `icon_button`
+/// re-run `LAYOUT_ALL` on every pass, because the icon constructors allocate a
+/// fresh `Path` each time `view()` calls them.
+fn button_icon_state(icon: Option<&Icon>, icon_size: f32) -> Option<(Icon, f32)> {
+    icon.map(|icon| (icon.clone(), resolved_icon_size(icon_size)))
+}
+
+/// Mirrors the glyph edge `Button::layout` derives from a requested size.
+///
+/// Resolving it here rather than at the comparison site is what lets two
+/// requests the control cannot distinguish - a negative edge and a NaN one both
+/// land on the same fallback - compare equal instead of forcing a relayout.
+fn resolved_icon_size(icon_size: f32) -> f32 {
+    if icon_size.is_finite() {
+        icon_size.max(1.0)
+    } else {
+        16.0
+    }
+}
+
+/// Projects the part of a button's icon state that `Button::layout` measures.
+fn button_icon_edge(icon: Option<&(Icon, f32)>) -> Option<f32> {
+    icon.map(|(_, edge)| *edge)
+}
+
+/// Rebuilds the retained glyph a button paints.
+fn button_icon(icon: Option<&(Icon, f32)>) -> Option<ButtonIcon> {
+    icon.map(|(icon, edge)| {
+        ButtonIcon::new(icon.path.clone(), icon.view_box, *edge).with_fill_rule(icon.fill_rule)
     })
 }
 
@@ -176,11 +192,8 @@ impl<Action: Clone + 'static> ViewNode<Action> for ButtonView<Action> {
             move || emit(),
         )
         .with_label_visible(self.show_label);
-        if let (Some(icon), Some((_, _, icon_size, fill_rule))) = (&self.icon, icon_state) {
-            button = button.with_icon(
-                ButtonIcon::new(icon.path.clone(), icon.view_box, icon_size)
-                    .with_fill_rule(fill_rule),
-            );
+        if let Some(icon) = button_icon(icon_state.as_ref()) {
+            button = button.with_icon(icon);
         }
         let handle = context.append(button)?;
         Ok(Mounted::new(
@@ -211,32 +224,28 @@ impl<Action: Clone + 'static> ViewNode<Action> for ButtonView<Action> {
         // already reads through, so a changed action no longer reinstalls a
         // boxed closure.
         state.action.update(self.action, &emitter);
-        // Label, size, and icon geometry feed layout; the two fills only repaint.
+        // Label, size, and whether there is a glyph at all feed `Button::layout`,
+        // as does the glyph's edge. Its verbs, view box, and winding rule do not:
+        // the control measures the square it reserved and scales the path into it,
+        // so a different picture at the same edge is a repaint. The two fills are
+        // likewise paint-only.
+        let icon_changed = state.icon != icon_state;
         let mut invalidation = Invalidation::empty();
         if state.size != self.size
             || state.text != self.text
-            || state.icon != icon_state
             || state.show_label != self.show_label
+            || button_icon_edge(state.icon.as_ref()) != button_icon_edge(icon_state.as_ref())
         {
             invalidation |= Invalidation::LAYOUT_ALL;
         }
-        if state.colors != colors {
+        if state.colors != colors || icon_changed {
             invalidation |= Invalidation::PAINT;
         }
         if !invalidation.is_empty() {
             let text = self.text.clone();
             let size = self.size;
             let show_label = self.show_label;
-            let icon = (state.icon != icon_state).then(|| {
-                self.icon.as_ref().map(|icon| {
-                    ButtonIcon::new(
-                        icon.path.clone(),
-                        icon.view_box,
-                        icon_state.map(|(_, _, size, _)| size).unwrap_or(16.0),
-                    )
-                    .with_fill_rule(icon.fill_rule)
-                })
-            });
+            let icon = icon_changed.then(|| button_icon(icon_state.as_ref()));
             context.ui().update(state.handle, invalidation, |button| {
                 button.label = text;
                 button.size = size;
@@ -267,7 +276,10 @@ struct TextFieldView<Action: 'static> {
 struct TextFieldState<Action: 'static> {
     handle: NodeHandle<TextField>,
     label: String,
-    value: String,
+    // The declared value is deliberately *not* cached here. Editing mutates the
+    // element itself, so what it holds can differ from what this view last
+    // declared while the declaration stands still, and only the live text is
+    // worth comparing against - see `rebuild`.
     colors: (Color, Color),
     changed: MapCell<String, Action>,
 }
@@ -296,7 +308,6 @@ impl<Action: 'static> ViewNode<Action> for TextFieldView<Action> {
             TextFieldState {
                 handle,
                 label: self.label,
-                value: self.value,
                 colors,
                 changed,
             },
@@ -316,10 +327,19 @@ impl<Action: 'static> ViewNode<Action> for TextFieldView<Action> {
         let emitter = context.emitter();
         let state = mounted.state_mut::<TextFieldState<Action>>()?;
         state.changed.update(self.on_changed, &emitter);
+        // The value is compared against the element's *live* text, not against
+        // the value this view last declared. The two diverge whenever an edit is
+        // refused: the element rewrote its own text as the user typed, the
+        // component reduced the change and kept its old value, and a guard that
+        // trusts the declaration then sees 12 against 12, writes nothing, and
+        // leaves text the controller never accepted on screen for good. Reading
+        // the element costs one tree lookup and is what makes refusing an edit
+        // mean anything at all.
+        let stale_value = context.ui().element(state.handle)?.text != self.value;
         // Value, placeholder label, and glyph color all reach the shaper, which
         // runs in layout. Only the field's background is paint-only.
         let mut invalidation = Invalidation::empty();
-        if state.value != self.value || state.label != self.label || state.colors.0 != colors.0 {
+        if stale_value || state.label != self.label || state.colors.0 != colors.0 {
             invalidation |= Invalidation::LAYOUT_ALL;
         }
         if state.colors.1 != colors.1 {
@@ -327,16 +347,18 @@ impl<Action: 'static> ViewNode<Action> for TextFieldView<Action> {
         }
         if !invalidation.is_empty() {
             let label = self.label.clone();
-            let value = self.value.clone();
+            let value = self.value;
             context.ui().update(state.handle, invalidation, |field| {
                 field.label = label;
+                // `set_text` clamps the retained caret and anchor into the new
+                // value, which is what keeps a reverted edit from leaving a
+                // selection pointing past the end of the text.
                 field.set_text(value);
                 field.text_color = colors.0;
                 field.background = colors.1;
             })?;
         }
         state.label = self.label;
-        state.value = self.value;
         state.colors = colors;
         Ok(())
     }
