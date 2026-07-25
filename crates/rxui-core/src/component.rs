@@ -10,7 +10,14 @@ use crate::{
     Theme, View, ViewHost, diagnostics::ViewStats,
 };
 
-pub(crate) struct RoutedComponentAction {
+/// One erased action addressed to the component instance that produced it.
+///
+/// This is the token the view protocol carries while unwinding: a retained
+/// element emits it through an [`crate::ActionEmitter`], and
+/// [`crate::MountedState::route`] passes it down the mounted tree until the
+/// addressed component takes it. It is deliberately opaque - the payload's type
+/// is known only to that component.
+pub struct RoutedComponentAction {
     pub(crate) target: u64,
     pub(crate) payload: Box<dyn Any>,
 }

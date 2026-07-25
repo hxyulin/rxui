@@ -212,7 +212,7 @@ impl Element for IconElement {
 impl<Action: 'static> RetainedSpec<Action> for IconSpec {
     type Element = IconElement;
 
-    fn create(&self, _emitter: ActionEmitter<Action>) -> Self::Element {
+    fn create(&self, _emitter: &ActionEmitter<Action>, _theme: &crate::Theme) -> Self::Element {
         IconElement {
             icon: self.icon.clone(),
             size: self.size,
@@ -221,20 +221,33 @@ impl<Action: 'static> RetainedSpec<Action> for IconSpec {
         }
     }
 
-    fn update(&self, element: &mut Self::Element, _emitter: ActionEmitter<Action>) {
+    fn update(
+        &self,
+        element: &mut Self::Element,
+        _emitter: &ActionEmitter<Action>,
+        _theme: &crate::Theme,
+    ) {
         element.icon = self.icon.clone();
         element.size = self.size;
         element.color = self.color;
         element.label.clone_from(&self.label);
     }
 
-    fn changed(&self, previous: &Self) -> bool {
-        self.icon.path.cache_id() != previous.icon.path.cache_id()
+    fn changed(&self, previous: &Self) -> astrelis_ui_next::Invalidation {
+        let changed = self.icon.path.cache_id() != previous.icon.path.cache_id()
             || self.icon.view_box != previous.icon.view_box
             || self.icon.fill_rule != previous.icon.fill_rule
             || self.size != previous.size
             || self.color != previous.color
-            || self.label != previous.label
+            || self.label != previous.label;
+        // Narrowing this is a per-widget judgement about which passes each field
+        // feeds, and it moves the engine's `PassStats`; the protocol change only
+        // makes it expressible.
+        if changed {
+            astrelis_ui_next::Invalidation::ALL
+        } else {
+            astrelis_ui_next::Invalidation::empty()
+        }
     }
 }
 

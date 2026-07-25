@@ -4,6 +4,22 @@ All notable public RXUI changes are documented here.
 
 ## 0.1.0-rc.1 - Unreleased
 
+### The view set is open
+
+- New public `ViewNode<Action>` trait, replacing the private `DynView`. All
+  twenty builtin view kinds are implemented against it with no privileged
+  access, which is the proof that a third-party crate can write a container that
+  behaves exactly like `column`. Supporting surface: `ViewKind`, `AnyView::new`,
+  `AnyView::kind`, `Mounted`, `MountedState`, `MountedChildren`, `ViewContext`,
+  `RouteContext`, `RebuildContext`, `RoutedComponentAction`, and
+  `ActionEmitter::{map, ptr_eq}`. See the new `docs/view-protocol.md`.
+- `Mounted` keeps its fields private and hands out state through
+  `state_mut::<S>() -> Result<&mut S, UiError>`, which replaces twenty
+  `.expect("view kind and state agree")` panics with an error a host can report.
+- The kind-mismatch decision lives once, in `ViewContext::rebuild_child`, and
+  the descent used for action routing and the dirty drain is derived from a
+  single `MountedState::visit_children`.
+
 ### Update isolation
 
 - Reducing an action no longer rebuilds the tree. It updates state, maps
@@ -28,6 +44,16 @@ All notable public RXUI changes are documented here.
 
 ### Breaking
 
+- `RetainedSpec::changed` returns `Invalidation` instead of `bool`, so a
+  specialized element can name the passes its change requires instead of getting
+  `Invalidation::ALL`. Return `Invalidation::ALL` where the old implementation
+  returned `true` for identical behavior.
+- `RetainedSpec::{create, update}` take `&ActionEmitter<Action>` and a `&Theme`.
+  An emitter is cloned rather than moved, and a spec can now resolve semantic
+  colors.
+- New `RetainedSpec::children`, defaulting to none. A specialized element can
+  host child views and gets full keyed reconciliation, nested components
+  included, without implementing `ViewNode`.
 - `ViewKey` is an enum over `u64`, `&'static str`, and `Arc<str>` instead of a
   single `Arc<str>`. `From<&str>` narrowed to `From<&'static str>`; key a
   non-static borrowed string with `ViewKey::new`. Numeric and textual keys are

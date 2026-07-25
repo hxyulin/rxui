@@ -162,11 +162,31 @@ operations all enter through the same normalized control path.
 
 Most application and editor code returns views. Specialized surfaces such as
 node graphs, timelines, code editors, virtual collections, and render
-viewports may implement retained `Element` behavior directly.
+viewports may implement retained `Element` behavior directly, and reach the view
+tree through `RetainedSpec`:
+
+```rust
+impl<Action: 'static> RetainedSpec<Action> for ChartSpec<Action> {
+    type Element = ChartElement<Action>;
+
+    fn create(&self, emitter: &ActionEmitter<Action>, theme: &Theme) -> Self::Element { .. }
+    fn update(&self, element: &mut Self::Element, emitter: &ActionEmitter<Action>, theme: &Theme) { .. }
+    fn changed(&self, previous: &Self) -> Invalidation { .. }
+}
+```
+
+`changed` names the passes a configuration change requires; an empty
+`Invalidation` means no pass has to run. `children` (defaulting to none) hosts
+child views inside the element, so a specialized *container* is expressible
+without implementing the view protocol.
+
+The view set itself is open: `ViewNode` is public, and the builtin view kinds
+are written against exactly the surface a third-party crate gets. See
+[the view protocol](view-protocol.md) for writing one.
 
 Application code does not choose invalidation flags. Reconciliation uses
-property-aware setters; raw `update(handle, flags, closure)` remains only as a
-low-level framework escape hatch.
+property-aware setters; raw `update(handle, flags, closure)` remains a
+low-level escape hatch, and the contract a custom view kind works against.
 
 ## Authoring rules
 

@@ -1,4 +1,13 @@
-//! Lightweight view values and keyed reconciliation.
+//! Lightweight view values, the open view protocol, and keyed reconciliation.
+//!
+//! A [`View`] is a description, not mounted state. Building one allocates a
+//! small tree of [`ViewNode`] values; mounting it walks that tree once and
+//! produces a parallel tree of [`Mounted`] nodes that own retained identity.
+//! Every later pass reconciles a fresh description against the mounted tree.
+//!
+//! The protocol is open: the twenty view kinds this module ships are written
+//! against exactly the surface a third-party crate gets. See
+//! [`ViewNode`] for the contract and `docs/view-protocol.md` for the guide.
 
 use std::{
     any::{Any, TypeId},
@@ -7,7 +16,7 @@ use std::{
     collections::HashMap,
     fmt,
     hash::{Hash, Hasher},
-    ops::RangeInclusive,
+    ops::{ControlFlow, RangeInclusive},
     rc::Rc,
     sync::{
         Arc,
@@ -26,8 +35,9 @@ use astrelis_ui_next::{
 };
 
 use crate::{
-    ButtonVariant, ColorRole, ComponentContext, ComponentWithProps, DirtyHandle, Icon,
-    IconButtonStyle, RenderScope, RoutedComponentAction, Space, Theme, diagnostics::ViewStats,
+    ButtonVariant, ColorRole, ComponentContext, ComponentServiceRequest, ComponentWithProps,
+    DirtyHandle, Icon, IconButtonStyle, RenderScope, RoutedComponentAction, Space, Theme,
+    diagnostics::ViewStats,
 };
 
 static NEXT_COMPONENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -160,10 +170,28 @@ impl fmt::Display for ViewKey {
     }
 }
 
+/// Type identity of one view kind.
+///
+/// Reconciliation pairs a fresh view with a mounted node only when their kinds
+/// agree; a mismatch means the mounted subtree is removed and the new view is
+/// mounted from scratch. The identity is the implementing Rust type, so two
+/// distinct [`ViewNode`] types never reconcile against each other even when
+/// their mounted state happens to have the same shape - which is what makes
+/// [`Mounted::state_mut`] a lookup rather than a guess.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ViewKind(TypeId);
+
+impl ViewKind {
+    /// Returns the kind identifying `T`.
+    pub fn of<T: ?Sized + 'static>() -> Self {
+        Self(TypeId::of::<T>())
+    }
+}
+
 /// One lightweight typed-action view value.
 pub struct AnyView<Action: 'static> {
-    key: Option<ViewKey>,
-    inner: Box<dyn DynView<Action>>,
+    pub(crate) key: Option<ViewKey>,
+    pub(crate) inner: Box<dyn ViewNode<Action>>,
 }
 
 /// Application-facing lightweight view description.
@@ -173,6 +201,18 @@ pub struct AnyView<Action: 'static> {
 pub type View<Action> = AnyView<Action>;
 
 impl<Action: 'static> AnyView<Action> {
+    /// Wraps a custom [`ViewNode`] as a view value.
+    ///
+    /// This is the entry point for a view kind defined outside this crate. The
+    /// resulting value is indistinguishable from a builtin: it can be keyed,
+    /// wrapped in modifiers, and placed in any container.
+    pub fn new(node: impl ViewNode<Action>) -> Self {
+        Self {
+            key: None,
+            inner: Box::new(node),
+        }
+    }
+
     /// Assigns stable identity for reconciliation inside a dynamic sequence.
     pub fn key(self, key: impl Into<ViewKey>) -> Self {
         self.keyed(key)
@@ -184,7 +224,8 @@ impl<Action: 'static> AnyView<Action> {
         self
     }
 
-    fn kind(&self) -> TypeId {
+    /// Returns the type identity this view reconciles against.
+    pub fn kind(&self) -> ViewKind {
         self.inner.kind()
     }
 
@@ -410,62 +451,242 @@ impl_tuple_children!(A, B, C, D, E, F);
 impl_tuple_children!(A, B, C, D, E, F, G);
 impl_tuple_children!(A, B, C, D, E, F, G, H);
 
-trait DynView<Action: 'static>: 'static {
-    fn kind(&self) -> TypeId;
-
-    /// Instrumented entry point for the mount path.
-    ///
-    /// Every from-scratch mount in this module dispatches through here, so
-    /// `nodes_built` counts each view node exactly once regardless of how many
-    /// wrapper layers a node sits behind. Call this instead of [`Self::build`].
-    fn build_counted(
-        self: Box<Self>,
-        key: Option<ViewKey>,
-        context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        // `nodes_built`: one view node mounted from scratch.
-        ViewStats::record_node_built();
-        self.build(key, context)
+/// One kind of view: how a description becomes and stays retained state.
+///
+/// A view node is built once and reconciled thereafter. Both entry points take
+/// `self: Box<Self>` so an implementation can move owned data - a `String`, a
+/// `Vec`, an `Arc` - straight into the retained element instead of cloning it
+/// out of a borrow.
+///
+/// # Contract
+///
+/// - [`build`](Self::build) must append exactly one retained node below
+///   [`ViewContext::parent`] and return it as the [`Mounted`] node's identity,
+///   or reuse a child's node and return that. A node that appends nothing and
+///   has no child has no identity and cannot be reconciled.
+/// - [`rebuild`](Self::rebuild) is called only when the mounted node's
+///   [`ViewKind`] equals this view's, so [`Mounted::state_mut`] with this
+///   view's own state type always succeeds. It must leave the retained tree
+///   describing the new value, and it must not remove its own node.
+/// - Invalidation is the implementation's responsibility: prefer
+///   `context.ui().update(handle, exact_bits, ..)` over a blanket
+///   [`Invalidation::ALL`], and skip the update entirely when nothing changed.
+///
+/// # Identity
+///
+/// The default [`kind`](Self::kind) is the implementing type, which is what a
+/// third-party node wants: two of its own instances reconcile against each
+/// other and never against a builtin or another crate's node. Override it only
+/// to deliberately merge or split identity.
+///
+/// # Example
+///
+/// A container that lays its children out along the horizontal axis. It reaches
+/// for nothing this crate keeps to itself: [`ViewContext::append`] gives it a
+/// retained node, [`ViewContext::child`] scopes a context to that node, and
+/// [`MountedChildren`] does the keyed reconciliation.
+///
+/// ```
+/// use std::{any::Any, ops::ControlFlow};
+///
+/// use rxui_core::{
+///     AnyView, Mounted, MountedChildren, MountedState, ViewContext, ViewNode,
+///     core::{Axis, Flex, NodeHandle, UiError},
+/// };
+///
+/// struct Strip<Action: 'static> {
+///     children: Vec<AnyView<Action>>,
+/// }
+///
+/// struct StripState<Action: 'static> {
+///     handle: NodeHandle<Flex>,
+///     children: MountedChildren<Action>,
+/// }
+///
+/// impl<Action: 'static> MountedState<Action> for StripState<Action> {
+///     fn as_any_mut(&mut self) -> &mut dyn Any {
+///         self
+///     }
+///
+///     fn visit_children(
+///         &mut self,
+///         visit: &mut dyn FnMut(&mut Mounted<Action>) -> ControlFlow<()>,
+///     ) {
+///         self.children.visit(visit);
+///     }
+/// }
+///
+/// impl<Action: 'static> ViewNode<Action> for Strip<Action> {
+///     fn build(
+///         self: Box<Self>,
+///         context: &mut ViewContext<'_, Action>,
+///     ) -> Result<Mounted<Action>, UiError> {
+///         let handle = context.append(Flex {
+///             axis: Axis::Horizontal,
+///             ..Flex::default()
+///         })?;
+///         let mut children = MountedChildren::new();
+///         children.build(self.children, &mut context.child(handle.id()))?;
+///         Ok(Mounted::new(handle.id(), StripState { handle, children }))
+///     }
+///
+///     fn rebuild(
+///         self: Box<Self>,
+///         mounted: &mut Mounted<Action>,
+///         context: &mut ViewContext<'_, Action>,
+///     ) -> Result<(), UiError> {
+///         let state = mounted.state_mut::<StripState<Action>>()?;
+///         let parent = state.handle.id();
+///         state
+///             .children
+///             .reconcile(self.children, &mut context.child(parent))
+///     }
+/// }
+///
+/// fn strip<Action: 'static>(children: Vec<AnyView<Action>>) -> AnyView<Action> {
+///     AnyView::new(Strip { children })
+/// }
+/// ```
+pub trait ViewNode<Action: 'static>: 'static {
+    /// Returns the type identity this node reconciles against.
+    fn kind(&self) -> ViewKind {
+        ViewKind::of::<Self>()
     }
 
-    /// Instrumented entry point for the in-place reconciliation path.
+    /// Whether this node reports its own reconciliation to [`ViewStats`].
     ///
-    /// Every in-place reconciliation in this module dispatches through here,
-    /// so `nodes_rebuilt` counts each view node exactly once. Call this
-    /// instead of [`Self::rebuild`].
-    fn rebuild_counted(
-        self: Box<Self>,
-        mounted: &mut MountedView<Action>,
-        context: &mut ViewContext<'_, Action>,
-    ) -> Result<(), UiError> {
-        // `nodes_rebuilt`: one view node reconciled against its previous
-        // mounted instance rather than replaced.
-        ViewStats::record_node_rebuilt();
-        self.rebuild(mounted, context)
+    /// The framework records [`ViewStats::record_node_rebuilt`] around every
+    /// reconciliation, because for almost every node reconciling *is* the work.
+    /// A node that may legitimately decide to do nothing at all - a component
+    /// boundary whose props, theme revision, and dirty flag all agree with the
+    /// previous pass - must return `true` here and record itself on the paths
+    /// that really reconcile. Otherwise `nodes_rebuilt` grows with the number of
+    /// *untouched* nodes, which is exactly the dependence that skipping exists
+    /// to remove.
+    fn records_own_rebuild(&self) -> bool {
+        false
     }
 
+    /// Mounts this view, appending retained state below the context's parent.
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError>;
+    ) -> Result<Mounted<Action>, UiError>;
+
+    /// Reconciles this view against a mounted node of the same [`ViewKind`].
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError>;
 }
 
-struct MountedView<Action: 'static> {
-    key: Option<ViewKey>,
-    kind: TypeId,
-    node: NodeId,
-    state: Box<dyn MountedState<Action>>,
-    marker: std::marker::PhantomData<fn() -> Action>,
+/// One mounted view node: retained identity plus the state that maintains it.
+///
+/// The framework stamps the key and the [`ViewKind`] onto every mounted node,
+/// so a [`ViewNode`] implementation constructs one with [`Mounted::new`] and
+/// never has to repeat its own identity. The state is erased; recover it with
+/// [`Mounted::state_mut`].
+pub struct Mounted<Action: 'static> {
+    pub(crate) key: Option<ViewKey>,
+    pub(crate) kind: ViewKind,
+    pub(crate) node: NodeId,
+    pub(crate) state: Box<dyn MountedState<Action>>,
 }
 
-pub(crate) struct RouteContext<'a> {
-    pub(crate) services: &'a mut Vec<crate::ComponentServiceRequest>,
+impl<Action: 'static> Mounted<Action> {
+    /// Creates a mounted node owning `state` and identified by `node`.
+    ///
+    /// `node` is the retained identity this view contributes to its parent's
+    /// child list: either a node this view appended, or the node of the single
+    /// child a transparent wrapper reuses.
+    pub fn new(node: NodeId, state: impl MountedState<Action>) -> Self {
+        Self {
+            // Stamped by the framework immediately after `ViewNode::build`
+            // returns, from the view value that produced this node.
+            key: None,
+            kind: ViewKind::of::<()>(),
+            node,
+            state: Box::new(state),
+        }
+    }
+
+    /// Retained identity contributed to the parent's child list.
+    pub const fn node(&self) -> NodeId {
+        self.node
+    }
+
+    /// Reconciliation identity assigned when this node was mounted.
+    pub const fn kind(&self) -> ViewKind {
+        self.kind
+    }
+
+    /// Key this node was mounted with, if it was part of a keyed sequence.
+    pub fn key(&self) -> Option<&ViewKey> {
+        self.key.as_ref()
+    }
+
+    /// Re-points this node at a different retained identity.
+    ///
+    /// Only a transparent wrapper needs this: when the single child it reuses is
+    /// replaced rather than reconciled, the wrapper's own identity moves with
+    /// it, and a parent that has already published the old node would otherwise
+    /// keep a dangling child.
+    pub fn set_node(&mut self, node: NodeId) {
+        self.node = node;
+    }
+
+    /// Borrows this node's state as the concrete type that mounted it.
+    ///
+    /// A [`ViewNode`] reconciling its own mounted node can rely on this: the
+    /// framework only calls [`ViewNode::rebuild`] when the kinds agree, and the
+    /// kind is the view's own Rust type. The error is therefore a framework
+    /// invariant violation rather than something a caller can provoke - it is
+    /// returned instead of panicking because a view protocol should not be able
+    /// to abort the host process.
+    pub fn state_mut<S: MountedState<Action>>(&mut self) -> Result<&mut S, UiError> {
+        self.state
+            .as_any_mut()
+            .downcast_mut::<S>()
+            .ok_or_else(|| UiError::new("mounted view state does not match the view kind"))
+    }
+
+    /// Offers one routed action to this node's subtree.
+    ///
+    /// A [`MountedState`] that owns children of a *different* action type routes
+    /// through this after mapping; see [`MountedState::route`].
+    pub fn route(
+        &mut self,
+        action: &mut Option<RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
+    ) -> Result<Vec<Action>, UiError> {
+        self.state.route(action, context)
+    }
+
+    /// Rebuilds the nested component identified by `target`, if it lives here.
+    pub fn rebuild_component(
+        &mut self,
+        target: u64,
+        context: &mut RebuildContext<'_>,
+    ) -> Result<bool, UiError> {
+        self.state.rebuild_component(target, context)
+    }
+}
+
+/// Host services available while a routed action unwinds the mounted tree.
+///
+/// Routing runs without the retained tree: an action is reduced into component
+/// state, and the rebuild it implies happens afterwards. Anything a reducer
+/// wants from the host therefore leaves through here.
+pub struct RouteContext<'a> {
+    pub(crate) services: &'a mut Vec<ComponentServiceRequest>,
+}
+
+impl RouteContext<'_> {
+    /// Queues one host service request for the runtime to drain.
+    pub fn request_service(&mut self, request: ComponentServiceRequest) {
+        self.services.push(request);
+    }
 }
 
 /// Retained-tree access for the depth-ordered dirty drain.
@@ -473,40 +694,127 @@ pub(crate) struct RouteContext<'a> {
 /// A dirty nested component carries everything else it needs - its retained
 /// parent handle, its action sink, its depth - in its own mounted state, so a
 /// scoped rebuild only needs the tree, the theme, and this flush's force flag.
-pub(crate) struct RebuildContext<'a> {
+pub struct RebuildContext<'a> {
     pub(crate) ui: &'a mut UiRoot,
     pub(crate) theme: &'a Theme,
     pub(crate) force: bool,
 }
 
-pub(crate) trait MountedState<Action: 'static>: Any {
+impl<'a> RebuildContext<'a> {
+    /// Borrows the retained tree.
+    pub fn ui(&mut self) -> &mut UiRoot {
+        self.ui
+    }
+
+    /// Reads the theme this flush resolves styles against.
+    pub const fn theme(&self) -> &'a Theme {
+        self.theme
+    }
+
+    /// Whether this flush must ignore props equality at component boundaries.
+    pub const fn force(&self) -> bool {
+        self.force
+    }
+}
+
+/// Retained state owned by one mounted view node.
+///
+/// Most implementations are a handle, the values last written to the retained
+/// element, and any mounted children. The three trait methods exist so the
+/// framework can walk *through* a node it knows nothing about: a leaf
+/// implements only [`as_any_mut`](Self::as_any_mut), a container implements
+/// [`visit_children`](Self::visit_children) and gets the other two for free.
+pub trait MountedState<Action: 'static>: Any {
+    /// Returns this state for typed recovery by [`Mounted::state_mut`].
     fn as_any_mut(&mut self) -> &mut dyn Any;
 
+    /// Visits each mounted child in paint order, stopping on `Break`.
+    ///
+    /// This is how the framework reaches components nested anywhere below a
+    /// third-party node: both [`route`](Self::route) and
+    /// [`rebuild_component`](Self::rebuild_component) are defined in terms of
+    /// it. A container that does not report its children here silently
+    /// swallows its descendants' actions and leaves them stale.
+    ///
+    /// A node whose children carry a *different* action type cannot report them
+    /// here, because they are not `Mounted<Action>`. It must override
+    /// [`route`](Self::route) and [`rebuild_component`](Self::rebuild_component)
+    /// instead, mapping in and out as it descends.
+    fn visit_children(&mut self, _visit: &mut dyn FnMut(&mut Mounted<Action>) -> ControlFlow<()>) {}
+
+    /// Offers one routed action to this node and its subtree.
+    ///
+    /// The action is taken from `action` by the component that owns it, so a
+    /// container stops descending as soon as `action` is `None`. Anything
+    /// returned is a *parent* action produced while unwinding - a nested
+    /// component's mapped effects - and is reduced by the enclosing component.
+    ///
+    /// The default descends through [`visit_children`](Self::visit_children).
     fn route(
         &mut self,
-        _action: &mut Option<crate::RoutedComponentAction>,
-        _context: &mut RouteContext<'_>,
+        action: &mut Option<RoutedComponentAction>,
+        context: &mut RouteContext<'_>,
     ) -> Result<Vec<Action>, UiError> {
-        Ok(Vec::new())
+        let mut output = Vec::new();
+        let mut failure = None;
+        self.visit_children(&mut |child| match child.route(action, context) {
+            Ok(actions) => {
+                output.extend(actions);
+                if action.is_none() {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+            Err(error) => {
+                failure = Some(error);
+                ControlFlow::Break(())
+            }
+        });
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(output),
+        }
     }
 
     /// Rebuilds the nested component identified by `target`, if it lives here.
     ///
-    /// Returns whether the target was found, which lets containers stop
+    /// Returns whether the target was found, which lets a container stop
     /// descending as soon as the owning subtree has been handled. Leaves cannot
     /// own a component boundary and never find anything.
-    fn rebuild_dirty(
+    ///
+    /// The default descends through [`visit_children`](Self::visit_children).
+    fn rebuild_component(
         &mut self,
-        _target: u64,
-        _context: &mut RebuildContext<'_>,
+        target: u64,
+        context: &mut RebuildContext<'_>,
     ) -> Result<bool, UiError> {
-        Ok(false)
+        let mut found = false;
+        let mut failure = None;
+        self.visit_children(
+            &mut |child| match child.rebuild_component(target, context) {
+                Ok(true) => {
+                    found = true;
+                    ControlFlow::Break(())
+                }
+                Ok(false) => ControlFlow::Continue(()),
+                Err(error) => {
+                    failure = Some(error);
+                    ControlFlow::Break(())
+                }
+            },
+        );
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(found),
+        }
     }
 }
 
+/// Implements [`MountedState`] for a state that owns no child views.
 macro_rules! leaf_mounted_state {
-    ($state:ty) => {
-        impl<Action: 'static> MountedState<Action> for $state {
+    ($state:ident $(<$param:ident>)? $(where Action: $bound:path)?) => {
+        impl<Action: 'static $(+ $bound)?> MountedState<Action> for $state $(<$param>)? {
             fn as_any_mut(&mut self) -> &mut dyn Any {
                 self
             }
@@ -522,20 +830,11 @@ macro_rules! wrapper_mounted_state {
                 self
             }
 
-            fn route(
+            fn visit_children(
                 &mut self,
-                action: &mut Option<crate::RoutedComponentAction>,
-                context: &mut RouteContext<'_>,
-            ) -> Result<Vec<Action>, UiError> {
-                self.child.state.route(action, context)
-            }
-
-            fn rebuild_dirty(
-                &mut self,
-                target: u64,
-                context: &mut RebuildContext<'_>,
-            ) -> Result<bool, UiError> {
-                self.child.state.rebuild_dirty(target, context)
+                visit: &mut dyn FnMut(&mut Mounted<Action>) -> ControlFlow<()>,
+            ) {
+                let _ = visit(&mut self.child);
             }
         }
     };
@@ -549,74 +848,194 @@ macro_rules! container_mounted_state {
                 self
             }
 
-            fn route(
+            fn visit_children(
                 &mut self,
-                action: &mut Option<crate::RoutedComponentAction>,
-                context: &mut RouteContext<'_>,
-            ) -> Result<Vec<Action>, UiError> {
-                let mut output = Vec::new();
-                for child in self.children.mounted_mut() {
-                    output.extend(child.state.route(action, context)?);
-                    if action.is_none() {
-                        break;
-                    }
-                }
-                Ok(output)
-            }
-
-            fn rebuild_dirty(
-                &mut self,
-                target: u64,
-                context: &mut RebuildContext<'_>,
-            ) -> Result<bool, UiError> {
-                for child in self.children.mounted_mut() {
-                    if child.state.rebuild_dirty(target, context)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
+                visit: &mut dyn FnMut(&mut Mounted<Action>) -> ControlFlow<()>,
+            ) {
+                self.children.visit(visit);
             }
         }
     };
 }
 
-struct ViewContext<'a, Action: 'static> {
+/// Everything a [`ViewNode`] needs to reach the retained tree.
+///
+/// A context is always scoped to a parent node: [`append`](Self::append) and
+/// child reconciliation attach below [`parent`](Self::parent). A view that
+/// creates a container node re-scopes with [`child`](Self::child) before
+/// mounting anything under it.
+///
+/// Descending is done through [`build_child`](Self::build_child) and
+/// [`rebuild_child`](Self::rebuild_child) rather than by calling
+/// [`ViewNode::build`] directly. They stamp identity, decide between
+/// reconciling and replacing, and keep the [`ViewStats`] counters honest.
+pub struct ViewContext<'a, Action: 'static> {
     ui: &'a mut UiRoot,
     parent: NodeId,
     theme: &'a Theme,
-    action_sink: Arc<dyn Fn(Action) -> Box<dyn Any>>,
+    emitter: ActionEmitter<Action>,
     /// Component nesting depth of the component whose view is being built.
     depth: u32,
     /// Dirty set shared with the owning [`crate::ComponentRuntime`].
     dirty: &'a DirtyHandle,
     /// Whether this pass must ignore props equality at component boundaries.
     force: bool,
-    marker: std::marker::PhantomData<fn() -> Action>,
 }
 
-impl<Action: 'static> ViewContext<'_, Action> {
-    fn reborrow(&mut self, parent: NodeId) -> ViewContext<'_, Action> {
+impl<'a, Action: 'static> ViewContext<'a, Action> {
+    pub(crate) fn new(
+        ui: &'a mut UiRoot,
+        parent: NodeId,
+        theme: &'a Theme,
+        emitter: ActionEmitter<Action>,
+        depth: u32,
+        dirty: &'a DirtyHandle,
+        force: bool,
+    ) -> Self {
+        Self {
+            ui,
+            parent,
+            theme,
+            emitter,
+            depth,
+            dirty,
+            force,
+        }
+    }
+
+    /// Borrows the retained tree.
+    pub fn ui(&mut self) -> &mut UiRoot {
+        self.ui
+    }
+
+    /// Reads the theme this pass resolves styles against.
+    ///
+    /// The borrow outlives the context, so resolved colors and spacing can be
+    /// computed before the tree is borrowed mutably.
+    pub const fn theme(&self) -> &'a Theme {
+        self.theme
+    }
+
+    /// Retained node new children are attached below.
+    pub const fn parent(&self) -> NodeId {
+        self.parent
+    }
+
+    /// Returns the bridge that erases this subtree's actions for routing.
+    ///
+    /// Hand it to a retained element once, at mount, and store it: a fresh
+    /// emitter allocates, and reinstalling a callback closure on every pass is
+    /// what makes action-sink identity unstable across frames.
+    pub fn emitter(&self) -> ActionEmitter<Action> {
+        self.emitter.clone()
+    }
+
+    /// Appends a retained element below [`parent`](Self::parent).
+    pub fn append<E: Element>(&mut self, element: E) -> Result<NodeHandle<E>, UiError> {
+        let parent = self.parent;
+        self.ui.append(parent, element)
+    }
+
+    /// Re-scopes this context so children attach below `parent`.
+    pub fn child(&mut self, parent: NodeId) -> ViewContext<'_, Action> {
         ViewContext {
             ui: self.ui,
             parent,
             theme: self.theme,
-            action_sink: self.action_sink.clone(),
+            emitter: self.emitter.clone(),
             depth: self.depth,
             dirty: self.dirty,
             force: self.force,
-            marker: std::marker::PhantomData,
         }
+    }
+
+    /// Re-scopes this context for a subtree with its own action type.
+    ///
+    /// `emitter` is what the subtree's retained elements will emit through, so a
+    /// wrapper that maps actions builds one at mount - typically with
+    /// [`ActionEmitter::map`] - stores it, and passes the same one every pass.
+    pub fn scoped<Child: 'static>(
+        &mut self,
+        parent: NodeId,
+        emitter: &ActionEmitter<Child>,
+    ) -> ViewContext<'_, Child> {
+        ViewContext {
+            ui: self.ui,
+            parent,
+            theme: self.theme,
+            emitter: emitter.clone(),
+            depth: self.depth,
+            dirty: self.dirty,
+            force: self.force,
+        }
+    }
+
+    /// Mounts one child view from scratch.
+    pub fn build_child(&mut self, view: AnyView<Action>) -> Result<Mounted<Action>, UiError> {
+        // `nodes_built`: one view node mounted from scratch. Every mount goes
+        // through here, so the counter is independent of how many wrapper layers
+        // a retained node sits behind.
+        ViewStats::record_node_built();
+        let AnyView { key, inner } = view;
+        let kind = inner.kind();
+        let mut mounted = inner.build(self)?;
+        mounted.key = key;
+        mounted.kind = kind;
+        Ok(mounted)
+    }
+
+    /// Reconciles one child view, replacing the mounted node on a kind change.
+    ///
+    /// This is the single place the kind-mismatch decision is made. A container
+    /// that pairs a fresh view with a mounted node calls this and is done: on a
+    /// mismatch the old retained subtree is removed, the new view is mounted,
+    /// and `mounted` is overwritten - including its identity, which a
+    /// transparent wrapper should read back with [`Mounted::node`].
+    pub fn rebuild_child(
+        &mut self,
+        mounted: &mut Mounted<Action>,
+        view: AnyView<Action>,
+    ) -> Result<(), UiError> {
+        let AnyView { key, inner } = view;
+        if mounted.kind == inner.kind() {
+            if !inner.records_own_rebuild() {
+                // `nodes_rebuilt`: one view node reconciled against its previous
+                // mounted instance rather than replaced.
+                ViewStats::record_node_rebuilt();
+            }
+            return inner.rebuild(mounted, self);
+        }
+        self.ui.remove(mounted.node)?;
+        ViewStats::record_node_built();
+        let kind = inner.kind();
+        let mut built = inner.build(self)?;
+        built.key = key;
+        built.kind = kind;
+        *mounted = built;
+        Ok(())
+    }
+
+    pub(crate) const fn depth(&self) -> u32 {
+        self.depth
+    }
+
+    pub(crate) const fn dirty(&self) -> &'a DirtyHandle {
+        self.dirty
+    }
+
+    pub(crate) const fn force(&self) -> bool {
+        self.force
     }
 }
 
 /// Mounts and incrementally reconciles one root view.
 pub struct ViewHost<Action: 'static> {
-    mounted: MountedView<Action>,
-    /// Hoisted root action sink.
+    mounted: Mounted<Action>,
+    /// Hoisted root action bridge.
     ///
     /// The root component's actions need no routing wrapper, so this is a single
     /// boxing closure allocated at mount instead of one per rebuild.
-    sink: Arc<dyn Fn(Action) -> Box<dyn Any>>,
+    emitter: ActionEmitter<Action>,
 }
 
 impl<Action: 'static> ViewHost<Action> {
@@ -627,19 +1046,11 @@ impl<Action: 'static> ViewHost<Action> {
         view: AnyView<Action>,
         dirty: &DirtyHandle,
     ) -> Result<Self, UiError> {
-        let sink: Arc<dyn Fn(Action) -> Box<dyn Any>> = Arc::new(|action| Box::new(action));
-        let mut context = ViewContext {
-            parent: ui.root(),
-            ui,
-            theme,
-            action_sink: sink.clone(),
-            depth: 0,
-            dirty,
-            force: false,
-            marker: std::marker::PhantomData,
-        };
-        let mounted = view.inner.build_counted(view.key, &mut context)?;
-        Ok(Self { mounted, sink })
+        let emitter = ActionEmitter::from_sink(Arc::new(|action| Box::new(action)));
+        let parent = ui.root();
+        let mut context = ViewContext::new(ui, parent, theme, emitter.clone(), 0, dirty, false);
+        let mounted = context.build_child(view)?;
+        Ok(Self { mounted, emitter })
     }
 
     /// Reconciles a replacement root view into retained state.
@@ -651,24 +1062,10 @@ impl<Action: 'static> ViewHost<Action> {
         dirty: &DirtyHandle,
         force: bool,
     ) -> Result<(), UiError> {
-        let mut context = ViewContext {
-            parent: ui.root(),
-            ui,
-            theme,
-            action_sink: self.sink.clone(),
-            depth: 0,
-            dirty,
-            force,
-            marker: std::marker::PhantomData,
-        };
-        if self.mounted.kind == view.kind() {
-            view.inner
-                .rebuild_counted(&mut self.mounted, &mut context)?;
-        } else {
-            context.ui.remove(self.mounted.node)?;
-            self.mounted = view.inner.build_counted(view.key, &mut context)?;
-        }
-        Ok(())
+        let parent = ui.root();
+        let mut context =
+            ViewContext::new(ui, parent, theme, self.emitter.clone(), 0, dirty, force);
+        context.rebuild_child(&mut self.mounted, view)
     }
 
     /// Root retained identity.
@@ -688,18 +1085,17 @@ impl<Action: 'static> ViewHost<Action> {
         force: bool,
     ) -> Result<(), UiError> {
         let mut context = RebuildContext { ui, theme, force };
-        self.mounted.state.rebuild_dirty(target, &mut context)?;
+        self.mounted.rebuild_component(target, &mut context)?;
         Ok(())
     }
 
     pub(crate) fn route(
         &mut self,
-        action: crate::RoutedComponentAction,
-        services: &mut Vec<crate::ComponentServiceRequest>,
+        action: RoutedComponentAction,
+        services: &mut Vec<ComponentServiceRequest>,
     ) -> Result<Vec<Action>, UiError> {
         let mut context = RouteContext { services };
-        let output = self.mounted.state.route(&mut Some(action), &mut context)?;
-        Ok(output)
+        self.mounted.route(&mut Some(action), &mut context)
     }
 }
 
@@ -960,7 +1356,12 @@ where
     }
 }
 
-/// Typed action bridge supplied to custom retained-element specifications.
+/// Typed action bridge handed to retained elements and custom view nodes.
+///
+/// An emitter erases one typed action so the runtime can route it back to the
+/// component that owns it. Its identity is stable for the lifetime of a mounted
+/// node, which is what lets an element install a callback once at mount instead
+/// of on every pass; [`ActionEmitter::ptr_eq`] is how a cache checks that.
 pub struct ActionEmitter<Action: 'static> {
     sink: Arc<dyn Fn(Action) -> Box<dyn Any>>,
 }
@@ -974,9 +1375,37 @@ impl<Action: 'static> Clone for ActionEmitter<Action> {
 }
 
 impl<Action: 'static> ActionEmitter<Action> {
+    pub(crate) fn from_sink(sink: Arc<dyn Fn(Action) -> Box<dyn Any>>) -> Self {
+        Self { sink }
+    }
+
     /// Erases one typed action for routing to its owning component.
     pub fn emit(&self, action: Action) -> Box<dyn Any> {
         (self.sink)(action)
+    }
+
+    /// Derives an emitter for a nested action vocabulary.
+    ///
+    /// The result composes `map` with this emitter, so a subtree can speak its
+    /// own action type while its actions still reach this emitter's component.
+    /// Build one per mounted node, not per pass.
+    pub fn map<Child: 'static>(
+        &self,
+        map: impl Fn(Child) -> Action + 'static,
+    ) -> ActionEmitter<Child> {
+        let sink = self.sink.clone();
+        ActionEmitter {
+            sink: Arc::new(move |action| sink(map(action))),
+        }
+    }
+
+    /// Whether two emitters are the same allocation.
+    ///
+    /// Action mappings are closures and cannot be compared, so identity is the
+    /// only thing a cache can key on. Two emitters that compare equal here
+    /// deliver to the same component through the same composition.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.sink, &other.sink)
     }
 }
 
@@ -984,18 +1413,46 @@ impl<Action: 'static> ActionEmitter<Action> {
 ///
 /// This is the escape hatch for charts, render viewports, docking surfaces,
 /// and other workloads whose interaction state should remain imperative.
+///
+/// # Two disjoint phases
+///
+/// A pass over a spec does two things that never overlap: it writes the element,
+/// then it reconciles children. The element write happens *inside* the engine's
+/// `update`, which hands out `&mut Element` and nothing else - which is why
+/// [`create`](Self::create) and [`update`](Self::update) receive an
+/// [`ActionEmitter`] and a [`Theme`] rather than a context. Children are
+/// reconciled afterwards, with the whole tree available, from
+/// [`children`](Self::children).
 pub trait RetainedSpec<Action: 'static>: Clone + 'static {
     /// Concrete retained element owned by the incremental tree.
     type Element: Element;
 
     /// Creates newly mounted retained state.
-    fn create(&self, emitter: ActionEmitter<Action>) -> Self::Element;
+    fn create(&self, emitter: &ActionEmitter<Action>, theme: &Theme) -> Self::Element;
 
     /// Applies changed configuration without discarding interaction state.
-    fn update(&self, element: &mut Self::Element, emitter: ActionEmitter<Action>);
+    ///
+    /// Called on every pass, including one where [`changed`](Self::changed)
+    /// reported nothing: the element still has to be pointed at this frame's
+    /// callbacks. Only the invalidation is conditional.
+    fn update(&self, element: &mut Self::Element, emitter: &ActionEmitter<Action>, theme: &Theme);
 
-    /// Reports whether retained layout, paint, or semantics may have changed.
-    fn changed(&self, previous: &Self) -> bool;
+    /// Reports which retained passes this configuration change requires.
+    ///
+    /// An empty [`Invalidation`] means the element is visually and semantically
+    /// identical to `previous` and no pass has to run over it. Reporting more
+    /// than changed is merely slow; reporting less leaves a stale frame, so
+    /// widen when in doubt - [`Invalidation::ALL`] is always correct.
+    fn changed(&self, previous: &Self) -> Invalidation;
+
+    /// Produces child views hosted inside this element.
+    ///
+    /// Defaults to none, which is what a leaf wants. A container element returns
+    /// its children here and gets full keyed reconciliation, nested components
+    /// included, without implementing [`ViewNode`] itself.
+    fn children(&self) -> Vec<AnyView<Action>> {
+        Vec::new()
+    }
 }
 
 /// Mounts a specialized retained element behind the reconciled view boundary.
@@ -1013,7 +1470,7 @@ struct RetainedView<Spec> {
 struct RetainedState<Spec: RetainedSpec<Action>, Action: 'static> {
     handle: NodeHandle<Spec::Element>,
     spec: Spec,
-    marker: std::marker::PhantomData<fn() -> Action>,
+    children: MountedChildren<Action>,
 }
 
 impl<Spec: RetainedSpec<Action>, Action: 'static> MountedState<Action>
@@ -1022,63 +1479,59 @@ impl<Spec: RetainedSpec<Action>, Action: 'static> MountedState<Action>
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn visit_children(&mut self, visit: &mut dyn FnMut(&mut Mounted<Action>) -> ControlFlow<()>) {
+        self.children.visit(visit);
+    }
 }
 
-impl<Spec: RetainedSpec<Action>, Action: 'static> DynView<Action> for RetainedView<Spec> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Spec: RetainedSpec<Action>, Action: 'static> ViewNode<Action> for RetainedView<Spec> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let emitter = ActionEmitter {
-            sink: context.action_sink.clone(),
-        };
-        let handle = context
-            .ui
-            .append(context.parent, self.spec.create(emitter))?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(RetainedState::<Spec, Action> {
+    ) -> Result<Mounted<Action>, UiError> {
+        let spec = self.spec;
+        let emitter = context.emitter();
+        let element = spec.create(&emitter, context.theme());
+        let handle = context.append(element)?;
+        let mut children = MountedChildren::new();
+        let child_views = spec.children();
+        if !child_views.is_empty() {
+            children.build(child_views, &mut context.child(handle.id()))?;
+        }
+        Ok(Mounted::new(
+            handle.id(),
+            RetainedState::<Spec, Action> {
                 handle,
-                spec: self.spec,
-                marker: std::marker::PhantomData,
-            }),
-            marker: std::marker::PhantomData,
-        })
+                spec,
+                children,
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<RetainedState<Spec, Action>>()
-            .expect("view kind and state agree");
-        // The only view that cannot narrow its bits. `RetainedSpec::changed`
-        // answers a single boolean, so a spec that reports change gets every
-        // pass. Narrowing this needs a per-pass answer from the trait, which is
-        // a public API change for every specialized element.
-        let invalidation = if self.spec.changed(&state.spec) {
-            Invalidation::ALL
-        } else {
-            Invalidation::empty()
-        };
-        let emitter = ActionEmitter {
-            sink: context.action_sink.clone(),
-        };
-        context.ui.update(state.handle, invalidation, |element| {
-            self.spec.update(element, emitter);
+        let spec = self.spec;
+        let emitter = context.emitter();
+        let theme = context.theme();
+        let state = mounted.state_mut::<RetainedState<Spec, Action>>()?;
+        let handle = state.handle;
+        let invalidation = spec.changed(&state.spec);
+        let child_views = spec.children();
+        // The element write and the child reconciliation are deliberately
+        // sequential: `update` holds `&mut Element`, so nothing that needs the
+        // tree can run inside it.
+        context.ui().update(handle, invalidation, |element| {
+            spec.update(element, &emitter, theme);
         })?;
-        state.spec = self.spec;
+        state.spec = spec;
+        if !(child_views.is_empty() && state.children.is_empty()) {
+            let mut child_context = context.child(handle.id());
+            state.children.reconcile(child_views, &mut child_context)?;
+        }
         Ok(())
     }
 }
@@ -1095,14 +1548,14 @@ struct ComponentState<C: ComponentWithProps, Parent: 'static> {
     parent: NodeHandle<Flex>,
     props: C::Props,
     component: C,
-    child: MountedView<C::Action>,
+    child: Mounted<C::Action>,
     map_effect: Arc<dyn Fn(C::Effect) -> Parent>,
-    /// Hoisted routing sink handed to every retained element in this subtree.
+    /// Hoisted routing bridge handed to every retained element in this subtree.
     ///
     /// Allocated once per mounted instance. It used to be rebuilt on every
     /// rebuild of the subtree, which also meant no two frames ever agreed on
     /// sink identity.
-    sink: Arc<dyn Fn(C::Action) -> Box<dyn Any>>,
+    emitter: ActionEmitter<C::Action>,
     /// Hoisted routing sink for erased service completions.
     service_route: Arc<dyn Fn(Box<dyn Any>) -> crate::ServiceAction>,
     /// Dirty set shared with the owning [`crate::ComponentRuntime`].
@@ -1112,13 +1565,13 @@ struct ComponentState<C: ComponentWithProps, Parent: 'static> {
 }
 
 impl<C: ComponentWithProps, Parent: 'static> ComponentState<C, Parent> {
-    fn action_sink(id: u64) -> Arc<dyn Fn(C::Action) -> Box<dyn Any>> {
-        Arc::new(move |action| {
+    fn emitter(id: u64) -> ActionEmitter<C::Action> {
+        ActionEmitter::from_sink(Arc::new(move |action| {
             Box::new(RoutedComponentAction {
                 target: id,
                 payload: Box::new(action),
             })
-        })
+        }))
     }
 
     fn service_sink(id: u64) -> Arc<dyn Fn(Box<dyn Any>) -> crate::ServiceAction> {
@@ -1142,24 +1595,16 @@ impl<C: ComponentWithProps, Parent: 'static> ComponentState<C, Parent> {
         ViewStats::record_component_view();
         let view = self.component.view(theme);
         self.theme_revision = theme.revision;
-        let mut child_context = ViewContext {
+        let mut context = ViewContext::new(
             ui,
-            parent: self.parent.id(),
+            self.parent.id(),
             theme,
-            action_sink: self.sink.clone(),
-            depth: self.depth,
-            dirty: &self.dirty,
+            self.emitter.clone(),
+            self.depth,
+            &self.dirty,
             force,
-            marker: std::marker::PhantomData,
-        };
-        if self.child.kind == view.kind() {
-            view.inner
-                .rebuild_counted(&mut self.child, &mut child_context)
-        } else {
-            child_context.ui.remove(self.child.node)?;
-            self.child = view.inner.build_counted(view.key, &mut child_context)?;
-            Ok(())
-        }
+        );
+        context.rebuild_child(&mut self.child, view)
     }
 
     fn reduce(
@@ -1199,6 +1644,12 @@ impl<C: ComponentWithProps, Parent: 'static> MountedState<Parent> for ComponentS
         self
     }
 
+    /// Routes across the action-type boundary this component introduces.
+    ///
+    /// The child subtree speaks `C::Action`, so it cannot be reported through
+    /// `visit_children`. An action addressed to this instance is taken here;
+    /// anything else descends, and whatever the child's reducer emits is mapped
+    /// into the parent's vocabulary on the way out.
     fn route(
         &mut self,
         action: &mut Option<RoutedComponentAction>,
@@ -1215,11 +1666,11 @@ impl<C: ComponentWithProps, Parent: 'static> MountedState<Parent> for ComponentS
                 .map_err(|_| UiError::new("nested component action type mismatch"))?;
             return self.reduce(vec![*action], context);
         }
-        let actions = self.child.state.route(action, context)?;
+        let actions = self.child.route(action, context)?;
         self.reduce(actions, context)
     }
 
-    fn rebuild_dirty(
+    fn rebuild_component(
         &mut self,
         target: u64,
         context: &mut RebuildContext<'_>,
@@ -1228,61 +1679,52 @@ impl<C: ComponentWithProps, Parent: 'static> MountedState<Parent> for ComponentS
             self.rebuild_child(context.ui, context.theme, context.force)?;
             return Ok(true);
         }
-        self.child.state.rebuild_dirty(target, context)
+        self.child.rebuild_component(target, context)
     }
 }
 
-impl<C: ComponentWithProps, Parent: 'static> DynView<Parent> for ComponentView<C, Parent> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
-    /// Records nothing before deciding whether to descend.
+impl<C: ComponentWithProps, Parent: 'static> ViewNode<Parent> for ComponentView<C, Parent> {
+    /// Reports its own reconciliation, because it may do nothing at all.
     ///
-    /// This is the one view whose reconciliation may be a no-op. A boundary
-    /// whose props, theme revision, and dirty flag all agree with the previous
-    /// pass touches neither the retained tree nor its own state, so counting it
-    /// as a rebuilt node would make `nodes_rebuilt` grow with the number of
-    /// *untouched* sibling components - exactly the dependence update isolation
-    /// exists to remove. [`Self::rebuild`] records the node itself, on the paths
-    /// that really do reconcile.
-    fn rebuild_counted(
-        self: Box<Self>,
-        mounted: &mut MountedView<Parent>,
-        context: &mut ViewContext<'_, Parent>,
-    ) -> Result<(), UiError> {
-        self.rebuild(mounted, context)
+    /// A boundary whose props, theme revision, and dirty flag all agree with the
+    /// previous pass touches neither the retained tree nor its own state.
+    /// Letting the framework count it as a rebuilt node would make
+    /// `nodes_rebuilt` grow with the number of *untouched* sibling components -
+    /// exactly the dependence update isolation exists to remove.
+    fn records_own_rebuild(&self) -> bool {
+        true
     }
 
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Parent>,
-    ) -> Result<MountedView<Parent>, UiError> {
+    ) -> Result<Mounted<Parent>, UiError> {
         let id = NEXT_COMPONENT_ID.fetch_add(1, Ordering::Relaxed);
-        let depth = context.depth + 1;
-        let parent = context.ui.append(context.parent, Flex::default())?;
+        let depth = context.depth() + 1;
+        // Read out before the tree is borrowed exclusively: `ViewContext::theme`
+        // hands back a borrow of the theme itself, not of the context.
+        let theme = context.theme();
+        let force = context.force();
+        let dirty = context.dirty().clone();
+        let parent = context.append(Flex::default())?;
         let component = C::create(&self.props);
         // `component_views`: a newly mounted nested component's first view.
         ViewStats::record_component_view();
-        let view = component.view(context.theme);
-        let sink = ComponentState::<C, Parent>::action_sink(id);
-        let mut child_context = ViewContext {
-            ui: context.ui,
-            parent: parent.id(),
-            theme: context.theme,
-            action_sink: sink.clone(),
+        let view = component.view(theme);
+        let emitter = ComponentState::<C, Parent>::emitter(id);
+        let mut child_context = ViewContext::new(
+            context.ui(),
+            parent.id(),
+            theme,
+            emitter.clone(),
             depth,
-            dirty: context.dirty,
-            force: context.force,
-            marker: std::marker::PhantomData,
-        };
-        let child = view.inner.build_counted(view.key, &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: parent.id(),
-            state: Box::new(ComponentState::<C, Parent> {
+            &dirty,
+            force,
+        );
+        let child = child_context.build_child(view)?;
+        Ok(Mounted::new(
+            parent.id(),
+            ComponentState::<C, Parent> {
                 id,
                 depth,
                 parent,
@@ -1290,25 +1732,22 @@ impl<C: ComponentWithProps, Parent: 'static> DynView<Parent> for ComponentView<C
                 component,
                 child,
                 map_effect: self.map_effect,
-                sink,
+                emitter,
                 service_route: ComponentState::<C, Parent>::service_sink(id),
-                dirty: context.dirty.clone(),
-                theme_revision: context.theme.revision,
-            }),
-            marker: std::marker::PhantomData,
-        })
+                dirty,
+                theme_revision: theme.revision,
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Parent>,
+        mounted: &mut Mounted<Parent>,
         context: &mut ViewContext<'_, Parent>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<ComponentState<C, Parent>>()
-            .expect("view kind and state agree");
+        let theme = context.theme();
+        let force = context.force();
+        let state = mounted.state_mut::<ComponentState<C, Parent>>()?;
         // The effect mapping is a fresh closure every frame and cannot be
         // compared, so it is always replaced. It is only read while routing an
         // action, never while rendering, so replacing it cannot make a skipped
@@ -1319,17 +1758,17 @@ impl<C: ComponentWithProps, Parent: 'static> DynView<Parent> for ComponentView<C
             state.component.changed(&self.props);
             state.props = self.props;
         }
-        let theme_changed = state.theme_revision != context.theme.revision;
+        let theme_changed = state.theme_revision != theme.revision;
         // Taken unconditionally: a boundary refreshed here by its parent's
         // cascade must not be rebuilt a second time by the dirty drain.
         let self_dirty = state.dirty.take(state.depth, state.id);
-        if !(props_changed || theme_changed || self_dirty || context.force) {
+        if !(props_changed || theme_changed || self_dirty || force) {
             return Ok(());
         }
         // `nodes_rebuilt`: the component boundary, counted only when it really
         // reconciles.
         ViewStats::record_node_rebuilt();
-        state.rebuild_child(context.ui, context.theme, context.force)
+        state.rebuild_child(context.ui(), theme, force)
     }
 }
 
@@ -1354,89 +1793,75 @@ struct FocusScopeView<Action: 'static> {
 }
 
 struct FocusScopeState<Action: 'static> {
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     active: bool,
     previous: Option<NodeId>,
 }
 
 wrapper_mounted_state!(FocusScopeState);
 
-impl<Action: 'static> DynView<Action> for FocusScopeView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for FocusScopeView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
+    ) -> Result<Mounted<Action>, UiError> {
         let previous = self
             .active
-            .then(|| context.ui.focused().or_else(|| context.ui.last_focused()))
+            .then(|| {
+                context
+                    .ui()
+                    .focused()
+                    .or_else(|| context.ui().last_focused())
+            })
             .flatten();
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), context)?;
+        let child = context.build_child(self.child)?;
         if self.active {
-            context.ui.focus_first_in_subtree(child.node)?;
+            context.ui().focus_first_in_subtree(child.node())?;
         }
-        let node = child.node;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
+        let node = child.node();
+        Ok(Mounted::new(
             node,
-            state: Box::new(FocusScopeState {
+            FocusScopeState {
                 child,
                 active: self.active,
                 previous,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<FocusScopeState<Action>>()
-            .expect("view kind and state agree");
+        let state = mounted.state_mut::<FocusScopeState<Action>>()?;
         let activating = !state.active && self.active;
         let deactivating = state.active && !self.active;
         let previous = activating
-            .then(|| context.ui.focused().or_else(|| context.ui.last_focused()))
+            .then(|| {
+                context
+                    .ui()
+                    .focused()
+                    .or_else(|| context.ui().last_focused())
+            })
             .flatten();
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, context)?;
-        } else {
-            context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), context)?;
-            mounted.node = state.child.node;
-        }
+        context.rebuild_child(&mut state.child, self.child)?;
+        let child_node = state.child.node();
         if activating {
             state.previous = previous;
-            context.ui.focus_first_in_subtree(state.child.node)?;
+            context.ui().focus_first_in_subtree(child_node)?;
         } else if deactivating {
             let restored = state
                 .previous
-                .filter(|previous| context.ui.contains(*previous))
-                .is_some_and(|previous| context.ui.set_focus(Some(previous)).is_ok());
+                .filter(|previous| context.ui().contains(*previous))
+                .is_some_and(|previous| context.ui().set_focus(Some(previous)).is_ok());
             if !restored {
-                context.ui.set_focus(None)?;
+                context.ui().set_focus(None)?;
             }
             state.previous = None;
         }
         state.active = self.active;
+        mounted.set_node(child_node);
         Ok(())
     }
 }
@@ -1448,71 +1873,45 @@ struct EscapeView<Action: Clone + 'static> {
 
 struct EscapeState<Action: Clone + 'static> {
     handle: NodeHandle<KeyListener>,
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     action: ActionCell<Action>,
 }
 
 wrapper_mounted_state!(EscapeState where Action: Clone);
 
-impl<Action: Clone + 'static> DynView<Action> for EscapeView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: Clone + 'static> ViewNode<Action> for EscapeView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let action = ActionCell::new(self.action, context.action_sink.clone());
+    ) -> Result<Mounted<Action>, UiError> {
+        let action = ActionCell::new(self.action, context.emitter());
         let emit = action.emitter();
-        let handle = context
-            .ui
-            .append(context.parent, KeyListener::on_escape(move || emit()))?;
-        let mut child_context = context.reborrow(handle.id());
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(EscapeState {
+        let handle = context.append(KeyListener::on_escape(move || emit()))?;
+        let child = context.child(handle.id()).build_child(self.child)?;
+        Ok(Mounted::new(
+            handle.id(),
+            EscapeState {
                 handle,
                 child,
                 action,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<EscapeState<Action>>()
-            .expect("view kind and state agree");
+        let emitter = context.emitter();
+        let state = mounted.state_mut::<EscapeState<Action>>()?;
         // Writing the cell replaces the dismissal action without reinstalling a
         // listener closure, which is why no retained update happens here at all.
-        state.action.update(self.action, &context.action_sink);
-        let mut child_context = context.reborrow(state.handle.id());
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, &mut child_context)?;
-        } else {
-            child_context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), &mut child_context)?;
-        }
-        Ok(())
+        state.action.update(self.action, &emitter);
+        let parent = state.handle.id();
+        context
+            .child(parent)
+            .rebuild_child(&mut state.child, self.child)
     }
 }
 
@@ -1525,7 +1924,7 @@ struct CommandNavigationView<Action: Clone + 'static> {
 
 struct CommandNavigationState<Action: Clone + 'static> {
     handle: NodeHandle<KeyListener>,
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     previous: ActionCell<Action>,
     next: ActionCell<Action>,
     submit: ActionCell<Action>,
@@ -1533,76 +1932,49 @@ struct CommandNavigationState<Action: Clone + 'static> {
 
 wrapper_mounted_state!(CommandNavigationState where Action: Clone);
 
-impl<Action: Clone + 'static> DynView<Action> for CommandNavigationView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: Clone + 'static> ViewNode<Action> for CommandNavigationView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let previous = ActionCell::new(self.previous, context.action_sink.clone());
-        let next = ActionCell::new(self.next, context.action_sink.clone());
-        let submit = ActionCell::new(self.submit, context.action_sink.clone());
+    ) -> Result<Mounted<Action>, UiError> {
+        let previous = ActionCell::new(self.previous, context.emitter());
+        let next = ActionCell::new(self.next, context.emitter());
+        let submit = ActionCell::new(self.submit, context.emitter());
         let emit_previous = previous.emitter();
         let emit_next = next.emitter();
         let emit_submit = submit.emitter();
-        let handle = context.ui.append(
-            context.parent,
-            KeyListener::command_navigation(
-                move || emit_previous(),
-                move || emit_next(),
-                move || emit_submit(),
-            ),
-        )?;
-        let mut child_context = context.reborrow(handle.id());
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(CommandNavigationState {
+        let handle = context.append(KeyListener::command_navigation(
+            move || emit_previous(),
+            move || emit_next(),
+            move || emit_submit(),
+        ))?;
+        let child = context.child(handle.id()).build_child(self.child)?;
+        Ok(Mounted::new(
+            handle.id(),
+            CommandNavigationState {
                 handle,
                 child,
                 previous,
                 next,
                 submit,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<CommandNavigationState<Action>>()
-            .expect("view kind and state agree");
-        state.previous.update(self.previous, &context.action_sink);
-        state.next.update(self.next, &context.action_sink);
-        state.submit.update(self.submit, &context.action_sink);
-        let mut child_context = context.reborrow(state.handle.id());
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, &mut child_context)?;
-        } else {
-            child_context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), &mut child_context)?;
-        }
-        Ok(())
+        let emitter = context.emitter();
+        let state = mounted.state_mut::<CommandNavigationState<Action>>()?;
+        state.previous.update(self.previous, &emitter);
+        state.next.update(self.next, &emitter);
+        state.submit.update(self.submit, &emitter);
+        let parent = state.handle.id();
+        context
+            .child(parent)
+            .rebuild_child(&mut state.child, self.child)
     }
 }
 
@@ -1614,149 +1986,103 @@ struct AlignView<Action: 'static> {
 
 struct AlignState<Action: 'static> {
     handle: NodeHandle<Align>,
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     alignment: Alignment,
     padding: f32,
 }
 
 wrapper_mounted_state!(AlignState);
 
-impl<Action: 'static> DynView<Action> for AlignView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for AlignView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let padding = context.theme.space(self.padding);
-        let handle = context.ui.append(
-            context.parent,
-            Align {
-                alignment: self.alignment,
-                padding,
-            },
-        )?;
-        let mut child_context = context.reborrow(handle.id());
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(AlignState {
+    ) -> Result<Mounted<Action>, UiError> {
+        let padding = context.theme().space(self.padding);
+        let handle = context.append(Align {
+            alignment: self.alignment,
+            padding,
+        })?;
+        let child = context.child(handle.id()).build_child(self.child)?;
+        Ok(Mounted::new(
+            handle.id(),
+            AlignState {
                 handle,
                 child,
                 alignment: self.alignment,
                 padding,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<AlignState<Action>>()
-            .expect("view kind and state agree");
-        let padding = context.theme.space(self.padding);
+        let padding = context.theme().space(self.padding);
+        let state = mounted.state_mut::<AlignState<Action>>()?;
         if state.alignment != self.alignment || state.padding != padding {
+            let alignment = self.alignment;
             context
-                .ui
+                .ui()
                 .update(state.handle, Invalidation::LAYOUT_ALL, |align| {
-                    align.alignment = self.alignment;
+                    align.alignment = alignment;
                     align.padding = padding;
                 })?;
+            state.alignment = alignment;
+            state.padding = padding;
         }
-        let mut child_context = context.reborrow(state.handle.id());
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, &mut child_context)?;
-        } else {
-            child_context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), &mut child_context)?;
-        }
-        state.alignment = self.alignment;
-        state.padding = padding;
-        Ok(())
+        let parent = state.handle.id();
+        context
+            .child(parent)
+            .rebuild_child(&mut state.child, self.child)
     }
 }
 
 struct FrameState<Action: 'static> {
     handle: NodeHandle<Frame>,
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     style: FrameStyle,
 }
 
 wrapper_mounted_state!(FrameState);
 
-impl<Action: 'static> DynView<Action> for FrameView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for FrameView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let handle = context.ui.append(
-            context.parent,
-            Frame {
-                width: self.style.width,
-                height: self.style.height,
-                min: self.style.min,
-                max: self.style.max,
-                grow: self.style.grow,
-            },
-        )?;
-        let mut child_context = context.reborrow(handle.id());
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(FrameState {
+    ) -> Result<Mounted<Action>, UiError> {
+        let handle = context.append(Frame {
+            width: self.style.width,
+            height: self.style.height,
+            min: self.style.min,
+            max: self.style.max,
+            grow: self.style.grow,
+        })?;
+        let child = context.child(handle.id()).build_child(self.child)?;
+        Ok(Mounted::new(
+            handle.id(),
+            FrameState {
                 handle,
                 child,
                 style: self.style,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<FrameState<Action>>()
-            .expect("view kind and state agree");
+        let state = mounted.state_mut::<FrameState<Action>>()?;
         if state.style != self.style {
             // Every field of a frame is a layout input, so `LAYOUT_ALL` is the
             // exact answer. Normalization mirrors what `set_frame` guaranteed.
             let style = self.style;
             context
-                .ui
+                .ui()
                 .update(state.handle, Invalidation::LAYOUT_ALL, |frame| {
                     frame.width = style.width.map(|value| value.max(0.0));
                     frame.height = style.height.map(|value| value.max(0.0));
@@ -1770,21 +2096,12 @@ impl<Action: 'static> DynView<Action> for FrameView<Action> {
                     });
                     frame.grow = style.grow.max(0.0);
                 })?;
+            state.style = style;
         }
-        let mut child_context = context.reborrow(state.handle.id());
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, &mut child_context)?;
-        } else {
-            child_context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), &mut child_context)?;
-        }
-        state.style = self.style;
-        Ok(())
+        let parent = state.handle.id();
+        context
+            .child(parent)
+            .rebuild_child(&mut state.child, self.child)
     }
 }
 
@@ -1794,170 +2111,123 @@ struct VisibleView<Action: 'static> {
 }
 
 struct VisibleState<Action: 'static> {
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     visible: bool,
 }
 
 wrapper_mounted_state!(VisibleState);
 
-impl<Action: 'static> DynView<Action> for VisibleView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for VisibleView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), context)?;
-        context.ui.set_visible(child.node, self.visible)?;
-        let node = child.node;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
+    ) -> Result<Mounted<Action>, UiError> {
+        let child = context.build_child(self.child)?;
+        let node = child.node();
+        context.ui().set_visible(node, self.visible)?;
+        Ok(Mounted::new(
             node,
-            state: Box::new(VisibleState {
+            VisibleState {
                 child,
                 visible: self.visible,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<VisibleState<Action>>()
-            .expect("view kind and state agree");
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, context)?;
-        } else {
-            context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), context)?;
-            mounted.node = state.child.node;
-        }
+        let state = mounted.state_mut::<VisibleState<Action>>()?;
+        context.rebuild_child(&mut state.child, self.child)?;
+        let node = state.child.node();
         if state.visible != self.visible {
-            context.ui.set_visible(state.child.node, self.visible)?;
+            context.ui().set_visible(node, self.visible)?;
         }
         state.visible = self.visible;
+        mounted.set_node(node);
         Ok(())
     }
 }
 
 struct EnabledState<Action: 'static> {
-    child: MountedView<Action>,
+    child: Mounted<Action>,
     enabled: bool,
 }
 
 wrapper_mounted_state!(EnabledState);
 
-impl<Action: 'static> DynView<Action> for EnabledView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for EnabledView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), context)?;
-        context.ui.set_enabled(child.node, self.enabled)?;
-        let node = child.node;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
+    ) -> Result<Mounted<Action>, UiError> {
+        let child = context.build_child(self.child)?;
+        let node = child.node();
+        context.ui().set_enabled(node, self.enabled)?;
+        Ok(Mounted::new(
             node,
-            state: Box::new(EnabledState {
+            EnabledState {
                 child,
                 enabled: self.enabled,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<EnabledState<Action>>()
-            .expect("view kind and state agree");
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, context)?;
-        } else {
-            context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), context)?;
-            mounted.node = state.child.node;
-        }
+        let state = mounted.state_mut::<EnabledState<Action>>()?;
+        context.rebuild_child(&mut state.child, self.child)?;
+        let node = state.child.node();
         if state.enabled != self.enabled {
-            context.ui.set_enabled(state.child.node, self.enabled)?;
+            context.ui().set_enabled(node, self.enabled)?;
         }
         state.enabled = self.enabled;
+        mounted.set_node(node);
         Ok(())
     }
 }
 
-/// Mutable inputs of a composed action sink.
+/// Mutable inputs of a composed action emitter.
 ///
 /// [`AnyView::map_action`] takes a fresh closure every frame, so the mapping's
 /// identity can never be compared and a naive rebuild has to allocate a new
-/// composed sink each pass. Every retained element below the wrapper then sees a
-/// different sink identity on every frame, which is invisible today but makes
-/// any future memo keyed on sink identity miss unconditionally. Routing through
-/// this cell keeps the composed sink allocated exactly once at mount while still
-/// calling the newest mapping.
+/// composed emitter each pass. Every retained element below the wrapper then
+/// sees a different sink identity on every frame, which is invisible today but
+/// makes any future memo keyed on sink identity miss unconditionally. Routing
+/// through this cell keeps the composed emitter allocated exactly once at mount
+/// while still calling the newest mapping.
 struct MapActionCell<Child: 'static, Parent: 'static> {
     map: Arc<dyn Fn(Child) -> Parent>,
-    parent_sink: Arc<dyn Fn(Parent) -> Box<dyn Any>>,
+    parent: ActionEmitter<Parent>,
 }
 
 impl<Child: 'static, Parent: 'static> MapActionCell<Child, Parent> {
-    /// Builds the single composed sink that reads through `cell` forever.
-    fn compose(cell: &Rc<RefCell<Self>>) -> Arc<dyn Fn(Child) -> Box<dyn Any>> {
+    /// Builds the single composed emitter that reads through `cell` forever.
+    fn compose(cell: &Rc<RefCell<Self>>) -> ActionEmitter<Child> {
         let cell = cell.clone();
-        Arc::new(move |action| {
-            // The closures are cloned out before being called so that a user
-            // mapping can never observe this cell mid-borrow.
-            let (map, parent_sink) = {
+        ActionEmitter::from_sink(Arc::new(move |action| {
+            // The mapping and the parent emitter are cloned out before being
+            // called so that a user mapping can never observe this cell
+            // mid-borrow.
+            let (map, parent) = {
                 let cell = cell.borrow();
-                (cell.map.clone(), cell.parent_sink.clone())
+                (cell.map.clone(), cell.parent.clone())
             };
-            parent_sink(map(action))
-        })
+            parent.emit(map(action))
+        }))
     }
 }
 
 struct MapActionState<Child: 'static, Parent: 'static> {
-    child: MountedView<Child>,
+    child: Mounted<Child>,
     cell: Rc<RefCell<MapActionCell<Child, Parent>>>,
-    /// Sink handed to the child subtree. Allocated at mount and never replaced.
-    composed: Arc<dyn Fn(Child) -> Box<dyn Any>>,
+    /// Emitter handed to the child subtree. Allocated at mount, never replaced.
+    composed: ActionEmitter<Child>,
 }
 
 impl<Child: 'static, Parent: 'static> MountedState<Parent> for MapActionState<Child, Parent> {
@@ -1965,106 +2235,73 @@ impl<Child: 'static, Parent: 'static> MountedState<Parent> for MapActionState<Ch
         self
     }
 
+    /// Maps the child vocabulary out on the way back up.
+    ///
+    /// The child is a `Mounted<Child>`, so it cannot be reported through
+    /// `visit_children`; this is the mapping half of that boundary.
     fn route(
         &mut self,
-        action: &mut Option<crate::RoutedComponentAction>,
+        action: &mut Option<RoutedComponentAction>,
         context: &mut RouteContext<'_>,
     ) -> Result<Vec<Parent>, UiError> {
-        let actions = self.child.state.route(action, context)?;
+        let actions = self.child.route(action, context)?;
         let map = self.cell.borrow().map.clone();
         Ok(actions.into_iter().map(|action| map(action)).collect())
     }
 
-    fn rebuild_dirty(
+    fn rebuild_component(
         &mut self,
         target: u64,
         context: &mut RebuildContext<'_>,
     ) -> Result<bool, UiError> {
-        self.child.state.rebuild_dirty(target, context)
+        self.child.rebuild_component(target, context)
     }
 }
 
-impl<Child: 'static, Parent: 'static> DynView<Parent> for MapActionView<Child, Parent> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Child: 'static, Parent: 'static> ViewNode<Parent> for MapActionView<Child, Parent> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Parent>,
-    ) -> Result<MountedView<Parent>, UiError> {
+    ) -> Result<Mounted<Parent>, UiError> {
         let cell = Rc::new(RefCell::new(MapActionCell {
             map: self.map,
-            parent_sink: context.action_sink.clone(),
+            parent: context.emitter(),
         }));
         let composed = MapActionCell::compose(&cell);
-        let mut child_context = ViewContext {
-            ui: context.ui,
-            parent: context.parent,
-            theme: context.theme,
-            action_sink: composed.clone(),
-            depth: context.depth,
-            dirty: context.dirty,
-            force: context.force,
-            marker: std::marker::PhantomData,
-        };
-        let child = self
-            .child
-            .inner
-            .build_counted(self.child.key.clone(), &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: child.node,
-            state: Box::new(MapActionState {
+        let parent = context.parent();
+        let child = context.scoped(parent, &composed).build_child(self.child)?;
+        let node = child.node();
+        Ok(Mounted::new(
+            node,
+            MapActionState {
                 child,
                 cell,
                 composed,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Parent>,
+        mounted: &mut Mounted<Parent>,
         context: &mut ViewContext<'_, Parent>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<MapActionState<Child, Parent>>()
-            .expect("view kind and state agree");
+        let emitter = context.emitter();
+        let parent = context.parent();
+        let state = mounted.state_mut::<MapActionState<Child, Parent>>()?;
         {
             let mut cell = state.cell.borrow_mut();
             cell.map = self.map;
-            if !Arc::ptr_eq(&cell.parent_sink, &context.action_sink) {
-                cell.parent_sink = context.action_sink.clone();
+            if !cell.parent.ptr_eq(&emitter) {
+                cell.parent = emitter;
             }
         }
-        let mut child_context = ViewContext {
-            ui: context.ui,
-            parent: context.parent,
-            theme: context.theme,
-            action_sink: state.composed.clone(),
-            depth: context.depth,
-            dirty: context.dirty,
-            force: context.force,
-            marker: std::marker::PhantomData,
-        };
-        if state.child.kind == self.child.kind() {
-            self.child
-                .inner
-                .rebuild_counted(&mut state.child, &mut child_context)?;
-        } else {
-            child_context.ui.remove(state.child.node)?;
-            state.child = self
-                .child
-                .inner
-                .build_counted(self.child.key.clone(), &mut child_context)?;
-            mounted.node = state.child.node;
-        }
+        let composed = state.composed.clone();
+        context
+            .scoped(parent, &composed)
+            .rebuild_child(&mut state.child, self.child)?;
+        let node = state.child.node();
+        mounted.set_node(node);
         Ok(())
     }
 }
@@ -2275,7 +2512,7 @@ pub fn split_pane<Action: 'static>(
 /// Mutable inputs of one retained control's change callback.
 struct MapTarget<Input: 'static, Action: 'static> {
     map: Arc<dyn Fn(Input) -> Action>,
-    sink: Arc<dyn Fn(Action) -> Box<dyn Any>>,
+    emitter: ActionEmitter<Action>,
 }
 
 /// Stable indirection behind a control's change callback.
@@ -2288,8 +2525,8 @@ struct MapTarget<Input: 'static, Action: 'static> {
 struct MapCell<Input: 'static, Action: 'static>(Rc<RefCell<MapTarget<Input, Action>>>);
 
 impl<Input: 'static, Action: 'static> MapCell<Input, Action> {
-    fn new(map: Arc<dyn Fn(Input) -> Action>, sink: Arc<dyn Fn(Action) -> Box<dyn Any>>) -> Self {
-        Self(Rc::new(RefCell::new(MapTarget { map, sink })))
+    fn new(map: Arc<dyn Fn(Input) -> Action>, emitter: ActionEmitter<Action>) -> Self {
+        Self(Rc::new(RefCell::new(MapTarget { map, emitter })))
     }
 
     /// Returns the closure installed into the retained element exactly once.
@@ -2298,24 +2535,20 @@ impl<Input: 'static, Action: 'static> MapCell<Input, Action> {
         move |input| {
             // Cloned out before being called so a user mapping can never observe
             // this cell mid-borrow.
-            let (map, sink) = {
+            let (map, emitter) = {
                 let target = cell.borrow();
-                (target.map.clone(), target.sink.clone())
+                (target.map.clone(), target.emitter.clone())
             };
-            sink(map(input))
+            emitter.emit(map(input))
         }
     }
 
     /// Points the cell at this frame's mapping without touching the element.
-    fn update(
-        &self,
-        map: Arc<dyn Fn(Input) -> Action>,
-        sink: &Arc<dyn Fn(Action) -> Box<dyn Any>>,
-    ) {
+    fn update(&self, map: Arc<dyn Fn(Input) -> Action>, emitter: &ActionEmitter<Action>) {
         let mut target = self.0.borrow_mut();
         target.map = map;
-        if !Arc::ptr_eq(&target.sink, sink) {
-            target.sink = sink.clone();
+        if !target.emitter.ptr_eq(emitter) {
+            target.emitter = emitter.clone();
         }
     }
 }
@@ -2323,35 +2556,35 @@ impl<Input: 'static, Action: 'static> MapCell<Input, Action> {
 /// Mutable inputs of one retained control's activation action.
 struct ActionTarget<Action: 'static> {
     action: Action,
-    sink: Arc<dyn Fn(Action) -> Box<dyn Any>>,
+    emitter: ActionEmitter<Action>,
 }
 
 /// Stable indirection behind an activation action carried by value.
 struct ActionCell<Action: Clone + 'static>(Rc<RefCell<ActionTarget<Action>>>);
 
 impl<Action: Clone + 'static> ActionCell<Action> {
-    fn new(action: Action, sink: Arc<dyn Fn(Action) -> Box<dyn Any>>) -> Self {
-        Self(Rc::new(RefCell::new(ActionTarget { action, sink })))
+    fn new(action: Action, emitter: ActionEmitter<Action>) -> Self {
+        Self(Rc::new(RefCell::new(ActionTarget { action, emitter })))
     }
 
     /// Returns the closure installed into the retained element exactly once.
     fn emitter(&self) -> impl Fn() -> Box<dyn Any> + use<Action> {
         let cell = self.0.clone();
         move || {
-            let (action, sink) = {
+            let (action, emitter) = {
                 let target = cell.borrow();
-                (target.action.clone(), target.sink.clone())
+                (target.action.clone(), target.emitter.clone())
             };
-            sink(action)
+            emitter.emit(action)
         }
     }
 
     /// Points the cell at this frame's action without touching the element.
-    fn update(&self, action: Action, sink: &Arc<dyn Fn(Action) -> Box<dyn Any>>) {
+    fn update(&self, action: Action, emitter: &ActionEmitter<Action>) {
         let mut target = self.0.borrow_mut();
         target.action = action;
-        if !Arc::ptr_eq(&target.sink, sink) {
-            target.sink = sink.clone();
+        if !target.emitter.ptr_eq(emitter) {
+            target.emitter = emitter.clone();
         }
     }
 }
@@ -2373,48 +2606,36 @@ struct LabelState {
 
 leaf_mounted_state!(LabelState);
 
-impl<Action: 'static> DynView<Action> for LabelView {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for LabelView {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let color = context.theme.color(self.role);
+    ) -> Result<Mounted<Action>, UiError> {
+        let color = context.theme().color(self.role);
         let mut label = Label::new(&*self.text)
             .with_font_size(self.font_size)
             .with_color(color);
         label.set_width(self.width);
-        let handle = context.ui.append(context.parent, label)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(LabelState {
+        let handle = context.append(label)?;
+        Ok(Mounted::new(
+            handle.id(),
+            LabelState {
                 handle,
                 text: self.text,
                 font_size: self.font_size,
                 color,
                 width: self.width,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<LabelState>()
-            .expect("view kind and state agree");
-        let color = context.theme.color(self.role);
+        let color = context.theme().color(self.role);
+        let state = mounted.state_mut::<LabelState>()?;
         if state.text == self.text
             && state.font_size == self.font_size
             && state.width == self.width
@@ -2432,18 +2653,20 @@ impl<Action: 'static> DynView<Action> for LabelView {
         // The engine's own per-element shaping memo keeps a redundant re-shape
         // cheap; this cannot become narrower until paint takes a text brush.
         let text = String::from(&*self.text);
+        let font_size = self.font_size;
+        let width = self.width;
         context
-            .ui
+            .ui()
             .update(state.handle, Invalidation::LAYOUT_ALL, |label| {
                 label.text = text;
-                label.font_size = self.font_size;
+                label.font_size = font_size;
                 label.color = Some(color);
-                label.set_width(self.width);
+                label.set_width(width);
             })?;
         state.text = self.text;
-        state.font_size = self.font_size;
+        state.font_size = font_size;
         state.color = color;
-        state.width = self.width;
+        state.width = width;
         Ok(())
     }
 }
@@ -2465,52 +2688,37 @@ struct BoxState {
 
 leaf_mounted_state!(BoxState);
 
-impl<Action: 'static> DynView<Action> for BoxView {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for BoxView {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let color = context.theme.color(self.role);
-        let handle = context.ui.append(
-            context.parent,
-            BoxElement {
-                size: self.size,
-                color,
-                semantics: self.semantics.clone(),
-                interactive: self.interactive,
-            },
-        )?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(BoxState {
+    ) -> Result<Mounted<Action>, UiError> {
+        let color = context.theme().color(self.role);
+        let handle = context.append(BoxElement {
+            size: self.size,
+            color,
+            semantics: self.semantics.clone(),
+            interactive: self.interactive,
+        })?;
+        Ok(Mounted::new(
+            handle.id(),
+            BoxState {
                 handle,
                 size: self.size,
                 color,
                 semantics: self.semantics,
                 interactive: self.interactive,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<BoxState>()
-            .expect("view kind and state agree");
-        let color = context.theme.color(self.role);
+        let color = context.theme().color(self.role);
+        let state = mounted.state_mut::<BoxState>()?;
         let mut invalidation = Invalidation::empty();
         if state.size != self.size {
             invalidation |= Invalidation::LAYOUT_ALL;
@@ -2533,16 +2741,16 @@ impl<Action: 'static> DynView<Action> for BoxView {
         let semantics = self.semantics.clone();
         let interactive = self.interactive;
         let size = self.size;
-        context.ui.update(state.handle, invalidation, |element| {
+        context.ui().update(state.handle, invalidation, |element| {
             element.size = size;
             element.color = color;
             element.semantics = semantics;
             element.interactive = interactive;
         })?;
-        state.size = self.size;
+        state.size = size;
         state.color = color;
         state.semantics = self.semantics;
-        state.interactive = self.interactive;
+        state.interactive = interactive;
         Ok(())
     }
 }
@@ -2568,37 +2776,36 @@ struct ButtonState<Action: Clone + 'static> {
     action: ActionCell<Action>,
 }
 
-impl<Action: Clone + 'static> MountedState<Action> for ButtonState<Action> {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
+leaf_mounted_state!(ButtonState<Action> where Action: Clone);
+
+/// Normalizes an icon's comparable geometry for one button pass.
+fn button_icon_state(
+    icon: Option<&Icon>,
+    icon_size: f32,
+) -> Option<(u64, LogicalSize, f32, astrelis_paint::FillRule)> {
+    icon.map(|icon| {
+        (
+            icon.path.cache_id(),
+            icon.view_box,
+            if icon_size.is_finite() {
+                icon_size.max(1.0)
+            } else {
+                16.0
+            },
+            icon.fill_rule,
+        )
+    })
 }
 
-impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: Clone + 'static> ViewNode<Action> for ButtonView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let colors = context.theme.button(self.variant);
-        let action = ActionCell::new(self.action, context.action_sink.clone());
+    ) -> Result<Mounted<Action>, UiError> {
+        let colors = context.theme().button(self.variant);
+        let action = ActionCell::new(self.action, context.emitter());
         let emit = action.emitter();
-        let icon_state = self.icon.as_ref().map(|icon| {
-            (
-                icon.path.cache_id(),
-                icon.view_box,
-                if self.icon_size.is_finite() {
-                    self.icon_size.max(1.0)
-                } else {
-                    16.0
-                },
-                icon.fill_rule,
-            )
-        });
+        let icon_state = button_icon_state(self.icon.as_ref(), self.icon_size);
         let mut button = Button::with_action_factory(
             self.text.clone(),
             self.size,
@@ -2613,12 +2820,10 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
                     .with_fill_rule(fill_rule),
             );
         }
-        let handle = context.ui.append(context.parent, button)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(ButtonState {
+        let handle = context.append(button)?;
+        Ok(Mounted::new(
+            handle.id(),
+            ButtonState {
                 handle,
                 text: self.text,
                 variant: self.variant,
@@ -2627,38 +2832,23 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
                 icon: icon_state,
                 show_label: self.show_label,
                 action,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<ButtonState<Action>>()
-            .expect("view kind and state agree");
-        let colors = context.theme.button(self.variant);
-        let icon_state = self.icon.as_ref().map(|icon| {
-            (
-                icon.path.cache_id(),
-                icon.view_box,
-                if self.icon_size.is_finite() {
-                    self.icon_size.max(1.0)
-                } else {
-                    16.0
-                },
-                icon.fill_rule,
-            )
-        });
+        let colors = context.theme().button(self.variant);
+        let emitter = context.emitter();
+        let icon_state = button_icon_state(self.icon.as_ref(), self.icon_size);
+        let state = mounted.state_mut::<ButtonState<Action>>()?;
         // The activation action is written into the cell the retained element
         // already reads through, so a changed action no longer reinstalls a
         // boxed closure.
-        state.action.update(self.action, &context.action_sink);
+        state.action.update(self.action, &emitter);
         // Label, size, and icon geometry feed layout; the two fills only repaint.
         let mut invalidation = Invalidation::empty();
         if state.size != self.size
@@ -2685,7 +2875,7 @@ impl<Action: Clone + 'static> DynView<Action> for ButtonView<Action> {
                     .with_fill_rule(icon.fill_rule)
                 })
             });
-            context.ui.update(state.handle, invalidation, |button| {
+            context.ui().update(state.handle, invalidation, |button| {
                 button.label = text;
                 button.size = size;
                 button.color = colors.0;
@@ -2720,63 +2910,50 @@ struct TextFieldState<Action: 'static> {
     changed: MapCell<String, Action>,
 }
 
-impl<Action: 'static> MountedState<Action> for TextFieldState<Action> {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
+leaf_mounted_state!(TextFieldState<Action>);
 
-impl<Action: 'static> DynView<Action> for TextFieldView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for TextFieldView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
+    ) -> Result<Mounted<Action>, UiError> {
+        let theme = context.theme();
         let colors = (
-            context.theme.color(ColorRole::Text),
-            context.theme.color(ColorRole::Surface),
+            theme.color(ColorRole::Text),
+            theme.color(ColorRole::Surface),
         );
-        let changed = MapCell::new(self.on_changed, context.action_sink.clone());
+        let changed = MapCell::new(self.on_changed, context.emitter());
         let emit = changed.emitter();
         let mut field = TextField::new(self.label.clone(), self.value.clone())
             .on_changed_factory(move |value| emit(value));
         field.text_color = colors.0;
         field.background = colors.1;
-        let handle = context.ui.append(context.parent, field)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(TextFieldState {
+        let handle = context.append(field)?;
+        Ok(Mounted::new(
+            handle.id(),
+            TextFieldState {
                 handle,
                 label: self.label,
                 value: self.value,
                 colors,
                 changed,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<TextFieldState<Action>>()
-            .expect("view kind and state agree");
+        let theme = context.theme();
         let colors = (
-            context.theme.color(ColorRole::Text),
-            context.theme.color(ColorRole::Surface),
+            theme.color(ColorRole::Text),
+            theme.color(ColorRole::Surface),
         );
-        state.changed.update(self.on_changed, &context.action_sink);
+        let emitter = context.emitter();
+        let state = mounted.state_mut::<TextFieldState<Action>>()?;
+        state.changed.update(self.on_changed, &emitter);
         // Value, placeholder label, and glyph color all reach the shaper, which
         // runs in layout. Only the field's background is paint-only.
         let mut invalidation = Invalidation::empty();
@@ -2789,7 +2966,7 @@ impl<Action: 'static> DynView<Action> for TextFieldView<Action> {
         if !invalidation.is_empty() {
             let label = self.label.clone();
             let value = self.value.clone();
-            context.ui.update(state.handle, invalidation, |field| {
+            context.ui().update(state.handle, invalidation, |field| {
                 field.label = label;
                 field.set_text(value);
                 field.text_color = colors.0;
@@ -2817,28 +2994,20 @@ struct CheckboxState<Action: 'static> {
     changed: MapCell<bool, Action>,
 }
 
-impl<Action: 'static> MountedState<Action> for CheckboxState<Action> {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
+leaf_mounted_state!(CheckboxState<Action>);
 
-impl<Action: 'static> DynView<Action> for CheckboxView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for CheckboxView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
+    ) -> Result<Mounted<Action>, UiError> {
+        let theme = context.theme();
         let colors = (
-            context.theme.color(ColorRole::Text),
-            context.theme.color(ColorRole::Muted),
-            context.theme.color(ColorRole::Accent),
+            theme.color(ColorRole::Text),
+            theme.color(ColorRole::Muted),
+            theme.color(ColorRole::Accent),
         );
-        let changed = MapCell::new(self.on_changed, context.action_sink.clone());
+        let changed = MapCell::new(self.on_changed, context.emitter());
         let emit = changed.emitter();
         let mut checkbox = Checkbox::new(self.label.clone(), self.checked, move |checked| {
             emit(checked)
@@ -2846,38 +3015,33 @@ impl<Action: 'static> DynView<Action> for CheckboxView<Action> {
         checkbox.text_color = colors.0;
         checkbox.outline_color = colors.1;
         checkbox.accent_color = colors.2;
-        let handle = context.ui.append(context.parent, checkbox)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(CheckboxState {
+        let handle = context.append(checkbox)?;
+        Ok(Mounted::new(
+            handle.id(),
+            CheckboxState {
                 handle,
                 label: self.label,
                 checked: self.checked,
                 colors,
                 changed,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<CheckboxState<Action>>()
-            .expect("view kind and state agree");
+        let theme = context.theme();
         let colors = (
-            context.theme.color(ColorRole::Text),
-            context.theme.color(ColorRole::Muted),
-            context.theme.color(ColorRole::Accent),
+            theme.color(ColorRole::Text),
+            theme.color(ColorRole::Muted),
+            theme.color(ColorRole::Accent),
         );
-        state.changed.update(self.on_changed, &context.action_sink);
+        let emitter = context.emitter();
+        let state = mounted.state_mut::<CheckboxState<Action>>()?;
+        state.changed.update(self.on_changed, &emitter);
         // The label and its glyph color reach the shaper, which runs in layout.
         // The checked state changes the indicator fill and the accessible value;
         // the outline and accent fills are paint-only.
@@ -2894,13 +3058,15 @@ impl<Action: 'static> DynView<Action> for CheckboxView<Action> {
         if !invalidation.is_empty() {
             let label = self.label.clone();
             let checked = self.checked;
-            context.ui.update(state.handle, invalidation, |checkbox| {
-                checkbox.label = label;
-                checkbox.checked = checked;
-                checkbox.text_color = colors.0;
-                checkbox.outline_color = colors.1;
-                checkbox.accent_color = colors.2;
-            })?;
+            context
+                .ui()
+                .update(state.handle, invalidation, |checkbox| {
+                    checkbox.label = label;
+                    checkbox.checked = checked;
+                    checkbox.text_color = colors.0;
+                    checkbox.outline_color = colors.1;
+                    checkbox.accent_color = colors.2;
+                })?;
         }
         state.label = self.label;
         state.checked = self.checked;
@@ -2927,27 +3093,19 @@ struct SliderState<Action: 'static> {
     changed: MapCell<f32, Action>,
 }
 
-impl<Action: 'static> MountedState<Action> for SliderState<Action> {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
+leaf_mounted_state!(SliderState<Action>);
 
-impl<Action: 'static> DynView<Action> for SliderView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for SliderView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
+    ) -> Result<Mounted<Action>, UiError> {
+        let theme = context.theme();
         let colors = (
-            context.theme.color(ColorRole::Muted),
-            context.theme.color(ColorRole::Accent),
+            theme.color(ColorRole::Muted),
+            theme.color(ColorRole::Accent),
         );
-        let changed = MapCell::new(self.on_changed, context.action_sink.clone());
+        let changed = MapCell::new(self.on_changed, context.emitter());
         let emit = changed.emitter();
         let mut slider = Slider::new(
             self.label.clone(),
@@ -2958,12 +3116,10 @@ impl<Action: 'static> DynView<Action> for SliderView<Action> {
         slider.step = self.step;
         slider.track_color = colors.0;
         slider.accent_color = colors.1;
-        let handle = context.ui.append(context.parent, slider)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(SliderState {
+        let handle = context.append(slider)?;
+        Ok(Mounted::new(
+            handle.id(),
+            SliderState {
                 handle,
                 label: self.label,
                 value: self.value,
@@ -2971,26 +3127,23 @@ impl<Action: 'static> DynView<Action> for SliderView<Action> {
                 step: self.step,
                 colors,
                 changed,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<SliderState<Action>>()
-            .expect("view kind and state agree");
+        let theme = context.theme();
         let colors = (
-            context.theme.color(ColorRole::Muted),
-            context.theme.color(ColorRole::Accent),
+            theme.color(ColorRole::Muted),
+            theme.color(ColorRole::Accent),
         );
-        state.changed.update(self.on_changed, &context.action_sink);
+        let emitter = context.emitter();
+        let state = mounted.state_mut::<SliderState<Action>>()?;
+        state.changed.update(self.on_changed, &emitter);
         // A slider's size is fixed and its label is never painted, so nothing
         // here relayouts. The label is accessibility-only; value and range move
         // the thumb and the reported value; the step is neither painted nor
@@ -3010,7 +3163,7 @@ impl<Action: 'static> DynView<Action> for SliderView<Action> {
             let range = self.range.clone();
             let value = self.value;
             let step = self.step;
-            context.ui.update(state.handle, invalidation, |slider| {
+            context.ui().update(state.handle, invalidation, |slider| {
                 // Normalization and clamping mirror `Slider::new`, which is what
                 // the retained element guarantees about these fields.
                 let start = (*range.start()).min(*range.end());
@@ -3057,65 +3210,56 @@ struct SplitPaneState<Action: 'static> {
 
 container_mounted_state!(SplitPaneState);
 
-impl<Action: 'static> DynView<Action> for SplitPaneView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for SplitPaneView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let resize = MapCell::new(self.on_resize, context.action_sink.clone());
+    ) -> Result<Mounted<Action>, UiError> {
+        let resize = MapCell::new(self.on_resize, context.emitter());
         let emit = resize.emitter();
-        let handle = context.ui.append(
-            context.parent,
-            SplitPane::new(self.axis, self.ratio, move |ratio| emit(ratio)),
-        )?;
-        let mut child_context = context.reborrow(handle.id());
+        let handle = context.append(SplitPane::new(self.axis, self.ratio, move |ratio| {
+            emit(ratio)
+        }))?;
         let mut children = MountedChildren::new();
-        children.build(self.children, &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(SplitPaneState {
+        children.build(self.children, &mut context.child(handle.id()))?;
+        Ok(Mounted::new(
+            handle.id(),
+            SplitPaneState {
                 handle,
                 axis: self.axis,
                 ratio: self.ratio,
                 resize,
                 children,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<SplitPaneState<Action>>()
-            .expect("view kind and state agree");
-        state.resize.update(self.on_resize, &context.action_sink);
+        let emitter = context.emitter();
+        let state = mounted.state_mut::<SplitPaneState<Action>>()?;
+        state.resize.update(self.on_resize, &emitter);
         // Guarded like every other container. This was the one view that asked
         // for `LAYOUT_ALL` on every pass whether or not the divider moved.
         if state.axis != self.axis || state.ratio != self.ratio {
+            let axis = self.axis;
+            let ratio = self.ratio;
             context
-                .ui
+                .ui()
                 .update(state.handle, Invalidation::LAYOUT_ALL, |split| {
-                    split.axis = self.axis;
-                    split.ratio = self.ratio;
+                    split.axis = axis;
+                    split.ratio = ratio;
                 })?;
-            state.axis = self.axis;
-            state.ratio = self.ratio;
+            state.axis = axis;
+            state.ratio = ratio;
         }
-        let mut child_context = context.reborrow(state.handle.id());
-        state.children.reconcile(self.children, &mut child_context)
+        let parent = state.handle.id();
+        state
+            .children
+            .reconcile(self.children, &mut context.child(parent))
     }
 }
 
@@ -3140,64 +3284,57 @@ struct ScrollState<Action: 'static> {
 
 container_mounted_state!(ScrollState);
 
-impl<Action: 'static> DynView<Action> for ScrollView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for ScrollView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let handle = context.ui.append(context.parent, Scroll::new(self.axis))?;
+    ) -> Result<Mounted<Action>, UiError> {
+        let handle = context.append(Scroll::new(self.axis))?;
+        let axis = self.axis;
+        let offset = self.offset;
         // Both fields feed `Scroll::layout`, which measures children against the
         // axis and places them at the offset.
         context
-            .ui
+            .ui()
             .update(handle, Invalidation::LAYOUT_ALL, |scroll| {
-                scroll.axis = self.axis;
-                scroll.offset = self.offset;
+                scroll.axis = axis;
+                scroll.offset = offset;
             })?;
-        let mut child_context = context.reborrow(handle.id());
         let mut children = MountedChildren::new();
-        children.build(self.children, &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(ScrollState {
+        children.build(self.children, &mut context.child(handle.id()))?;
+        Ok(Mounted::new(
+            handle.id(),
+            ScrollState {
                 handle,
-                axis: self.axis,
-                requested_offset: self.offset,
+                axis,
+                requested_offset: offset,
                 children,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<ScrollState<Action>>()
-            .expect("view kind and state agree");
+        let state = mounted.state_mut::<ScrollState<Action>>()?;
         if state.axis != self.axis || state.requested_offset != self.offset {
+            let axis = self.axis;
+            let offset = self.offset;
             context
-                .ui
+                .ui()
                 .update(state.handle, Invalidation::LAYOUT_ALL, |scroll| {
-                    scroll.axis = self.axis;
-                    scroll.offset = self.offset;
+                    scroll.axis = axis;
+                    scroll.offset = offset;
                 })?;
-            state.axis = self.axis;
-            state.requested_offset = self.offset;
+            state.axis = axis;
+            state.requested_offset = offset;
         }
-        let mut child_context = context.reborrow(state.handle.id());
-        state.children.reconcile(self.children, &mut child_context)
+        let parent = state.handle.id();
+        state
+            .children
+            .reconcile(self.children, &mut context.child(parent))
     }
 }
 
@@ -3210,54 +3347,40 @@ struct StackState<Action: 'static> {
 
 container_mounted_state!(StackState);
 
-impl<Action: 'static> DynView<Action> for StackView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for StackView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let padding = context.theme.space(self.padding);
-        let background = self.background.map(|role| context.theme.color(role));
-        let handle = context.ui.append(
-            context.parent,
-            Stack {
-                padding,
-                background,
-            },
-        )?;
-        let mut child_context = context.reborrow(handle.id());
+    ) -> Result<Mounted<Action>, UiError> {
+        let theme = context.theme();
+        let padding = theme.space(self.padding);
+        let background = self.background.map(|role| theme.color(role));
+        let handle = context.append(Stack {
+            padding,
+            background,
+        })?;
         let mut children = MountedChildren::new();
-        children.build(self.children, &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(StackState {
+        children.build(self.children, &mut context.child(handle.id()))?;
+        Ok(Mounted::new(
+            handle.id(),
+            StackState {
                 handle,
                 padding,
                 background,
                 children,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<StackState<Action>>()
-            .expect("view kind and state agree");
-        let padding = context.theme.space(self.padding);
-        let background = self.background.map(|role| context.theme.color(role));
+        let theme = context.theme();
+        let padding = theme.space(self.padding);
+        let background = self.background.map(|role| theme.color(role));
+        let state = mounted.state_mut::<StackState<Action>>()?;
         // Padding insets children, so it relayouts. A background is a local fill
         // and only repaints.
         let mut invalidation = Invalidation::empty();
@@ -3268,15 +3391,17 @@ impl<Action: 'static> DynView<Action> for StackView<Action> {
             invalidation |= Invalidation::PAINT;
         }
         if !invalidation.is_empty() {
-            context.ui.update(state.handle, invalidation, |stack| {
+            context.ui().update(state.handle, invalidation, |stack| {
                 stack.padding = padding;
                 stack.background = background;
             })?;
             state.padding = padding;
             state.background = background;
         }
-        let mut child_context = context.reborrow(state.handle.id());
-        state.children.reconcile(self.children, &mut child_context)
+        let parent = state.handle.id();
+        state
+            .children
+            .reconcile(self.children, &mut context.child(parent))
     }
 }
 
@@ -3291,60 +3416,46 @@ struct FlexState<Action: 'static> {
 
 container_mounted_state!(FlexState);
 
-impl<Action: 'static> DynView<Action> for FlexView<Action> {
-    fn kind(&self) -> TypeId {
-        TypeId::of::<Self>()
-    }
-
+impl<Action: 'static> ViewNode<Action> for FlexView<Action> {
     fn build(
         self: Box<Self>,
-        key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
-    ) -> Result<MountedView<Action>, UiError> {
-        let gap = context.theme.space(self.gap);
-        let padding = context.theme.space(self.padding);
-        let background = self.background.map(|role| context.theme.color(role));
-        let handle = context.ui.append(
-            context.parent,
-            Flex {
-                axis: self.axis,
-                gap,
-                padding,
-                background,
-            },
-        )?;
-        let mut child_context = context.reborrow(handle.id());
+    ) -> Result<Mounted<Action>, UiError> {
+        let theme = context.theme();
+        let gap = theme.space(self.gap);
+        let padding = theme.space(self.padding);
+        let background = self.background.map(|role| theme.color(role));
+        let handle = context.append(Flex {
+            axis: self.axis,
+            gap,
+            padding,
+            background,
+        })?;
         let mut children = MountedChildren::new();
-        children.build(self.children, &mut child_context)?;
-        Ok(MountedView {
-            key,
-            kind: TypeId::of::<Self>(),
-            node: handle.id(),
-            state: Box::new(FlexState {
+        children.build(self.children, &mut context.child(handle.id()))?;
+        Ok(Mounted::new(
+            handle.id(),
+            FlexState {
                 handle,
                 axis: self.axis,
                 gap,
                 padding,
                 background,
                 children,
-            }),
-            marker: std::marker::PhantomData,
-        })
+            },
+        ))
     }
 
     fn rebuild(
         self: Box<Self>,
-        mounted: &mut MountedView<Action>,
+        mounted: &mut Mounted<Action>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
-        let state = mounted
-            .state
-            .as_any_mut()
-            .downcast_mut::<FlexState<Action>>()
-            .expect("view kind and state agree");
-        let gap = context.theme.space(self.gap);
-        let padding = context.theme.space(self.padding);
-        let background = self.background.map(|role| context.theme.color(role));
+        let theme = context.theme();
+        let gap = theme.space(self.gap);
+        let padding = theme.space(self.padding);
+        let background = self.background.map(|role| theme.color(role));
+        let state = mounted.state_mut::<FlexState<Action>>()?;
         // Axis, gap, and padding all place children; a background is only a
         // local fill behind them.
         let mut invalidation = Invalidation::empty();
@@ -3355,19 +3466,22 @@ impl<Action: 'static> DynView<Action> for FlexView<Action> {
             invalidation |= Invalidation::PAINT;
         }
         if !invalidation.is_empty() {
-            context.ui.update(state.handle, invalidation, |flex| {
-                flex.axis = self.axis;
+            let axis = self.axis;
+            context.ui().update(state.handle, invalidation, |flex| {
+                flex.axis = axis;
                 flex.gap = gap;
                 flex.padding = padding;
                 flex.background = background;
             })?;
-            state.axis = self.axis;
+            state.axis = axis;
             state.gap = gap;
             state.padding = padding;
             state.background = background;
         }
-        let mut child_context = context.reborrow(state.handle.id());
-        state.children.reconcile(self.children, &mut child_context)
+        let parent = state.handle.id();
+        state
+            .children
+            .reconcile(self.children, &mut context.child(parent))
     }
 }
 
@@ -3385,22 +3499,36 @@ enum ChildStrategy {
 
 /// One container's reconciled child list plus the scratch space it reuses.
 ///
+/// This is the whole of keyed reconciliation, and a custom container gets it by
+/// owning one of these: [`build`](Self::build) at mount,
+/// [`reconcile`](Self::reconcile) on every pass, and
+/// [`visit`](Self::visit) from [`MountedState::visit_children`]. Nothing else is
+/// required for a third-party container to preserve retained identity across
+/// reorders, host nested components, and publish a minimal child list.
+///
 /// Everything here exists to keep a steady-state frame allocation-free: the
 /// mounted list is edited in place rather than rebuilt, the key index and the
 /// remap buffer are cleared instead of dropped, and the published child order is
 /// remembered so an unchanged order is never handed to the engine again.
-struct MountedChildren<Action: 'static> {
-    mounted: Vec<MountedView<Action>>,
+pub struct MountedChildren<Action: 'static> {
+    mounted: Vec<Mounted<Action>>,
     /// Child order most recently published to the engine.
     published: Vec<NodeId>,
     /// Previous children held during a keyed remap.
-    scratch: Vec<Option<MountedView<Action>>>,
+    scratch: Vec<Option<Mounted<Action>>>,
     /// Key index reused by validation and by the keyed remap.
     index: HashMap<ViewKey, usize>,
 }
 
+impl<Action: 'static> Default for MountedChildren<Action> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Action: 'static> MountedChildren<Action> {
-    fn new() -> Self {
+    /// Creates an empty child list.
+    pub fn new() -> Self {
         Self {
             mounted: Vec::new(),
             published: Vec::new(),
@@ -3409,15 +3537,37 @@ impl<Action: 'static> MountedChildren<Action> {
         }
     }
 
-    fn mounted_mut(&mut self) -> impl Iterator<Item = &mut MountedView<Action>> {
+    /// Whether no children are mounted.
+    pub fn is_empty(&self) -> bool {
+        self.mounted.is_empty()
+    }
+
+    /// Number of mounted children.
+    pub fn len(&self) -> usize {
+        self.mounted.len()
+    }
+
+    /// Iterates the mounted children in paint order.
+    pub fn mounted_mut(&mut self) -> impl Iterator<Item = &mut Mounted<Action>> {
         self.mounted.iter_mut()
     }
 
-    /// Mounts an initial child list.
+    /// Visits each mounted child in paint order, stopping on `Break`.
+    ///
+    /// Forward [`MountedState::visit_children`] straight to this.
+    pub fn visit(&mut self, visit: &mut dyn FnMut(&mut Mounted<Action>) -> ControlFlow<()>) {
+        for child in &mut self.mounted {
+            if visit(child).is_break() {
+                break;
+            }
+        }
+    }
+
+    /// Mounts an initial child list below the context's parent.
     ///
     /// The engine appends children in order, so the published order is recorded
     /// rather than set: there is nothing to reorder yet.
-    fn build(
+    pub fn build(
         &mut self,
         views: Vec<AnyView<Action>>,
         context: &mut ViewContext<'_, Action>,
@@ -3426,15 +3576,19 @@ impl<Action: 'static> MountedChildren<Action> {
         self.mounted.reserve(views.len());
         self.published.reserve(views.len());
         for view in views {
-            let built = view.inner.build_counted(view.key, context)?;
-            self.published.push(built.node);
+            let built = context.build_child(view)?;
+            self.published.push(built.node());
             self.mounted.push(built);
         }
         Ok(())
     }
 
     /// Reconciles a replacement child list into retained state.
-    fn reconcile(
+    ///
+    /// Errors when the sequence is partially keyed or carries a duplicate key,
+    /// which are authoring mistakes rather than recoverable conditions: both
+    /// silently lose retained identity on the next insertion.
+    pub fn reconcile(
         &mut self,
         views: Vec<AnyView<Action>>,
         context: &mut ViewContext<'_, Action>,
@@ -3479,7 +3633,7 @@ impl<Action: 'static> MountedChildren<Action> {
             if self.index.insert(key.clone(), position).is_some() {
                 return Err(UiError::new(format!("duplicate view key `{key}`")));
             }
-            if aligned && self.mounted[position].key.as_ref() != Some(key) {
+            if aligned && self.mounted[position].key() != Some(key) {
                 aligned = false;
             }
         }
@@ -3498,20 +3652,15 @@ impl<Action: 'static> MountedChildren<Action> {
         let kept = views.len();
         for (position, view) in views.into_iter().enumerate() {
             if let Some(retained) = self.mounted.get_mut(position) {
-                if retained.kind == view.kind() {
-                    view.inner.rebuild_counted(retained, context)?;
-                } else {
-                    context.ui.remove(retained.node)?;
-                    *retained = view.inner.build_counted(view.key, context)?;
-                }
+                context.rebuild_child(retained, view)?;
             } else {
-                let built = view.inner.build_counted(view.key, context)?;
+                let built = context.build_child(view)?;
                 self.mounted.push(built);
             }
         }
         while self.mounted.len() > kept {
             let extra = self.mounted.pop().expect("length was checked");
-            context.ui.remove(extra.node)?;
+            context.ui().remove(extra.node())?;
         }
         Ok(())
     }
@@ -3530,30 +3679,26 @@ impl<Action: 'static> MountedChildren<Action> {
             self.scratch.push(Some(retained));
         }
         for view in views {
-            let key = view.key.clone().expect("validated keyed sequence");
+            let key = view.key.as_ref().expect("validated keyed sequence");
             let retained = self
                 .index
-                .get(&key)
+                .get(key)
                 .copied()
                 .and_then(|slot| self.scratch[slot].take());
             match retained {
-                Some(mut retained) if retained.kind == view.kind() => {
-                    view.inner.rebuild_counted(&mut retained, context)?;
+                Some(mut retained) => {
+                    context.rebuild_child(&mut retained, view)?;
                     self.mounted.push(retained);
                 }
-                Some(retained) => {
-                    context.ui.remove(retained.node)?;
-                    self.mounted
-                        .push(view.inner.build_counted(Some(key), context)?);
+                None => {
+                    let built = context.build_child(view)?;
+                    self.mounted.push(built);
                 }
-                None => self
-                    .mounted
-                    .push(view.inner.build_counted(Some(key), context)?),
             }
         }
         for slot in 0..self.scratch.len() {
             if let Some(extra) = self.scratch[slot].take() {
-                context.ui.remove(extra.node)?;
+                context.ui().remove(extra.node())?;
             }
         }
         self.scratch.clear();
@@ -3572,16 +3717,17 @@ impl<Action: 'static> MountedChildren<Action> {
                 .published
                 .iter()
                 .zip(&self.mounted)
-                .all(|(node, view)| *node == view.node)
+                .all(|(node, view)| *node == view.node())
         {
             return Ok(());
         }
         self.published.clear();
         self.published
-            .extend(self.mounted.iter().map(|view| view.node));
+            .extend(self.mounted.iter().map(|view| view.node()));
         // `set_children_calls`: the only place the framework hands the engine a
         // whole child list.
         ViewStats::record_set_children();
-        context.ui.set_children(context.parent, &self.published)
+        let parent = context.parent();
+        context.ui().set_children(parent, &self.published)
     }
 }
