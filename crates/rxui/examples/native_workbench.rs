@@ -202,6 +202,7 @@ impl Component for Workbench {
         let workspace = dock_workspace(&self.layout, render, Action::SelectPane, Action::Resize);
         let commands = vec![
             ToolbarItem::IconCommand {
+                id: "save".into(),
                 icon: icons::save(),
                 label: "Save".into(),
                 action: Action::Save,
@@ -212,6 +213,7 @@ impl Component for Workbench {
             },
             ToolbarItem::Separator,
             ToolbarItem::IconCommand {
+                id: "commands".into(),
                 icon: icons::search(),
                 label: "Commands".into(),
                 action: Action::TogglePalette,
@@ -220,6 +222,7 @@ impl Component for Workbench {
                     .button(ButtonStyle::standard().variant(ButtonVariant::Quiet)),
             },
             ToolbarItem::IconCommand {
+                id: "settings".into(),
                 icon: icons::settings(),
                 label: "Settings".into(),
                 action: Action::OpenDialog,
@@ -240,9 +243,9 @@ impl Component for Workbench {
             "Interaction mode",
             radio_group(
                 &[
-                    Choice::new("Edit".to_string(), "Edit"),
-                    Choice::new("Inspect".to_string(), "Inspect"),
-                    Choice::new("Present".to_string(), "Present"),
+                    Choice::new("edit", "Edit".to_string(), "Edit"),
+                    Choice::new("inspect", "Inspect".to_string(), "Inspect"),
+                    Choice::new("present", "Present".to_string(), "Present"),
                 ],
                 Some(&self.mode),
                 Action::SetMode,
