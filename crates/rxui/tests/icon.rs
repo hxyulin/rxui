@@ -2,9 +2,8 @@
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_paint::Path;
-use rxui::{
-    Component, ComponentContext, ComponentHost, Icon, IconSpec, Theme, icon, icon_button, icons,
-};
+use rxui::{Component, ComponentContext, Icon, IconSpec, Theme, icon, icon_button, icons};
+use rxui_test_support::Harness;
 
 #[test]
 fn icon_rejects_empty_or_invalid_geometry() {
@@ -27,15 +26,8 @@ impl Component for SearchIcon {
 
 #[test]
 fn labeled_icon_publishes_image_semantics_at_requested_size() {
-    let host =
-        ComponentHost::new(SearchIcon, LogicalSize::new(100.0, 100.0), Theme::dark()).unwrap();
-    let icon = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Search")
-        .unwrap();
-    assert_eq!(icon.bounds.size, LogicalSize::new(20.0, 20.0));
+    let harness = Harness::new(SearchIcon, LogicalSize::new(100.0, 100.0)).unwrap();
+    assert_eq!(harness.bounds("Search").size, LogicalSize::new(20.0, 20.0));
 }
 
 struct SearchButton;
@@ -53,14 +45,8 @@ impl Component for SearchButton {
 
 #[test]
 fn compact_icon_button_keeps_button_semantics_without_painting_its_label() {
-    let host =
-        ComponentHost::new(SearchButton, LogicalSize::new(100.0, 100.0), Theme::dark()).unwrap();
-    let button = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Search")
-        .unwrap();
+    let harness = Harness::new(SearchButton, LogicalSize::new(100.0, 100.0)).unwrap();
+    let button = harness.find("Search");
     assert_eq!(button.data.role, astrelis_ui_next::SemanticRole::Button);
     assert_eq!(button.bounds.size, LogicalSize::new(30.0, 30.0));
 }

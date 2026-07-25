@@ -2,9 +2,10 @@
 
 use astrelis_core::geometry::LogicalSize;
 use rxui::{
-    Component, ComponentContext, ComponentHost, FormValidation, Theme, ValidationIssue,
-    ValidationResult, validated_text_field,
+    Component, ComponentContext, FormValidation, Theme, ValidationIssue, ValidationResult,
+    validated_text_field,
 };
+use rxui_test_support::Harness;
 
 #[test]
 fn form_validation_separates_results_from_presentation_state() {
@@ -48,17 +49,7 @@ impl Component for ValidatedForm {
 
 #[test]
 fn validated_field_publishes_control_and_issue_semantics() {
-    let host =
-        ComponentHost::new(ValidatedForm, LogicalSize::new(320.0, 120.0), Theme::dark()).unwrap();
-    let semantics = host.ui().semantic_snapshot();
-    assert!(
-        semantics
-            .iter()
-            .any(|node| node.data.label == "Name" && node.focusable)
-    );
-    assert!(
-        semantics
-            .iter()
-            .any(|node| node.data.label == "Name is required")
-    );
+    let harness = Harness::new(ValidatedForm, LogicalSize::new(320.0, 120.0)).unwrap();
+    assert!(harness.find("Name").focusable);
+    assert!(harness.try_find("Name is required").is_some());
 }

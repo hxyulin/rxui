@@ -1,7 +1,8 @@
 //! Public facade coverage for the component-native API.
 
 use astrelis_core::geometry::LogicalSize;
-use rxui::{Component, ComponentContext, ComponentHost, Theme, View, button, column, label};
+use rxui::{Component, ComponentContext, Theme, View, button, column, label};
+use rxui_test_support::Harness;
 
 #[derive(Clone)]
 enum Action {
@@ -34,9 +35,8 @@ fn component_api_is_the_rxui_root_and_prelude() {
         rxui::prelude::button("Prelude", action)
     }
 
-    let mut host =
-        ComponentHost::new(Counter(0), LogicalSize::new(320.0, 200.0), Theme::dark()).unwrap();
-    host.dispatch(Action::Increment).unwrap();
-    assert_eq!(host.component().0, 1);
+    let mut harness = Harness::new(Counter(0), LogicalSize::new(320.0, 200.0)).unwrap();
+    harness.dispatch(Action::Increment);
+    assert_eq!(harness.component().0, 1);
     let _ = prelude_view(Action::Increment);
 }

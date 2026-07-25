@@ -3,11 +3,11 @@
 use std::num::NonZeroUsize;
 
 use astrelis_core::geometry::LogicalSize;
-use astrelis_ui_next::SemanticAction;
 use rxui::{
-    Component, ComponentContext, ComponentHost, ComponentWithProps, MemoryClipboard, Theme,
-    UndoHistory, View, button, component,
+    Component, ComponentContext, ComponentWithProps, MemoryClipboard, Theme, UndoHistory, View,
+    button, component,
 };
+use rxui_test_support::Harness;
 
 #[derive(Clone)]
 enum Action {
@@ -44,21 +44,20 @@ impl Component for Services {
 
 #[test]
 fn headless_host_executes_clipboard_and_tasks_deterministically() {
-    let mut host = ComponentHost::new(
+    let mut harness = Harness::new(
         Services {
             clipboard: None,
             task: None,
         },
         LogicalSize::new(200.0, 80.0),
-        Theme::dark(),
     )
     .unwrap();
-    host.dispatch(Action::Start).unwrap();
+    harness.dispatch(Action::Start);
     let mut clipboard = MemoryClipboard::default();
-    assert_eq!(host.run_pending_services(&mut clipboard).unwrap(), 3);
+    assert_eq!(harness.run_pending_services(&mut clipboard), 3);
     assert_eq!(clipboard.text(), Some("Astrelis"));
-    assert_eq!(host.component().clipboard.as_deref(), Some("Astrelis"));
-    assert_eq!(host.component().task, Some(42));
+    assert_eq!(harness.component().clipboard.as_deref(), Some("Astrelis"));
+    assert_eq!(harness.component().task, Some(42));
 }
 
 #[derive(Clone, PartialEq)]
@@ -131,24 +130,11 @@ impl Component for Parent {
 
 #[test]
 fn nested_service_completion_returns_to_the_component_that_requested_it() {
-    let mut host = ComponentHost::new(
-        Parent { loaded: None },
-        LogicalSize::new(200.0, 80.0),
-        Theme::dark(),
-    )
-    .unwrap();
-    let paste = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Paste")
-        .unwrap()
-        .id;
-    host.semantic_action(paste, SemanticAction::Activate)
-        .unwrap();
+    let mut harness = Harness::new(Parent { loaded: None }, LogicalSize::new(200.0, 80.0)).unwrap();
+    harness.activate("Paste");
     let mut clipboard = MemoryClipboard::new(Some("nested".into()));
-    assert_eq!(host.run_pending_services(&mut clipboard).unwrap(), 1);
-    assert_eq!(host.component().loaded.as_deref(), Some("nested"));
+    assert_eq!(harness.run_pending_services(&mut clipboard), 1);
+    assert_eq!(harness.component().loaded.as_deref(), Some("nested"));
 }
 
 #[test]
