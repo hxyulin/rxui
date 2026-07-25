@@ -95,9 +95,34 @@ fn keyed_moves_preserve_retained_field_identity() {
             .map(|node| (node.data.label, node.id))
             .collect::<std::collections::HashMap<_, _>>()
     };
-    let before = identities(&harness);
+    // Order-blind on purpose: this is the property that a keyed move reuses the
+    // node it moved rather than tearing it down, so it must hold *because* the
+    // order changed underneath it.
+    let identity_map = identities(&harness);
+    // Which makes it, on its own, equally satisfied by a reverse that did
+    // nothing at all. So pair it with the order.
+    let order = |harness: &Harness<Properties>| {
+        let mut rows = harness
+            .semantics()
+            .into_iter()
+            .filter(|node| node.data.label.starts_with("Property "))
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| left.bounds.origin.y.total_cmp(&right.bounds.origin.y));
+        rows.into_iter()
+            .map(|node| node.data.label)
+            .collect::<Vec<_>>()
+    };
+    let before = order(&harness);
+    assert_eq!(before.first().map(String::as_str), Some("Property 0"));
+
     harness.dispatch(Action::Reverse);
-    assert_eq!(before, identities(&harness));
+    assert_eq!(identity_map, identities(&harness));
+    let after = order(&harness);
+    assert_eq!(
+        after,
+        before.iter().rev().cloned().collect::<Vec<_>>(),
+        "the rows are laid out in the reversed order, not merely still present",
+    );
 }
 
 #[test]
