@@ -80,15 +80,18 @@ impl<C: Component> ComponentWindow<C> {
     }
 
     /// Routes one platform event through the retained UI and component tree.
+    ///
+    /// A single event can produce several retained actions - a pointer release
+    /// that both commits a drag and activates a control, say. They are reduced
+    /// as one batch and reconciled once, so the frame's cost does not scale with
+    /// how many actions the event happened to emit.
     pub fn handle_event(&mut self, event: &WindowEvent) -> Result<HostUpdate, HostError> {
         let mut update = self.host.handle_event(event)?;
         let actions = self.host.drain_actions().collect::<Vec<_>>();
         if !actions.is_empty() {
-            for action in actions {
-                self.runtime
-                    .dispatch_erased(self.host.ui_mut(), action)
-                    .map_err(|error| HostError::new(error.to_string()))?;
-            }
+            self.runtime
+                .dispatch_all_erased(self.host.ui_mut(), actions)
+                .map_err(|error| HostError::new(error.to_string()))?;
             update.redraw = true;
         }
         Ok(update)
@@ -99,9 +102,27 @@ impl<C: Component> ComponentWindow<C> {
         self.runtime.dispatch(self.host.ui_mut(), action)
     }
 
+    /// Applies a batch of root actions with a single reconciliation.
+    pub fn dispatch_all(
+        &mut self,
+        actions: impl IntoIterator<Item = C::Action>,
+    ) -> Result<FrameUpdate<'_>, UiError> {
+        self.runtime.dispatch_all(self.host.ui_mut(), actions)
+    }
+
     /// Reconciles after application-owned state mutation.
     pub fn refresh(&mut self) -> Result<FrameUpdate<'_>, UiError> {
         self.runtime.refresh(self.host.ui_mut())
+    }
+
+    /// Marks the root component's view stale without reconciling yet.
+    pub fn mark_dirty(&mut self) {
+        self.runtime.mark_dirty();
+    }
+
+    /// Rebuilds every stale component and runs the retained passes once.
+    pub fn flush(&mut self) -> Result<FrameUpdate<'_>, UiError> {
+        self.runtime.flush(self.host.ui_mut())
     }
 
     /// Replaces typed theme tokens and reconciles resolved styles.

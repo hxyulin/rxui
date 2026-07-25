@@ -74,8 +74,8 @@ pub fn fragment_digest(ui: &UiRoot) -> String {
 /// A shaped glyph run records `FontFace { cache_id: (collection, face) }`. The
 /// collection component is handed out by a process-global counter, one per
 /// `FontDatabase`, so a second host shaping identical text produces identical
-/// glyphs under a different `cache_id`. Everything else in the dump — commands,
-/// brushes, colors, glyph ids, advances, baselines — is content-derived and is
+/// glyphs under a different `cache_id`. Everything else in the dump - commands,
+/// brushes, colors, glyph ids, advances, baselines - is content-derived and is
 /// compared verbatim.
 fn normalize_font_cache_ids(debug: &str) -> String {
     const MARKER: &str = "cache_id: (";
@@ -96,8 +96,8 @@ fn normalize_font_cache_ids(debug: &str) -> String {
 ///
 /// This is the anti-cheat guard for the whole gate: no future reduction in
 /// [`ViewStats`] may be bought by leaving retained state stale. It mounts a
-/// second host from `fresh_state` — which the caller must construct to equal
-/// `live`'s final component state — and compares both the semantic snapshot
+/// second host from `fresh_state` - which the caller must construct to equal
+/// `live`'s final component state - and compares both the semantic snapshot
 /// and the fragment/geometry digest.
 ///
 /// `prepare` re-establishes engine-owned transient interaction state on the

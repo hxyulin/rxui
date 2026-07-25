@@ -1,8 +1,8 @@
 //! Headed smoke test: opens a real window, renders a fixed number of frames,
 //! and exits successfully.
 //!
-//! This is the CI gate that the native path — window creation, GPU adapter
-//! selection, surface configuration, compositing, and presentation — still
+//! This is the CI gate that the native path - window creation, GPU adapter
+//! selection, surface configuration, compositing, and presentation - still
 //! works on every supported platform. It asserts nothing about appearance; it
 //! only proves that a frame reaches the screen without an error.
 //!

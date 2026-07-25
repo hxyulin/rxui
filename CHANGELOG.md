@@ -2,7 +2,39 @@
 
 All notable public RXUI changes are documented here.
 
-## 0.1.0-rc.1 — Unreleased
+## 0.1.0-rc.1 - Unreleased
+
+### Update isolation
+
+- Reducing an action no longer rebuilds the tree. It updates state, maps
+  effects, and records the reducing component as stale; the runtime then builds
+  the root's view only if the root's own state changed and rebuilds the
+  remaining stale components in depth order. One action into one of N sibling
+  components costs the same work at any N.
+- A nested `component` boundary is rebuilt only when its props compare unequal,
+  its `Theme::revision` moved, it reduced one of its own actions, or an
+  enclosing scope forced the pass. **`Props: PartialEq` is now load-bearing**,
+  and a `view` that reads state the framework cannot see needs the new
+  `ComponentContext::request_render`. See `docs/update-isolation.md`.
+- New `ComponentRuntime::mark_dirty` and `flush`, plus `dispatch_all` and
+  `dispatch_all_erased`, which reduce a batch of actions and reconcile once.
+  `ComponentWindow::handle_event` and `ComponentHost::run_pending_services` use
+  the batched path.
+- `Theme::revision` is now read by reconciliation and must be bumped whenever
+  theme tokens change.
+- Reconciliation asks the engine for exact invalidation bits instead of a
+  blanket layout pass, and a container whose child order did not move no longer
+  republishes it.
+
+### Breaking
+
+- `ViewKey` is an enum over `u64`, `&'static str`, and `Arc<str>` instead of a
+  single `Arc<str>`. `From<&str>` narrowed to `From<&'static str>`; key a
+  non-static borrowed string with `ViewKey::new`. Numeric and textual keys are
+  now distinct spaces, so `ViewKey::from(7u64) != ViewKey::from("7")`.
+- `label`, `label_with_width`, and `label_with_style` take
+  `impl Into<Arc<str>>`. `dropdown_field`, `form_section`, and `dialog` take
+  `impl Into<Arc<str>>` for the text they forward to a label.
 
 ### Component API cutover
 

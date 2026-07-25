@@ -41,9 +41,11 @@ pub struct ViewStats {
     ///
     /// Counts both the root view build performed by
     /// [`crate::ComponentRuntime`] and every nested component's own view
-    /// build. A single interaction that rebuilds a nested component and then
-    /// re-renders the root therefore counts more than once, which is exactly
-    /// the waste this instrument exists to expose.
+    /// build. The root is built only when the root component's own state
+    /// changed, and a nested component only when its props, its theme
+    /// revision, or its own dirty flag says its output can have changed, so an
+    /// action routed into one of many siblings counts a small constant rather
+    /// than one per sibling.
     pub component_views: usize,
 
     /// View nodes mounted from scratch.
@@ -60,6 +62,12 @@ pub struct ViewStats {
     /// The counterpart of [`Self::nodes_built`], counted over the same set of
     /// view nodes. A node is counted here when its previous mounted instance
     /// had a matching kind and could be updated instead of replaced.
+    ///
+    /// A nested component's boundary is the one exception: it is counted only
+    /// when it actually reconciles. A boundary whose props, theme revision, and
+    /// dirty flag all match the previous pass touches neither its own state nor
+    /// its subtree, so counting it would make this counter grow with the number
+    /// of *untouched* sibling components.
     pub nodes_rebuilt: usize,
 
     /// Child-list reconciliation passes.
@@ -72,10 +80,11 @@ pub struct ViewStats {
 
     /// Calls that hand a new child list to the engine.
     ///
-    /// Today this tracks [`Self::containers_reconciled`] one-for-one, because
-    /// child-list reconciliation always republishes the resulting order. Once
-    /// update isolation can prove a child list unchanged, this counter is
-    /// expected to fall below `containers_reconciled`.
+    /// Well below [`Self::containers_reconciled`] in practice: a container
+    /// compares its reconciled order against the order it last published and
+    /// stays silent when nothing moved. The engine invalidates a parent with
+    /// every retained pass when its child list is set, so an unchanged
+    /// container that republished its order paid for a full pass over itself.
     pub set_children_calls: usize,
 
     /// Memoized subtrees skipped without rebuilding.
