@@ -23,7 +23,7 @@ use astrelis_ui_next::{
 
 use crate::{
     ButtonVariant, ColorRole, ComponentContext, ComponentWithProps, Icon, IconButtonStyle,
-    RoutedComponentAction, Space, Theme,
+    RoutedComponentAction, Space, Theme, diagnostics::ViewStats,
 };
 
 static NEXT_COMPONENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -315,6 +315,38 @@ impl_tuple_children!(A, B, C, D, E, F, G, H);
 
 trait DynView<Action: 'static>: 'static {
     fn kind(&self) -> TypeId;
+
+    /// Instrumented entry point for the mount path.
+    ///
+    /// Every from-scratch mount in this module dispatches through here, so
+    /// `nodes_built` counts each view node exactly once regardless of how many
+    /// wrapper layers a node sits behind. Call this instead of [`Self::build`].
+    fn build_counted(
+        self: Box<Self>,
+        key: Option<ViewKey>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<MountedView<Action>, UiError> {
+        // `nodes_built`: one view node mounted from scratch.
+        ViewStats::record_node_built();
+        self.build(key, context)
+    }
+
+    /// Instrumented entry point for the in-place reconciliation path.
+    ///
+    /// Every in-place reconciliation in this module dispatches through here,
+    /// so `nodes_rebuilt` counts each view node exactly once. Call this
+    /// instead of [`Self::rebuild`].
+    fn rebuild_counted(
+        self: Box<Self>,
+        mounted: &mut MountedView<Action>,
+        context: &mut ViewContext<'_, Action>,
+    ) -> Result<(), UiError> {
+        // `nodes_rebuilt`: one view node reconciled against its previous
+        // mounted instance rather than replaced.
+        ViewStats::record_node_rebuilt();
+        self.rebuild(mounted, context)
+    }
+
     fn build(
         self: Box<Self>,
         key: Option<ViewKey>,
@@ -398,7 +430,7 @@ impl<Action: 'static> ViewHost<Action> {
             action_sink: Arc::new(|action| Box::new(action)),
             marker: std::marker::PhantomData,
         };
-        let mounted = view.inner.build(view.key, &mut context)?;
+        let mounted = view.inner.build_counted(view.key, &mut context)?;
         Ok(Self { mounted })
     }
 
@@ -417,10 +449,11 @@ impl<Action: 'static> ViewHost<Action> {
             marker: std::marker::PhantomData,
         };
         if self.mounted.kind == view.kind() {
-            view.inner.rebuild(&mut self.mounted, &mut context)?;
+            view.inner
+                .rebuild_counted(&mut self.mounted, &mut context)?;
         } else {
             context.ui.remove(self.mounted.node)?;
-            self.mounted = view.inner.build(view.key, &mut context)?;
+            self.mounted = view.inner.build_counted(view.key, &mut context)?;
         }
         Ok(())
     }
@@ -845,6 +878,10 @@ impl<C: ComponentWithProps, Parent: 'static> ComponentState<C, Parent> {
     }
 
     fn rebuild_child(&mut self, ui: &mut UiRoot, theme: &Theme) -> Result<(), UiError> {
+        // `component_views`: one nested component re-render. Reached both when
+        // the nested component reduces its own action and again when the
+        // parent's root re-render reconciles this `ComponentView`.
+        ViewStats::record_component_view();
         let view = self.component.view(theme);
         let mut child_context = ViewContext {
             ui,
@@ -854,10 +891,11 @@ impl<C: ComponentWithProps, Parent: 'static> ComponentState<C, Parent> {
             marker: std::marker::PhantomData,
         };
         if self.child.kind == view.kind() {
-            view.inner.rebuild(&mut self.child, &mut child_context)
+            view.inner
+                .rebuild_counted(&mut self.child, &mut child_context)
         } else {
             child_context.ui.remove(self.child.node)?;
-            self.child = view.inner.build(view.key, &mut child_context)?;
+            self.child = view.inner.build_counted(view.key, &mut child_context)?;
             Ok(())
         }
     }
@@ -934,6 +972,8 @@ impl<C: ComponentWithProps, Parent: 'static> DynView<Parent> for ComponentView<C
         let id = NEXT_COMPONENT_ID.fetch_add(1, Ordering::Relaxed);
         let parent = context.ui.append(context.parent, Flex::default())?;
         let component = C::create(&self.props);
+        // `component_views`: a newly mounted nested component's first view.
+        ViewStats::record_component_view();
         let view = component.view(context.theme);
         let mut child_context = ViewContext {
             ui: context.ui,
@@ -942,7 +982,7 @@ impl<C: ComponentWithProps, Parent: 'static> DynView<Parent> for ComponentView<C
             action_sink: ComponentState::<C, Parent>::action_sink(id),
             marker: std::marker::PhantomData,
         };
-        let child = view.inner.build(view.key, &mut child_context)?;
+        let child = view.inner.build_counted(view.key, &mut child_context)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -1032,7 +1072,10 @@ impl<Action: 'static> DynView<Action> for FocusScopeView<Action> {
             .active
             .then(|| context.ui.focused().or_else(|| context.ui.last_focused()))
             .flatten();
-        let child = self.child.inner.build(self.child.key.clone(), context)?;
+        let child = self
+            .child
+            .inner
+            .build_counted(self.child.key.clone(), context)?;
         if self.active {
             context.ui.focus_first_in_subtree(child.node)?;
         }
@@ -1066,10 +1109,15 @@ impl<Action: 'static> DynView<Action> for FocusScopeView<Action> {
             .then(|| context.ui.focused().or_else(|| context.ui.last_focused()))
             .flatten();
         if state.child.kind == self.child.kind() {
-            self.child.inner.rebuild(&mut state.child, context)?;
+            self.child
+                .inner
+                .rebuild_counted(&mut state.child, context)?;
         } else {
             context.ui.remove(state.child.node)?;
-            state.child = self.child.inner.build(self.child.key.clone(), context)?;
+            state.child = self
+                .child
+                .inner
+                .build_counted(self.child.key.clone(), context)?;
             mounted.node = state.child.node;
         }
         if activating {
@@ -1134,7 +1182,7 @@ impl<Action: Clone + 'static> DynView<Action> for EscapeView<Action> {
         let child = self
             .child
             .inner
-            .build(self.child.key.clone(), &mut child_context)?;
+            .build_counted(self.child.key.clone(), &mut child_context)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -1165,13 +1213,13 @@ impl<Action: Clone + 'static> DynView<Action> for EscapeView<Action> {
         if state.child.kind == self.child.kind() {
             self.child
                 .inner
-                .rebuild(&mut state.child, &mut child_context)?;
+                .rebuild_counted(&mut state.child, &mut child_context)?;
         } else {
             child_context.ui.remove(state.child.node)?;
             state.child = self
                 .child
                 .inner
-                .build(self.child.key.clone(), &mut child_context)?;
+                .build_counted(self.child.key.clone(), &mut child_context)?;
         }
         Ok(())
     }
@@ -1231,7 +1279,7 @@ impl<Action: Clone + 'static> DynView<Action> for CommandNavigationView<Action> 
         let child = self
             .child
             .inner
-            .build(self.child.key.clone(), &mut child_context)?;
+            .build_counted(self.child.key.clone(), &mut child_context)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -1270,13 +1318,13 @@ impl<Action: Clone + 'static> DynView<Action> for CommandNavigationView<Action> 
         if state.child.kind == self.child.kind() {
             self.child
                 .inner
-                .rebuild(&mut state.child, &mut child_context)?;
+                .rebuild_counted(&mut state.child, &mut child_context)?;
         } else {
             child_context.ui.remove(state.child.node)?;
             state.child = self
                 .child
                 .inner
-                .build(self.child.key.clone(), &mut child_context)?;
+                .build_counted(self.child.key.clone(), &mut child_context)?;
         }
         Ok(())
     }
@@ -1331,7 +1379,7 @@ impl<Action: 'static> DynView<Action> for AlignView<Action> {
         let child = self
             .child
             .inner
-            .build(self.child.key.clone(), &mut child_context)?;
+            .build_counted(self.child.key.clone(), &mut child_context)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -1369,13 +1417,13 @@ impl<Action: 'static> DynView<Action> for AlignView<Action> {
         if state.child.kind == self.child.kind() {
             self.child
                 .inner
-                .rebuild(&mut state.child, &mut child_context)?;
+                .rebuild_counted(&mut state.child, &mut child_context)?;
         } else {
             child_context.ui.remove(state.child.node)?;
             state.child = self
                 .child
                 .inner
-                .build(self.child.key.clone(), &mut child_context)?;
+                .build_counted(self.child.key.clone(), &mut child_context)?;
         }
         state.alignment = self.alignment;
         state.padding = padding;
@@ -1427,7 +1475,7 @@ impl<Action: 'static> DynView<Action> for FrameView<Action> {
         let child = self
             .child
             .inner
-            .build(self.child.key.clone(), &mut child_context)?;
+            .build_counted(self.child.key.clone(), &mut child_context)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -1464,13 +1512,13 @@ impl<Action: 'static> DynView<Action> for FrameView<Action> {
         if state.child.kind == self.child.kind() {
             self.child
                 .inner
-                .rebuild(&mut state.child, &mut child_context)?;
+                .rebuild_counted(&mut state.child, &mut child_context)?;
         } else {
             child_context.ui.remove(state.child.node)?;
             state.child = self
                 .child
                 .inner
-                .build(self.child.key.clone(), &mut child_context)?;
+                .build_counted(self.child.key.clone(), &mut child_context)?;
         }
         state.style = self.style;
         Ok(())
@@ -1511,7 +1559,10 @@ impl<Action: 'static> DynView<Action> for VisibleView<Action> {
         key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<MountedView<Action>, UiError> {
-        let child = self.child.inner.build(self.child.key.clone(), context)?;
+        let child = self
+            .child
+            .inner
+            .build_counted(self.child.key.clone(), context)?;
         context.ui.set_visible(child.node, self.visible)?;
         let node = child.node;
         Ok(MountedView {
@@ -1537,10 +1588,15 @@ impl<Action: 'static> DynView<Action> for VisibleView<Action> {
             .downcast_mut::<VisibleState<Action>>()
             .expect("view kind and state agree");
         if state.child.kind == self.child.kind() {
-            self.child.inner.rebuild(&mut state.child, context)?;
+            self.child
+                .inner
+                .rebuild_counted(&mut state.child, context)?;
         } else {
             context.ui.remove(state.child.node)?;
-            state.child = self.child.inner.build(self.child.key.clone(), context)?;
+            state.child = self
+                .child
+                .inner
+                .build_counted(self.child.key.clone(), context)?;
             mounted.node = state.child.node;
         }
         if state.visible != self.visible {
@@ -1580,7 +1636,10 @@ impl<Action: 'static> DynView<Action> for EnabledView<Action> {
         key: Option<ViewKey>,
         context: &mut ViewContext<'_, Action>,
     ) -> Result<MountedView<Action>, UiError> {
-        let child = self.child.inner.build(self.child.key.clone(), context)?;
+        let child = self
+            .child
+            .inner
+            .build_counted(self.child.key.clone(), context)?;
         context.ui.set_enabled(child.node, self.enabled)?;
         let node = child.node;
         Ok(MountedView {
@@ -1606,10 +1665,15 @@ impl<Action: 'static> DynView<Action> for EnabledView<Action> {
             .downcast_mut::<EnabledState<Action>>()
             .expect("view kind and state agree");
         if state.child.kind == self.child.kind() {
-            self.child.inner.rebuild(&mut state.child, context)?;
+            self.child
+                .inner
+                .rebuild_counted(&mut state.child, context)?;
         } else {
             context.ui.remove(state.child.node)?;
-            state.child = self.child.inner.build(self.child.key.clone(), context)?;
+            state.child = self
+                .child
+                .inner
+                .build_counted(self.child.key.clone(), context)?;
             mounted.node = state.child.node;
         }
         if state.enabled != self.enabled {
@@ -1666,7 +1730,7 @@ impl<Child: 'static, Parent: 'static> DynView<Parent> for MapActionView<Child, P
         let child = self
             .child
             .inner
-            .build(self.child.key.clone(), &mut child_context)?;
+            .build_counted(self.child.key.clone(), &mut child_context)?;
         Ok(MountedView {
             key,
             kind: TypeId::of::<Self>(),
@@ -1702,13 +1766,13 @@ impl<Child: 'static, Parent: 'static> DynView<Parent> for MapActionView<Child, P
         if state.child.kind == self.child.kind() {
             self.child
                 .inner
-                .rebuild(&mut state.child, &mut child_context)?;
+                .rebuild_counted(&mut state.child, &mut child_context)?;
         } else {
             child_context.ui.remove(state.child.node)?;
             state.child = self
                 .child
                 .inner
-                .build(self.child.key.clone(), &mut child_context)?;
+                .build_counted(self.child.key.clone(), &mut child_context)?;
             mounted.node = state.child.node;
         }
         Ok(())
@@ -2588,7 +2652,7 @@ impl<Action: 'static> DynView<Action> for SplitPaneView<Action> {
         let mut child_context = context.reborrow(handle.id());
         let mut children = Vec::with_capacity(self.children.len());
         for child in self.children {
-            children.push(child.inner.build(child.key, &mut child_context)?);
+            children.push(child.inner.build_counted(child.key, &mut child_context)?);
         }
         Ok(MountedView {
             key,
@@ -2688,7 +2752,7 @@ impl<Action: 'static> DynView<Action> for ScrollView<Action> {
         let mut child_context = context.reborrow(handle.id());
         let mut children = Vec::with_capacity(self.children.len());
         for child in self.children {
-            children.push(child.inner.build(child.key, &mut child_context)?);
+            children.push(child.inner.build_counted(child.key, &mut child_context)?);
         }
         Ok(MountedView {
             key,
@@ -2780,7 +2844,7 @@ impl<Action: 'static> DynView<Action> for StackView<Action> {
         let mut child_context = context.reborrow(handle.id());
         let mut children = Vec::with_capacity(self.children.len());
         for child in self.children {
-            children.push(child.inner.build(child.key, &mut child_context)?);
+            children.push(child.inner.build_counted(child.key, &mut child_context)?);
         }
         Ok(MountedView {
             key,
@@ -2879,7 +2943,7 @@ impl<Action: 'static> DynView<Action> for FlexView<Action> {
         let mut child_context = context.reborrow(handle.id());
         let mut children = Vec::with_capacity(self.children.len());
         for child in self.children {
-            children.push(child.inner.build(child.key, &mut child_context)?);
+            children.push(child.inner.build_counted(child.key, &mut child_context)?);
         }
         Ok(MountedView {
             key,
@@ -2952,6 +3016,10 @@ fn reconcile_children<Action: 'static>(
     views: Vec<AnyView<Action>>,
     context: &mut ViewContext<'_, Action>,
 ) -> Result<(), UiError> {
+    // `containers_reconciled`: one child-list reconciliation pass. This is the
+    // single entry point for both the keyed and the positional strategy, so
+    // counting here covers every container without double counting.
+    ViewStats::record_container_reconciled();
     let keyed = views.first().is_some_and(|view| view.key.is_some());
     let old = std::mem::take(mounted);
     let mut next = Vec::with_capacity(views.len());
@@ -2969,14 +3037,14 @@ fn reconcile_children<Action: 'static>(
             let key = view.key.clone().expect("validated keyed sequence");
             if let Some(mut retained) = old.remove(&key) {
                 if retained.kind == view.kind() {
-                    view.inner.rebuild(&mut retained, context)?;
+                    view.inner.rebuild_counted(&mut retained, context)?;
                     next.push(retained);
                 } else {
                     context.ui.remove(retained.node)?;
-                    next.push(view.inner.build(Some(key), context)?);
+                    next.push(view.inner.build_counted(Some(key), context)?);
                 }
             } else {
-                next.push(view.inner.build(Some(key), context)?);
+                next.push(view.inner.build_counted(Some(key), context)?);
             }
         }
         for retained in old.into_values() {
@@ -2987,20 +3055,23 @@ fn reconcile_children<Action: 'static>(
         for view in views {
             if let Some(mut retained) = old.next() {
                 if retained.kind == view.kind() {
-                    view.inner.rebuild(&mut retained, context)?;
+                    view.inner.rebuild_counted(&mut retained, context)?;
                     next.push(retained);
                 } else {
                     context.ui.remove(retained.node)?;
-                    next.push(view.inner.build(None, context)?);
+                    next.push(view.inner.build_counted(None, context)?);
                 }
             } else {
-                next.push(view.inner.build(None, context)?);
+                next.push(view.inner.build_counted(None, context)?);
             }
         }
         for retained in old {
             context.ui.remove(retained.node)?;
         }
     }
+    // `set_children_calls`: the only place the framework hands the engine a
+    // whole child list. Today it runs on every reconciliation pass.
+    ViewStats::record_set_children();
     context.ui.set_children(
         context.parent,
         &next.iter().map(|view| view.node).collect::<Vec<_>>(),
