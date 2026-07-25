@@ -86,6 +86,42 @@ All notable public RXUI changes are documented here.
   implementation crates. Application code continues to depend on the
   aggregate `rxui` facade.
 
+### Fixed
+
+- Icons compare by content. `Icon` gained a hand-written `PartialEq` over its
+  view box, winding rule, and path verbs, because `Path`'s only identity is
+  `Path::cache_id`, a per-allocation counter the renderer uses to key its mesh
+  cache. Both `IconSpec::changed` and `ButtonView::rebuild` were keyed on that
+  counter, and every `icons::*` constructor allocates a fresh path from inside
+  `view()`, so **every icon and every `icon_button` invalidated itself on every
+  pass** and dragged its container and the root through layout with it. One icon
+  command in a toolbar cost three layouts and a rebuilt fragment per frame; it
+  now costs nothing.
+- Controlled leaf controls revert a refused change. `text_field`, `checkbox`, and
+  `slider` all compared the incoming value against the one the *view* last
+  declared rather than against the element. All three write their own state
+  before emitting, so a component that reduces the change and keeps its old
+  value left the two disagreeing while the declaration stood still: the guard saw
+  no change, wrote nothing, and the rejected edit survived every later rebuild.
+  That made `numeric_field`'s `Result<Number, String>` callback unusable as
+  documented, since refusing an edit silently meant accepting it visually. All
+  three now compare against the element's live state, which costs one tree lookup
+  and leaves the accepted path writing nothing.
+- `.visible(false)` and `.enabled(false)` survive their child being replaced.
+  Both wrappers wrote to the engine only when the value they declared differed
+  from the previous pass, which is right for a reconcile and wrong for a
+  replacement: a changed child kind builds a fresh node, a fresh node is visible
+  and enabled, and a wrapper whose own declaration had not changed wrote nothing
+  to it.
+- The node graph shapes each title once per change to that title, not once per
+  layout pass. Combined with the narrowed `changed()` below, a pan, a zoom, a
+  node drag, and a selection highlight are repaints.
+- `NodeGraphSpec`, `ChartSpec`, `ImageSpec`, `RenderViewSpec`, and `IconSpec`
+  name the passes each field feeds instead of asking for `Invalidation::ALL`. In
+  every one of the five, the element's `layout` reads only its declared size, so
+  content changes are paint and accessibility. A node-graph selection in the
+  workbench example is now zero layouts, zero shapes, and one rebuilt fragment.
+
 ### Removed
 
 - The transitional `rxui::next`, `rxui::legacy`, and `next-default` surfaces.
