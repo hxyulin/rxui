@@ -299,16 +299,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astrelis-ui-testing"
-version = "0.3.0-rc.1"
-dependencies = [
- "astrelis-core",
- "astrelis-paint",
- "astrelis-text",
- "astrelis-ui-core",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2136,6 +2126,7 @@ dependencies = [
  "rxui-controls",
  "rxui-core",
  "rxui-native",
+ "rxui-test-support",
  "rxui-widgets",
  "wasm-bindgen",
  "web-sys",
@@ -2189,14 +2180,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rxui-testing"
+name = "rxui-test-support"
 version = "0.1.0-rc.1"
 dependencies = [
  "astrelis-core",
  "astrelis-platform",
- "astrelis-ui-core",
- "astrelis-ui-testing",
- "rxui",
+ "rxui-core",
 ]
 
 [[package]]
@@ -3606,3 +3595,7 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[patch.unused]]
+name = "astrelis-ui-testing"
+version = "0.3.0-rc.1"

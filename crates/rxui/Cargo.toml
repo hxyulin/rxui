@@ -27,6 +27,7 @@ astrelis-paint = { workspace = true }
 astrelis-platform = { workspace = true }
 astrelis-platform-winit = { workspace = true }
 astrelis-ui-next = { workspace = true }
+rxui-test-support = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen = { workspace = true }

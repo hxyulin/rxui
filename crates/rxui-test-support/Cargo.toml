@@ -1,0 +1,22 @@
+[package]
+name = "rxui-test-support"
+description = "Deterministic headless harness shared by RXUI's own test suites"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+# Test scaffolding is not part of the public surface, and keeping it unpublished
+# is what lets it sit *below* `rxui` in the graph instead of above it.
+publish = false
+
+[dependencies]
+astrelis-core = { workspace = true }
+astrelis-platform = { workspace = true }
+rxui-core = { workspace = true }
+
+[lints]
+workspace = true
