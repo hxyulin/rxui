@@ -7,13 +7,15 @@ use astrelis_ui_next::Alignment;
 
 use rxui_core::{
     ButtonStyle, ButtonVariant, ColorRole, ContainerStyle, FrameStyle, Icon, IconButtonStyle,
-    Space, StackStyle, View, button, button_with, column, column_with, icon_button_with, label,
-    panel, row, row_with, spacer, stack_with, text_field, views,
+    Space, StackStyle, View, ViewKey, button, button_with, column, column_with, icon_button_with,
+    label, panel, row, row_with, spacer, stack_with, text_field, views,
 };
 
 /// One controlled radio-group option.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Choice<Value> {
+    /// Stable choice identity, independent of position in the group.
+    pub id: ViewKey,
     /// Domain value emitted when selected.
     pub value: Value,
     /// User-visible label.
@@ -24,8 +26,9 @@ pub struct Choice<Value> {
 
 impl<Value> Choice<Value> {
     /// Creates an enabled choice.
-    pub fn new(value: Value, label: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<ViewKey>, value: Value, label: impl Into<String>) -> Self {
         Self {
+            id: id.into(),
             value,
             label: label.into(),
             enabled: true,
@@ -49,7 +52,7 @@ where
     Action: Clone + 'static,
     Value: Clone + PartialEq + 'static,
 {
-    column(views(choices.iter().enumerate().map(|(index, choice)| {
+    column(views(choices.iter().map(|choice| {
         let marker = if selected == Some(&choice.value) {
             "●"
         } else {
@@ -59,13 +62,15 @@ where
         let on_selected = on_selected.clone();
         button(format!("{marker} {}", choice.label), on_selected(value))
             .enabled(choice.enabled)
-            .key(index as u64)
+            .key(choice.id.clone())
     })))
 }
 
 /// One controlled combo-box option.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComboOption<Value> {
+    /// Stable option identity, independent of position in the list.
+    pub id: ViewKey,
     /// Domain value.
     pub value: Value,
     /// User-visible label.
@@ -76,8 +81,9 @@ pub struct ComboOption<Value> {
 
 impl<Value> ComboOption<Value> {
     /// Creates an enabled option.
-    pub fn new(value: Value, label: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<ViewKey>, value: Value, label: impl Into<String>) -> Self {
         Self {
+            id: id.into(),
             value,
             label: label.into(),
             enabled: true,
@@ -109,12 +115,12 @@ where
                 .gap(Space::Xs)
                 .padding(Space::Xs)
                 .background(ColorRole::Surface),
-            views(options.iter().enumerate().map(|(index, option)| {
+            views(options.iter().map(|option| {
                 let value = option.value.clone();
                 let on_selected = on_selected.clone();
                 button(option.label.clone(), on_selected(value))
                     .enabled(option.enabled)
-                    .key(index as u64)
+                    .key(option.id.clone())
             })),
         )
     } else {
@@ -158,6 +164,8 @@ pub fn form_section<Action: 'static>(
 pub enum ToolbarItem<Action> {
     /// Activatable command.
     Command {
+        /// Stable command identity, independent of toolbar position.
+        id: ViewKey,
         /// User-visible label.
         label: String,
         /// Typed action.
@@ -169,6 +177,8 @@ pub enum ToolbarItem<Action> {
     },
     /// Vector-icon command with compact or labeled presentation.
     IconCommand {
+        /// Stable command identity, independent of toolbar position.
+        id: ViewKey,
         /// Monochrome vector glyph.
         icon: Icon,
         /// Accessible label, optionally also painted.
@@ -188,18 +198,35 @@ pub enum ToolbarItem<Action> {
 
 /// Builds a keyed command toolbar.
 pub fn toolbar<Action: Clone + 'static>(items: &[ToolbarItem<Action>]) -> View<Action> {
+    // Separators and spacers are interchangeable and retain no interaction
+    // state, so numbering them among themselves is a canonical identity: a
+    // command inserted anywhere still leaves every decoration key alone.
+    let mut decorations = 0usize;
+    let keys = items
+        .iter()
+        .map(|item| match item {
+            ToolbarItem::Command { id, .. } | ToolbarItem::IconCommand { id, .. } => {
+                ViewKey::new(format!("command-{id}"))
+            }
+            ToolbarItem::Separator | ToolbarItem::Space(_) => {
+                decorations += 1;
+                ViewKey::new(format!("decoration-{}", decorations - 1))
+            }
+        })
+        .collect::<Vec<_>>();
     row_with(
         ContainerStyle::new()
             .gap(Space::Xs)
             .padding(Space::Xs)
             .background(ColorRole::Surface),
-        views(items.iter().enumerate().map(|(index, item)| {
+        views(items.iter().zip(keys).map(|(item, key)| {
             let view = match item {
                 ToolbarItem::Command {
                     label,
                     action,
                     enabled,
                     variant,
+                    ..
                 } => button_with(
                     label.clone(),
                     action.clone(),
@@ -212,6 +239,7 @@ pub fn toolbar<Action: Clone + 'static>(items: &[ToolbarItem<Action>]) -> View<A
                     action,
                     enabled,
                     style,
+                    ..
                 } => icon_button_with(icon.clone(), label.clone(), action.clone(), *style)
                     .enabled(*enabled),
                 ToolbarItem::Separator => {
@@ -219,12 +247,15 @@ pub fn toolbar<Action: Clone + 'static>(items: &[ToolbarItem<Action>]) -> View<A
                 }
                 ToolbarItem::Space(width) => spacer(LogicalSize::new((*width).max(0.0), 1.0)),
             };
-            view.key(index as u64)
+            view.key(key)
         })),
     )
 }
 
 /// One modal-dialog action.
+///
+/// The label doubles as the action's identity for keyed reconciliation, so
+/// two actions in one dialog must not share a label.
 #[derive(Clone)]
 pub struct DialogAction<Action> {
     /// User-visible label.
@@ -252,13 +283,13 @@ pub fn dialog<Action: Clone + 'static>(
         (
             label(title),
             content,
-            row(views(actions.iter().enumerate().map(|(index, action)| {
+            row(views(actions.iter().map(|action| {
                 button_with(
                     action.label.clone(),
                     action.action.clone(),
                     ButtonStyle::standard().variant(action.variant),
                 )
-                .key(index as u64)
+                .key(action.label.clone())
             }))),
         ),
     )
@@ -364,6 +395,44 @@ pub struct CommandPaletteNavigation<Action> {
     pub next: Action,
 }
 
+/// Command rows one palette shows at once.
+const COMMAND_PALETTE_MATCHES: usize = 12;
+
+/// Selects the commands a query matches, in declaration order.
+///
+/// Matching is case-insensitive over label and description, ignores
+/// surrounding whitespace, and keeps at most [`COMMAND_PALETTE_MATCHES`] rows.
+fn filter_commands<'a, Action>(
+    commands: &'a [CommandItem<Action>],
+    query: &str,
+) -> Vec<&'a CommandItem<Action>> {
+    let query = query.trim().to_lowercase();
+    commands
+        .iter()
+        .filter(|command| {
+            query.is_empty()
+                || command.label.to_lowercase().contains(&query)
+                || command
+                    .description
+                    .as_deref()
+                    .is_some_and(|value| value.to_lowercase().contains(&query))
+        })
+        .take(COMMAND_PALETTE_MATCHES)
+        .collect()
+}
+
+/// Keeps a caller-owned selection inside the visible match list.
+///
+/// An empty match list has no selectable row; the returned index is then only
+/// meaningful as a lookup that misses.
+const fn clamp_selection(selected: usize, matches: usize) -> usize {
+    if selected >= matches {
+        matches.saturating_sub(1)
+    } else {
+        selected
+    }
+}
+
 /// Builds a controlled keyboard-first command palette surface.
 pub fn command_palette<Action: Clone + 'static>(
     open: bool,
@@ -373,20 +442,8 @@ pub fn command_palette<Action: Clone + 'static>(
     on_query: impl Fn(String) -> Action + 'static,
     navigation: CommandPaletteNavigation<Action>,
 ) -> View<Action> {
-    let query_lower = query.trim().to_lowercase();
-    let matches = commands
-        .iter()
-        .filter(|command| {
-            query_lower.is_empty()
-                || command.label.to_lowercase().contains(&query_lower)
-                || command
-                    .description
-                    .as_deref()
-                    .is_some_and(|value| value.to_lowercase().contains(&query_lower))
-        })
-        .take(12)
-        .collect::<Vec<_>>();
-    let selected = selected.min(matches.len().saturating_sub(1));
+    let matches = filter_commands(commands, query);
+    let selected = clamp_selection(selected, matches.len());
     let submit = matches
         .get(selected)
         .filter(|command| command.enabled)
@@ -425,4 +482,200 @@ pub fn command_palette<Action: Clone + 'static>(
     .command_navigation(navigation.previous, navigation.next, submit)
     .dismiss_on_escape(navigation.dismiss)
     .aligned(Alignment::Top, Space::Xl)
+}
+
+#[cfg(test)]
+mod tests {
+    use astrelis_ui_next::{NodeId, SemanticNode};
+    use rxui_core::{Component, ComponentContext, ComponentHost, Theme};
+
+    use super::*;
+
+    fn command(id: &str, label: &str, description: Option<&str>) -> CommandItem<()> {
+        CommandItem {
+            id: id.into(),
+            label: label.into(),
+            description: description.map(Into::into),
+            action: (),
+            enabled: true,
+        }
+    }
+
+    fn ids(matches: &[&CommandItem<()>]) -> Vec<String> {
+        matches.iter().map(|command| command.id.clone()).collect()
+    }
+
+    #[test]
+    fn an_empty_query_matches_every_command() {
+        let commands = [
+            command("open", "Open File", None),
+            command("save", "Save File", None),
+        ];
+        assert_eq!(ids(&filter_commands(&commands, "")), ["open", "save"]);
+        assert_eq!(ids(&filter_commands(&commands, "   ")), ["open", "save"]);
+    }
+
+    #[test]
+    fn commands_match_labels_and_descriptions_case_insensitively() {
+        let commands = [
+            command("open", "Open File", None),
+            command("save", "Save File", Some("Write the document to disk")),
+            command("quit", "Quit", None),
+        ];
+        assert_eq!(ids(&filter_commands(&commands, "FILE")), ["open", "save"]);
+        assert_eq!(ids(&filter_commands(&commands, "  disk ")), ["save"]);
+        assert_eq!(ids(&filter_commands(&commands, "qui")), ["quit"]);
+        assert!(filter_commands(&commands, "nothing").is_empty());
+    }
+
+    #[test]
+    fn matches_keep_declaration_order_and_stop_at_the_row_budget() {
+        let commands = (0..40)
+            .map(|index| {
+                let id = format!("command-{index}");
+                command(&id, &format!("Command {index}"), None)
+            })
+            .collect::<Vec<_>>();
+        let matches = filter_commands(&commands, "command");
+        assert_eq!(matches.len(), COMMAND_PALETTE_MATCHES);
+        assert_eq!(matches[0].id, "command-0");
+        assert_eq!(matches[COMMAND_PALETTE_MATCHES - 1].id, "command-11");
+    }
+
+    #[test]
+    fn selection_inside_the_match_list_is_left_alone() {
+        assert_eq!(clamp_selection(0, 3), 0);
+        assert_eq!(clamp_selection(2, 3), 2);
+    }
+
+    #[test]
+    fn selection_past_the_last_match_lands_on_it() {
+        assert_eq!(clamp_selection(3, 3), 2);
+        assert_eq!(clamp_selection(usize::MAX, 3), 2);
+    }
+
+    #[test]
+    fn selection_in_an_empty_match_list_cannot_address_a_row() {
+        let selected = clamp_selection(7, 0);
+        assert_eq!(selected, 0);
+        let commands: [CommandItem<()>; 0] = [];
+        assert!(filter_commands(&commands, "").get(selected).is_none());
+    }
+
+    fn focused(host: &ComponentHost<impl Component>) -> SemanticNode {
+        host.ui()
+            .semantic_snapshot()
+            .into_iter()
+            .find(|node| node.focused)
+            .expect("a focused node")
+    }
+
+    fn node_labeled(host: &ComponentHost<impl Component>, suffix: &str) -> NodeId {
+        host.ui()
+            .semantic_snapshot()
+            .into_iter()
+            .find(|node| node.data.label.ends_with(suffix))
+            .map(|node| node.id)
+            .unwrap_or_else(|| panic!("no node labeled {suffix}"))
+    }
+
+    struct RadioForm {
+        choices: Vec<Choice<&'static str>>,
+    }
+
+    impl Component for RadioForm {
+        type Action = &'static str;
+        type Effect = ();
+
+        fn update(&mut self, _action: Self::Action, _context: &mut ComponentContext<'_, ()>) {}
+
+        fn view(&self, _theme: &Theme) -> View<Self::Action> {
+            radio_group(&self.choices, None, |value| value)
+        }
+    }
+
+    #[test]
+    fn radio_choices_keep_their_retained_identity_across_an_insertion() {
+        let mut host = ComponentHost::new(
+            RadioForm {
+                choices: vec![
+                    Choice::new("beta", "beta", "Beta"),
+                    Choice::new("gamma", "gamma", "Gamma"),
+                ],
+            },
+            LogicalSize::new(320.0, 240.0),
+            Theme::dark(),
+        )
+        .unwrap();
+        let beta = node_labeled(&host, "Beta");
+        host.ui_mut().set_focus(Some(beta)).unwrap();
+        host.refresh().unwrap();
+        assert_eq!(focused(&host).id, beta);
+
+        host.component_mut()
+            .choices
+            .insert(0, Choice::new("alpha", "alpha", "Alpha"));
+        host.refresh().unwrap();
+
+        // Position-keyed children would hand Beta's retained control - and its
+        // focus - to the newly inserted Alpha.
+        let focused = focused(&host);
+        assert_eq!(focused.id, beta);
+        assert!(focused.data.label.ends_with("Beta"), "{:?}", focused.data);
+        assert_eq!(node_labeled(&host, "Beta"), beta);
+        assert_ne!(node_labeled(&host, "Alpha"), beta);
+    }
+
+    struct Toolbar {
+        commands: Vec<&'static str>,
+    }
+
+    impl Component for Toolbar {
+        type Action = &'static str;
+        type Effect = ();
+
+        fn update(&mut self, _action: Self::Action, _context: &mut ComponentContext<'_, ()>) {}
+
+        fn view(&self, _theme: &Theme) -> View<Self::Action> {
+            let items = self
+                .commands
+                .iter()
+                .flat_map(|label| {
+                    [
+                        ToolbarItem::Command {
+                            id: (*label).into(),
+                            label: (*label).into(),
+                            action: *label,
+                            enabled: true,
+                            variant: ButtonVariant::Standard,
+                        },
+                        ToolbarItem::Separator,
+                    ]
+                })
+                .collect::<Vec<_>>();
+            toolbar(&items)
+        }
+    }
+
+    #[test]
+    fn toolbar_commands_keep_their_retained_identity_across_an_insertion() {
+        let mut host = ComponentHost::new(
+            Toolbar {
+                commands: vec!["Save", "Close"],
+            },
+            LogicalSize::new(480.0, 120.0),
+            Theme::dark(),
+        )
+        .unwrap();
+        let save = node_labeled(&host, "Save");
+        host.ui_mut().set_focus(Some(save)).unwrap();
+        host.refresh().unwrap();
+
+        host.component_mut().commands.insert(0, "Open");
+        host.refresh().unwrap();
+
+        let focused = focused(&host);
+        assert_eq!(focused.id, save);
+        assert_eq!(focused.data.label, "Save");
+    }
 }
