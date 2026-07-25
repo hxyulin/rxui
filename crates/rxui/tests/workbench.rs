@@ -294,36 +294,7 @@ fn chart_domain_origin(bounds: LogicalRect) -> LogicalPoint {
 }
 
 #[test]
-#[ignore = "SplitPane::event (astrelis-ui-next builtins.rs:625) treats any bubbled \
-            PointerPressed as a divider grab, so it takes pointer capture and the release \
-            never reaches a docked chart or graph"]
-fn clicking_the_chart_selects_the_nearest_point_and_empty_space_clears_it() {
-    let mut harness = mount();
-    let bounds = by_role(&harness, SemanticRole::Chart).bounds;
-    harness.click_at(chart_domain_origin(bounds));
-    // Series 1 is declared first, so it wins the tie against series 2's own
-    // point at the same coordinate.
-    assert_eq!(harness.component().selected_series, Some((1, 0)));
-}
-
-#[test]
-#[ignore = "SplitPane::event (astrelis-ui-next builtins.rs:625) treats any bubbled \
-            PointerPressed as a divider grab, so it takes pointer capture and the release \
-            never reaches a docked chart or graph"]
-fn clicking_a_graph_node_selects_it() {
-    let mut harness = mount();
-    let bounds = by_role(&harness, SemanticRole::Graph).bounds;
-    // Node 1 covers canvas (30, 80) to (150, 140) at the default identity
-    // viewport, so (90, 110) is its centre.
-    harness.click_at(LogicalPoint::new(
-        bounds.origin.x + 90.0,
-        bounds.origin.y + 110.0,
-    ));
-    assert_eq!(harness.component().selected_node, Some(1));
-}
-
-#[test]
-fn pressing_inside_a_docked_pane_currently_grabs_the_split_divider() {
+fn dragging_from_inside_a_docked_pane_moves_neither_the_divider_nor_the_selection() {
     let mut harness = mount();
     let bounds = by_role(&harness, SemanticRole::Chart).bounds;
     let before = bounds.size.width;
@@ -333,15 +304,13 @@ fn pressing_inside_a_docked_pane_currently_grabs_the_split_divider() {
     harness.hover_at(LogicalPoint::new(inside.x + 200.0, inside.y));
     harness.release_pointer_at(LogicalPoint::new(inside.x + 200.0, inside.y));
 
-    // Documents the bug the two ignored tests above state. The user pressed 12
-    // units inside the chart, nowhere near the divider at x = 547, and dragged;
-    // the divider followed the pointer exactly, widening the pane by the drag
-    // distance. `SplitPane::hit_test` correctly restricts *direct* hits to the
-    // divider, but a press on a child bubbles to the split, which accepts it
-    // unconditionally and so takes pointer capture for the whole gesture.
+    // A press 12 units inside the chart, nowhere near the divider at x = 547,
+    // used to grab the divider and drag it the full 200 units, because a press a
+    // child declines bubbles to the split and the split accepted every one.
     let after = by_role(&harness, SemanticRole::Chart).bounds.size.width;
-    assert_eq!(after, before + 200.0);
-    // The chart never saw the release, so nothing was selected either.
+    assert_eq!(after, before);
+    // Nor does the chart mistake a drag that ended 200 units away for a click on
+    // where it started: the release is what selects, and it landed elsewhere.
     assert_eq!(harness.component().selected_series, None);
 }
 
@@ -349,17 +318,18 @@ fn pressing_inside_a_docked_pane_currently_grabs_the_split_divider() {
 fn the_chart_reports_the_nearest_point_and_empty_space_clears_it() {
     let mut harness = mount();
     let bounds = by_role(&harness, SemanticRole::Chart).bounds;
-    // Driven with a bare release: a full press-then-release gesture is captured
-    // by the enclosing split (see `pressing_inside_a_docked_pane_currently_grabs_the_split_divider`),
-    // so this is the only way to reach the docked chart's own handler until that
-    // is fixed.
-    harness.release_pointer_at(chart_domain_origin(bounds));
+    // A full click, which is what the divider fix bought: the chart handles the
+    // release and not the press, so before it the enclosing split captured the
+    // gesture on press and the release never arrived here at all.
+    harness.click_at(chart_domain_origin(bounds));
+    // Series 1 is declared first, so it wins the tie against series 2's own
+    // point at the same coordinate.
     assert_eq!(harness.component().selected_series, Some((1, 0)));
 
     // Just inside the top-left corner: the highest-valued point sits far to the
     // right and the leftmost points sit far below, so nothing is within the
     // element's 12 unit selection radius.
-    harness.release_pointer_at(LogicalPoint::new(
+    harness.click_at(LogicalPoint::new(
         bounds.origin.x + 14.0,
         bounds.origin.y + 14.0,
     ));
@@ -371,16 +341,15 @@ fn the_node_graph_reports_the_node_under_the_pointer_and_empty_canvas_clears_it(
     let mut harness = mount();
     let bounds = by_role(&harness, SemanticRole::Graph).bounds;
     // Node 1 covers canvas (30, 80) to (150, 140) at the default identity
-    // viewport, so (90, 110) is its centre. Bare releases, for the same reason
-    // as the chart above.
-    harness.release_pointer_at(LogicalPoint::new(
+    // viewport, so (90, 110) is its centre.
+    harness.click_at(LogicalPoint::new(
         bounds.origin.x + 90.0,
         bounds.origin.y + 110.0,
     ));
     assert_eq!(harness.component().selected_node, Some(1));
 
     // Canvas (200, 40) falls between all three node rectangles.
-    harness.release_pointer_at(LogicalPoint::new(
+    harness.click_at(LogicalPoint::new(
         bounds.origin.x + 200.0,
         bounds.origin.y + 40.0,
     ));
