@@ -8,8 +8,8 @@
 use astrelis_core::geometry::{LogicalPoint, LogicalSize};
 use rxui::core::SemanticRole;
 use rxui::{
-    Choice, ComboOption, Component, ComponentContext, Theme, View, column, combo_box,
-    numeric_field, radio_group,
+    Choice, ComboOption, Component, ComponentContext, Theme, View, checkbox, column, combo_box,
+    numeric_field, radio_group, slider,
 };
 use rxui_test_support::Harness;
 
@@ -379,4 +379,144 @@ fn refreshing_an_edited_numeric_field_does_no_retained_work() {
     assert_eq!(stats.layout_elements, 0);
     assert_eq!(stats.shaped_text, 0);
     assert_eq!(stats.rebuilt_fragments, 0);
+}
+
+/// Refuses every change, which is the only way to observe the divergence: a
+/// control that writes its own state before emitting has already moved by the
+/// time the reducer declines.
+struct RefusingScene {
+    checked: bool,
+    value: f32,
+    refusals: usize,
+    /// What the controls asked for, so a test can show the element had already
+    /// moved rather than infer it from the refusal count.
+    requested: Vec<RefusingAction>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum RefusingAction {
+    Check(bool),
+    Slide(f32),
+}
+
+impl Component for RefusingScene {
+    type Action = RefusingAction;
+    type Effect = ();
+
+    fn update(&mut self, action: Self::Action, _context: &mut ComponentContext<'_, ()>) {
+        // Deliberately keeps both values. A real controller would refuse
+        // selectively - a clamp, a quantization, a validation - but refusing
+        // everything is the same code path and is checkable.
+        self.refusals += 1;
+        self.requested.push(action);
+    }
+
+    fn view(&self, _theme: &Theme) -> View<Self::Action> {
+        column(vec![
+            checkbox("Enabled", self.checked, RefusingAction::Check),
+            slider("Amount", self.value, 0.0..=100.0, RefusingAction::Slide),
+        ])
+    }
+}
+
+#[test]
+fn a_checkbox_is_controlled_and_reverts_a_refused_toggle() {
+    let mut harness = Harness::new(
+        RefusingScene {
+            checked: false,
+            value: 10.0,
+            refusals: 0,
+            requested: Vec::new(),
+        },
+        VIEWPORT,
+    )
+    .expect("the refusing scene mounts");
+    let unchecked = harness.find("Enabled").data.value.clone();
+
+    harness.click("Enabled");
+    // `Checkbox::toggle` flipped its own field on the way down and emitted
+    // afterwards, so the reducer's refusal is the second half of the story, not
+    // the first: the element is already ticked and something has to untick it.
+    assert_eq!(
+        harness.component().requested,
+        vec![RefusingAction::Check(true)],
+        "the checkbox asked to become checked, so it had already ticked itself",
+    );
+    assert_eq!(harness.find("Enabled").data.value, unchecked);
+
+    // And it stays reverted across further passes. Comparing against the value
+    // the view last declared saw false both times, wrote nothing, and left the
+    // box ticked permanently.
+    harness.refresh();
+    harness.refresh();
+    assert_eq!(harness.find("Enabled").data.value, unchecked);
+}
+
+#[test]
+fn a_slider_is_controlled_and_reverts_a_refused_drag() {
+    let mut harness = Harness::new(
+        RefusingScene {
+            checked: false,
+            value: 10.0,
+            refusals: 0,
+            requested: Vec::new(),
+        },
+        VIEWPORT,
+    )
+    .expect("the refusing scene mounts");
+    let bounds = harness.bounds("Amount");
+    let reported = harness.find("Amount").data.value.clone();
+
+    // Press and drag most of the way across, which is many emitted values rather
+    // than one, and refuse all of them.
+    harness.press_pointer_at(LogicalPoint::new(
+        bounds.origin.x + bounds.size.width * 0.5,
+        bounds.origin.y + bounds.size.height * 0.5,
+    ));
+    harness.hover_at(LogicalPoint::new(
+        bounds.origin.x + bounds.size.width * 0.9,
+        bounds.origin.y + bounds.size.height * 0.5,
+    ));
+    harness.release_pointer_at(LogicalPoint::new(
+        bounds.origin.x + bounds.size.width * 0.9,
+        bounds.origin.y + bounds.size.height * 0.5,
+    ));
+
+    assert!(harness.component().refusals > 0, "the drag has to report");
+    assert_eq!(harness.component().value, 10.0);
+    assert_eq!(harness.find("Amount").data.value, reported);
+    harness.refresh();
+    assert_eq!(harness.find("Amount").data.value, reported);
+}
+
+#[test]
+fn an_accepted_checkbox_toggle_writes_nothing_on_the_next_pass() {
+    struct Accepting {
+        checked: bool,
+    }
+    impl Component for Accepting {
+        type Action = bool;
+        type Effect = ();
+
+        fn update(&mut self, checked: bool, _context: &mut ComponentContext<'_, ()>) {
+            self.checked = checked;
+        }
+
+        fn view(&self, _theme: &Theme) -> View<bool> {
+            checkbox("Enabled", self.checked, |checked| checked)
+        }
+    }
+
+    let mut harness =
+        Harness::new(Accepting { checked: false }, VIEWPORT).expect("the accepting scene mounts");
+    harness.click("Enabled");
+    assert!(harness.component().checked);
+    harness.refresh();
+    let stats = harness.stats();
+    // The counterpart to the revert: the element already agrees, so reading it
+    // rather than the cached declaration must not turn every settled frame into a
+    // write. This is what a naive unconditional re-apply would cost.
+    assert_eq!(stats.layout_elements, 0);
+    assert_eq!(stats.rebuilt_fragments, 0);
+    assert_eq!(stats.accessibility_nodes, 0);
 }

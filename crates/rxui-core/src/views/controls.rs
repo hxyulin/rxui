@@ -373,7 +373,9 @@ struct CheckboxView<Action: 'static> {
 struct CheckboxState<Action: 'static> {
     handle: NodeHandle<Checkbox>,
     label: String,
-    checked: bool,
+    // Not cached, for the same reason as `TextFieldState`: `Checkbox::toggle`
+    // flips its own field before emitting, so the element and this view's last
+    // declaration diverge the moment a controller refuses the change.
     colors: (Color, Color, Color),
     changed: MapCell<bool, Action>,
 }
@@ -405,7 +407,6 @@ impl<Action: 'static> ViewNode<Action> for CheckboxView<Action> {
             CheckboxState {
                 handle,
                 label: self.label,
-                checked: self.checked,
                 colors,
                 changed,
             },
@@ -426,6 +427,13 @@ impl<Action: 'static> ViewNode<Action> for CheckboxView<Action> {
         let emitter = context.emitter();
         let state = mounted.state_mut::<CheckboxState<Action>>()?;
         state.changed.update(self.on_changed, &emitter);
+        // Compared against the element's live state rather than the declaration,
+        // which is what makes refusing a toggle mean anything: the checkbox flips
+        // itself as the pointer goes down and emits afterwards, so a controller
+        // that keeps its old value leaves the two disagreeing while the
+        // declaration stands still. Trusting the declaration then writes nothing
+        // and the box stays ticked for good.
+        let stale_checked = context.ui().element(state.handle)?.checked != self.checked;
         // The label and its glyph color reach the shaper, which runs in layout.
         // The checked state changes the indicator fill and the accessible value;
         // the outline and accent fills are paint-only.
@@ -433,7 +441,7 @@ impl<Action: 'static> ViewNode<Action> for CheckboxView<Action> {
         if state.label != self.label || state.colors.0 != colors.0 {
             invalidation |= Invalidation::LAYOUT_ALL;
         }
-        if state.checked != self.checked {
+        if stale_checked {
             invalidation |= Invalidation::PAINT | Invalidation::ACCESSIBILITY;
         }
         if state.colors.1 != colors.1 || state.colors.2 != colors.2 {
@@ -453,7 +461,6 @@ impl<Action: 'static> ViewNode<Action> for CheckboxView<Action> {
                 })?;
         }
         state.label = self.label;
-        state.checked = self.checked;
         state.colors = colors;
         Ok(())
     }
@@ -470,7 +477,9 @@ struct SliderView<Action: 'static> {
 struct SliderState<Action: 'static> {
     handle: NodeHandle<Slider>,
     label: String,
-    value: f32,
+    // Not cached, for the same reason as `CheckboxState`: the slider writes its
+    // own value on a drag, a keyboard step, and a semantic action, all before the
+    // controller has said whether it accepts any of them.
     range: RangeInclusive<f32>,
     step: f32,
     colors: (Color, Color),
@@ -506,7 +515,6 @@ impl<Action: 'static> ViewNode<Action> for SliderView<Action> {
             SliderState {
                 handle,
                 label: self.label,
-                value: self.value,
                 range: self.range,
                 step: self.step,
                 colors,
@@ -528,6 +536,11 @@ impl<Action: 'static> ViewNode<Action> for SliderView<Action> {
         let emitter = context.emitter();
         let state = mounted.state_mut::<SliderState<Action>>()?;
         state.changed.update(self.on_changed, &emitter);
+        // Live value, not the declaration - see `CheckboxView::rebuild`. A drag
+        // is the case that matters most here, because it emits a value per
+        // pointer move and a controller that clamps or quantizes disagrees with
+        // the element on nearly every one of them.
+        let stale_value = context.ui().element(state.handle)?.value != self.value;
         // A slider's size is fixed and its label is never painted, so nothing
         // here relayouts. The label is accessibility-only; value and range move
         // the thumb and the reported value; the step is neither painted nor
@@ -536,7 +549,7 @@ impl<Action: 'static> ViewNode<Action> for SliderView<Action> {
         if state.label != self.label {
             invalidation |= Invalidation::ACCESSIBILITY;
         }
-        if state.value != self.value || state.range != self.range {
+        if stale_value || state.range != self.range {
             invalidation |= Invalidation::PAINT | Invalidation::ACCESSIBILITY;
         }
         if state.colors != colors {
@@ -561,7 +574,6 @@ impl<Action: 'static> ViewNode<Action> for SliderView<Action> {
             })?;
         }
         state.label = self.label;
-        state.value = self.value;
         state.range = self.range;
         state.step = self.step;
         state.colors = colors;
