@@ -389,16 +389,18 @@ fn selecting_a_graph_node_reshapes_no_node_title() {
     // `Invalidation::ALL` and the element re-shaped unconditionally in `layout`.
     // Both halves of that are gone, so a highlight is a repaint.
     assert_eq!(stats.shaped_text, 0, "a highlight must not reshape a title");
-    assert!(stats.rebuilt_fragments > 0, "the new fill is painted");
-    // `layout_elements` is deliberately not asserted here, and it is not zero.
-    // Rebuilding this view also rebuilds the toolbar, whose icons compare by
-    // `Path::cache_id` and so declare a spurious change on every pass - the bug
-    // `retained_specs::refreshing_an_icon_with_an_identical_spec_does_no_retained_work`
-    // is ignored for. The graph's own zero is pinned in isolation there, by
-    // `selecting_a_graph_node_repaints_without_layout_or_a_new_announcement`.
-    //
+    // One fragment, and it is the graph's. This is asserted on the *whole*
+    // workbench rather than on a graph in isolation, which is what makes it a
+    // statement about the toolbar too: every icon command in it used to declare a
+    // spurious change on every pass, because icon identity was keyed on
+    // `Path::cache_id`, an allocation counter. So this frame cost 9 layouts and 4
+    // fragments for a fill colour, and a test written then could only pin the
+    // graph's own zero in isolation and say why.
+    assert_eq!(stats.layout_elements, 0);
+    assert_eq!(stats.rebuilt_fragments, 1);
     // The graph announces its node and edge counts and not its selection, so
     // the semantic tree has nothing to republish either.
+    assert_eq!(stats.accessibility_nodes, 0);
     assert_eq!(by_role(&harness, SemanticRole::Graph).data.value, announced);
 }
 
