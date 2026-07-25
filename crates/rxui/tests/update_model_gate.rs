@@ -700,6 +700,139 @@ fn one_action_into_one_panel_is_independent_of_sibling_count() {
     assert_eq!(large_pass.reused_fragments, 321); // 5 * 64 + 1
 }
 
+// ------------------------------------------------------------ effect-free child
+
+/// A child that keeps its state entirely to itself.
+///
+/// `Effect = ()` and nothing is ever emitted, so its action reaches no ancestor.
+/// This is the only shape that exercises the scoped drain: the root stays clean,
+/// so the flush has to locate and rebuild one stale component without building
+/// the root's view at all.
+#[derive(Clone, PartialEq, Eq)]
+struct TallyProps {
+    caption: &'static str,
+}
+
+#[derive(Clone)]
+enum TallyAction {
+    Bump,
+}
+
+struct Tally {
+    caption: &'static str,
+    count: i32,
+}
+
+impl Component for Tally {
+    type Action = TallyAction;
+    type Effect = ();
+
+    fn update(&mut self, action: TallyAction, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            TallyAction::Bump => self.count += 1,
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> View<TallyAction> {
+        row((
+            button(format!("Bump {}", self.caption), TallyAction::Bump).keyed("bump"),
+            label(format!("{} is {}", self.caption, self.count)).keyed("count"),
+        ))
+    }
+}
+
+impl ComponentWithProps for Tally {
+    type Props = TallyProps;
+
+    fn create(props: &TallyProps) -> Self {
+        Self {
+            caption: props.caption,
+            count: 0,
+        }
+    }
+
+    fn changed(&mut self, props: &TallyProps) {
+        self.caption = props.caption;
+    }
+}
+
+#[derive(Clone)]
+enum TallyBoardAction {
+    /// Unreachable: `Tally` emits no effects. Present only to type the mapping.
+    Never,
+}
+
+struct TallyBoard;
+
+impl Component for TallyBoard {
+    type Action = TallyBoardAction;
+    type Effect = ();
+
+    fn update(&mut self, action: TallyBoardAction, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            TallyBoardAction::Never => unreachable!("Tally emits no effects"),
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> View<TallyBoardAction> {
+        column(views(["left", "right"].into_iter().map(|caption| {
+            component::<Tally, TallyBoardAction>(TallyProps { caption }, |()| {
+                TallyBoardAction::Never
+            })
+            .keyed(caption)
+        })))
+    }
+}
+
+/// A nested action with no parent effect must cost zero root renders.
+///
+/// This scenario cannot use `assert_incremental_matches_fresh`: the child's
+/// state is unreachable from the parent by construction, so no `TallyBoard`
+/// value can reproduce it in a second host — which is exactly the property under
+/// test. The semantic assertions stand in for it, and they are what would fail
+/// if the scoped drain rebuilt the wrong component, or none.
+#[test]
+fn a_nested_action_with_no_parent_effect_never_renders_the_root() {
+    let mut host =
+        ComponentHost::new(TallyBoard, VIEWPORT, Theme::dark()).expect("tally board mounts");
+    let bump = find(&host, "Bump left").id;
+
+    let ((), view) = ViewStats::measure(|| {
+        host.semantic_action(bump, SemanticAction::Activate)
+            .expect("bump");
+    });
+
+    // The bumped child re-rendered and its sibling did not.
+    assert!(
+        host.ui()
+            .semantic_snapshot()
+            .iter()
+            .any(|node| node.data.label == "left is 1"),
+        "the bumped child must not be left stale"
+    );
+    assert!(
+        host.ui()
+            .semantic_snapshot()
+            .iter()
+            .any(|node| node.data.label == "right is 0"),
+        "the sibling must not be disturbed"
+    );
+
+    // 1 = the bumped child only. The root's state did not change, so its view is
+    // never built; the depth-ordered drain locates the one stale component and
+    // rebuilds just that subtree.
+    assert_eq!(view.component_views, 1);
+    assert_eq!(view.nodes_built, 0);
+    // 3 = the child's row and its two children. The component boundary itself is
+    // not reconciled on this path — the drain rebuilds the subtree directly
+    // rather than descending through a parent's `ComponentView`.
+    assert_eq!(view.nodes_rebuilt, 3);
+    // 1 = the child's row. The root column is not touched at all.
+    assert_eq!(view.containers_reconciled, 1);
+    assert_eq!(view.set_children_calls, 0);
+    assert_no_memo_or_row_activity("effect-free child", view);
+}
+
 // ------------------------------------------------------- coalesced dispatch
 
 #[test]
