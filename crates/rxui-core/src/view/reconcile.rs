@@ -230,10 +230,13 @@ impl<Action: 'static> MountedChildren<Action> {
 
     /// Publishes the child order, but only when it actually moved.
     ///
-    /// `UiRoot::set_children` invalidates the parent with `Invalidation::ALL`,
-    /// so republishing an unchanged order costs a full pass over a container
-    /// that did not change at all. Comparing against the last published order
-    /// makes that cost proportional to real structural change.
+    /// `UiRoot::set_children` now diffs what it is handed and asks for nothing
+    /// when the order already matches, so this is no longer what stands between
+    /// an untouched container and a full pass. It stays because the engine's
+    /// diff is O(children) and this comparison is the same walk without the
+    /// call, and because `set_children_calls` is meant to count real structural
+    /// change: a counter that ticked once per container per frame would report
+    /// the reconciler doing work the engine then discarded.
     fn publish(&mut self, context: &mut ViewContext<'_, Action>) -> Result<(), UiError> {
         if self.published.len() == self.mounted.len()
             && self

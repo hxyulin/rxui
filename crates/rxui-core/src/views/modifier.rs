@@ -480,9 +480,15 @@ impl<Action: 'static> ViewNode<Action> for VisibleView<Action> {
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
         let state = mounted.state_mut::<VisibleState<Action>>()?;
+        // A replacement, not a reconcile, is the case the declared-value guard
+        // alone gets wrong: `rebuild_child` builds a fresh node when the child's
+        // kind changes, and a fresh node is visible. Comparing only what this
+        // wrapper declared would then see no change and write nothing, so
+        // swapping the view under a `.visible(false)` would reveal it.
+        let previous = state.child.node();
         context.rebuild_child(&mut state.child, self.child)?;
         let node = state.child.node();
-        if state.visible != self.visible {
+        if state.visible != self.visible || node != previous {
             context.ui().set_visible(node, self.visible)?;
         }
         state.visible = self.visible;
@@ -521,9 +527,12 @@ impl<Action: 'static> ViewNode<Action> for EnabledView<Action> {
         context: &mut ViewContext<'_, Action>,
     ) -> Result<(), UiError> {
         let state = mounted.state_mut::<EnabledState<Action>>()?;
+        // See `VisibleView::rebuild`: a fresh node arrives enabled, so the
+        // declared-value guard has to be paired with an identity check.
+        let previous = state.child.node();
         context.rebuild_child(&mut state.child, self.child)?;
         let node = state.child.node();
-        if state.enabled != self.enabled {
+        if state.enabled != self.enabled || node != previous {
             context.ui().set_enabled(node, self.enabled)?;
         }
         state.enabled = self.enabled;

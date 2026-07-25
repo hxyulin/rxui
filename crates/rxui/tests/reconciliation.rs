@@ -375,6 +375,73 @@ fn enabled_modifier_controls_a_retained_subtree_without_recreation() {
 }
 
 #[derive(Clone)]
+enum SwapAction {
+    Swap,
+}
+
+/// Swaps the *kind* of the child under modifiers whose declared value never
+/// changes, which is what forces a replacement rather than a reconcile.
+struct SwappedChild {
+    swapped: bool,
+}
+
+impl Component for SwappedChild {
+    type Action = SwapAction;
+    type Effect = ();
+
+    fn update(&mut self, action: Self::Action, _context: &mut ComponentContext<'_, ()>) {
+        match action {
+            SwapAction::Swap => self.swapped = !self.swapped,
+        }
+    }
+
+    fn view(&self, _theme: &Theme) -> rxui::View<Self::Action> {
+        let hidden = if self.swapped {
+            label("Hidden")
+        } else {
+            button("Hidden", SwapAction::Swap)
+        };
+        let disabled = if self.swapped {
+            button("Disabled", SwapAction::Swap)
+        } else {
+            checkbox("Disabled", false, |_| SwapAction::Swap)
+        };
+        column(vec![
+            hidden.visible(false),
+            disabled.enabled(false),
+            button("Swap", SwapAction::Swap),
+        ])
+    }
+}
+
+#[test]
+fn visibility_and_enablement_survive_the_child_being_replaced() {
+    let mut harness = Harness::new(
+        SwappedChild { swapped: false },
+        LogicalSize::new(300.0, 200.0),
+    )
+    .unwrap();
+    assert!(
+        harness.try_find("Hidden").is_none(),
+        "a hidden subtree is omitted from semantics"
+    );
+    assert!(!harness.find("Disabled").enabled);
+
+    // Both modifiers declare the same value as before, so a guard that compares
+    // only the declared value writes nothing - and the node it would have
+    // written to is a fresh one, which arrives visible and enabled.
+    harness.click("Swap");
+    assert!(harness.try_find("Hidden").is_none());
+    assert!(!harness.find("Disabled").enabled);
+
+    // Back again, so the replacement is covered in both directions rather than
+    // only for whichever kind happens to be built second.
+    harness.click("Swap");
+    assert!(harness.try_find("Hidden").is_none());
+    assert!(!harness.find("Disabled").enabled);
+}
+
+#[derive(Clone)]
 enum OverlayAction {
     Toggle,
 }
