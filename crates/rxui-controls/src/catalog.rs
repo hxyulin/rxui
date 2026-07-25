@@ -253,11 +253,10 @@ pub fn toolbar<Action: Clone + 'static>(items: &[ToolbarItem<Action>]) -> View<A
 }
 
 /// One modal-dialog action.
-///
-/// The label doubles as the action's identity for keyed reconciliation, so
-/// two actions in one dialog must not share a label.
 #[derive(Clone)]
 pub struct DialogAction<Action> {
+    /// Identity for keyed reconciliation, stable across label changes.
+    pub id: ViewKey,
     /// User-visible label.
     pub label: String,
     /// Typed action.
@@ -289,7 +288,7 @@ pub fn dialog<Action: Clone + 'static>(
                     action.action.clone(),
                     ButtonStyle::standard().variant(action.variant),
                 )
-                .key(action.label.clone())
+                .key(action.id.clone())
             }))),
         ),
     )

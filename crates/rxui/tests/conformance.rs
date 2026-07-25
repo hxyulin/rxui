@@ -98,11 +98,13 @@ impl Component for ModalScene {
             ModalAction::Dismiss,
             &[
                 DialogAction {
+                    id: "cancel".into(),
                     label: "Cancel".into(),
                     action: ModalAction::Dismiss,
                     variant: ButtonVariant::Quiet,
                 },
                 DialogAction {
+                    id: "confirm".into(),
                     label: "Confirm".into(),
                     action: ModalAction::Confirm,
                     variant: ButtonVariant::Primary,

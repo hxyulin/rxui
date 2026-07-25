@@ -259,11 +259,13 @@ impl Component for Workbench {
             Action::CloseDialog,
             &[
                 DialogAction {
+                    id: "cancel".into(),
                     label: "Cancel".into(),
                     action: Action::CloseDialog,
                     variant: ButtonVariant::Quiet,
                 },
                 DialogAction {
+                    id: "save".into(),
                     label: "Save".into(),
                     action: Action::Save,
                     variant: ButtonVariant::Primary,
