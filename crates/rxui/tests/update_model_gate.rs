@@ -299,10 +299,11 @@ fn hover_over_a_control_does_no_view_work() {
     // 0 = hover is not an accessibility-visible property here.
     assert_eq!(pass.accessibility_nodes, 0);
     assert_eq!(pass.shaped_text, 0);
-    // Always 0: `update_passes` resets `PassStats` before running, and hit
-    // testing happens in `dispatch` beforehand, so the traversal count is
-    // never observable from the frame's stats.
-    assert_eq!(pass.hit_test_nodes, 0);
+    // 7 = the nodes the pointer walked to reach the button. Hit testing runs in
+    // `dispatch`, before the pass, and the engine now carries this counter
+    // across `update_passes`'s reset so it stays readable afterwards; it read a
+    // structural 0 here before that fix.
+    assert_eq!(pass.hit_test_nodes, 7);
 
     assert_incremental_matches_fresh(
         "hover",
