@@ -1,6 +1,6 @@
 //! Specialized retained node-graph surface.
 
-use std::{any::Any, hash::Hash, sync::Arc};
+use std::{any::Any, collections::HashMap, hash::Hash, sync::Arc};
 
 use astrelis_core::{
     color::Color,
@@ -65,6 +65,93 @@ pub enum NodeGraphAction<Id> {
     ClearSelection,
 }
 
+/// The shaping request for one node title.
+///
+/// Sole producer of the request, so the memo key and the shaped text can never
+/// disagree. A second copy of these constants would compare unequal to the
+/// stored key on some field nobody remembered to keep in step, and every lookup
+/// would silently miss.
+fn title_request(title: &str) -> TextLayoutRequest {
+    let mut request = TextLayoutRequest::new(title.to_owned());
+    request.style = TextStyle {
+        size: 14.0,
+        color: Color::WHITE,
+        ..TextStyle::default()
+    };
+    request.paragraph.wrap = TextWrap::NoWrap;
+    request
+}
+
+/// One graph's memo of the titles it last shaped, keyed by node identity.
+///
+/// Shaping - itemization, font fallback, BiDi, kerning - is the most expensive
+/// thing this element does, and `layout` runs unconditionally: any invalidation
+/// that reaches the graph re-runs the whole pass, so a node dragged one logical
+/// unit used to re-shape every title on the canvas. Keying the retained
+/// [`TextLayout`] on the exact [`TextLayoutRequest`] that produced it turns
+/// those repeats into pointer clones, and because the key is the whole
+/// normalized request, every input that can reach the shaped output - the text,
+/// the style, the colour, the wrapping - invalidates its own entry. There is
+/// nothing to invalidate by hand and no need for the element to know which of
+/// its fields feed text.
+///
+/// The engine keeps one entry per shaped string in its own text elements, which
+/// is right when an element shapes exactly one. A graph shapes `N`, so a
+/// single-entry memo would thrash: two nodes would evict each other on every
+/// pass and shape twice as often as no memo at all. The entries are therefore
+/// keyed by `Id` - the domain identity the graph already requires to be
+/// `Eq + Hash` - and not by position in `nodes`, so a reorder is free rather
+/// than a full re-shape. Eviction needs no policy: [`Self::shape`] moves
+/// forward only the entries this frame's nodes claim, so a removed node's entry
+/// is dropped with the frame that removed it and the map stays exactly as large
+/// as the graph.
+struct TitleShapingMemo<Id> {
+    entries: HashMap<Id, (TextLayoutRequest, TextLayout)>,
+}
+
+/// Hand-written because deriving would demand `Id: Default`, which no graph
+/// identity owes anyone.
+impl<Id> Default for TitleShapingMemo<Id> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+}
+
+impl<Id: Clone + Eq + Hash> TitleShapingMemo<Id> {
+    /// Returns one layout per node, shaping only the titles that changed.
+    ///
+    /// Both the comparison and the stored key use
+    /// [`TextLayoutRequest::normalized`], so a request whose only difference
+    /// cannot reach the shaped output still hits.
+    ///
+    /// Two nodes sharing an identity, which the graph does not promise against,
+    /// cost the second one a re-shape, because the first already claimed the
+    /// entry. That is slow rather than wrong, and it is the same trade the rest
+    /// of the element makes for duplicate ids.
+    fn shape(
+        &mut self,
+        context: &mut LayoutContext<'_>,
+        nodes: &[GraphNode<Id>],
+    ) -> Result<Vec<TextLayout>, UiError> {
+        let mut previous = std::mem::take(&mut self.entries);
+        self.entries.reserve(nodes.len());
+        let mut labels = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let request = title_request(&node.title).normalized();
+            let layout = match previous.remove(&node.id) {
+                Some((shaped, layout)) if shaped == request => layout,
+                _ => context.shape_text(request.clone())?,
+            };
+            self.entries
+                .insert(node.id.clone(), (request, layout.clone()));
+            labels.push(layout);
+        }
+        Ok(labels)
+    }
+}
+
 /// Retained graph implementation exposed only for [`RetainedSpec`] integration.
 #[doc(hidden)]
 pub struct NodeGraphElement<Id, Action>
@@ -79,6 +166,7 @@ where
     hovered: Option<Id>,
     size: LogicalSize,
     labels: Vec<TextLayout>,
+    titles: TitleShapingMemo<Id>,
     emitter: ActionEmitter<Action>,
     map_action: Arc<dyn Fn(NodeGraphAction<Id>) -> Action>,
 }
@@ -118,20 +206,10 @@ where
         constraints: Constraints,
     ) -> Result<LogicalSize, UiError> {
         self.size = constraints.constrain(LogicalSize::new(640.0, 360.0));
-        self.labels = self
-            .nodes
-            .iter()
-            .map(|node| {
-                let mut request = TextLayoutRequest::new(node.title.clone());
-                request.style = TextStyle {
-                    size: 14.0,
-                    color: Color::WHITE,
-                    ..TextStyle::default()
-                };
-                request.paragraph.wrap = TextWrap::NoWrap;
-                context.shape_text(request)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        // The labels stay a parallel `Vec` rather than being read out of the
+        // memo: `paint` zips them with `nodes` and must not have to hash an id
+        // per node to draw a frame.
+        self.labels = self.titles.shape(context, &self.nodes)?;
         Ok(self.size)
     }
 
@@ -347,6 +425,7 @@ where
             hovered: None,
             size: LogicalSize::ZERO,
             labels: Vec::new(),
+            titles: TitleShapingMemo::default(),
             emitter: emitter.clone(),
             map_action: self.map_action.clone(),
         }

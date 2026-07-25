@@ -178,8 +178,6 @@ struct GraphScene {
 }
 
 impl GraphScene {
-    const NODES: usize = 3;
-
     fn new() -> Self {
         Self {
             viewport: GraphViewport::default(),
@@ -242,9 +240,6 @@ fn refreshing_a_node_graph_with_an_identical_spec_does_no_retained_work() {
 }
 
 #[test]
-#[ignore = "NodeGraphElement::layout reshapes every node title on every layout pass; \
-            rxui-widgets/src/node_graph.rs:121-134 has no shaping memo and the engine's \
-            ShapingMemo is pub(crate), so a pure pan costs one shape per node"]
 fn panning_a_node_graph_reshapes_no_node_titles() {
     let mut harness = Harness::new(GraphScene::new(), VIEWPORT).expect("the graph scene mounts");
     harness.mutate(|scene| {
@@ -253,23 +248,10 @@ fn panning_a_node_graph_reshapes_no_node_titles() {
             zoom: 1.0,
         };
     });
+    // `NodeGraphSpec::changed` still answers `Invalidation::ALL`, so the graph
+    // is dragged back through layout - but the pan cannot change a single title,
+    // so every request hits the memo and the shaper is never called.
     assert_eq!(harness.stats().shaped_text, 0);
-}
-
-#[test]
-fn panning_a_node_graph_currently_reshapes_every_node_title() {
-    let mut harness = Harness::new(GraphScene::new(), VIEWPORT).expect("the graph scene mounts");
-    harness.mutate(|scene| {
-        scene.viewport = GraphViewport {
-            pan: LogicalPoint::new(24.0, 0.0),
-            zoom: 1.0,
-        };
-    });
-    // Documents the bug `panning_a_node_graph_reshapes_no_node_titles` states:
-    // a pan is a paint-space translation, but `RetainedSpec::changed` can only
-    // answer `Invalidation::ALL`, and the element re-shapes unconditionally in
-    // `layout`, so the whole title set is shaped again. One shape per node.
-    assert_eq!(harness.stats().shaped_text, GraphScene::NODES);
 }
 
 #[test]

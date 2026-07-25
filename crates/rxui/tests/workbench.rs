@@ -267,6 +267,21 @@ fn dragging_the_root_splitter_widens_the_chart_pane() {
 }
 
 #[test]
+fn resizing_the_root_split_reshapes_no_graph_titles() {
+    let mut harness = mount();
+    harness.dispatch(Action::Resize(ROOT_SPLIT, 700.0));
+    // The graph's own configuration did not move here; its *parent* did, so the
+    // pane is re-measured from the outside and `NodeGraphElement::layout` runs
+    // whatever the spec reported. Nothing a spec can say about invalidation
+    // helps with that: only the per-node shaping memo keeps a splitter drag -
+    // one frame per pointer move - off the shaper.
+    assert_eq!(harness.stats().shaped_text, 0);
+    // And the drag really did re-measure, so the zero above is not a frame that
+    // never happened.
+    assert!(harness.stats().layout_elements > 0);
+}
+
+#[test]
 fn a_resize_action_clamps_the_root_split_into_a_usable_range() {
     let mut harness = mount();
     harness.dispatch(Action::Resize(ROOT_SPLIT, 12.0));
@@ -357,18 +372,18 @@ fn the_node_graph_reports_the_node_under_the_pointer_and_empty_canvas_clears_it(
 }
 
 #[test]
-fn selecting_a_graph_node_currently_reshapes_every_node_title() {
+fn selecting_a_graph_node_reshapes_no_node_title() {
     let mut harness = mount();
     let bounds = by_role(&harness, SemanticRole::Graph).bounds;
     harness.release_pointer_at(LogicalPoint::new(
         bounds.origin.x + 90.0,
         bounds.origin.y + 110.0,
     ));
-    // `NodeGraphSpec::changed` reports the new selection, which is only a fill
-    // colour - but the spec can answer nothing finer than `Invalidation::ALL`,
-    // so the graph is dragged back through layout and reshapes all three node
-    // titles. A selection highlight costs a full re-shape of the canvas.
-    assert_eq!(harness.stats().shaped_text, 3);
+    assert_eq!(harness.component().selected_node, Some(1));
+    // `NodeGraphSpec::changed` reports the new selection as `Invalidation::ALL`,
+    // so the graph is still dragged back through layout for what is only a fill
+    // colour - but the titles it finds there are the ones it already shaped.
+    assert_eq!(harness.stats().shaped_text, 0);
 }
 
 #[test]
