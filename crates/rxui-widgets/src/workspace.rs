@@ -179,3 +179,152 @@ pub const fn dock_axis(axis: DockAxis) -> Axis {
         DockAxis::Vertical => Axis::Vertical,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pane(id: u64) -> DockPane<&'static str> {
+        DockPane {
+            id,
+            title: "Pane".into(),
+            value: "value",
+        }
+    }
+
+    /// Split 1 over pane 10 and split 2 over pane 20 and tab group 3 (21, 22).
+    fn layout() -> DockNode<&'static str> {
+        DockNode::Split {
+            id: 1,
+            axis: DockAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(DockNode::Pane(pane(10))),
+            second: Box::new(DockNode::Split {
+                id: 2,
+                axis: DockAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(DockNode::Pane(pane(20))),
+                second: Box::new(DockNode::Tabs {
+                    id: 3,
+                    active: 21,
+                    panes: vec![pane(21), pane(22)],
+                }),
+            }),
+        }
+    }
+
+    fn active_in(node: &DockNode<&'static str>, group: u64) -> Option<u64> {
+        match node {
+            DockNode::Tabs { id, active, .. } if *id == group => Some(*active),
+            DockNode::Split { first, second, .. } => {
+                active_in(first, group).or_else(|| active_in(second, group))
+            }
+            DockNode::Pane(_) | DockNode::Tabs { .. } => None,
+        }
+    }
+
+    fn ratio_of(node: &DockNode<&'static str>, split: u64) -> Option<f32> {
+        match node {
+            DockNode::Split {
+                id,
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                if *id == split {
+                    Some(*ratio)
+                } else {
+                    ratio_of(first, split).or_else(|| ratio_of(second, split))
+                }
+            }
+            DockNode::Pane(_) | DockNode::Tabs { .. } => None,
+        }
+    }
+
+    #[test]
+    fn pane_ids_are_reported_in_visual_order() {
+        assert_eq!(layout().pane_ids(), vec![10, 20, 21, 22]);
+    }
+
+    #[test]
+    fn pane_ids_include_every_tab_not_just_the_active_one() {
+        let tabs = DockNode::Tabs {
+            id: 3,
+            active: 21,
+            panes: vec![pane(21), pane(22)],
+        };
+        assert_eq!(tabs.pane_ids(), vec![21, 22]);
+    }
+
+    #[test]
+    fn pane_ids_of_a_leaf_is_that_leaf() {
+        assert_eq!(DockNode::Pane(pane(10)).pane_ids(), vec![10]);
+    }
+
+    #[test]
+    fn set_ratio_reaches_nested_splits() {
+        let mut layout = layout();
+        assert!(layout.set_ratio(2, 0.25));
+        assert_eq!(ratio_of(&layout, 2), Some(0.25));
+        assert_eq!(ratio_of(&layout, 1), Some(0.5));
+    }
+
+    #[test]
+    fn set_ratio_clamps_into_a_usable_range() {
+        let mut layout = layout();
+        assert!(layout.set_ratio(1, -3.0));
+        assert_eq!(ratio_of(&layout, 1), Some(0.05));
+        assert!(layout.set_ratio(1, 12.0));
+        assert_eq!(ratio_of(&layout, 1), Some(0.95));
+    }
+
+    #[test]
+    fn set_ratio_rejects_identities_that_are_not_splits() {
+        let mut layout = layout();
+        // Tab groups and panes share the identity space with splits, so a
+        // ratio addressed at one of them must not silently hit a split.
+        assert!(!layout.set_ratio(3, 0.25));
+        assert!(!layout.set_ratio(10, 0.25));
+        assert!(!layout.set_ratio(999, 0.25));
+        assert_eq!(layout, self::layout());
+    }
+
+    #[test]
+    fn select_activates_a_pane_in_its_own_tab_group() {
+        let mut layout = layout();
+        assert!(layout.select(22));
+        assert_eq!(active_in(&layout, 3), Some(22));
+    }
+
+    #[test]
+    fn select_ignores_unknown_and_non_tab_panes() {
+        let mut layout = layout();
+        // Pane 10 is a leaf, not a tab, so there is no activation to change.
+        assert!(!layout.select(10));
+        assert!(!layout.select(999));
+        assert_eq!(layout, self::layout());
+    }
+
+    #[test]
+    fn select_only_touches_the_group_holding_the_pane() {
+        let mut layout = DockNode::Split {
+            id: 1,
+            axis: DockAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(DockNode::Tabs {
+                id: 2,
+                active: 20,
+                panes: vec![pane(20), pane(21)],
+            }),
+            second: Box::new(DockNode::Tabs {
+                id: 3,
+                active: 30,
+                panes: vec![pane(30), pane(31)],
+            }),
+        };
+        assert!(layout.select(31));
+        assert_eq!(active_in(&layout, 2), Some(20));
+        assert_eq!(active_in(&layout, 3), Some(31));
+    }
+}
