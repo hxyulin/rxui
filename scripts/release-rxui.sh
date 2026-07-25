@@ -10,14 +10,15 @@ layers=(
   "rxui-core"
   "rxui-controls rxui-widgets rxui-charts rxui-native"
   "rxui"
-  "rxui-testing"
 )
 
 required_astrelis=(
   astrelis-app astrelis-compositor astrelis-core astrelis-gpu
   astrelis-paint astrelis-paint-gpu astrelis-platform
-  astrelis-platform-winit astrelis-text astrelis-ui-core
-  astrelis-ui-host astrelis-ui-next astrelis-ui-testing
+  astrelis-platform-winit astrelis-text
+  # `astrelis-ui-core` is no longer used directly, but `astrelis-ui-host` still
+  # pulls it, so it must still be on the registry before RXUI can publish.
+  astrelis-ui-core astrelis-ui-host astrelis-ui-next
 )
 
 usage() {
