@@ -95,38 +95,56 @@ pub struct ChartElement<Action: 'static> {
     map_action: Arc<dyn Fn(ChartAction) -> Action>,
 }
 
+/// Domain extent covered by every plotted series.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DomainBounds {
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+}
+
+/// Maps one domain point into inset surface coordinates.
+///
+/// Kept free of element state so projection can be exercised directly for
+/// degenerate domains and surfaces smaller than the nominal inset.
+fn project_point(point: ChartPoint, bounds: DomainBounds, size: LogicalSize) -> LogicalPoint {
+    let x_span = (bounds.max_x - bounds.min_x).max(f64::EPSILON);
+    let y_span = (bounds.max_y - bounds.min_y).max(f64::EPSILON);
+    let inset = 12.0f32.min(size.width * 0.1).min(size.height * 0.1);
+    let width = (size.width - inset * 2.0).max(0.0);
+    let height = (size.height - inset * 2.0).max(0.0);
+    LogicalPoint::new(
+        inset + ((point.x - bounds.min_x) / x_span) as f32 * width,
+        inset + height - ((point.y - bounds.min_y) / y_span) as f32 * height,
+    )
+}
+
 impl<Action: 'static> ChartElement<Action> {
-    fn bounds(&self) -> Option<(f64, f64, f64, f64)> {
+    fn bounds(&self) -> Option<DomainBounds> {
         let mut points = self.series.iter().flat_map(|series| &series.points);
         let first = *points.next()?;
         Some(points.fold(
-            (first.x, first.x, first.y, first.y),
-            |(min_x, max_x, min_y, max_y), point| {
-                (
-                    min_x.min(point.x),
-                    max_x.max(point.x),
-                    min_y.min(point.y),
-                    max_y.max(point.y),
-                )
+            DomainBounds {
+                min_x: first.x,
+                max_x: first.x,
+                min_y: first.y,
+                max_y: first.y,
+            },
+            |bounds, point| DomainBounds {
+                min_x: bounds.min_x.min(point.x),
+                max_x: bounds.max_x.max(point.x),
+                min_y: bounds.min_y.min(point.y),
+                max_y: bounds.max_y.max(point.y),
             },
         ))
     }
 
     fn project(&self, point: ChartPoint) -> LogicalPoint {
-        let Some((min_x, max_x, min_y, max_y)) = self.bounds() else {
+        let Some(bounds) = self.bounds() else {
             return LogicalPoint::ZERO;
         };
-        let x_span = (max_x - min_x).max(f64::EPSILON);
-        let y_span = (max_y - min_y).max(f64::EPSILON);
-        let inset = 12.0f32
-            .min(self.size.width * 0.1)
-            .min(self.size.height * 0.1);
-        let width = (self.size.width - inset * 2.0).max(0.0);
-        let height = (self.size.height - inset * 2.0).max(0.0);
-        LogicalPoint::new(
-            inset + ((point.x - min_x) / x_span) as f32 * width,
-            inset + height - ((point.y - min_y) / y_span) as f32 * height,
-        )
+        project_point(point, bounds, self.size)
     }
 
     fn nearest(&self, position: LogicalPoint) -> Option<(u64, usize)> {
@@ -354,15 +372,153 @@ pub fn chart<Action: 'static>(spec: ChartSpec<Action>) -> View<Action> {
 }
 
 /// Selects representative line points while preserving both endpoints.
+///
+/// Returns indices into `points`, ascending, never longer than `target`. An
+/// empty input needs no special case: `target >= points.len()` already covers
+/// it and returns the empty index list.
 pub fn decimate_line(points: &[ChartPoint], target: usize) -> Vec<usize> {
     if target >= points.len() {
         return (0..points.len()).collect();
     }
-    if target < 2 || points.is_empty() {
-        return (0..target.min(points.len())).collect();
+    if target < 2 {
+        return (0..target).collect();
     }
     let step = (points.len() - 1) as f64 / (target - 1) as f64;
     (0..target)
         .map(|index| ((index as f64 * step).round() as usize).min(points.len() - 1))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn points(count: usize) -> Vec<ChartPoint> {
+        (0..count)
+            .map(|index| ChartPoint {
+                x: index as f64,
+                y: index as f64,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn decimate_line_keeps_every_point_when_target_is_not_smaller() {
+        let points = points(4);
+        assert_eq!(decimate_line(&points, 4), vec![0, 1, 2, 3]);
+        assert_eq!(decimate_line(&points, 9), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn decimate_line_handles_empty_input_for_every_target() {
+        // The `target >= points.len()` branch absorbs the empty case, so the
+        // former `points.is_empty()` guard was unreachable.
+        for target in [0, 1, 2, 7] {
+            assert!(decimate_line(&[], target).is_empty(), "target {target}");
+        }
+    }
+
+    #[test]
+    fn decimate_line_degenerates_below_two_targets() {
+        let points = points(8);
+        assert!(decimate_line(&points, 0).is_empty());
+        assert_eq!(decimate_line(&points, 1), vec![0]);
+    }
+
+    #[test]
+    fn decimate_line_preserves_both_endpoints() {
+        let points = points(97);
+        for target in 2..=32 {
+            let selected = decimate_line(&points, target);
+            assert_eq!(selected.len(), target, "target {target}");
+            assert_eq!(selected.first().copied(), Some(0), "target {target}");
+            assert_eq!(selected.last().copied(), Some(96), "target {target}");
+            assert!(
+                selected.windows(2).all(|pair| pair[0] < pair[1]),
+                "target {target} produced {selected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decimate_line_spaces_indices_evenly() {
+        assert_eq!(decimate_line(&points(10), 4), vec![0, 3, 6, 9]);
+        assert_eq!(decimate_line(&points(5), 3), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn decimate_line_repeats_no_index_when_target_is_one_below_the_count() {
+        // Rounding is the only thing keeping this injective; a duplicate index
+        // would silently drop a point from the decimated polyline.
+        for count in 3..64 {
+            let selected = decimate_line(&points(count), count - 1);
+            assert!(
+                selected.windows(2).all(|pair| pair[0] < pair[1]),
+                "count {count} produced {selected:?}"
+            );
+        }
+    }
+
+    const UNIT_BOUNDS: DomainBounds = DomainBounds {
+        min_x: 0.0,
+        max_x: 10.0,
+        min_y: 0.0,
+        max_y: 10.0,
+    };
+
+    #[test]
+    fn project_point_maps_the_domain_corners_to_the_inset_box() {
+        let size = LogicalSize::new(200.0, 100.0);
+        let origin = project_point(ChartPoint { x: 0.0, y: 0.0 }, UNIT_BOUNDS, size);
+        let opposite = project_point(ChartPoint { x: 10.0, y: 10.0 }, UNIT_BOUNDS, size);
+        assert_eq!(origin, LogicalPoint::new(10.0, 90.0));
+        assert_eq!(opposite, LogicalPoint::new(190.0, 10.0));
+    }
+
+    #[test]
+    fn project_point_inverts_the_vertical_axis() {
+        let size = LogicalSize::new(200.0, 100.0);
+        let low = project_point(ChartPoint { x: 5.0, y: 2.0 }, UNIT_BOUNDS, size);
+        let high = project_point(ChartPoint { x: 5.0, y: 8.0 }, UNIT_BOUNDS, size);
+        assert!(high.y < low.y);
+        assert_eq!(low.x, high.x);
+    }
+
+    #[test]
+    fn project_point_stays_finite_for_a_degenerate_domain() {
+        let bounds = DomainBounds {
+            min_x: 3.0,
+            max_x: 3.0,
+            min_y: -1.0,
+            max_y: -1.0,
+        };
+        let projected = project_point(
+            ChartPoint { x: 3.0, y: -1.0 },
+            bounds,
+            LogicalSize::new(200.0, 100.0),
+        );
+        assert!(projected.x.is_finite() && projected.y.is_finite());
+        assert_eq!(projected, LogicalPoint::new(10.0, 90.0));
+    }
+
+    #[test]
+    fn project_point_shrinks_the_inset_on_small_surfaces() {
+        let size = LogicalSize::new(40.0, 20.0);
+        // The inset is 10% of the smaller side, not the nominal 12 logical
+        // pixels, so the plot area never collapses to zero width.
+        let origin = project_point(ChartPoint { x: 0.0, y: 0.0 }, UNIT_BOUNDS, size);
+        let opposite = project_point(ChartPoint { x: 10.0, y: 10.0 }, UNIT_BOUNDS, size);
+        assert_eq!(origin, LogicalPoint::new(2.0, 18.0));
+        assert_eq!(opposite, LogicalPoint::new(38.0, 2.0));
+    }
+
+    #[test]
+    fn project_point_survives_a_zero_sized_surface() {
+        let projected = project_point(
+            ChartPoint { x: 4.0, y: 4.0 },
+            UNIT_BOUNDS,
+            LogicalSize::ZERO,
+        );
+        assert_eq!(projected, LogicalPoint::ZERO);
+    }
 }
