@@ -318,7 +318,7 @@ pub fn icon_button_with<Action: Clone + 'static>(
     action: Action,
     style: IconButtonStyle,
 ) -> View<Action> {
-    crate::view::icon_button_view(icon, label.into(), action, style)
+    crate::views::icon_button_view(icon, label.into(), action, style)
 }
 
 /// Common editor glyphs.
