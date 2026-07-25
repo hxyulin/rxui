@@ -1,14 +1,13 @@
 //! Component and keyed reconciliation tests.
 
-use astrelis_core::geometry::LogicalSize;
-use astrelis_platform::{
-    DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey, PhysicalKey,
-};
+use astrelis_core::geometry::{LogicalPoint, LogicalSize};
+use astrelis_platform::NamedKey;
 use rxui::{
-    CommandItem, CommandPaletteNavigation, Component, ComponentContext, ComponentHost,
-    ComponentWithProps, PropertyField, Theme, button, checkbox, column, command_palette, component,
-    label, property_grid, slider, stack, text_field,
+    CommandItem, CommandPaletteNavigation, Component, ComponentContext, ComponentWithProps,
+    PropertyField, Theme, button, checkbox, column, command_palette, component, label,
+    property_grid, slider, stack, text_field,
 };
+use rxui_test_support::Harness;
 
 #[derive(Clone)]
 enum Action {
@@ -59,23 +58,19 @@ fn one_property_change_mutates_only_the_field_path() {
             })
             .collect(),
     };
-    let mut host =
-        ComponentHost::new(component, LogicalSize::new(800.0, 700.0), Theme::dark()).unwrap();
-    let stats = host
-        .dispatch(Action::SetValue("changed".into()))
-        .unwrap()
-        .stats;
+    let mut harness = Harness::new(component, LogicalSize::new(800.0, 700.0)).unwrap();
+    harness.dispatch(Action::SetValue("changed".into()));
+    let stats = harness.stats();
     assert!(stats.rebuilt_fragments <= 4, "{stats:?}");
 }
 
 #[test]
 fn typed_effects_leave_the_local_action_channel() {
     let component = Properties { fields: Vec::new() };
-    let mut host =
-        ComponentHost::new(component, LogicalSize::new(800.0, 700.0), Theme::dark()).unwrap();
-    host.dispatch(Action::Save).unwrap();
+    let mut harness = Harness::new(component, LogicalSize::new(800.0, 700.0)).unwrap();
+    harness.dispatch(Action::Save);
     assert_eq!(
-        host.drain_effects().collect::<Vec<_>>(),
+        harness.drain_effects().collect::<Vec<_>>(),
         vec![Effect::Saved]
     );
 }
@@ -91,24 +86,18 @@ fn keyed_moves_preserve_retained_field_identity() {
             })
             .collect(),
     };
-    let mut host =
-        ComponentHost::new(component, LogicalSize::new(800.0, 700.0), Theme::dark()).unwrap();
-    let before = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .filter(|node| node.data.label.starts_with("Property "))
-        .map(|node| (node.data.label, node.id))
-        .collect::<std::collections::HashMap<_, _>>();
-    host.dispatch(Action::Reverse).unwrap();
-    let after = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .filter(|node| node.data.label.starts_with("Property "))
-        .map(|node| (node.data.label, node.id))
-        .collect::<std::collections::HashMap<_, _>>();
-    assert_eq!(before, after);
+    let mut harness = Harness::new(component, LogicalSize::new(800.0, 700.0)).unwrap();
+    let identities = |harness: &Harness<Properties>| {
+        harness
+            .semantics()
+            .into_iter()
+            .filter(|node| node.data.label.starts_with("Property "))
+            .map(|node| (node.data.label, node.id))
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+    let before = identities(&harness);
+    harness.dispatch(Action::Reverse);
+    assert_eq!(before, identities(&harness));
 }
 
 #[test]
@@ -124,7 +113,7 @@ fn duplicate_keys_fail_deterministically() {
             column(vec![label("a").keyed("same"), label("b").keyed("same")])
         }
     }
-    assert!(ComponentHost::new(Duplicate, LogicalSize::new(100.0, 100.0), Theme::dark()).is_err());
+    assert!(Harness::new(Duplicate, LogicalSize::new(100.0, 100.0)).is_err());
 }
 
 #[derive(Clone)]
@@ -158,49 +147,25 @@ impl Component for Form {
 
 #[test]
 fn mapped_local_field_action_edits_and_reconciles_without_recreation() {
-    let mut host = ComponentHost::new(
+    let mut harness = Harness::new(
         Form {
             name: "Astrelis".into(),
         },
         LogicalSize::new(400.0, 100.0),
-        Theme::dark(),
     )
     .unwrap();
-    let semantic = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Name")
-        .unwrap();
-    let id = semantic.id;
-    let point = astrelis_core::geometry::LogicalPoint::new(
-        semantic.bounds.origin.x + semantic.bounds.size.width - 10.0,
-        semantic.bounds.origin.y + 10.0,
-    );
-    host.input(rxui::core::UiInput::PointerPressed(point))
-        .unwrap();
-    host.input(rxui::core::UiInput::Keyboard {
-        input: KeyboardInput {
-            device_id: DeviceId(1),
-            physical_key: PhysicalKey::Unidentified,
-            logical_key: Key::Character("!".into()),
-            text: Some("!".into()),
-            location: KeyLocation::Standard,
-            state: ElementState::Pressed,
-            repeat: false,
-            synthetic: false,
-        },
-        modifiers: Modifiers::default(),
-    })
-    .unwrap();
-    assert_eq!(host.component().name, "Astrelis!");
-    let after = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Name")
-        .unwrap();
-    assert_eq!(after.id, id);
+    let field = harness.find("Name");
+    // Click near the trailing edge so the caret lands after the existing text
+    // rather than splitting it, which is what makes the appended "!" legible.
+    harness.click_at(LogicalPoint::new(
+        field.bounds.origin.x + field.bounds.size.width - 10.0,
+        field.bounds.origin.y + 10.0,
+    ));
+    harness.type_text("!");
+
+    assert_eq!(harness.component().name, "Astrelis!");
+    let after = harness.find("Name");
+    assert_eq!(after.id, field.id);
     assert_eq!(after.data.value.as_deref(), Some("Astrelis!"));
 }
 
@@ -287,42 +252,24 @@ impl Component for Parent {
     }
 }
 
-fn activate_increment(host: &mut ComponentHost<Parent>) {
-    let button = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Increment")
-        .unwrap();
-    let point = astrelis_core::geometry::LogicalPoint::new(
-        button.bounds.origin.x + 5.0,
-        button.bounds.origin.y + 5.0,
-    );
-    host.input(rxui::core::UiInput::PointerPressed(point))
-        .unwrap();
-    host.input(rxui::core::UiInput::PointerReleased(point))
-        .unwrap();
-}
-
 #[test]
 fn nested_component_preserves_local_state_and_maps_effects() {
-    let mut host = ComponentHost::new(
+    let mut harness = Harness::new(
         Parent {
             step: 1,
             child_value: 0,
         },
         LogicalSize::new(400.0, 100.0),
-        Theme::dark(),
     )
     .unwrap();
 
-    activate_increment(&mut host);
-    assert_eq!(host.component().child_value, 1);
+    harness.click("Increment");
+    assert_eq!(harness.component().child_value, 1);
 
-    host.dispatch(ParentAction::SetStep(2)).unwrap();
-    activate_increment(&mut host);
+    harness.dispatch(ParentAction::SetStep(2));
+    harness.click("Increment");
     assert_eq!(
-        host.component().child_value,
+        harness.component().child_value,
         3,
         "prop updates must not recreate child-local state"
     );
@@ -360,45 +307,21 @@ impl Component for Controls {
 
 #[test]
 fn controlled_checkbox_and_slider_route_values() {
-    let mut host = ComponentHost::new(
+    let mut harness = Harness::new(
         Controls {
             checked: false,
             value: 0.0,
         },
         LogicalSize::new(300.0, 100.0),
-        Theme::dark(),
     )
     .unwrap();
-    let semantics = host.ui().semantic_snapshot();
-    let checkbox = semantics
-        .iter()
-        .find(|node| node.data.label == "Visible")
-        .unwrap();
-    let point = astrelis_core::geometry::LogicalPoint::new(
-        checkbox.bounds.origin.x + 5.0,
-        checkbox.bounds.origin.y + 5.0,
-    );
-    host.input(rxui::core::UiInput::PointerPressed(point))
-        .unwrap();
-    host.input(rxui::core::UiInput::PointerReleased(point))
-        .unwrap();
-    assert!(host.component().checked);
 
-    let slider = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Opacity")
-        .unwrap();
-    let point = astrelis_core::geometry::LogicalPoint::new(
-        slider.bounds.origin.x + slider.bounds.size.width * 0.5,
-        slider.bounds.origin.y + slider.bounds.size.height * 0.5,
-    );
-    host.input(rxui::core::UiInput::PointerPressed(point))
-        .unwrap();
-    host.input(rxui::core::UiInput::PointerReleased(point))
-        .unwrap();
-    assert!((host.component().value - 0.5).abs() < 0.01);
+    harness.click("Visible");
+    assert!(harness.component().checked);
+
+    // Clicking a slider's midpoint must resolve to the middle of its range.
+    harness.click("Opacity");
+    assert!((harness.component().value - 0.5).abs() < 0.01);
 }
 
 #[derive(Clone)]
@@ -428,55 +351,27 @@ impl Component for EnabledControl {
     }
 }
 
-fn activate_conditional(host: &mut ComponentHost<EnabledControl>) {
-    let button = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Conditional")
-        .unwrap();
-    let point = astrelis_core::geometry::LogicalPoint::new(
-        button.bounds.origin.x + 5.0,
-        button.bounds.origin.y + 5.0,
-    );
-    host.input(rxui::core::UiInput::PointerPressed(point))
-        .unwrap();
-    host.input(rxui::core::UiInput::PointerReleased(point))
-        .unwrap();
-}
-
 #[test]
 fn enabled_modifier_controls_a_retained_subtree_without_recreation() {
-    let mut host = ComponentHost::new(
+    let mut harness = Harness::new(
         EnabledControl {
             enabled: false,
             activations: 0,
         },
         LogicalSize::new(300.0, 100.0),
-        Theme::dark(),
     )
     .unwrap();
-    let before = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Conditional")
-        .unwrap();
+    let before = harness.find("Conditional");
     assert!(!before.enabled);
-    activate_conditional(&mut host);
-    assert_eq!(host.component().activations, 0);
+    harness.click("Conditional");
+    assert_eq!(harness.component().activations, 0);
 
-    host.dispatch(EnabledAction::SetEnabled(true)).unwrap();
-    let after = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Conditional")
-        .unwrap();
+    harness.dispatch(EnabledAction::SetEnabled(true));
+    let after = harness.find("Conditional");
     assert_eq!(after.id, before.id);
     assert!(after.enabled);
-    activate_conditional(&mut host);
-    assert_eq!(host.component().activations, 1);
+    harness.click("Conditional");
+    assert_eq!(harness.component().activations, 1);
 }
 
 #[derive(Clone)]
@@ -511,51 +406,17 @@ impl Component for Overlay {
 
 #[test]
 fn focus_scope_autofocuses_restores_and_routes_escape() {
-    let mut host = ComponentHost::new(
-        Overlay { open: false },
-        LogicalSize::new(300.0, 100.0),
-        Theme::dark(),
-    )
-    .unwrap();
-    let root = host.ui().root();
-    host.ui_mut().focus_first_in_subtree(root).unwrap();
-    host.ui_mut().update_passes().unwrap();
-    assert!(
-        host.ui()
-            .semantic_snapshot()
-            .into_iter()
-            .any(|node| node.data.label == "Open" && node.focused)
-    );
+    let mut harness =
+        Harness::new(Overlay { open: false }, LogicalSize::new(300.0, 100.0)).unwrap();
+    harness.focus_first();
+    assert!(harness.find("Open").focused);
 
-    host.dispatch(OverlayAction::Toggle).unwrap();
-    assert!(
-        host.ui()
-            .semantic_snapshot()
-            .into_iter()
-            .any(|node| node.data.label == "Close" && node.focused)
-    );
+    harness.dispatch(OverlayAction::Toggle);
+    assert!(harness.find("Close").focused);
 
-    host.input(rxui::core::UiInput::Keyboard {
-        input: KeyboardInput {
-            device_id: DeviceId(1),
-            physical_key: PhysicalKey::Unidentified,
-            logical_key: Key::Named(NamedKey::Escape),
-            text: None,
-            location: KeyLocation::Standard,
-            state: ElementState::Pressed,
-            repeat: false,
-            synthetic: false,
-        },
-        modifiers: Modifiers::default(),
-    })
-    .unwrap();
-    assert!(!host.component().open);
-    assert!(
-        host.ui()
-            .semantic_snapshot()
-            .into_iter()
-            .any(|node| node.data.label == "Open" && node.focused)
-    );
+    harness.press(NamedKey::Escape);
+    assert!(!harness.component().open);
+    assert!(harness.find("Open").focused);
 }
 
 #[derive(Clone)]
@@ -623,31 +484,17 @@ impl Component for Palette {
 
 #[test]
 fn command_palette_navigation_bubbles_through_the_search_field() {
-    let mut host = ComponentHost::new(
+    let mut harness = Harness::new(
         Palette {
             selected: 0,
             invoked: None,
         },
         LogicalSize::new(640.0, 480.0),
-        Theme::dark(),
     )
     .unwrap();
     for key in [NamedKey::Other("ArrowDown".into()), NamedKey::Enter] {
-        host.input(rxui::core::UiInput::Keyboard {
-            input: KeyboardInput {
-                device_id: DeviceId(1),
-                physical_key: PhysicalKey::Unidentified,
-                logical_key: Key::Named(key),
-                text: None,
-                location: KeyLocation::Standard,
-                state: ElementState::Pressed,
-                repeat: false,
-                synthetic: false,
-            },
-            modifiers: Modifiers::default(),
-        })
-        .unwrap();
+        harness.press(key);
     }
-    assert_eq!(host.component().selected, 1);
-    assert_eq!(host.component().invoked, Some(2));
+    assert_eq!(harness.component().selected, 1);
+    assert_eq!(harness.component().invoked, Some(2));
 }

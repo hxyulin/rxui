@@ -24,7 +24,7 @@ changes made with the patch active**:
 git checkout Cargo.lock
 ```
 
-CI enforces this — the `boundaries` job fails if `Cargo.lock` does not pin the
+CI enforces this - the `boundaries` job fails if `Cargo.lock` does not pin the
 revision named in `Cargo.toml`. To update the lockfile deliberately, move
 `.cargo/config.toml` aside first so Cargo resolves Astrelis from git.
 

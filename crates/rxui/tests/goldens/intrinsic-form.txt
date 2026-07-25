@@ -1,0 +1,5 @@
+Label label="Account" value=None bounds=(16.00,16.00) 50.59x14.00 enabled=true focused=false
+TextField label="Profile" value=Some("Astrelis") bounds=(16.00,42.00) 160.00x24.00 enabled=true focused=false
+Checkbox label="Notifications" value=Some("checked") bounds=(16.00,78.00) 180.00x28.00 enabled=true focused=false
+Slider label="Scale" value=Some("6") bounds=(16.00,118.00) 180.00x28.00 enabled=true focused=false
+Button label="Apply" value=None bounds=(16.00,158.00) 59.02x30.00 enabled=true focused=false

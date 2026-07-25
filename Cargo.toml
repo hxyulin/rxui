@@ -6,7 +6,7 @@ members = [
   "crates/rxui-controls",
   "crates/rxui-core",
   "crates/rxui-native",
-  "crates/rxui-testing",
+  "crates/rxui-test-support",
   "crates/rxui-widgets",
 ]
 
@@ -28,8 +28,10 @@ rxui-charts = { path = "crates/rxui-charts", version = "=0.1.0-rc.1" }
 rxui-controls = { path = "crates/rxui-controls", version = "=0.1.0-rc.1" }
 rxui-core = { path = "crates/rxui-core", version = "=0.1.0-rc.1" }
 rxui-native = { path = "crates/rxui-native", version = "=0.1.0-rc.1" }
-rxui-testing = { path = "crates/rxui-testing", version = "=0.1.0-rc.1" }
 rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
+# Unpublished, so deliberately carries no `version`: cargo strips path-only
+# dev-dependencies when packaging.
+rxui-test-support = { path = "crates/rxui-test-support" }
 
 # The component engine is under joint development in the sibling Astrelis
 # checkout and is not published yet. Pin an exact revision so CI and every
@@ -49,10 +51,8 @@ astrelis-paint-gpu = { git = "https://github.com/hxyulin/astrelis", rev = "39ea1
 astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
 astrelis-platform-winit = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
 astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
-astrelis-ui-core = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
 astrelis-ui-next = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
 astrelis-ui-host = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
-astrelis-ui-testing = { git = "https://github.com/hxyulin/astrelis", rev = "39ea10f602b825b302433dff5fad1796c0de4727", version = "=0.3.0-rc.1" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }

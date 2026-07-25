@@ -1,18 +1,14 @@
 //! Component synthetic scene goldens and interaction traces.
 
 use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-use astrelis_platform::{
-    CursorIcon, DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey,
-    PhysicalKey,
-};
-use rxui::core::{Axis, SemanticData, SemanticRole, UiInput};
+use astrelis_platform::{CursorIcon, NamedKey};
+use rxui::core::{Axis, SemanticData, SemanticRole};
 use rxui::{
-    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ComponentHost,
-    ContainerStyle, DialogAction, FrameStyle, Space, Theme, View, button, button_with, dialog,
-    label, panel, row_with, split_pane, stack,
+    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ContainerStyle,
+    DialogAction, FrameStyle, Space, Theme, View, button, button_with, dialog, label, panel,
+    row_with, split_pane, stack,
 };
-use rxui_testing::differential::SemanticScene;
-use rxui_testing::golden::assert_text_golden;
+use rxui_test_support::{Harness, assert_text_golden};
 
 #[derive(Clone)]
 enum SplitAction {
@@ -71,6 +67,15 @@ enum ModalAction {
 struct ModalScene {
     open: bool,
     background_activations: usize,
+}
+
+impl ModalScene {
+    const fn open() -> Self {
+        Self {
+            open: true,
+            background_activations: 0,
+        }
+    }
 }
 
 impl Component for ModalScene {
@@ -183,9 +188,8 @@ impl Component for StackScene {
     }
 }
 
-fn scene<C: Component>(component: C, viewport: LogicalSize) -> SemanticScene {
-    let host = ComponentHost::new(component, viewport, Theme::dark()).unwrap();
-    SemanticScene::from_component(&host.ui().semantic_snapshot())
+fn mount<C: Component>(component: C, viewport: LogicalSize) -> Harness<C> {
+    Harness::new(component, viewport).expect("synthetic scene mounts")
 }
 
 #[test]
@@ -193,186 +197,96 @@ fn synthetic_component_layouts_match_reviewed_golden() {
     let mut snapshot = String::new();
     for ratio in [0.25, 0.5, 0.75] {
         snapshot.push_str(&format!("[split {ratio:.2}]\n"));
-        snapshot.push_str(&scene(SplitScene { ratio }, LogicalSize::new(400.0, 240.0)).snapshot());
+        snapshot.push_str(&mount(SplitScene { ratio }, LogicalSize::new(400.0, 240.0)).snapshot());
     }
     snapshot.push_str("[modal 640x480]\n");
-    snapshot.push_str(
-        &scene(
-            ModalScene {
-                open: true,
-                background_activations: 0,
-            },
-            LogicalSize::new(640.0, 480.0),
-        )
-        .snapshot(),
-    );
+    snapshot.push_str(&mount(ModalScene::open(), LogicalSize::new(640.0, 480.0)).snapshot());
     snapshot.push_str("[grow 1-2-1]\n");
-    snapshot.push_str(&scene(GrowScene, LogicalSize::new(400.0, 120.0)).snapshot());
+    snapshot.push_str(&mount(GrowScene, LogicalSize::new(400.0, 120.0)).snapshot());
     snapshot.push_str("[stack overlap]\n");
     snapshot.push_str(
-        &scene(
+        &mount(
             StackScene { back: 0, front: 0 },
             LogicalSize::new(240.0, 100.0),
         )
         .snapshot(),
     );
     snapshot.push_str("[modal 320x240]\n");
-    snapshot.push_str(
-        &scene(
-            ModalScene {
-                open: true,
-                background_activations: 0,
-            },
-            LogicalSize::new(320.0, 240.0),
-        )
-        .snapshot(),
-    );
+    snapshot.push_str(&mount(ModalScene::open(), LogicalSize::new(320.0, 240.0)).snapshot());
     assert_text_golden(
         &snapshot,
-        include_str!("goldens/next-synthetic-scenes.txt"),
+        include_str!("goldens/synthetic-scenes.txt"),
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/goldens/next-synthetic-scenes.txt"
+            "/tests/goldens/synthetic-scenes.txt"
         ),
     );
 }
 
 #[test]
 fn splitter_click_drag_capture_and_release_trace_is_stable() {
-    let mut host = ComponentHost::new(
-        SplitScene { ratio: 0.5 },
-        LogicalSize::new(400.0, 240.0),
-        Theme::dark(),
-    )
-    .unwrap();
-    let first = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "First pane")
-        .unwrap()
-        .bounds;
+    let mut harness = mount(SplitScene { ratio: 0.5 }, LogicalSize::new(400.0, 240.0));
+    // The splitter handle publishes no accessible node of its own, so it has to
+    // be located from the pane whose trailing edge it follows.
+    let first = harness.bounds("First pane");
     let divider = LogicalPoint::new(first.origin.x + first.size.width + 3.0, 120.0);
 
-    host.input(UiInput::PointerMoved(divider)).unwrap();
-    assert_eq!(host.ui().cursor_icon(), CursorIcon::EwResize);
-    host.input(UiInput::PointerPressed(divider)).unwrap();
-    host.input(UiInput::PointerReleased(divider)).unwrap();
-    assert!((host.component().ratio - 0.5).abs() < 0.001);
+    harness.hover_at(divider);
+    assert_eq!(harness.cursor_icon(), CursorIcon::EwResize);
+    harness.click_at(divider);
+    assert!((harness.component().ratio - 0.5).abs() < 0.001);
 
-    host.input(UiInput::PointerPressed(divider)).unwrap();
-    host.input(UiInput::PointerMoved(LogicalPoint::new(300.0, 120.0)))
-        .unwrap();
-    assert!((0.7..0.8).contains(&host.component().ratio));
-    host.input(UiInput::PointerReleased(LogicalPoint::new(450.0, 120.0)))
-        .unwrap();
-    assert!((host.component().ratio - 0.95).abs() < 0.001);
-    host.input(UiInput::PointerMoved(LogicalPoint::new(100.0, 120.0)))
-        .unwrap();
-    assert!((host.component().ratio - 0.95).abs() < 0.001);
+    harness.press_pointer_at(divider);
+    harness.hover_at(LogicalPoint::new(300.0, 120.0));
+    assert!((0.7..0.8).contains(&harness.component().ratio));
+    harness.release_pointer_at(LogicalPoint::new(450.0, 120.0));
+    assert!((harness.component().ratio - 0.95).abs() < 0.001);
+    harness.hover_at(LogicalPoint::new(100.0, 120.0));
+    assert!((harness.component().ratio - 0.95).abs() < 0.001);
 }
 
 #[test]
 fn modal_disables_background_autofocuses_and_dismisses_on_escape() {
-    let mut host = ComponentHost::new(
-        ModalScene {
-            open: true,
-            background_activations: 0,
-        },
-        LogicalSize::new(640.0, 480.0),
-        Theme::dark(),
-    )
-    .unwrap();
-    let nodes = host.ui().semantic_snapshot();
-    let background = nodes
-        .iter()
-        .find(|node| node.data.label == "Background action")
-        .unwrap();
-    let cancel = nodes
-        .iter()
-        .find(|node| node.data.label == "Cancel")
-        .unwrap();
-    assert!(!background.enabled);
-    assert!(cancel.focused);
+    let mut harness = mount(ModalScene::open(), LogicalSize::new(640.0, 480.0));
+    assert!(!harness.find("Background action").enabled);
+    assert!(harness.find("Cancel").focused);
 
-    host.semantic_action(background.id, rxui::core::SemanticAction::Activate)
-        .unwrap();
-    assert_eq!(host.component().background_activations, 0);
+    harness.activate("Background action");
+    assert_eq!(harness.component().background_activations, 0);
 
-    host.input(UiInput::Keyboard {
-        input: KeyboardInput {
-            device_id: DeviceId(1),
-            physical_key: PhysicalKey::Unidentified,
-            logical_key: Key::Named(NamedKey::Escape),
-            text: None,
-            location: KeyLocation::Standard,
-            state: ElementState::Pressed,
-            repeat: false,
-            synthetic: true,
-        },
-        modifiers: Modifiers::default(),
-    })
-    .unwrap();
-    assert!(!host.component().open);
+    harness.press(NamedKey::Escape);
+    assert!(!harness.component().open);
 }
 
 #[test]
 fn hover_entry_and_window_exit_update_cursor_and_repaint_locally() {
-    let mut host =
-        ComponentHost::new(HoverScene, LogicalSize::new(240.0, 80.0), Theme::dark()).unwrap();
-    let bounds = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Hover target")
-        .unwrap()
-        .bounds;
-    let point = LogicalPoint::new(
-        bounds.origin.x + bounds.size.width * 0.5,
-        bounds.origin.y + bounds.size.height * 0.5,
-    );
-    let enter = host
-        .input(UiInput::PointerMoved(point))
-        .unwrap()
-        .unwrap()
-        .stats;
-    assert_eq!(host.ui().cursor_icon(), CursorIcon::Pointer);
-    assert!(enter.rebuilt_fragments <= 2);
+    let mut harness = mount(HoverScene, LogicalSize::new(240.0, 80.0));
 
-    let leave = host.input(UiInput::PointerLeft).unwrap().unwrap().stats;
-    assert_eq!(host.ui().cursor_icon(), CursorIcon::Default);
-    assert!(leave.rebuilt_fragments <= 2);
+    harness.hover("Hover target");
+    assert_eq!(harness.cursor_icon(), CursorIcon::Pointer);
+    assert!(harness.stats().rebuilt_fragments <= 2);
+
+    harness.pointer_left();
+    assert_eq!(harness.cursor_icon(), CursorIcon::Default);
+    assert!(harness.stats().rebuilt_fragments <= 2);
 }
 
 #[test]
 fn proportional_growth_and_stack_hit_order_are_deterministic() {
-    let grow = scene(GrowScene, LogicalSize::new(400.0, 120.0));
+    let grow = mount(GrowScene, LogicalSize::new(400.0, 120.0));
     let widths = grow
+        .scene()
         .landmarks
         .iter()
         .map(|landmark| landmark.bounds.size.width)
         .collect::<Vec<_>>();
     assert_eq!(widths, vec![100.0, 200.0, 100.0]);
 
-    let mut host = ComponentHost::new(
+    let mut stack = mount(
         StackScene { back: 0, front: 0 },
         LogicalSize::new(240.0, 100.0),
-        Theme::dark(),
-    )
-    .unwrap();
-    let front = host
-        .ui()
-        .semantic_snapshot()
-        .into_iter()
-        .find(|node| node.data.label == "Front layer")
-        .unwrap()
-        .bounds;
-    let point = LogicalPoint::new(
-        front.origin.x + front.size.width * 0.5,
-        front.origin.y + front.size.height * 0.5,
     );
-    host.input(UiInput::PointerPressed(point)).unwrap();
-    host.input(UiInput::PointerReleased(point)).unwrap();
-    assert_eq!(host.component().back, 0);
-    assert_eq!(host.component().front, 1);
+    stack.click("Front layer");
+    assert_eq!(stack.component().back, 0);
+    assert_eq!(stack.component().front, 1);
 }

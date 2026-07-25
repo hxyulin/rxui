@@ -66,9 +66,12 @@ All notable public RXUI changes are documented here.
 - The old message-application, mutable widget, editor facade, devtools facade,
   native-menu, and desktop-service packages.
 - Examples and tutorials authored against those removed APIs.
+- The `rxui-testing` crate. Its differential oracle against the old retained
+  engine is replaced by exact component-side layout assertions, and its
+  headless harness moved down into the unpublished `rxui-test-support`.
 
-The old retained UI remains only as a private test oracle for differential
-layout goldens. It is not part of the public RXUI authoring API.
+The old retained UI is no longer referenced by any RXUI crate. It still reaches
+the dependency graph through `astrelis-ui-host`, which is an engine concern.
 
 ### Known gaps
 

@@ -45,7 +45,7 @@ The public API includes:
 - retained chart, node-graph, image, render-view, and docking surfaces;
 - host-executed clipboard and background-task requests with typed completion;
 - headless `ComponentHost` and native `ComponentWindow` runtimes;
-- deterministic interaction, semantic, layout, and differential golden tests.
+- deterministic interaction, semantic, and layout golden tests.
 
 The low-level Astrelis retained core is available through `rxui::core` for
 specialized elements. The former message-application and mutable widget-tree
@@ -60,6 +60,10 @@ Internally, the implementation is split by responsibility:
 - `rxui-charts` owns chart models, rendering, and interaction;
 - `rxui-native` owns native window/runtime integration;
 - `rxui` is the stable aggregate facade application code should depend on.
+
+`rxui-test-support` is unpublished scaffolding for RXUI's own suites. It sits
+below `rxui` in the graph, which is what lets integration tests share a headless
+harness without a `testing` feature on the library.
 
 ## Examples
 
@@ -101,7 +105,7 @@ cargo test --workspace --all-features --all-targets
 does make Cargo rewrite `Cargo.lock` to path sources; see
 [CONTRIBUTING.md](CONTRIBUTING.md) before committing that file.
 
-Layout and behavior parity tests are documented in
+Layout and behavior conformance tests are documented in
 [UI conformance goldens](docs/ui-conformance-goldens.md). `cargo run -p rxui
 --example native_smoke` renders a few frames in a real window and exits, which is
 the cross-platform check that the native path still works.
