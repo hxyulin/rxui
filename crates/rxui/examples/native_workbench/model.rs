@@ -1,77 +1,118 @@
-//! Native editor-style workbench exercising the migrated UI catalog.
+//! The workbench component: docking, charts, a graph, and every app surface.
+//!
+//! This module is deliberately free of windowing, of the event loop, and of any
+//! `astrelis-app` dependency, so it can be compiled into a headless integration
+//! test as well as into the native binary. `crates/rxui/tests/workbench.rs`
+//! includes this exact file with `#[path]` and drives it through `Harness`.
 
+// The wasm build of this example has an empty `main`, so nothing here is
+// reachable there.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 use astrelis_core::{
     color::Color,
-    geometry::{LogicalPoint, LogicalSize, Size},
+    geometry::{LogicalPoint, LogicalSize},
 };
-use astrelis_platform::WindowAttributes;
 use rxui::{
     ButtonStyle, ButtonVariant, ChartAction, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec,
     Choice, CommandItem, CommandPaletteNavigation, Component, ComponentContext, ContainerStyle,
     DialogAction, DockAxis, DockNode, DockPane, FrameStyle, GraphEdge, GraphNode, IconButtonStyle,
     NodeGraphAction, NodeGraphSpec, Space, StackStyle, Theme, Toast, ToastLevel, ToolbarItem, View,
-    WindowHostOptions, chart, command_palette, dialog, dock_workspace, form_section, icons,
-    node_graph, radio_group, run_component, stack_with, toasts, toolbar,
+    chart, command_palette, dialog, dock_workspace, form_section, icons, node_graph, radio_group,
+    stack_with, toasts, toolbar,
 };
 
+/// Identity of the split holding the two dock groups.
+pub const ROOT_SPLIT: u64 = 10;
+/// Identity of the pane showing the chart.
+pub const CHART_PANE: u64 = 1;
+/// Identity of the pane showing the node graph.
+pub const GRAPH_PANE: u64 = 2;
+
+/// Which surface a dock pane renders.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Pane {
+pub enum Pane {
+    /// Interactive time-series chart.
     Chart,
+    /// Interactive node graph.
     Graph,
 }
 
-#[derive(Clone)]
-enum Action {
+/// Every intent the workbench can report.
+#[derive(Clone, Debug)]
+pub enum Action {
+    /// Activate a dock pane inside its tab group.
     SelectPane(u64),
+    /// Replace a split ratio.
     Resize(u64, f32),
+    /// A chart interaction.
     Chart(ChartAction),
+    /// A node-graph interaction.
     Graph(NodeGraphAction<u64>),
+    /// Choose an interaction mode in the settings dialog.
     SetMode(String),
+    /// Open the settings dialog.
     OpenDialog,
+    /// Dismiss the settings dialog.
     CloseDialog,
+    /// Show or hide the command palette.
     TogglePalette,
+    /// Move the palette selection backwards.
     PreviousCommand,
+    /// Move the palette selection forwards.
     NextCommand,
+    /// Replace the palette query.
     Query(String),
+    /// Persist the workspace and raise a toast.
     Save,
+    /// Dismiss the toast.
     ClearToast,
 }
 
-struct Workbench {
-    layout: DockNode<Pane>,
-    selected_node: Option<u64>,
-    selected_series: Option<(u64, usize)>,
-    mode: String,
-    dialog_open: bool,
-    palette_open: bool,
-    selected_command: usize,
-    query: String,
-    toast: Option<Toast<Action>>,
+/// The whole workbench application state.
+pub struct Workbench {
+    /// Persistent dock layout.
+    pub layout: DockNode<Pane>,
+    /// Graph node the user last selected.
+    pub selected_node: Option<u64>,
+    /// Chart series and point index the user last selected.
+    pub selected_series: Option<(u64, usize)>,
+    /// Chosen interaction mode.
+    pub mode: String,
+    /// Whether the settings dialog is open.
+    pub dialog_open: bool,
+    /// Whether the command palette is open.
+    pub palette_open: bool,
+    /// Palette row the user has highlighted.
+    pub selected_command: usize,
+    /// Current palette query.
+    pub query: String,
+    /// Pending status toast.
+    pub toast: Option<Toast<Action>>,
 }
 
 impl Workbench {
-    fn new() -> Self {
+    /// Creates the workbench with the chart and the graph docked side by side.
+    pub fn new() -> Self {
         Self {
             layout: DockNode::Split {
-                id: 10,
+                id: ROOT_SPLIT,
                 axis: DockAxis::Horizontal,
                 ratio: 0.5,
                 first: Box::new(DockNode::Tabs {
                     id: 11,
-                    active: 1,
+                    active: CHART_PANE,
                     panes: vec![DockPane {
-                        id: 1,
+                        id: CHART_PANE,
                         title: "Chart".into(),
                         value: Pane::Chart,
                     }],
                 }),
                 second: Box::new(DockNode::Tabs {
                     id: 12,
-                    active: 2,
+                    active: GRAPH_PANE,
                     panes: vec![DockPane {
-                        id: 2,
+                        id: GRAPH_PANE,
                         title: "Graph".into(),
                         value: Pane::Graph,
                     }],
@@ -311,22 +352,3 @@ impl Component for Workbench {
         )
     }
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<std::io::Error>> {
-    run_component(
-        Workbench::new(),
-        Theme::dark(),
-        WindowHostOptions {
-            window: WindowAttributes {
-                title: "RXUI workbench".into(),
-                inner_size: Some(Size::new(1100.0, 720.0)),
-                ..WindowAttributes::default()
-            },
-            ..WindowHostOptions::default()
-        },
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-fn main() {}

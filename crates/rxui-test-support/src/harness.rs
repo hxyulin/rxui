@@ -7,7 +7,7 @@ use astrelis_platform::{
 };
 use rxui_core::{
     Clipboard, Component, ComponentHost, Theme,
-    core::{NodeId, PassStats, SemanticAction, SemanticNode, UiError, UiInput},
+    core::{NodeId, PassStats, SemanticAction, SemanticNode, UiError, UiInput, UiRoot},
 };
 
 use crate::SemanticScene;
@@ -49,6 +49,29 @@ impl<C: Component> Harness<C> {
             .dispatch(action)
             .expect("dispatching a typed action reconciles")
             .stats;
+    }
+
+    /// Rebuilds the entire view tree from unchanged component state.
+    ///
+    /// This is the only way to observe what a view costs when nothing about it
+    /// changed: it marks the root stale and disables props-equality pruning, so
+    /// every mounted view is re-diffed against a freshly constructed one. A
+    /// well-behaved tree therefore settles with empty [`PassStats`].
+    pub fn refresh(&mut self) {
+        self.stats = self
+            .host
+            .refresh()
+            .expect("refreshing rebuilds the whole tree")
+            .stats;
+    }
+
+    /// Mutates application-owned state and reconciles the resulting frame.
+    ///
+    /// Component state a test edits directly is invisible to the reducer, which
+    /// is why this forces the same whole-tree rebuild [`Self::refresh`] does.
+    pub fn mutate(&mut self, edit: impl FnOnce(&mut C)) {
+        edit(self.host.component_mut());
+        self.refresh();
     }
 
     fn input(&mut self, input: UiInput) {
@@ -224,6 +247,17 @@ impl<C: Component> Harness<C> {
     /// Reads component state.
     pub const fn component(&self) -> &C {
         self.host.component()
+    }
+
+    /// Reads the mounted retained tree through a caller-supplied projection.
+    ///
+    /// Part of RXUI's public surface takes `&UiRoot` directly - the retained
+    /// inspection snapshot, for one - and such an API cannot be exercised
+    /// through label lookups. The borrow is immutable and scoped to the
+    /// closure, so this stays a read of the mounted tree rather than the
+    /// mutable host escape hatch this type exists to avoid.
+    pub fn with_ui<R>(&self, read: impl FnOnce(&UiRoot) -> R) -> R {
+        read(self.host.ui())
     }
 }
 
