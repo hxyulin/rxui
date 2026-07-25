@@ -83,6 +83,24 @@ impl Icon {
     }
 }
 
+/// Compares two icons by the geometry they describe.
+///
+/// This cannot be derived, because `Path`'s only identity is
+/// `Path::cache_id` - a per-allocation counter the renderer uses to key its
+/// mesh cache - and two paths recording the same verbs therefore never share
+/// one. Change detection keyed on that counter reported *every* icon as changed
+/// on *every* pass, because `icons::save()` and friends build a fresh `Path`
+/// each time they are called and they are called from inside `view()`. An icon
+/// is a dozen verbs; comparing them costs far less than the relayout and repaint
+/// that comparing them avoids.
+impl PartialEq for Icon {
+    fn eq(&self, other: &Self) -> bool {
+        self.view_box == other.view_box
+            && self.fill_rule == other.fill_rule
+            && self.path.verbs() == other.path.verbs()
+    }
+}
+
 /// Invalid custom vector icon.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IconError(String);
@@ -144,6 +162,20 @@ impl IconSpec {
     }
 }
 
+/// Resolves the square edge an icon of `size` is actually laid out at.
+///
+/// Both the element and the change comparison go through this, so a request the
+/// element cannot act on - a NaN edge, or one below a single logical unit -
+/// compares equal to any other request resolving the same way instead of
+/// relayouting the icon on every pass.
+fn resolved_icon_size(size: f32) -> f32 {
+    if size.is_finite() {
+        size.max(1.0)
+    } else {
+        16.0
+    }
+}
+
 /// Retained vector icon used by [`IconSpec`].
 #[doc(hidden)]
 pub struct IconElement {
@@ -167,11 +199,7 @@ impl Element for IconElement {
         _context: &mut LayoutContext<'_>,
         constraints: Constraints,
     ) -> Result<LogicalSize, UiError> {
-        let size = if self.size.is_finite() {
-            self.size.max(1.0)
-        } else {
-            16.0
-        };
+        let size = resolved_icon_size(self.size);
         Ok(constraints.constrain(LogicalSize::new(size, size)))
     }
 
@@ -234,20 +262,25 @@ impl<Action: 'static> RetainedSpec<Action> for IconSpec {
     }
 
     fn changed(&self, previous: &Self) -> astrelis_ui_next::Invalidation {
-        let changed = self.icon.path.cache_id() != previous.icon.path.cache_id()
-            || self.icon.view_box != previous.icon.view_box
-            || self.icon.fill_rule != previous.icon.fill_rule
-            || self.size != previous.size
-            || self.color != previous.color
-            || self.label != previous.label;
-        // Narrowing this is a per-widget judgement about which passes each field
-        // feeds, and it moves the engine's `PassStats`; the protocol change only
-        // makes it expressible.
-        if changed {
-            astrelis_ui_next::Invalidation::ALL
-        } else {
-            astrelis_ui_next::Invalidation::empty()
+        use astrelis_ui_next::Invalidation;
+
+        let mut invalidation = Invalidation::empty();
+        // `IconElement::layout` reads nothing but `size`: the glyph is fitted to
+        // whatever square that measurement produced, so the view box, the verbs,
+        // and the winding rule change the picture without changing the box. They
+        // are paint inputs, and so is the fill color.
+        if resolved_icon_size(self.size) != resolved_icon_size(previous.size) {
+            invalidation |= Invalidation::LAYOUT_ALL;
         }
+        if self.color != previous.color || self.icon != previous.icon {
+            invalidation |= Invalidation::PAINT;
+        }
+        // The label reaches `accessibility` and nothing else - an icon paints its
+        // glyph alone, so a renamed icon is a semantic event, not a visual one.
+        if self.label != previous.label {
+            invalidation |= Invalidation::ACCESSIBILITY;
+        }
+        invalidation
     }
 }
 

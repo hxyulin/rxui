@@ -10,13 +10,13 @@ use astrelis_core::{
     color::Color,
     geometry::{LogicalPoint, LogicalSize, Size},
 };
-use astrelis_paint::Image;
+use astrelis_paint::{Image, PathVerb};
 use rxui::core::PassStats;
 use rxui::{
     ChartAction, ChartOptions, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec, Component,
-    ComponentContext, GraphEdge, GraphNode, GraphViewport, IconSpec, ImageSpec, NodeGraphAction,
-    NodeGraphSpec, RenderViewContent, RenderViewSpec, Theme, View, chart, icon, icons, image,
-    node_graph, render_surface,
+    ComponentContext, GraphEdge, GraphNode, GraphViewport, Icon, IconSpec, ImageSpec,
+    NodeGraphAction, NodeGraphSpec, RenderViewContent, RenderViewSpec, Theme, View, chart, icon,
+    icons, image, node_graph, render_surface,
 };
 use rxui_test_support::Harness;
 
@@ -432,7 +432,22 @@ fn a_render_view_reports_a_content_change_and_keeps_routing_input() {
 }
 
 struct IconScene {
+    /// Replaces the built-in glyph, for the two content-identity tests.
+    glyph: Option<Icon>,
     size: f32,
+    color: Color,
+    label: String,
+}
+
+impl IconScene {
+    fn new() -> Self {
+        Self {
+            glyph: None,
+            size: 24.0,
+            color: Color::WHITE,
+            label: "Settings".into(),
+        }
+    }
 }
 
 impl Component for IconScene {
@@ -442,67 +457,136 @@ impl Component for IconScene {
     fn update(&mut self, _action: (), _context: &mut ComponentContext<'_, ()>) {}
 
     fn view(&self, _theme: &Theme) -> View<()> {
+        // Left to the default, this builds its glyph with `icons::settings()` on
+        // every pass, and every such call allocates a new `Path`. That is the
+        // shape a spec has to tolerate: a view is a description, rebuilt from
+        // nothing each time, and two descriptions of the same icon must compare
+        // equal however many times the path behind them was allocated.
         icon(
-            IconSpec::new(icons::settings())
+            IconSpec::new(self.glyph.clone().unwrap_or_else(icons::settings))
                 .size(self.size)
-                .label("Settings"),
+                .color(self.color)
+                .label(self.label.clone()),
         )
     }
 }
 
+/// Rebuilds an icon's geometry into a separately allocated `Path`.
+fn rebuilt_path(icon: &Icon) -> Icon {
+    Icon::from_verbs(icon.view_box(), icon.path().verbs().iter().copied())
+        .expect("re-recording a valid icon's verbs yields a valid icon")
+        .with_fill_rule(icon.fill_rule())
+}
+
+/// Rebuilds an icon with exactly one of its verbs displaced by a logical unit.
+fn one_verb_moved(icon: &Icon) -> Icon {
+    let mut verbs = icon.path().verbs().to_vec();
+    let point = verbs
+        .iter_mut()
+        .find_map(|verb| match verb {
+            PathVerb::LineTo(point) => Some(point),
+            _ => None,
+        })
+        .expect("the settings glyph draws line segments");
+    point.x += 1.0;
+    Icon::from_verbs(icon.view_box(), verbs)
+        .expect("displacing one point keeps the icon valid")
+        .with_fill_rule(icon.fill_rule())
+}
+
 #[test]
-#[ignore = "IconSpec::changed keys on Path::cache_id (rxui-core/src/icon.rs:234), which is a \
-            per-allocation counter, not content-derived; icons::settings() builds a fresh Path \
-            on every view() call, so an unchanged icon repaints every frame"]
 fn refreshing_an_icon_with_an_identical_spec_does_no_retained_work() {
-    let mut harness =
-        Harness::new(IconScene { size: 24.0 }, VIEWPORT).expect("the icon scene mounts");
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
     harness.refresh();
     assert_no_retained_work("IconSpec", harness.stats());
 }
 
 #[test]
-fn refreshing_an_icon_currently_repaints_it_once_per_frame() {
-    let mut harness =
-        Harness::new(IconScene { size: 24.0 }, VIEWPORT).expect("the icon scene mounts");
-    harness.refresh();
-    let stats = harness.stats();
-    // Documents the bug `refreshing_an_icon_with_an_identical_spec_does_no_retained_work`
-    // states. Exactly one fragment - the icon's - rebuilds, and `Invalidation::ALL`
-    // also drags the element back through layout. The fix is to compare the
-    // path's verbs, which `Path::verbs` already exposes, instead of the
-    // `#[doc(hidden)]` renderer-cache id.
-    assert_eq!(stats.rebuilt_fragments, 1);
-    // Two: the icon itself, plus the root component's flex container, which has
-    // to re-measure a child that declared its layout stale.
-    assert_eq!(stats.layout_elements, 2);
-    // Nothing is reshaped: the icon paints no text, and `ButtonView::rebuild` -
-    // which compares the same cache id for `icon_button` and so suffers the same
-    // spurious invalidation - is saved by the engine's per-element shaping memo.
-    // The wasted work is layout and paint, not shaping.
-    assert_eq!(stats.shaped_text, 0);
+fn an_icon_rebuilt_from_the_same_verbs_is_not_a_change() {
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
+    harness.mutate(|scene| scene.glyph = Some(rebuilt_path(&icons::settings())));
+    // Two independently constructed paths recording the same verbs describe the
+    // same picture, and `Icon`'s equality says so. Keying on `Path::cache_id`
+    // instead - a per-allocation counter - is what made every icon in a tree
+    // report itself changed on every single frame.
+    assert_no_retained_work("IconSpec with a re-recorded path", harness.stats());
 }
 
 #[test]
-fn an_icon_spec_reports_a_size_change() {
-    let mut harness =
-        Harness::new(IconScene { size: 24.0 }, VIEWPORT).expect("the icon scene mounts");
+fn an_icon_differing_in_one_verb_repaints_without_relayout() {
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
+    harness.mutate(|scene| scene.glyph = Some(one_verb_moved(&icons::settings())));
+    let stats = harness.stats();
+    // The companion to the test above: content equality has to be equality, not
+    // a constant `true`. One displaced point is a different picture and must
+    // reach the element.
+    assert_eq!(stats.rebuilt_fragments, 1);
+    // A glyph is fitted into the square `size` asked for, so its verbs never
+    // reach `IconElement::layout`. Nothing re-measures.
+    assert_eq!(stats.layout_elements, 0);
+}
+
+#[test]
+fn an_icon_color_change_repaints_without_relayout() {
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
+    harness.mutate(|scene| scene.color = Color::from_hex(0xff5c33));
+    let stats = harness.stats();
+    assert_eq!(stats.rebuilt_fragments, 1);
+    // A monochrome fill is a paint input and nothing else. This is the whole
+    // point of narrowing `changed`: recoloring an icon per theme, hover, or
+    // enablement state must not drag the icon and its ancestors through layout.
+    assert_eq!(stats.layout_elements, 0);
+    assert_eq!(stats.accessibility_nodes, 0);
+}
+
+#[test]
+fn an_icon_size_change_relayouts_and_resizes_the_semantic_node() {
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
     harness.mutate(|scene| scene.size = 32.0);
+    // The size is the one field that reaches `IconElement::layout`, so it has to
+    // be observable in the accessible bounds.
     assert_eq!(
         harness.bounds("Settings").size,
         LogicalSize::new(32.0, 32.0)
     );
-    assert!(harness.stats().rebuilt_fragments > 0);
+    let stats = harness.stats();
+    assert_eq!(stats.rebuilt_fragments, 1);
+    // Two: the icon itself, plus the root component's flex container, which has
+    // to re-measure a child that declared a different intrinsic size.
+    assert_eq!(stats.layout_elements, 2);
+}
+
+#[test]
+fn an_icon_size_the_element_cannot_act_on_is_not_a_change() {
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
+    harness.mutate(|scene| scene.size = 0.5);
+    harness.mutate(|scene| scene.size = 0.25);
+    // An icon is never laid out below one logical unit, so two requests that
+    // resolve to the same edge are the same request. Comparing the raw field
+    // would relayout on every pass an animation spent under the floor, and would
+    // relayout forever for a non-finite edge, which never equals itself.
+    assert_no_retained_work("IconSpec below its layout floor", harness.stats());
+}
+
+#[test]
+fn an_icon_label_change_republishes_semantics_without_repainting() {
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
+    harness.mutate(|scene| scene.label = "Preferences".into());
+    assert!(harness.try_find("Preferences").is_some());
+    let stats = harness.stats();
+    // An icon's label is announced, never drawn: `IconElement::paint` fills the
+    // path and stops. Renaming one is a semantic event alone.
+    assert_eq!(stats.accessibility_nodes, 1);
+    assert_eq!(stats.rebuilt_fragments, 0);
+    assert_eq!(stats.layout_elements, 0);
 }
 
 #[test]
 fn an_icon_keeps_its_retained_identity_across_a_rebuild() {
-    let mut harness =
-        Harness::new(IconScene { size: 24.0 }, VIEWPORT).expect("the icon scene mounts");
+    let mut harness = Harness::new(IconScene::new(), VIEWPORT).expect("the icon scene mounts");
     let before = harness.find("Settings").id;
     harness.refresh();
-    // The spurious repaint above must stay a repaint: reconciliation may not
-    // fall back to remove-and-rebuild, which would also discard focus and
-    // hover state on any specialized element that holds them.
+    // Reconciliation may not fall back to remove-and-rebuild, which would also
+    // discard focus and hover state on any specialized element holding them.
     assert_eq!(harness.find("Settings").id, before);
 }
