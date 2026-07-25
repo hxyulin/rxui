@@ -89,9 +89,7 @@ pub fn inspection_view<Action: Clone + 'static>(
                     )
                     .enabled(node.enabled)
                     // The inspected identity is the row's domain identity.
-                    // `NodeId` exposes no scalar, so its debug form is the
-                    // stable spelling available here.
-                    .key(format!("{id:?}"))
+                    .key(id)
                 })),
             ),
         ),

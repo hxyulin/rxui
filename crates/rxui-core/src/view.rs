@@ -144,6 +144,12 @@ impl From<u64> for ViewKey {
     }
 }
 
+impl From<NodeId> for ViewKey {
+    fn from(value: NodeId) -> Self {
+        Self::Index(value.to_bits())
+    }
+}
+
 impl fmt::Display for ViewKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

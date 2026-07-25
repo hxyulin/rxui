@@ -73,7 +73,14 @@ impl<Pane> DockNode<Pane> {
     }
 
     /// Replaces a split ratio by stable identity.
+    ///
+    /// The ratio is clamped into a range that leaves both sides visible. A
+    /// non-finite ratio is rejected rather than clamped, because `f32::clamp`
+    /// passes NaN through and a NaN ratio would propagate into layout geometry.
     pub fn set_ratio(&mut self, target: u64, ratio: f32) -> bool {
+        if !ratio.is_finite() {
+            return false;
+        }
         match self {
             Self::Split {
                 id,
@@ -277,6 +284,18 @@ mod tests {
         assert_eq!(ratio_of(&layout, 1), Some(0.05));
         assert!(layout.set_ratio(1, 12.0));
         assert_eq!(ratio_of(&layout, 1), Some(0.95));
+    }
+
+    #[test]
+    fn set_ratio_rejects_a_ratio_that_is_not_a_number() {
+        let mut layout = layout();
+        assert!(!layout.set_ratio(1, f32::NAN));
+        assert!(!layout.set_ratio(1, f32::INFINITY));
+        assert_eq!(
+            layout,
+            self::layout(),
+            "clamping NaN would store NaN and poison the split geometry",
+        );
     }
 
     #[test]
