@@ -338,7 +338,7 @@ where
 {
     type Element = NodeGraphElement<Id, Action>;
 
-    fn create(&self, emitter: ActionEmitter<Action>) -> Self::Element {
+    fn create(&self, emitter: &ActionEmitter<Action>, _theme: &rxui_core::Theme) -> Self::Element {
         NodeGraphElement {
             nodes: self.nodes.clone(),
             edges: self.edges.clone(),
@@ -347,25 +347,38 @@ where
             hovered: None,
             size: LogicalSize::ZERO,
             labels: Vec::new(),
-            emitter,
+            emitter: emitter.clone(),
             map_action: self.map_action.clone(),
         }
     }
 
-    fn update(&self, element: &mut Self::Element, emitter: ActionEmitter<Action>) {
+    fn update(
+        &self,
+        element: &mut Self::Element,
+        emitter: &ActionEmitter<Action>,
+        _theme: &rxui_core::Theme,
+    ) {
         element.nodes.clone_from(&self.nodes);
         element.edges.clone_from(&self.edges);
         element.viewport = self.viewport;
         element.selected.clone_from(&self.selected);
-        element.emitter = emitter;
+        element.emitter = emitter.clone();
         element.map_action = self.map_action.clone();
     }
 
-    fn changed(&self, previous: &Self) -> bool {
-        self.nodes != previous.nodes
+    fn changed(&self, previous: &Self) -> Invalidation {
+        // Narrowing this is a per-widget judgement about which passes each field
+        // feeds, and it moves the engine's `PassStats`; the protocol change only
+        // makes it expressible.
+        if self.nodes != previous.nodes
             || self.edges != previous.edges
             || self.viewport != previous.viewport
             || self.selected != previous.selected
+        {
+            Invalidation::ALL
+        } else {
+            Invalidation::empty()
+        }
     }
 }
 

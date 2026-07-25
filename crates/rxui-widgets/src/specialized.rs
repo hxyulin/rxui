@@ -59,7 +59,7 @@ impl ImageSpec {
 impl<Action: 'static> RetainedSpec<Action> for ImageSpec {
     type Element = ImageElement;
 
-    fn create(&self, _emitter: ActionEmitter<Action>) -> Self::Element {
+    fn create(&self, _emitter: &ActionEmitter<Action>, _theme: &rxui_core::Theme) -> Self::Element {
         ImageElement {
             image: self.image.clone(),
             label: self.label.clone(),
@@ -71,7 +71,12 @@ impl<Action: 'static> RetainedSpec<Action> for ImageSpec {
         }
     }
 
-    fn update(&self, element: &mut Self::Element, _emitter: ActionEmitter<Action>) {
+    fn update(
+        &self,
+        element: &mut Self::Element,
+        _emitter: &ActionEmitter<Action>,
+        _theme: &rxui_core::Theme,
+    ) {
         element.image = self.image.clone();
         element.label.clone_from(&self.label);
         element.size = self.size;
@@ -81,14 +86,22 @@ impl<Action: 'static> RetainedSpec<Action> for ImageSpec {
         element.opacity = self.opacity;
     }
 
-    fn changed(&self, previous: &Self) -> bool {
-        self.image.cache_id() != previous.image.cache_id()
+    fn changed(&self, previous: &Self) -> astrelis_ui_next::Invalidation {
+        let changed = self.image.cache_id() != previous.image.cache_id()
             || self.label != previous.label
             || self.size != previous.size
             || self.fit != previous.fit
             || self.alignment != previous.alignment
             || self.sampling != previous.sampling
-            || self.opacity != previous.opacity
+            || self.opacity != previous.opacity;
+        // Narrowing this is a per-widget judgement about which passes each field
+        // feeds, and it moves the engine's `PassStats`; the protocol change only
+        // makes it expressible.
+        if changed {
+            astrelis_ui_next::Invalidation::ALL
+        } else {
+            astrelis_ui_next::Invalidation::empty()
+        }
     }
 }
 
@@ -139,26 +152,41 @@ impl<Action: 'static> RenderViewSpec<Action> {
 impl<Action: 'static> RetainedSpec<Action> for RenderViewSpec<Action> {
     type Element = RenderView;
 
-    fn create(&self, emitter: ActionEmitter<Action>) -> Self::Element {
+    fn create(&self, emitter: &ActionEmitter<Action>, _theme: &rxui_core::Theme) -> Self::Element {
         let mut element = RenderView::new(self.label.clone(), self.size);
         element.content = self.content.clone();
         let on_input = self.on_input.clone();
+        let emitter = emitter.clone();
         element.set_input(move |input| emitter.emit(on_input(input)));
         element
     }
 
-    fn update(&self, element: &mut Self::Element, emitter: ActionEmitter<Action>) {
+    fn update(
+        &self,
+        element: &mut Self::Element,
+        emitter: &ActionEmitter<Action>,
+        _theme: &rxui_core::Theme,
+    ) {
         element.label.clone_from(&self.label);
         element.size = self.size;
         element.content = self.content.clone();
         let on_input = self.on_input.clone();
+        let emitter = emitter.clone();
         element.set_input(move |input| emitter.emit(on_input(input)));
     }
 
-    fn changed(&self, previous: &Self) -> bool {
-        self.label != previous.label
+    fn changed(&self, previous: &Self) -> astrelis_ui_next::Invalidation {
+        let changed = self.label != previous.label
             || self.size != previous.size
-            || self.content != previous.content
+            || self.content != previous.content;
+        // Narrowing this is a per-widget judgement about which passes each field
+        // feeds, and it moves the engine's `PassStats`; the protocol change only
+        // makes it expressible.
+        if changed {
+            astrelis_ui_next::Invalidation::ALL
+        } else {
+            astrelis_ui_next::Invalidation::empty()
+        }
     }
 }
 

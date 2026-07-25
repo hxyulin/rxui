@@ -343,26 +343,38 @@ impl<Action: 'static> ChartSpec<Action> {
 impl<Action: 'static> RetainedSpec<Action> for ChartSpec<Action> {
     type Element = ChartElement<Action>;
 
-    fn create(&self, emitter: ActionEmitter<Action>) -> Self::Element {
+    fn create(&self, emitter: &ActionEmitter<Action>, _theme: &rxui_core::Theme) -> Self::Element {
         ChartElement {
             series: self.series.clone(),
             options: self.options,
             size: LogicalSize::ZERO,
             hovered: None,
-            emitter,
+            emitter: emitter.clone(),
             map_action: self.map_action.clone(),
         }
     }
 
-    fn update(&self, element: &mut Self::Element, emitter: ActionEmitter<Action>) {
+    fn update(
+        &self,
+        element: &mut Self::Element,
+        emitter: &ActionEmitter<Action>,
+        _theme: &rxui_core::Theme,
+    ) {
         element.series.clone_from(&self.series);
         element.options = self.options;
-        element.emitter = emitter;
+        element.emitter = emitter.clone();
         element.map_action = self.map_action.clone();
     }
 
-    fn changed(&self, previous: &Self) -> bool {
-        self.series != previous.series || self.options != previous.options
+    fn changed(&self, previous: &Self) -> Invalidation {
+        // Narrowing this is a per-widget judgement about which passes each field
+        // feeds, and it moves the engine's `PassStats`; the protocol change only
+        // makes it expressible.
+        if self.series != previous.series || self.options != previous.options {
+            Invalidation::ALL
+        } else {
+            Invalidation::empty()
+        }
     }
 }
 
