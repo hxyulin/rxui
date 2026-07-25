@@ -270,10 +270,10 @@ fn dragging_the_root_splitter_widens_the_chart_pane() {
 fn resizing_the_root_split_reshapes_no_graph_titles() {
     let mut harness = mount();
     harness.dispatch(Action::Resize(ROOT_SPLIT, 700.0));
-    // The graph's own configuration did not move here; its *parent* did, so the
-    // pane is re-measured from the outside and `NodeGraphElement::layout` runs
-    // whatever the spec reported. Nothing a spec can say about invalidation
-    // helps with that: only the per-node shaping memo keeps a splitter drag -
+    // This is the half of the fix that `changed()` cannot do. The graph's own
+    // configuration did not move at all; its *parent* did, so the pane is
+    // re-measured from the outside and `NodeGraphElement::layout` runs whatever
+    // the spec reported. Only the per-node shaping memo keeps a splitter drag -
     // one frame per pointer move - off the shaper.
     assert_eq!(harness.stats().shaped_text, 0);
     // And the drag really did re-measure, so the zero above is not a frame that
@@ -374,16 +374,32 @@ fn the_node_graph_reports_the_node_under_the_pointer_and_empty_canvas_clears_it(
 #[test]
 fn selecting_a_graph_node_reshapes_no_node_title() {
     let mut harness = mount();
+    let announced = by_role(&harness, SemanticRole::Graph).data.value;
     let bounds = by_role(&harness, SemanticRole::Graph).bounds;
     harness.release_pointer_at(LogicalPoint::new(
         bounds.origin.x + 90.0,
         bounds.origin.y + 110.0,
     ));
     assert_eq!(harness.component().selected_node, Some(1));
-    // `NodeGraphSpec::changed` reports the new selection as `Invalidation::ALL`,
-    // so the graph is still dragged back through layout for what is only a fill
-    // colour - but the titles it finds there are the ones it already shaped.
-    assert_eq!(harness.stats().shaped_text, 0);
+
+    let stats = harness.stats();
+    // The selection a real click routes through the reducer and back into
+    // `NodeGraphSpec` is a fill colour. It used to cost a re-shape of every
+    // title on the canvas, because the spec could answer nothing finer than
+    // `Invalidation::ALL` and the element re-shaped unconditionally in `layout`.
+    // Both halves of that are gone, so a highlight is a repaint.
+    assert_eq!(stats.shaped_text, 0, "a highlight must not reshape a title");
+    assert!(stats.rebuilt_fragments > 0, "the new fill is painted");
+    // `layout_elements` is deliberately not asserted here, and it is not zero.
+    // Rebuilding this view also rebuilds the toolbar, whose icons compare by
+    // `Path::cache_id` and so declare a spurious change on every pass - the bug
+    // `retained_specs::refreshing_an_icon_with_an_identical_spec_does_no_retained_work`
+    // is ignored for. The graph's own zero is pinned in isolation there, by
+    // `selecting_a_graph_node_repaints_without_layout_or_a_new_announcement`.
+    //
+    // The graph announces its node and edge counts and not its selection, so
+    // the semantic tree has nothing to republish either.
+    assert_eq!(by_role(&harness, SemanticRole::Graph).data.value, announced);
 }
 
 #[test]

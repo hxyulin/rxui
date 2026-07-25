@@ -86,22 +86,39 @@ impl<Action: 'static> RetainedSpec<Action> for ImageSpec {
         element.opacity = self.opacity;
     }
 
+    /// Reports the passes each field actually feeds.
+    ///
+    /// Three groups. `size` is the only layout input: `ImageElement::layout`
+    /// constrains it and reads nothing else, and in particular does *not* derive
+    /// a size from the source image, so a taller image alone never re-measures.
+    /// `label` is only ever announced. Everything else, the source included, is
+    /// consumed by `paint`.
+    ///
+    /// The source belongs to the announcement too, because the element reports
+    /// the image's pixel dimensions as its accessible value. Keying that on the
+    /// cache id over-reports - a same-sized replacement re-announces an
+    /// unchanged string - which is the safe direction, and cheaper than
+    /// comparing two [`Image`] headers to find out.
     fn changed(&self, previous: &Self) -> astrelis_ui_next::Invalidation {
-        let changed = self.image.cache_id() != previous.image.cache_id()
-            || self.label != previous.label
-            || self.size != previous.size
+        use astrelis_ui_next::Invalidation;
+
+        let source_changed = self.image.cache_id() != previous.image.cache_id();
+        let mut invalidation = Invalidation::empty();
+        if self.size != previous.size {
+            invalidation |= Invalidation::LAYOUT;
+        }
+        if source_changed || self.label != previous.label {
+            invalidation |= Invalidation::ACCESSIBILITY;
+        }
+        if source_changed
             || self.fit != previous.fit
             || self.alignment != previous.alignment
             || self.sampling != previous.sampling
-            || self.opacity != previous.opacity;
-        // Narrowing this is a per-widget judgement about which passes each field
-        // feeds, and it moves the engine's `PassStats`; the protocol change only
-        // makes it expressible.
-        if changed {
-            astrelis_ui_next::Invalidation::ALL
-        } else {
-            astrelis_ui_next::Invalidation::empty()
+            || self.opacity != previous.opacity
+        {
+            invalidation |= Invalidation::PAINT;
         }
+        invalidation
     }
 }
 
@@ -175,18 +192,33 @@ impl<Action: 'static> RetainedSpec<Action> for RenderViewSpec<Action> {
         element.set_input(move |input| emitter.emit(on_input(input)));
     }
 
+    /// Reports the passes each field actually feeds.
+    ///
+    /// `size` is the layout input, `label` is announced and never drawn, and the
+    /// content is both drawn and announced: `RenderView::accessibility` reports
+    /// a failed frame's message as its accessible value, so a viewport that
+    /// dropped its device has to say so and not merely turn red. The two silent
+    /// content variants re-announce the same absent value when swapped for each
+    /// other, which is a wasted accessibility visit rather than a wrong one, and
+    /// cheaper than mirroring the engine's private mapping here so it can drift.
+    ///
+    /// Hit testing never changes: `RenderView::hit_testable` follows its input
+    /// callback, and [`Self::update`] reinstalls that on every pass.
     fn changed(&self, previous: &Self) -> astrelis_ui_next::Invalidation {
-        let changed = self.label != previous.label
-            || self.size != previous.size
-            || self.content != previous.content;
-        // Narrowing this is a per-widget judgement about which passes each field
-        // feeds, and it moves the engine's `PassStats`; the protocol change only
-        // makes it expressible.
-        if changed {
-            astrelis_ui_next::Invalidation::ALL
-        } else {
-            astrelis_ui_next::Invalidation::empty()
+        use astrelis_ui_next::Invalidation;
+
+        let content_changed = self.content != previous.content;
+        let mut invalidation = Invalidation::empty();
+        if self.size != previous.size {
+            invalidation |= Invalidation::LAYOUT;
         }
+        if content_changed || self.label != previous.label {
+            invalidation |= Invalidation::ACCESSIBILITY;
+        }
+        if content_changed {
+            invalidation |= Invalidation::PAINT;
+        }
+        invalidation
     }
 }
 

@@ -445,19 +445,53 @@ where
         element.map_action = self.map_action.clone();
     }
 
+    /// Reports the passes each field actually feeds.
+    ///
+    /// `layout` produces exactly two things: a size that is a constant folded
+    /// through the incoming constraints, and one shaped [`TextLayout`] per node.
+    /// So the only configuration change that has to re-run it is one that can
+    /// change the set of titles, and nothing else about the graph is a layout
+    /// input at all. `accessibility` announces the node and edge counts and
+    /// nothing else, which is why a selection is not an accessibility change.
+    /// Everything the canvas draws, including the viewport, is applied inside
+    /// `paint` by `rect`.
+    ///
+    /// The viewport is the one worth stating explicitly, because a pan looks
+    /// like a geometry change and is not one. The element has no children to
+    /// re-place, it reports the same size whatever the viewport says, and it
+    /// draws the translated content itself into its own unchanged bounds. Its
+    /// hit shape is those bounds too - `hit_testable` is unconditional and
+    /// `event` re-derives which node is under the pointer from the live
+    /// viewport - so neither `COMPOSE` nor `HIT_TEST` has anything to do. A pan
+    /// is a repaint, and only a repaint.
+    ///
+    /// `Invalidation::LAYOUT` is returned bare rather than widened by hand:
+    /// `UiRoot::invalidate` already expands it into compose, paint,
+    /// accessibility, and hit test, because a re-measured element can move
+    /// anything around it.
     fn changed(&self, previous: &Self) -> Invalidation {
-        // Narrowing this is a per-widget judgement about which passes each field
-        // feeds, and it moves the engine's `PassStats`; the protocol change only
-        // makes it expressible.
+        let mut invalidation = Invalidation::empty();
+        // Titles are shaped in `layout`, so they are a layout input, and a node
+        // count that no longer matches leaves `paint` zipping labels against
+        // the wrong nodes. Comparing pairwise rather than comparing the whole
+        // node list keeps a drag out of layout: a moved node paints from a
+        // title that is still correct.
+        if self.nodes.len() != previous.nodes.len()
+            || std::iter::zip(&self.nodes, &previous.nodes).any(|(new, old)| new.title != old.title)
+        {
+            invalidation |= Invalidation::LAYOUT;
+        }
+        if self.nodes.len() != previous.nodes.len() || self.edges.len() != previous.edges.len() {
+            invalidation |= Invalidation::ACCESSIBILITY;
+        }
         if self.nodes != previous.nodes
             || self.edges != previous.edges
             || self.viewport != previous.viewport
             || self.selected != previous.selected
         {
-            Invalidation::ALL
-        } else {
-            Invalidation::empty()
+            invalidation |= Invalidation::PAINT;
         }
+        invalidation
     }
 }
 
