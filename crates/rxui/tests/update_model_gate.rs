@@ -358,13 +358,15 @@ fn keystroke_into_a_nested_child_field_rebuilds_the_whole_root() {
 
     // For contrast, the engine's own view of the same keystroke is nearly
     // free: 5 = the field and its four ancestors re-measure, 1 fragment
-    // repaints, 45 are reused, 1 accessibility node changes, and the field's
-    // text plus its placeholder are re-shaped.
+    // repaints, 45 are reused, 1 accessibility node changes.
     assert_eq!(pass.layout_elements, 5);
     assert_eq!(pass.rebuilt_fragments, 1);
     assert_eq!(pass.reused_fragments, 45);
     assert_eq!(pass.accessibility_nodes, 1);
-    assert_eq!(pass.shaped_text, 2);
+    // 1 = only the edited value re-shapes. The field also shapes a placeholder
+    // every pass to keep its height stable, but the engine's per-element
+    // shaping memo now serves that from cache, so this was 2 before the memo.
+    assert_eq!(pass.shaped_text, 1);
 
     assert_incremental_matches_fresh(
         "keystroke",
@@ -444,12 +446,16 @@ fn theme_change_rebuilds_and_repaints_the_whole_tree() {
     assert_no_memo_or_row_activity("theme", view);
 
     // Unlike every other scenario, the engine does real work here: 46 = every
-    // element re-measures, 28 of 46 fragments repaint, and 17 text layouts
-    // re-shape because the glyph color is baked into the shaped run.
+    // element re-measures and 28 of 46 fragments repaint.
     assert_eq!(pass.layout_elements, 46);
     assert_eq!(pass.rebuilt_fragments, 28);
     assert_eq!(pass.reused_fragments, 18);
-    assert_eq!(pass.shaped_text, 17);
+    // 14 = text whose glyph color actually changed must re-shape, because the
+    // shaper bakes the brush into every glyph run. The engine's shaping memo
+    // absorbs the rest (this was 17 before it existed). Giving paint a text
+    // brush is what would take this to 0 and make a theme switch a repaint
+    // rather than a reshape.
+    assert_eq!(pass.shaped_text, 14);
     // 0 = colors carry no accessibility meaning.
     assert_eq!(pass.accessibility_nodes, 0);
 
