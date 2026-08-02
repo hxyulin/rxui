@@ -669,6 +669,11 @@ impl UiTree {
             .collect()
     }
 
+    /// Returns the accessibility delta produced by the most recent update.
+    pub const fn accessibility_update(&self) -> &AccessibilityUpdate {
+        &self.accessibility
+    }
+
     /// Drains platform clipboard mutations requested by retained elements.
     pub fn drain_clipboard(&mut self) -> impl Iterator<Item = ClipboardOperation> + '_ {
         self.clipboard.drain(..)

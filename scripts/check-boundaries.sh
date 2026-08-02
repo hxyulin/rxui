@@ -44,9 +44,12 @@ check_manifest \
 check_manifest \
   "crates/rxui-test/Cargo.toml" \
   " astrelis-core astrelis-platform astrelis-text "
+check_manifest \
+  "crates/rxui-host/Cargo.toml" \
+  " astrelis-app astrelis-compositor astrelis-core astrelis-gpu astrelis-gpu-wgpu astrelis-paint astrelis-paint-gpu astrelis-platform astrelis-platform-winit astrelis-text astrelis-text-gpu "
 
 if (( found_disallowed )); then
   exit 1
 fi
 
-printf 'Boundary check OK: rxui-core, rxui-tree, and rxui-test use only allowed astrelis crates.\n'
+printf 'Boundary check OK: rxui-core, rxui-tree, rxui-test, and rxui-host use only allowed astrelis crates.\n'

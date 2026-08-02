@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/rxui-core", "crates/rxui-test", "crates/rxui-tree"]
+members = [
+  "crates/rxui-core",
+  "crates/rxui-host",
+  "crates/rxui-test",
+  "crates/rxui-tree",
+]
 
 [workspace.package]
 version = "0.2.0-alpha.1"
@@ -16,9 +21,16 @@ rust-version = "1.88"
 # NOTE: fallback to path deps — Cargo fetches the unavailable git revision
 # before applying the local patch, and that revision is absent from its cache.
 astrelis-core = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-core" }
+astrelis-app = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-app" }
+astrelis-compositor = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-compositor" }
+astrelis-gpu = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-gpu" }
+astrelis-gpu-wgpu = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-gpu-wgpu" }
 astrelis-paint = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-paint" }
+astrelis-paint-gpu = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-paint-gpu" }
 astrelis-platform = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-platform" }
+astrelis-platform-winit = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-platform-winit" }
 astrelis-text = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-text" }
+astrelis-text-gpu = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-text-gpu" }
 rxui-tree = { path = "crates/rxui-tree" }
 # Intended git pins once the revision is available remotely:
 # astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }
@@ -31,6 +43,10 @@ criterion = { version = "0.8", default-features = false, features = [
   "cargo_bench_support",
 ] }
 proptest = "1.7"
+pollster = "0.4"
+raw-window-handle = "0.6"
+wgpu = { version = "=29.0.4", default-features = false, features = ["std", "wgsl"] }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

@@ -492,9 +492,17 @@ impl App {
     /// Routes one retained-tree input payload through its target entity and
     /// settles the resulting entity and retained work.
     pub fn dispatch_input(&mut self, input: rxui_tree::UiInput) -> FlushStats {
+        self.route_input(input);
+        self.flush()
+    }
+
+    /// Routes retained-tree input without running render or retained passes.
+    ///
+    /// Native hosts use this to coalesce every input derived from one platform
+    /// event, inspect [`Self::needs_flush`], and schedule at most one pass.
+    pub fn route_input(&mut self, input: rxui_tree::UiInput) {
         let action = self.tree.dispatch(input);
         self.route_erased(action);
-        self.flush()
     }
 
     /// Routes one accessibility action through its target entity and settles.
@@ -503,11 +511,35 @@ impl App {
         target: NodeId,
         action: rxui_tree::SemanticAction,
     ) -> FlushStats {
-        let action = self.tree.perform_semantic_action(target, action);
-        self.route_erased(action);
+        self.route_semantic_action(target, action);
         let mut stats = self.flush();
         stats.passes.hit_test_nodes = 0;
         stats
+    }
+
+    /// Routes one accessibility action without running render or retained passes.
+    ///
+    /// This is the semantic counterpart of [`Self::route_input`] for native
+    /// accessibility adapters that batch requests with a platform event.
+    pub fn route_semantic_action(&mut self, target: NodeId, action: rxui_tree::SemanticAction) {
+        let action = self.tree.perform_semantic_action(target, action);
+        self.route_erased(action);
+    }
+
+    /// Reports whether entity reconciliation or a retained pass is pending.
+    ///
+    /// Observational only: native scheduling reads this before [`Self::flush`]
+    /// clears the queued work.
+    pub fn needs_flush(&self) -> bool {
+        !self.notified.is_empty() || !self.effects.is_empty() || self.tree.needs_update()
+    }
+
+    /// Reports whether at least one mounted entity is queued to render.
+    ///
+    /// A native host treats this as potentially visible work, while a retained
+    /// accessibility-only invalidation can remain pass-only.
+    pub fn needs_render(&self) -> bool {
+        !self.notified.is_empty()
     }
 
     fn route_erased(&mut self, action: Option<Box<dyn Any>>) {
