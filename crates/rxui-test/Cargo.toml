@@ -13,6 +13,7 @@ publish = false
 astrelis-core = { workspace = true }
 astrelis-platform = { workspace = true }
 rxui-tree = { workspace = true }
+rxui-core = { path = "../rxui-core" }
 
 [dev-dependencies]
 astrelis-text = { workspace = true }

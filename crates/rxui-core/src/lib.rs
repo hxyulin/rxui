@@ -18,10 +18,14 @@ use rxui_tree::{Flex, NodeId, PassStats, UiTree};
 
 pub mod diagnostics;
 mod element;
+mod harness;
 mod reconcile;
+mod theme;
 
 pub use diagnostics::ViewStats;
 pub use element::{Element, Key, button, column, label, row};
+pub use harness::{EntityHarness, HarnessScope};
+pub use theme::Theme;
 
 use element::{EmbeddedEntity, RenderFn};
 use reconcile::Mounted;
@@ -318,6 +322,7 @@ pub struct App {
     renderers: BTreeMap<EntityId, Renderer>,
     update_depth: usize,
     flushing: bool,
+    theme: Theme,
 }
 
 impl App {
@@ -333,6 +338,7 @@ impl App {
             renderers: BTreeMap::new(),
             update_depth: 0,
             flushing: false,
+            theme: Theme::dark(),
         }
     }
 
@@ -429,6 +435,55 @@ impl App {
     /// diagnose a cyclic emitter graph instead of hanging indefinitely.
     pub fn flush(&mut self) -> FlushStats {
         self.flush_internal(true)
+    }
+
+    /// Returns the current application theme.
+    pub const fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    /// Replaces the application theme and invalidates every mounted entity
+    /// when its revision changes.
+    pub fn set_theme(&mut self, theme: Theme) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        self.notified.extend(
+            self.renderers
+                .iter()
+                .map(|(id, renderer)| (renderer.cell.depth, *id)),
+        );
+    }
+
+    /// Routes one retained-tree input payload through its target entity and
+    /// settles the resulting entity and retained work.
+    pub fn dispatch_input(&mut self, input: rxui_tree::UiInput) -> FlushStats {
+        let action = self.tree.dispatch(input);
+        self.route_erased(action);
+        self.flush()
+    }
+
+    /// Routes one accessibility action through its target entity and settles.
+    pub fn perform_semantic_action(
+        &mut self,
+        target: NodeId,
+        action: rxui_tree::SemanticAction,
+    ) -> FlushStats {
+        let action = self.tree.perform_semantic_action(target, action);
+        self.route_erased(action);
+        let mut stats = self.flush();
+        stats.passes.hit_test_nodes = 0;
+        stats
+    }
+
+    fn route_erased(&mut self, action: Option<Box<dyn Any>>) {
+        if let Some(action) = action {
+            let handler = action
+                .downcast::<RoutedHandler>()
+                .expect("retained action payload must be a RoutedHandler");
+            let _ = self.dispatch(*handler);
+        }
     }
 
     fn flush_effects(&mut self) {
@@ -723,6 +778,11 @@ impl<T: 'static> Context<'_, T> {
         self.app
             .effects
             .push_back(DeferredEffect::Notify(self.current));
+    }
+
+    /// Returns the current application theme.
+    pub fn theme(&self) -> &Theme {
+        &self.app.theme
     }
 
     /// Queues a typed event for subscribers after the current borrow ends.

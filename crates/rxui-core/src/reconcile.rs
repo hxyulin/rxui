@@ -384,7 +384,7 @@ fn reconcile_element(
 
 fn button_surface(text: &str) -> BoxElement {
     BoxElement {
-        size: LogicalSize::ZERO,
+        size: LogicalSize::new((text.chars().count() as f32 * 9.0 + 20.0).max(32.0), 28.0),
         color: Color::from_srgb8(60, 60, 64, 255),
         semantics: Some(SemanticData {
             role: SemanticRole::Button,

@@ -987,6 +987,7 @@ dependencies = [
  "astrelis-core",
  "astrelis-platform",
  "astrelis-text",
+ "rxui-core",
  "rxui-tree",
 ]
 

@@ -9,4 +9,5 @@ mod scene;
 
 pub use golden::assert_text_golden;
 pub use harness::{Clipboard, Harness, MemoryClipboard};
+pub use rxui_core::EntityHarness;
 pub use scene::{SemanticLandmark, SemanticScene};
