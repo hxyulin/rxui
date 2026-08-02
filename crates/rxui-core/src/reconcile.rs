@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use astrelis_core::{color::Color, geometry::LogicalSize};
 use rxui_tree::{
-    ActionBox, BoxElement, Flex, Frame, Label, NodeHandle, NodeId, SemanticData, SemanticRole,
+    Button, Checkbox, Flex, Frame, Label, NodeHandle, NodeId, Scroll, ScrollAxis, Slider,
+    SplitPane, TextField,
 };
 
 use crate::{
@@ -31,9 +32,25 @@ pub(crate) enum MountedKind {
         children: MountedChildren,
     },
     Label(NodeHandle<Label>),
-    Button {
-        surface: NodeHandle<ActionBox<RoutedHandler>>,
-        label: NodeHandle<Label>,
+    Button(NodeHandle<Button>),
+    Checkbox(NodeHandle<Checkbox>),
+    Slider(NodeHandle<Slider>),
+    TextField {
+        field: NodeHandle<TextField>,
+        error: NodeHandle<Label>,
+    },
+    Scroll {
+        handle: NodeHandle<Scroll>,
+        children: MountedChildren,
+    },
+    SplitPane {
+        handle: NodeHandle<SplitPane>,
+        children: MountedChildren,
+    },
+    List {
+        scroll: NodeHandle<Scroll>,
+        content: NodeHandle<Flex>,
+        children: MountedChildren,
     },
     Entity(EntityId),
     Vacant,
@@ -59,9 +76,17 @@ impl Mounted {
 
     pub(crate) fn forget(self, app: &mut App, remove_node: bool) {
         match self.kind {
-            MountedKind::Flex { children, .. } => children.forget(app),
+            MountedKind::Flex { children, .. }
+            | MountedKind::Scroll { children, .. }
+            | MountedKind::SplitPane { children, .. }
+            | MountedKind::List { children, .. } => children.forget(app),
             MountedKind::Entity(id) => app.unregister_renderer(id),
-            MountedKind::Label(_) | MountedKind::Button { .. } | MountedKind::Vacant => {}
+            MountedKind::Label(_)
+            | MountedKind::Button(_)
+            | MountedKind::Checkbox(_)
+            | MountedKind::Slider(_)
+            | MountedKind::TextField { .. }
+            | MountedKind::Vacant => {}
         }
         if remove_node && app.tree.contains(self.node) {
             app.tree.remove(self.node);
@@ -392,18 +417,158 @@ pub(crate) fn mount_element(
                 kind: MountedKind::Label(handle),
             }
         }
-        ElementKind::Button { text, on_click } => {
-            let frame = app.tree.insert_child_at(parent, position, Frame::default());
-            let surface = app
+        ElementKind::Button {
+            text,
+            enabled,
+            on_click,
+        } => {
+            let action = on_click.expect("button interactions require .on_click(...)");
+            let handle = app
                 .tree
-                .append(frame.id(), ActionBox::new(button_surface(&text), on_click));
-            let label = app
-                .tree
-                .append(frame.id(), Label::new(text).without_semantics());
+                .insert_child_at(parent, position, make_button(text, action));
+            app.tree.set_enabled(handle.id(), enabled);
             Mounted {
                 key,
-                node: frame.id(),
-                kind: MountedKind::Button { surface, label },
+                node: handle.id(),
+                kind: MountedKind::Button(handle),
+            }
+        }
+        ElementKind::Checkbox {
+            label,
+            checked,
+            on_toggle,
+        } => {
+            let handler = on_toggle.expect("checkbox interactions require .on_toggle(...)");
+            let handle = app.tree.insert_child_at(
+                parent,
+                position,
+                Checkbox::new(label, checked, move |value| Box::new(handler.with(value))),
+            );
+            Mounted {
+                key,
+                node: handle.id(),
+                kind: MountedKind::Checkbox(handle),
+            }
+        }
+        ElementKind::Slider {
+            label,
+            value,
+            range,
+            step,
+            on_change,
+        } => {
+            let handler = on_change.expect("slider interactions require .on_change(...)");
+            let mut slider = Slider::new(label, value, range, move |value| {
+                Box::new(handler.with(value))
+            });
+            slider.step = step;
+            let handle = app.tree.insert_child_at(parent, position, slider);
+            Mounted {
+                key,
+                node: handle.id(),
+                kind: MountedKind::Slider(handle),
+            }
+        }
+        ElementKind::TextField {
+            label,
+            text,
+            error,
+            on_input,
+            on_commit,
+        } => {
+            let container = app.tree.insert_child_at(
+                parent,
+                position,
+                Flex {
+                    gap: 3.0,
+                    ..Flex::default()
+                },
+            );
+            let mut element = TextField::new(label, text);
+            if let Some(handler) = on_input {
+                element = element.on_changed_factory(move |value| Box::new(handler.with(value)));
+            }
+            if let Some(handler) = on_commit {
+                element = element.on_submitted_factory(move |value| Box::new(handler.with(value)));
+            }
+            let field = app.tree.append(container.id(), element);
+            let error = app
+                .tree
+                .append(container.id(), Label::new(error.unwrap_or_default()));
+            Mounted {
+                key,
+                node: container.id(),
+                kind: MountedKind::TextField { field, error },
+            }
+        }
+        ElementKind::Scroll {
+            axis,
+            offset,
+            child,
+            on_scroll,
+        } => {
+            let mut element = Scroll::new(axis);
+            element.offset = offset;
+            if let Some(handler) = on_scroll {
+                element = element.on_scrolled_factory(move |value| Box::new(handler.with(value)));
+            }
+            let handle = app.tree.insert_child_at(parent, position, element);
+            let mut children = MountedChildren::new();
+            children.build(
+                child.into_iter().map(|child| *child).collect(),
+                handle.id(),
+                owner_depth,
+                app,
+            );
+            Mounted {
+                key,
+                node: handle.id(),
+                kind: MountedKind::Scroll { handle, children },
+            }
+        }
+        ElementKind::SplitPane {
+            axis,
+            ratio,
+            children: elements,
+            on_change,
+        } => {
+            let handler = on_change.expect("split pane interactions require .on_change(...)");
+            let handle = app.tree.insert_child_at(
+                parent,
+                position,
+                SplitPane::new(axis, ratio, move |value| Box::new(handler.with(value))),
+            );
+            let mut children = MountedChildren::new();
+            children.build(elements, handle.id(), owner_depth, app);
+            Mounted {
+                key,
+                node: handle.id(),
+                kind: MountedKind::SplitPane { handle, children },
+            }
+        }
+        ElementKind::List {
+            children: elements,
+            offset,
+            on_scroll,
+        } => {
+            assert_keyed_list(&elements);
+            let mut element = Scroll::new(ScrollAxis::Vertical);
+            element.offset = offset;
+            if let Some(handler) = on_scroll {
+                element = element.on_scrolled_factory(move |value| Box::new(handler.with(value)));
+            }
+            let scroll = app.tree.insert_child_at(parent, position, element);
+            let content = app.tree.append(scroll.id(), Flex::default());
+            let mut children = MountedChildren::new();
+            children.build(elements, content.id(), owner_depth, app);
+            Mounted {
+                key,
+                node: scroll.id(),
+                kind: MountedKind::List {
+                    scroll,
+                    content,
+                    children,
+                },
             }
         }
         ElementKind::Entity(entity) => {
@@ -460,11 +625,158 @@ fn reconcile_element(
             app.tree.label_mut(*handle).set_text(text);
             retained.key = key;
         }
-        (MountedKind::Button { surface, label, .. }, ElementKind::Button { text, on_click }) => {
+        (
+            MountedKind::Button(handle),
+            ElementKind::Button {
+                text,
+                enabled,
+                on_click,
+            },
+        ) => {
             ViewStats::record_node_rebuilt();
-            app.tree.edit(*surface).set_surface(button_surface(&text));
-            app.tree.edit(*surface).set_action(on_click);
-            app.tree.label_mut(*label).set_text(text);
+            app.tree.button_mut(*handle).set_label(text);
+            app.tree.set_enabled(handle.id(), enabled);
+            let action = on_click.expect("button interactions require .on_click(...)");
+            app.tree
+                .button_mut(*handle)
+                .set_action(move || Box::new(action.clone()));
+            retained.key = key;
+        }
+        (
+            MountedKind::Checkbox(handle),
+            ElementKind::Checkbox {
+                label,
+                checked,
+                on_toggle,
+            },
+        ) => {
+            ViewStats::record_node_rebuilt();
+            app.tree.checkbox_mut(*handle).set_label(label);
+            app.tree.checkbox_mut(*handle).set_checked(checked);
+            let handler = on_toggle.expect("checkbox interactions require .on_toggle(...)");
+            app.tree
+                .checkbox_mut(*handle)
+                .set_change_action(move |value| Box::new(handler.with(value)));
+            retained.key = key;
+        }
+        (
+            MountedKind::Slider(handle),
+            ElementKind::Slider {
+                label,
+                value,
+                range,
+                step,
+                on_change,
+            },
+        ) => {
+            ViewStats::record_node_rebuilt();
+            app.tree.slider_mut(*handle).set_label(label);
+            app.tree.slider_mut(*handle).set_range(range);
+            app.tree.slider_mut(*handle).set_value(value);
+            app.tree.slider_mut(*handle).set_step(step);
+            let handler = on_change.expect("slider interactions require .on_change(...)");
+            app.tree
+                .slider_mut(*handle)
+                .set_change_action(move |value| Box::new(handler.with(value)));
+            retained.key = key;
+        }
+        (
+            MountedKind::TextField {
+                field,
+                error: issue,
+                ..
+            },
+            ElementKind::TextField {
+                label,
+                text,
+                error,
+                on_input,
+                on_commit,
+            },
+        ) => {
+            ViewStats::record_node_rebuilt();
+            app.tree.text_field_mut(*field).set_label(label);
+            app.tree.text_field_mut(*field).set_text(text);
+            app.tree
+                .label_mut(*issue)
+                .set_text(error.unwrap_or_default());
+            if let Some(handler) = on_input {
+                app.tree
+                    .text_field_mut(*field)
+                    .set_change_action(move |value| Box::new(handler.with(value)));
+            }
+            if let Some(handler) = on_commit {
+                app.tree
+                    .text_field_mut(*field)
+                    .set_submit_action(move |value| Box::new(handler.with(value)));
+            }
+            retained.key = key;
+        }
+        (
+            MountedKind::Scroll { handle, children },
+            ElementKind::Scroll {
+                axis,
+                offset,
+                child,
+                on_scroll,
+            },
+        ) => {
+            ViewStats::record_node_rebuilt();
+            app.tree.scroll_mut(*handle).set_axis(axis);
+            app.tree.scroll_mut(*handle).set_offset(offset);
+            if let Some(handler) = on_scroll {
+                app.tree
+                    .scroll_mut(*handle)
+                    .set_scrolled_factory(move |value| Box::new(handler.with(value)));
+            }
+            children.reconcile(
+                child.into_iter().map(|child| *child).collect(),
+                handle.id(),
+                owner_depth,
+                app,
+            );
+            retained.key = key;
+        }
+        (
+            MountedKind::SplitPane { handle, children },
+            ElementKind::SplitPane {
+                axis,
+                ratio,
+                children: elements,
+                on_change,
+            },
+        ) => {
+            ViewStats::record_node_rebuilt();
+            app.tree.split_pane_mut(*handle).set_axis(axis);
+            app.tree.split_pane_mut(*handle).set_ratio(ratio);
+            let handler = on_change.expect("split pane interactions require .on_change(...)");
+            app.tree
+                .split_pane_mut(*handle)
+                .set_change_action(move |value| Box::new(handler.with(value)));
+            children.reconcile(elements, handle.id(), owner_depth, app);
+            retained.key = key;
+        }
+        (
+            MountedKind::List {
+                scroll,
+                content,
+                children,
+            },
+            ElementKind::List {
+                children: elements,
+                offset,
+                on_scroll,
+            },
+        ) => {
+            ViewStats::record_node_rebuilt();
+            assert_keyed_list(&elements);
+            app.tree.scroll_mut(*scroll).set_offset(offset);
+            if let Some(handler) = on_scroll {
+                app.tree
+                    .scroll_mut(*scroll)
+                    .set_scrolled_factory(move |value| Box::new(handler.with(value)));
+            }
+            children.reconcile(elements, content.id(), owner_depth, app);
             retained.key = key;
         }
         (MountedKind::Entity(id), ElementKind::Entity(entity)) if *id == entity.cell.id => {
@@ -486,17 +798,14 @@ fn reconcile_element(
     }
 }
 
-fn button_surface(text: &str) -> BoxElement {
-    BoxElement {
-        size: LogicalSize::new((text.chars().count() as f32 * 9.0 + 20.0).max(32.0), 28.0),
-        color: Color::from_srgb8(60, 60, 64, 255),
-        semantics: Some(SemanticData {
-            role: SemanticRole::Button,
-            label: text.to_owned(),
-            ..SemanticData::default()
-        }),
-        interactive: true,
-    }
+fn make_button(text: String, action: RoutedHandler) -> Button {
+    Button::with_action_factory(
+        text.clone(),
+        LogicalSize::new((text.chars().count() as f32 * 9.0 + 20.0).max(32.0), 28.0),
+        Color::from_srgb8(60, 60, 64, 255),
+        Color::from_srgb8(82, 82, 88, 255),
+        move || Box::new(action.clone()),
+    )
 }
 
 fn element_entity_id(element: &Element) -> Option<EntityId> {
@@ -504,4 +813,11 @@ fn element_entity_id(element: &Element) -> Option<EntityId> {
         ElementKind::Entity(entity) => Some(entity.cell.id),
         _ => None,
     }
+}
+
+fn assert_keyed_list(elements: &[Element]) {
+    assert!(
+        elements.iter().all(|element| element.key.is_some()),
+        "list children must all have stable .key(...) identities"
+    );
 }

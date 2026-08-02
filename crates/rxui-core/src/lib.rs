@@ -18,13 +18,18 @@ use rxui_tree::{Flex, NodeId, PassStats, UiTree};
 
 pub mod diagnostics;
 mod element;
+pub mod forms;
 mod harness;
 mod reconcile;
 mod theme;
 
 pub use diagnostics::ViewStats;
-pub use element::{Element, Key, button, column, label, row};
+pub use element::{
+    Element, Key, button, checkbox, column, label, list, row, scroll, slider, split_pane,
+    text_field,
+};
 pub use harness::{EntityHarness, HarnessScope};
+pub use rxui_tree::{Axis, ScrollAxis};
 pub use theme::Theme;
 
 use element::{EmbeddedEntity, RenderFn};
@@ -214,12 +219,39 @@ pub trait Render: 'static + Sized {
 
 /// Reusable UI action addressed to the entity that created it.
 type RoutedInvoke = dyn Fn(&mut dyn Any, &mut App);
+type RoutedValueInvoke<V> = dyn Fn(V, &mut dyn Any, &mut App);
 
 /// Cloneable, reusable UI action addressed to the entity that created it.
 #[derive(Clone)]
 pub struct RoutedHandler {
     target: EntityId,
     invoke: Rc<RoutedInvoke>,
+}
+
+/// Reusable UI action carrying a proposed controlled value to its owning entity.
+pub struct RoutedValueHandler<V: 'static> {
+    target: EntityId,
+    invoke: Rc<RoutedValueInvoke<V>>,
+}
+
+impl<V: 'static> Clone for RoutedValueHandler<V> {
+    fn clone(&self) -> Self {
+        Self {
+            target: self.target,
+            invoke: self.invoke.clone(),
+        }
+    }
+}
+
+impl<V: Clone + 'static> RoutedValueHandler<V> {
+    pub(crate) fn with(&self, value: V) -> RoutedHandler {
+        let target = self.target;
+        let invoke = self.invoke.clone();
+        RoutedHandler {
+            target,
+            invoke: Rc::new(move |state, app| invoke(value.clone(), state, app)),
+        }
+    }
 }
 
 impl fmt::Debug for RoutedHandler {
@@ -906,6 +938,30 @@ impl<T: 'static> Context<'_, T> {
                     marker: PhantomData,
                 };
                 listener(state, (), &mut context);
+            }),
+        }
+    }
+
+    /// Creates a reusable routed handler for a value proposed by a controlled element.
+    pub fn listener_value<V: Clone + 'static>(
+        &self,
+        listener: impl Fn(&mut T, V, &mut Context<'_, T>) + 'static,
+    ) -> RoutedValueHandler<V> {
+        let target = self.current;
+        let depth = self.depth;
+        RoutedValueHandler {
+            target,
+            invoke: Rc::new(move |value, state, app| {
+                let state = state
+                    .downcast_mut::<T>()
+                    .expect("routed handler target type mismatch");
+                let mut context = Context {
+                    app,
+                    current: target,
+                    depth,
+                    marker: PhantomData,
+                };
+                listener(state, value, &mut context);
             }),
         }
     }

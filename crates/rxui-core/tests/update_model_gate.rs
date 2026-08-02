@@ -9,7 +9,10 @@ use std::{cell::Cell, rc::Rc};
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_text::FontDatabase;
-use rxui_core::{App, Context, Element, Entity, Render, Theme, ViewStats, column, label};
+use rxui_core::{
+    App, Context, Element, Entity, EntityHarness, Render, Theme, ViewStats, button, checkbox,
+    column, label, slider, text_field,
+};
 use rxui_tree::PassStats;
 
 struct Static;
@@ -48,6 +51,29 @@ fn unchanged_rerender_has_zero_retained_mutations() {
             rows_recycled: 0,
         }
     );
+}
+
+struct StaticForm;
+
+impl Render for StaticForm {
+    fn render(&mut self, cx: &mut Context<Self>) -> Element {
+        column()
+            .child(text_field("Name", "Ada").on_input(cx.listener_value(|_, _: String, _| {})))
+            .child(checkbox("Enabled", true).on_toggle(cx.listener_value(|_, _, _| {})))
+            .child(slider("Gain", 5.0, 0.0..=10.0).on_change(cx.listener_value(|_, _, _| {})))
+            .child(button("Save").on_click(cx.listener(|_, _, _| {})))
+    }
+}
+
+#[test]
+fn unchanged_form_rerender_has_zero_retained_mutations() {
+    let mut harness = EntityHarness::new(|cx| cx.new(|_| StaticForm));
+    harness.refresh();
+    assert_eq!(harness.stats().passes.layout_elements, 0);
+    assert_eq!(harness.stats().passes.rebuilt_fragments, 0);
+    assert_eq!(harness.stats().passes.accessibility_nodes, 0);
+    assert_eq!(harness.stats().views.nodes_built, 0);
+    assert_eq!(harness.stats().views.set_children_calls, 0);
 }
 
 struct Child {

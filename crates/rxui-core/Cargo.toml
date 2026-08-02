@@ -15,6 +15,7 @@ astrelis-text = { workspace = true }
 rxui-tree = { workspace = true }
 
 [dev-dependencies]
+astrelis-platform = { workspace = true }
 proptest = { workspace = true }
 
 [lints]

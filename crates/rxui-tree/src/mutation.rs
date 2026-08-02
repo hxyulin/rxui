@@ -552,6 +552,35 @@ impl NodeMut<'_, Slider> {
     }
 }
 
+impl NodeMut<'_, SplitPane> {
+    /// Replaces the split direction. `LAYOUT`.
+    pub fn set_axis(&mut self, axis: Axis) -> bool {
+        self.guarded(
+            axis,
+            Invalidation::LAYOUT,
+            |pane| &pane.axis,
+            |pane, axis| pane.axis = axis,
+        )
+    }
+
+    /// Replaces the controlled split ratio. `LAYOUT`.
+    pub fn set_ratio(&mut self, ratio: f32) -> bool {
+        self.guarded(
+            ratio.clamp(0.05, 0.95),
+            Invalidation::LAYOUT,
+            |pane| &pane.ratio,
+            |pane, ratio| pane.ratio = ratio,
+        )
+    }
+
+    /// Replaces the erased resize-action factory. No invalidation.
+    pub fn set_change_action(&mut self, changed: impl Fn(f32) -> Box<dyn Any> + 'static) {
+        self.ui.update(self.handle, Invalidation::empty(), |pane| {
+            pane.set_changed(changed);
+        });
+    }
+}
+
 impl NodeMut<'_, Align> {
     /// Replaces child placement. `LAYOUT`.
     pub fn set_alignment(&mut self, alignment: Alignment) -> bool {

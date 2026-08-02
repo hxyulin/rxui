@@ -975,6 +975,7 @@ name = "rxui-core"
 version = "0.2.0-alpha.1"
 dependencies = [
  "astrelis-core",
+ "astrelis-platform",
  "astrelis-text",
  "proptest",
  "rxui-tree",

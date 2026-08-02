@@ -1,10 +1,11 @@
 //! Lightweight, non-generic element descriptions and fluent builders.
 
-use std::{fmt, rc::Rc};
+use std::{fmt, ops::RangeInclusive, rc::Rc};
 
-use rxui_tree::Axis;
+use astrelis_core::geometry::LogicalPoint;
+use rxui_tree::{Axis, ScrollAxis};
 
-use crate::{Entity, EntityCell, Render, RoutedHandler};
+use crate::{Entity, EntityCell, Render, RoutedHandler, RoutedValueHandler};
 
 /// Stable identity supplied to a child in a reorderable sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -80,7 +81,44 @@ pub(crate) enum ElementKind {
     },
     Button {
         text: String,
+        enabled: bool,
         on_click: Option<RoutedHandler>,
+    },
+    Checkbox {
+        label: String,
+        checked: bool,
+        on_toggle: Option<RoutedValueHandler<bool>>,
+    },
+    Slider {
+        label: String,
+        value: f32,
+        range: RangeInclusive<f32>,
+        step: f32,
+        on_change: Option<RoutedValueHandler<f32>>,
+    },
+    TextField {
+        label: String,
+        text: String,
+        error: Option<String>,
+        on_input: Option<RoutedValueHandler<String>>,
+        on_commit: Option<RoutedValueHandler<String>>,
+    },
+    Scroll {
+        axis: ScrollAxis,
+        offset: LogicalPoint,
+        child: Option<Box<Element>>,
+        on_scroll: Option<RoutedValueHandler<LogicalPoint>>,
+    },
+    SplitPane {
+        axis: Axis,
+        ratio: f32,
+        children: Vec<Element>,
+        on_change: Option<RoutedValueHandler<f32>>,
+    },
+    List {
+        children: Vec<Element>,
+        offset: LogicalPoint,
+        on_scroll: Option<RoutedValueHandler<LogicalPoint>>,
     },
     Entity(EmbeddedEntity),
 }
@@ -100,6 +138,12 @@ impl fmt::Debug for Element {
             ElementKind::Flex { .. } => "Flex",
             ElementKind::Label { .. } => "Label",
             ElementKind::Button { .. } => "Button",
+            ElementKind::Checkbox { .. } => "Checkbox",
+            ElementKind::Slider { .. } => "Slider",
+            ElementKind::TextField { .. } => "TextField",
+            ElementKind::Scroll { .. } => "Scroll",
+            ElementKind::SplitPane { .. } => "SplitPane",
+            ElementKind::List { .. } => "List",
             ElementKind::Entity(_) => "Entity",
         };
         formatter
@@ -130,7 +174,16 @@ impl Element {
     pub fn child(mut self, child: impl Into<Element>) -> Self {
         match &mut self.kind {
             ElementKind::Flex { children, .. } => children.push(child.into()),
-            _ => panic!("children are supported only by row and column elements"),
+            ElementKind::Scroll { child: current, .. } => *current = Some(Box::new(child.into())),
+            ElementKind::SplitPane { children, .. } => {
+                assert!(
+                    children.len() < 2,
+                    "split panes accept exactly two children"
+                );
+                children.push(child.into());
+            }
+            ElementKind::List { children, .. } => children.push(child.into()),
+            _ => panic!("children are not supported by this element"),
         }
         self
     }
@@ -141,7 +194,21 @@ impl Element {
             ElementKind::Flex {
                 children: current, ..
             } => current.extend(children.into_iter().map(Into::into)),
-            _ => panic!("children are supported only by row and column elements"),
+            ElementKind::SplitPane {
+                children: current, ..
+            } => {
+                current.extend(children.into_iter().map(Into::into));
+                assert!(
+                    current.len() <= 2,
+                    "split panes accept exactly two children"
+                );
+            }
+            ElementKind::List {
+                children: current, ..
+            } => {
+                current.extend(children.into_iter().map(Into::into));
+            }
+            _ => panic!("children are not supported by this element"),
         }
         self
     }
@@ -151,6 +218,98 @@ impl Element {
         match &mut self.kind {
             ElementKind::Button { on_click, .. } => *on_click = Some(handler),
             _ => panic!("on_click is supported only by button elements"),
+        }
+        self
+    }
+
+    /// Selects whether a button participates in hit testing and focus.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        match &mut self.kind {
+            ElementKind::Button {
+                enabled: current, ..
+            } => *current = enabled,
+            _ => panic!("enabled is supported only by button elements"),
+        }
+        self
+    }
+
+    /// Installs a controlled checkbox proposal listener.
+    pub fn on_toggle(mut self, handler: RoutedValueHandler<bool>) -> Self {
+        match &mut self.kind {
+            ElementKind::Checkbox { on_toggle, .. } => *on_toggle = Some(handler),
+            _ => panic!("on_toggle is supported only by checkbox elements"),
+        }
+        self
+    }
+
+    /// Installs a controlled numeric proposal listener.
+    pub fn on_change(mut self, handler: RoutedValueHandler<f32>) -> Self {
+        match &mut self.kind {
+            ElementKind::Slider { on_change, .. } | ElementKind::SplitPane { on_change, .. } => {
+                *on_change = Some(handler);
+            }
+            _ => panic!("on_change is supported only by sliders and split panes"),
+        }
+        self
+    }
+
+    /// Installs a listener for every text edit proposal.
+    pub fn on_input(mut self, handler: RoutedValueHandler<String>) -> Self {
+        match &mut self.kind {
+            ElementKind::TextField { on_input, .. } => *on_input = Some(handler),
+            _ => panic!("on_input is supported only by text fields"),
+        }
+        self
+    }
+
+    /// Installs a listener for text submitted with Enter.
+    pub fn on_commit(mut self, handler: RoutedValueHandler<String>) -> Self {
+        match &mut self.kind {
+            ElementKind::TextField { on_commit, .. } => *on_commit = Some(handler),
+            _ => panic!("on_commit is supported only by text fields"),
+        }
+        self
+    }
+
+    /// Surfaces a validation issue as a semantic label adjacent to a text field.
+    pub fn error(mut self, error: impl Into<String>) -> Self {
+        match &mut self.kind {
+            ElementKind::TextField { error: current, .. } => *current = Some(error.into()),
+            _ => panic!("error is supported only by text fields"),
+        }
+        self
+    }
+
+    /// Sets the controlled scroll offset.
+    pub fn offset(mut self, offset: LogicalPoint) -> Self {
+        match &mut self.kind {
+            ElementKind::Scroll {
+                offset: current, ..
+            }
+            | ElementKind::List {
+                offset: current, ..
+            } => *current = offset,
+            _ => panic!("offset is supported only by scroll and list elements"),
+        }
+        self
+    }
+
+    /// Installs a controlled scroll-offset proposal listener.
+    pub fn on_scroll(mut self, handler: RoutedValueHandler<LogicalPoint>) -> Self {
+        match &mut self.kind {
+            ElementKind::Scroll { on_scroll, .. } | ElementKind::List { on_scroll, .. } => {
+                *on_scroll = Some(handler)
+            }
+            _ => panic!("on_scroll is supported only by scroll and list elements"),
+        }
+        self
+    }
+
+    /// Sets the keyboard adjustment step for a slider.
+    pub fn step(mut self, step: f32) -> Self {
+        match &mut self.kind {
+            ElementKind::Slider { step: current, .. } => *current = step.max(0.0),
+            _ => panic!("step is supported only by slider elements"),
         }
         self
     }
@@ -203,7 +362,89 @@ pub fn button(text: impl Into<String>) -> Element {
         key: None,
         kind: ElementKind::Button {
             text: text.into(),
+            enabled: true,
             on_click: None,
+        },
+    }
+}
+
+/// Creates a controlled checkbox.
+pub fn checkbox(label: impl Into<String>, checked: bool) -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::Checkbox {
+            label: label.into(),
+            checked,
+            on_toggle: None,
+        },
+    }
+}
+
+/// Creates a controlled horizontal slider.
+pub fn slider(label: impl Into<String>, value: f32, range: RangeInclusive<f32>) -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::Slider {
+            label: label.into(),
+            value,
+            range,
+            step: 1.0,
+            on_change: None,
+        },
+    }
+}
+
+/// Creates a controlled single-line text field.
+pub fn text_field(label: impl Into<String>, text: impl Into<String>) -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::TextField {
+            label: label.into(),
+            text: text.into(),
+            error: None,
+            on_input: None,
+            on_commit: None,
+        },
+    }
+}
+
+/// Creates a controlled clipped scroll viewport.
+pub fn scroll() -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::Scroll {
+            axis: ScrollAxis::Vertical,
+            offset: LogicalPoint::ZERO,
+            child: None,
+            on_scroll: None,
+        },
+    }
+}
+
+/// Creates a controlled two-child split pane.
+pub fn split_pane(axis: Axis, ratio: f32) -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::SplitPane {
+            axis,
+            ratio,
+            children: Vec::new(),
+            on_change: None,
+        },
+    }
+}
+
+/// Creates a keyed vertical sequence inside a scroll viewport.
+///
+/// Virtualization is intentionally deferred to Stage 6; this builder uses the
+/// normal keyed reconciler and retains every supplied row.
+pub fn list() -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::List {
+            children: Vec::new(),
+            offset: LogicalPoint::ZERO,
+            on_scroll: None,
         },
     }
 }

@@ -16,7 +16,7 @@ pub struct HarnessScope;
 ///
 /// The constructor deliberately mirrors application initialization:
 /// `EntityHarness::new(|cx| cx.new(|_| Root { ... }))`. Every activation is
-/// taken from the tree's `ActionBox`, routed through [`App`], and flushed before
+/// taken from the retained control, routed through [`App`], and flushed before
 /// the method returns.
 pub struct EntityHarness<T: Render> {
     app: App,
@@ -62,6 +62,24 @@ impl<T: Render> EntityHarness<T> {
             .perform_semantic_action(target, SemanticAction::Activate);
     }
 
+    /// Performs an accessibility action against the labeled semantic node.
+    pub fn semantic_action(&mut self, label: &str, action: SemanticAction) {
+        let target = self.find(label).id;
+        self.stats = self.app.perform_semantic_action(target, action);
+    }
+
+    /// Dispatches one raw tree input and settles resulting entity work.
+    pub fn input(&mut self, input: UiInput) {
+        self.stats = self.app.dispatch_input(input);
+    }
+
+    /// Requests a render of the root without changing its model.
+    pub fn refresh(&mut self) {
+        let root = self.root.clone();
+        root.update(&mut self.app, |_, context| context.notify());
+        self.stats = self.app.flush();
+    }
+
     /// Returns the labeled semantic node, panicking with available labels.
     pub fn find(&self, label: &str) -> SemanticNode {
         self.try_find(label).unwrap_or_else(|| {
@@ -96,7 +114,11 @@ impl<T: Render> EntityHarness<T> {
             .into_iter()
             .filter(|node| !node.data.label.is_empty())
         {
-            let _ = writeln!(snapshot, "{:?} label={:?}", node.data.role, node.data.label);
+            let _ = writeln!(
+                snapshot,
+                "{:?} label={:?} value={:?}",
+                node.data.role, node.data.label, node.data.value
+            );
         }
         snapshot
     }

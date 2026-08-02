@@ -80,17 +80,17 @@ fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
     assert_eq!(
         increment.passes,
         PassStats {
-            layout_elements: 38,
-            rebuilt_fragments: 4,
-            reused_fragments: 10,
-            hit_test_nodes: 8,
+            layout_elements: 14,
+            rebuilt_fragments: 2,
+            reused_fragments: 6,
+            hit_test_nodes: 6,
             accessibility_nodes: 1,
-            shaped_text: 14,
-            visited_compose_nodes: 11,
-            compose_skipped_subtrees: 3,
-            visited_accessibility_nodes: 11,
-            accessibility_skipped_subtrees: 3,
-            invalidate_steps: 3,
+            shaped_text: 2,
+            visited_compose_nodes: 4,
+            compose_skipped_subtrees: 1,
+            visited_accessibility_nodes: 4,
+            accessibility_skipped_subtrees: 1,
+            invalidate_steps: 7,
             ..PassStats::default()
         }
     );
@@ -102,7 +102,7 @@ fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
     assert_eq!(
         decrement.passes,
         PassStats {
-            hit_test_nodes: 9,
+            hit_test_nodes: 7,
             ..increment.passes
         }
     );
@@ -118,8 +118,10 @@ fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
     assert_eq!(
         first_click.passes,
         PassStats {
-            reused_fragments: 14,
-            hit_test_nodes: 7,
+            rebuilt_fragments: 1,
+            reused_fragments: 7,
+            hit_test_nodes: 5,
+            invalidate_steps: 4,
             ..PassStats::default()
         }
     );
@@ -135,7 +137,7 @@ fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
     assert_eq!(
         first_semantic.passes,
         PassStats {
-            reused_fragments: 14,
+            reused_fragments: 8,
             ..PassStats::default()
         }
     );

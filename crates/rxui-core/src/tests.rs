@@ -745,8 +745,7 @@ fn button_builder_routes_a_listener_from_semantic_activation() {
     let mut app = app();
     let root = app.new_entity(|_| ButtonView { clicks: 0 });
     app.mount(&root);
-    let frame = rendered_root(&app);
-    let surface = app.tree().children(frame)[0];
+    let surface = rendered_root(&app);
     let action = app
         .tree_mut()
         .perform_semantic_action(surface, rxui_tree::SemanticAction::Activate)
