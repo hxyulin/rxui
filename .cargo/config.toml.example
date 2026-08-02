@@ -1,0 +1,10 @@
+# NOTE: Inert while the root manifest uses the documented path-dependency
+# fallback; Cargo fetched the unavailable git revision before applying patches.
+# When git pins are restored, copy this file to `.cargo/config.toml` (which is
+# gitignored) and adjust paths if astrelis is not a sibling of this repository.
+#
+# [patch."https://github.com/hxyulin/astrelis"]
+# astrelis-core = { path = "../astrelis/crates/astrelis-core" }
+# astrelis-paint = { path = "../astrelis/crates/astrelis-paint" }
+# astrelis-platform = { path = "../astrelis/crates/astrelis-platform" }
+# astrelis-text = { path = "../astrelis/crates/astrelis-text" }

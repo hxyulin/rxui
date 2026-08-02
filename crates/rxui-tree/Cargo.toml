@@ -1,0 +1,28 @@
+[package]
+name = "rxui-tree"
+description = "Incremental retained tree engine for RXUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-text = { workspace = true }
+bitflags = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "incremental"
+harness = false
+
+[lints]
+workspace = true

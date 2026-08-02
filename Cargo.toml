@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/rxui-tree"]
+
+[workspace.package]
+version = "0.2.0-alpha.1"
+authors = ["hxyulin <hxyulin@proton.me>"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/hxyulin/rxui"
+homepage = "https://github.com/hxyulin/rxui"
+readme = "README.md"
+rust-version = "1.88"
+
+[workspace.dependencies]
+# NOTE: fallback to path deps — Cargo fetches the unavailable git revision
+# before applying the local patch, and that revision is absent from its cache.
+astrelis-core = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-core" }
+astrelis-paint = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-paint" }
+astrelis-platform = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-platform" }
+astrelis-text = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-text" }
+# Intended git pins once the revision is available remotely:
+# astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }
+# astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }
+# astrelis-platform = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }
+# astrelis-text = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }
+bitflags = "2"
+unicode-segmentation = "1.12"
+criterion = { version = "0.8", default-features = false, features = [
+  "cargo_bench_support",
+] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
