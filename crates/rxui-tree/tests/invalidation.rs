@@ -633,3 +633,44 @@ fn hit_test_counter_survives_the_pass_that_follows_it() {
     assert_eq!(stats.hit_test_nodes, dispatched);
     assert_eq!(ui.stats().hit_test_nodes, dispatched);
 }
+
+#[test]
+fn hit_testing_rejects_wide_subtrees_before_visiting_their_children() {
+    const PANELS: usize = 10;
+    const REGULAR_LEAVES: usize = 99;
+    let mut ui = UiTree::new(
+        Flex {
+            axis: Axis::Horizontal,
+            ..Flex::default()
+        },
+        LogicalSize::new(100.0, 500.0),
+    );
+    let root = ui.root();
+    for panel_index in 0..PANELS {
+        let panel = ui.append(
+            root,
+            Flex {
+                axis: Axis::Vertical,
+                ..Flex::default()
+            },
+        );
+        let leaves = if panel_index + 1 == PANELS {
+            REGULAR_LEAVES - 1
+        } else {
+            REGULAR_LEAVES
+        };
+        for _ in 0..leaves {
+            let mut leaf = BoxElement::new(LogicalSize::new(10.0, 5.0), Color::WHITE);
+            leaf.interactive = true;
+            ui.append(panel.id(), leaf);
+        }
+    }
+    ui.update_passes();
+
+    assert!(ui.hit_test(LogicalPoint::new(95.0, 487.5)).is_some());
+    assert_eq!(
+        ui.stats().hit_test_nodes,
+        3,
+        "only the root, containing panel, and containing leaf are visited"
+    );
+}

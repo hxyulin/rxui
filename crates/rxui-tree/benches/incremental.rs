@@ -1,8 +1,11 @@
 //! Incremental retained-core microbenchmarks.
 
-use astrelis_core::{color::Color, geometry::LogicalSize};
+use astrelis_core::{
+    color::Color,
+    geometry::{LogicalPoint, LogicalSize},
+};
 use criterion::{Criterion, criterion_group, criterion_main};
-use rxui_tree::{Axis, Flex, Label, UiTree};
+use rxui_tree::{Axis, BoxElement, Flex, Label, UiTree};
 use std::hint::black_box;
 
 fn ui(count: usize) -> (UiTree, rxui_tree::NodeHandle<Label>) {
@@ -39,6 +42,43 @@ fn incremental(criterion: &mut Criterion) {
             black_box(ui.update_passes().stats);
         });
     });
+
+    let mut hit_tree = hit_test_tree();
+    let point = LogicalPoint::new(95.0, 487.5);
+    criterion.bench_function("rxui_tree/pointer_hit_test_pruned_1000", |bencher| {
+        bencher.iter(|| black_box(hit_tree.hit_test(black_box(point))));
+    });
+}
+
+/// Builds exactly 1,000 nodes: a root, ten spatially disjoint panels, and 989
+/// leaves. The target is the final leaf of the final panel, so reverse paint
+/// order reaches it after visiting only the root, that panel, and that leaf.
+fn hit_test_tree() -> UiTree {
+    let mut ui = UiTree::new(
+        Flex {
+            axis: Axis::Horizontal,
+            ..Flex::default()
+        },
+        LogicalSize::new(100.0, 500.0),
+    );
+    let root = ui.root();
+    for panel_index in 0..10 {
+        let panel = ui.append(
+            root,
+            Flex {
+                axis: Axis::Vertical,
+                ..Flex::default()
+            },
+        );
+        let leaves = if panel_index == 9 { 98 } else { 99 };
+        for _ in 0..leaves {
+            let mut leaf = BoxElement::new(LogicalSize::new(10.0, 5.0), Color::WHITE);
+            leaf.interactive = true;
+            ui.append(panel.id(), leaf);
+        }
+    }
+    ui.update_passes();
+    ui
 }
 
 criterion_group!(benches, incremental);

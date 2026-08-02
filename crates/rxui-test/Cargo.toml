@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 astrelis-core = { workspace = true }
+astrelis-platform = { workspace = true }
 rxui-tree = { workspace = true }
 
 [dev-dependencies]
