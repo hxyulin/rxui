@@ -1,0 +1,21 @@
+[package]
+name = "rxui-core"
+description = "Entity runtime and declarative UI core for RXUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+astrelis-core = { workspace = true }
+astrelis-text = { workspace = true }
+rxui-tree = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rxui-test", "crates/rxui-tree"]
+members = ["crates/rxui-core", "crates/rxui-test", "crates/rxui-tree"]
 
 [workspace.package]
 version = "0.2.0-alpha.1"
@@ -30,6 +30,7 @@ unicode-segmentation = "1.12"
 criterion = { version = "0.8", default-features = false, features = [
   "cargo_bench_support",
 ] }
+proptest = "1.7"
 
 [workspace.lints.rust]
 missing_docs = "warn"
