@@ -177,17 +177,25 @@ fn align_setters() {
     assert_setter!(ui, Invalidation::LAYOUT_ALL, align => set_padding(8.0));
 }
 
-fn image(seed: u8) -> Image {
-    Image::from_rgba8(Size::<Physical, u32>::new(2, 2), vec![seed; 16]).expect("valid image")
+fn image(width: u32, height: u32, seed: u8) -> Image {
+    Image::from_rgba8(
+        Size::<Physical, u32>::new(width, height),
+        vec![seed; (width * height * 4) as usize],
+    )
+    .expect("valid image")
 }
 
 #[test]
 fn image_setters() {
-    let (mut ui, image_element) = settled(ImageElement::new(image(0), "preview"));
-    let replacement = image(255);
+    let (mut ui, image_element) = settled(ImageElement::new(image(2, 2, 0), "preview"));
+    let replacement = image(3, 4, 255);
 
     let applied = ui.image_mut(image_element).set_image(replacement.clone());
-    changed(&mut ui, applied, Invalidation::PAINT);
+    changed(
+        &mut ui,
+        applied,
+        Invalidation::PAINT | Invalidation::ACCESSIBILITY,
+    );
     let applied = ui.image_mut(image_element).set_image(replacement);
     unchanged(&mut ui, applied);
     assert_setter!(ui, Invalidation::ACCESSIBILITY, image_element => set_label("thumbnail"));
@@ -211,7 +219,10 @@ fn render_view_setters() {
     );
     ui.render_view_mut(view)
         .set_input(|input| Box::new(input) as Box<dyn std::any::Any>);
-    assert_eq!(ui.invalidation(), Invalidation::HIT_TEST);
+    assert_eq!(
+        ui.invalidation(),
+        Invalidation::HIT_TEST | Invalidation::ACCESSIBILITY
+    );
 }
 
 #[test]

@@ -148,7 +148,8 @@ impl NodeMut<'_, Align> {
         )
     }
 
-    /// Replaces all alignment-container properties.
+    /// Replaces all alignment-container properties. See
+    /// [`NodeMut::set_content`] for why the bundles remain.
     pub fn set_align(&mut self, alignment: Alignment, padding: f32) {
         self.set_alignment(alignment);
         self.set_padding(padding);
@@ -156,14 +157,18 @@ impl NodeMut<'_, Align> {
 }
 
 impl NodeMut<'_, ImageElement> {
-    /// Replaces the immutable image source. `PAINT`.
+    /// Replaces the immutable image source. `PAINT | ACCESSIBILITY`.
     pub fn set_image(&mut self, image: Image) -> bool {
         if self.ui.element(self.handle).image.cache_id() == image.cache_id() {
             return false;
         }
-        self.ui.update(self.handle, Invalidation::PAINT, |element| {
-            element.image = image;
-        });
+        self.ui.update(
+            self.handle,
+            Invalidation::PAINT | Invalidation::ACCESSIBILITY,
+            |element| {
+                element.image = image;
+            },
+        );
         true
     }
 
@@ -259,12 +264,15 @@ impl NodeMut<'_, RenderView> {
         )
     }
 
-    /// Replaces typed-erased input routing. `HIT_TEST`.
+    /// Replaces typed-erased input routing. `HIT_TEST | ACCESSIBILITY`.
     pub fn set_input(&mut self, input: impl Fn(UiInput) -> Box<dyn Any> + 'static) {
-        self.ui
-            .update(self.handle, Invalidation::HIT_TEST, |element| {
+        self.ui.update(
+            self.handle,
+            Invalidation::HIT_TEST | Invalidation::ACCESSIBILITY,
+            |element| {
                 element.set_input(input);
-            });
+            },
+        );
     }
 }
 
