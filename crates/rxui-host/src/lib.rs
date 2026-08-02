@@ -957,7 +957,7 @@ mod tests {
     use astrelis_core::geometry::{LogicalPoint, LogicalSize};
     use astrelis_text::FontDatabase;
     use rxui_core::{App, Context, Element, Render, label};
-    use rxui_tree::UiInput;
+    use rxui_tree::{NodeId, SemanticAction, UiInput};
 
     use super::{RetainedWork, consume_retained_work, workbench};
 
@@ -986,14 +986,20 @@ mod tests {
         app
     }
 
-    fn semantic_center(app: &App, label: &str) -> LogicalPoint {
-        let bounds = app
-            .tree()
+    fn semantic_node(app: &App, label: &str) -> rxui_tree::SemanticNode {
+        app.tree()
             .semantic_snapshot()
             .into_iter()
             .find(|node| node.data.label == label)
             .unwrap_or_else(|| panic!("missing semantic node {label:?}"))
-            .bounds;
+    }
+
+    fn semantic_node_id(app: &App, label: &str) -> NodeId {
+        semantic_node(app, label).id
+    }
+
+    fn semantic_center(app: &App, label: &str) -> LogicalPoint {
+        let bounds = semantic_node(app, label).bounds;
         LogicalPoint::new(
             bounds.origin.x + bounds.size.width * 0.5,
             bounds.origin.y + bounds.size.height * 0.5,
@@ -1070,11 +1076,27 @@ mod tests {
         assert_eq!(RetainedWork::pending(&app, false), RetainedWork::default());
     }
 
-    // There is no semantic-only entity-model operation to port: every public
-    // Workbench semantic change either notifies its entity (and can change
-    // pixels) or changes focus on a control whose focus indicator repaints.
-    // The pass-without-redraw branch is nevertheless covered below at the host
-    // decision-consumption seam.
+    #[test]
+    fn focusing_a_button_schedules_a_pass_without_a_frame() {
+        // Focus on a button invalidates ACCESSIBILITY only (buttons have no
+        // focus-indicator repaint), so this is the semantic-only change that
+        // must publish without producing a frame.
+        let mut app = workbench_app();
+        let save = semantic_node_id(&app, "Save workspace");
+
+        app.route_semantic_action(save, SemanticAction::Focus);
+
+        assert!(app.needs_flush());
+        assert!(!app.needs_render());
+        assert!(!app.tree().needs_redraw());
+        assert_eq!(
+            RetainedWork::pending(&app, false),
+            RetainedWork {
+                passes: 1,
+                redraw: false,
+            }
+        );
+    }
 
     #[test]
     fn host_consumes_pass_and_redraw_decisions_independently() {
