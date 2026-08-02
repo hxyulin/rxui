@@ -36,10 +36,12 @@ fn framed_landmark(ui: &mut UiTree, parent: rxui_tree::NodeId, label: &str, grow
     ui.append(frame.id(), landmark(label));
 }
 
-fn finish_scene(output: &mut String, section: &str, ui: &mut UiTree) {
+fn finish_scene(output: &mut String, section: &str, ui: &mut UiTree) -> SemanticScene {
     ui.update_passes();
+    let scene = SemanticScene::from_nodes(&ui.semantic_snapshot());
     let _ = writeln!(output, "[{section}]");
-    output.push_str(&SemanticScene::from_nodes(&ui.semantic_snapshot()).snapshot());
+    output.push_str(&scene.snapshot());
+    scene
 }
 
 fn ratio_split(output: &mut String) {
@@ -106,7 +108,15 @@ fn labeled_form(output: &mut String) {
         LogicalSize::new(260.0, 140.0),
     );
     let root = ui.root();
-    ui.append(root, Label::new("Account").with_font_size(16.0));
+    let heading = ui.append(
+        root,
+        Frame {
+            width: Some(236.0),
+            height: Some(20.0),
+            ..Frame::default()
+        },
+    );
+    ui.append(heading.id(), Label::new("Account").with_font_size(16.0));
     for label in ["Name", "Email"] {
         let frame = ui.append(
             root,
@@ -120,19 +130,19 @@ fn labeled_form(output: &mut String) {
         field.semantics.as_mut().expect("semantics").role = SemanticRole::Field;
         ui.append(frame.id(), field);
     }
-    let stats = ui.update_passes().stats;
+    let scene = finish_scene(output, "labeled form", &mut ui);
+    let stats = ui.stats();
     assert_eq!(stats.shaped_text, 1, "the Label must pass through shaping");
-    let account = SemanticScene::from_nodes(&ui.semantic_snapshot())
+    let account = scene
         .landmarks
-        .into_iter()
+        .iter()
         .find(|landmark| landmark.label == "Account")
         .expect("Account landmark");
-    assert!(
-        account.bounds.size.height > 0.0,
-        "shaping must contribute intrinsic label height"
+    assert_eq!(
+        account.bounds.size,
+        LogicalSize::new(236.0, 20.0),
+        "the heading frame must isolate golden geometry from host font metrics"
     );
-    let _ = writeln!(output, "[labeled form]");
-    output.push_str(&SemanticScene::from_nodes(&ui.semantic_snapshot()).snapshot());
 }
 
 #[test]

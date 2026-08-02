@@ -7,6 +7,11 @@ check_manifest() {
   local manifest="$1"
   local allowed="$2"
 
+  [[ -f "$manifest" ]] || {
+    echo "missing manifest: $manifest" >&2
+    exit 1
+  }
+
   while IFS= read -r dependency; do
     case "$dependency" in
       astrelis-*)
