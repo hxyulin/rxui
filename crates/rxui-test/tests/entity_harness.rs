@@ -19,7 +19,7 @@ impl Render for Counter {
 }
 
 #[test]
-fn click_routes_action_box_through_app_and_flushes() {
+fn click_routes_retained_button_through_app_and_flushes() {
     let mut harness = EntityHarness::new(|cx| cx.new(|_| Counter { value: 0 }));
     harness.click("Increment");
 

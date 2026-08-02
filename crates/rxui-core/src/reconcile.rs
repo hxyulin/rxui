@@ -492,9 +492,12 @@ pub(crate) fn mount_element(
                 element = element.on_submitted_factory(move |value| Box::new(handler.with(value)));
             }
             let field = app.tree.append(container.id(), element);
-            let error = app
-                .tree
-                .append(container.id(), Label::new(error.unwrap_or_default()));
+            let error_semantic = error.as_ref().is_some_and(|error| !error.is_empty());
+            let mut error_element = Label::new(error.unwrap_or_default());
+            if !error_semantic {
+                error_element = error_element.without_semantics();
+            }
+            let error = app.tree.append(container.id(), error_element);
             Mounted {
                 key,
                 node: container.id(),
@@ -697,18 +700,24 @@ fn reconcile_element(
             ViewStats::record_node_rebuilt();
             app.tree.text_field_mut(*field).set_label(label);
             app.tree.text_field_mut(*field).set_text(text);
+            let error_semantic = error.as_ref().is_some_and(|error| !error.is_empty());
+            app.tree.label_mut(*issue).set_semantic(error_semantic);
             app.tree
                 .label_mut(*issue)
                 .set_text(error.unwrap_or_default());
-            if let Some(handler) = on_input {
-                app.tree
+            match on_input {
+                Some(handler) => app
+                    .tree
                     .text_field_mut(*field)
-                    .set_change_action(move |value| Box::new(handler.with(value)));
+                    .set_change_action(move |value| Box::new(handler.with(value))),
+                None => app.tree.text_field_mut(*field).clear_change_action(),
             }
-            if let Some(handler) = on_commit {
-                app.tree
+            match on_commit {
+                Some(handler) => app
+                    .tree
                     .text_field_mut(*field)
-                    .set_submit_action(move |value| Box::new(handler.with(value)));
+                    .set_submit_action(move |value| Box::new(handler.with(value))),
+                None => app.tree.text_field_mut(*field).clear_submit_action(),
             }
             retained.key = key;
         }
@@ -724,10 +733,12 @@ fn reconcile_element(
             ViewStats::record_node_rebuilt();
             app.tree.scroll_mut(*handle).set_axis(axis);
             app.tree.scroll_mut(*handle).set_offset(offset);
-            if let Some(handler) = on_scroll {
-                app.tree
+            match on_scroll {
+                Some(handler) => app
+                    .tree
                     .scroll_mut(*handle)
-                    .set_scrolled_factory(move |value| Box::new(handler.with(value)));
+                    .set_scrolled_factory(move |value| Box::new(handler.with(value))),
+                None => app.tree.scroll_mut(*handle).clear_scroll_action(),
             }
             children.reconcile(
                 child.into_iter().map(|child| *child).collect(),
@@ -771,10 +782,12 @@ fn reconcile_element(
             ViewStats::record_node_rebuilt();
             assert_keyed_list(&elements);
             app.tree.scroll_mut(*scroll).set_offset(offset);
-            if let Some(handler) = on_scroll {
-                app.tree
+            match on_scroll {
+                Some(handler) => app
+                    .tree
                     .scroll_mut(*scroll)
-                    .set_scrolled_factory(move |value| Box::new(handler.with(value)));
+                    .set_scrolled_factory(move |value| Box::new(handler.with(value))),
+                None => app.tree.scroll_mut(*scroll).clear_scroll_action(),
             }
             children.reconcile(elements, content.id(), owner_depth, app);
             retained.key = key;

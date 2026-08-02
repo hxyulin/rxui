@@ -98,4 +98,18 @@ fn validated_field_surfaces_control_and_issue_to_semantics() {
     let harness = EntityHarness::new(|cx| cx.new(|_| Validated));
     assert!(harness.find("Name").focusable);
     assert!(harness.try_find("Name is required").is_some());
+    assert!(
+        harness
+            .semantics()
+            .iter()
+            .all(|node| !node.data.label.is_empty())
+    );
+}
+
+#[test]
+fn reveal_all_is_sticky_for_fields_registered_after_submit() {
+    let mut form = FormModel::default();
+    form.reveal_all();
+    form.set_result("late", errored());
+    assert_eq!(form.visible_result(&"late"), Some(&errored()));
 }

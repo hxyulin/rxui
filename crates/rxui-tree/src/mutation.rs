@@ -26,8 +26,8 @@ use astrelis_core::{
 use astrelis_paint::{Image, ImageSampling};
 
 use crate::{
-    ActionBox, Align, Alignment, Axis, BoxElement, Button, ButtonIcon, Checkbox, Element, Flex,
-    Frame, ImageAlignment, ImageElement, ImageFit, Invalidation, KeyListener, Label, NodeHandle,
+    Align, Alignment, Axis, BoxElement, Button, ButtonIcon, Checkbox, Element, Flex, Frame,
+    ImageAlignment, ImageElement, ImageFit, Invalidation, KeyListener, Label, NodeHandle,
     RenderView, RenderViewContent, Scroll, ScrollAxis, SemanticData, Slider, SplitPane, Stack,
     TextField, UiInput, UiTree,
 };
@@ -353,10 +353,22 @@ impl NodeMut<'_, TextField> {
             field.set_changed_factory(changed)
         });
     }
+    /// Removes the edit-action factory. No invalidation.
+    pub fn clear_change_action(&mut self) {
+        self.ui.update(self.handle, Invalidation::empty(), |field| {
+            field.clear_changed_factory();
+        });
+    }
     /// Replaces the erased submit-action factory. No invalidation.
     pub fn set_submit_action(&mut self, submitted: impl Fn(String) -> Box<dyn Any> + 'static) {
         self.ui.update(self.handle, Invalidation::empty(), |field| {
             field.set_submitted_factory(submitted)
+        });
+    }
+    /// Removes the submit-action factory. No invalidation.
+    pub fn clear_submit_action(&mut self) {
+        self.ui.update(self.handle, Invalidation::empty(), |field| {
+            field.clear_submitted_factory();
         });
     }
     /// Replaces every resolved field property at once.
@@ -741,6 +753,16 @@ impl NodeMut<'_, Label> {
         )
     }
 
+    /// Selects whether this label publishes accessibility semantics.
+    pub fn set_semantic(&mut self, semantic: bool) -> bool {
+        self.guarded(
+            semantic,
+            Invalidation::ACCESSIBILITY,
+            |label| &label.semantic,
+            |label, semantic| label.semantic = semantic,
+        )
+    }
+
     /// Replaces the nominal font size. `LAYOUT`.
     pub fn set_font_size(&mut self, font_size: f32) -> bool {
         self.guarded(
@@ -840,44 +862,6 @@ impl NodeMut<'_, BoxElement> {
         self.set_color(color);
         self.set_semantics(semantics);
         self.set_interactive(interactive);
-    }
-}
-
-impl<A: Clone + 'static> NodeMut<'_, ActionBox<A>> {
-    /// Replaces the visual and semantic surface through equality-guarded
-    /// property setters.
-    pub fn set_surface(&mut self, surface: BoxElement) {
-        let current = &self.ui.element(self.handle).surface;
-        let size_changed = current.size != surface.size;
-        let color_changed = current.color != surface.color;
-        let semantics_changed = current.semantics != surface.semantics;
-        let interactive_changed = current.interactive != surface.interactive;
-        if size_changed || color_changed || semantics_changed || interactive_changed {
-            let mut invalidation = Invalidation::empty();
-            if size_changed {
-                invalidation |= Invalidation::LAYOUT;
-            }
-            if color_changed {
-                invalidation |= Invalidation::PAINT;
-            }
-            if semantics_changed {
-                invalidation |= Invalidation::ACCESSIBILITY;
-            }
-            if interactive_changed {
-                invalidation |= Invalidation::HIT_TEST;
-            }
-            self.ui.update(self.handle, invalidation, |box_element| {
-                box_element.surface = surface;
-            });
-        }
-    }
-
-    /// Replaces routing data without requesting a retained pass.
-    pub fn set_action(&mut self, action: Option<A>) {
-        self.ui
-            .update(self.handle, Invalidation::empty(), |box_element| {
-                box_element.action = action;
-            });
     }
 }
 
@@ -1090,6 +1074,14 @@ impl NodeMut<'_, Scroll> {
             .update(self.handle, Invalidation::empty(), |scroll| {
                 scroll.set_scrolled_factory(scrolled);
             })
+    }
+
+    /// Removes the scroll-action factory. No invalidation.
+    pub fn clear_scroll_action(&mut self) {
+        self.ui
+            .update(self.handle, Invalidation::empty(), |scroll| {
+                scroll.clear_scrolled_factory();
+            });
     }
 
     /// Replaces the controlled axes and offset at once.

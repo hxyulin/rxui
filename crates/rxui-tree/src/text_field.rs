@@ -9,7 +9,7 @@ use astrelis_core::{
 use astrelis_paint::{Brush, Painter};
 use astrelis_platform::{CursorIcon, ElementState, ImeEvent, Key, NamedKey};
 use astrelis_text::{
-    CaretMovement, ParagraphStyle, TextLayout, TextLayoutRequest, TextPosition, TextStyle, TextWrap,
+    ParagraphStyle, TextLayout, TextLayoutRequest, TextPosition, TextStyle, TextWrap,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -114,6 +114,11 @@ impl TextField {
         self.changed = Some(Box::new(callback));
     }
 
+    /// Removes the edit-action factory.
+    pub fn clear_changed_factory(&mut self) {
+        self.changed = None;
+    }
+
     /// Emits a typed action when Enter submits the current value.
     pub fn on_submitted<A: Any>(mut self, callback: impl Fn(String) -> A + 'static) -> Self {
         self.submitted = Some(Box::new(move |text| Box::new(callback(text))));
@@ -132,6 +137,11 @@ impl TextField {
     /// Replaces the erased submit-action factory without recreating the field.
     pub fn set_submitted_factory(&mut self, callback: impl Fn(String) -> Box<dyn Any> + 'static) {
         self.submitted = Some(Box::new(callback));
+    }
+
+    /// Removes the submit-action factory.
+    pub fn clear_submitted_factory(&mut self) {
+        self.submitted = None;
     }
 
     /// Current selection in normalized UTF-8 byte order.
@@ -195,12 +205,11 @@ impl TextField {
         }
     }
 
-    fn move_caret(&mut self, movement: CaretMovement, extend: bool) {
-        let Some(layout) = &self.layout else {
-            return;
+    fn move_caret_to(&mut self, byte_index: usize, extend: bool) {
+        self.caret = TextPosition {
+            byte_index: self.clamp_boundary(byte_index),
+            ..TextPosition::default()
         };
-        self.caret = layout.move_caret(self.caret, movement);
-        self.caret.byte_index = self.caret.byte_index.min(self.text.len());
         if !extend {
             self.anchor = self.caret;
         }
@@ -431,19 +440,25 @@ impl Element for TextField {
                         }
                     }
                     Key::Named(NamedKey::Other(name)) if name == "ArrowLeft" => {
-                        self.move_caret(CaretMovement::VisualLeft, modifiers.shift);
+                        let index = self
+                            .previous_grapheme(self.caret.byte_index)
+                            .unwrap_or_default();
+                        self.move_caret_to(index, modifiers.shift);
                         handled = true;
                     }
                     Key::Named(NamedKey::Other(name)) if name == "ArrowRight" => {
-                        self.move_caret(CaretMovement::VisualRight, modifiers.shift);
+                        let index = self
+                            .next_grapheme(self.caret.byte_index)
+                            .unwrap_or(self.text.len());
+                        self.move_caret_to(index, modifiers.shift);
                         handled = true;
                     }
                     Key::Named(NamedKey::Other(name)) if name == "Home" => {
-                        self.move_caret(CaretMovement::LineStart, modifiers.shift);
+                        self.move_caret_to(0, modifiers.shift);
                         handled = true;
                     }
                     Key::Named(NamedKey::Other(name)) if name == "End" => {
-                        self.move_caret(CaretMovement::LineEnd, modifiers.shift);
+                        self.move_caret_to(self.text.len(), modifiers.shift);
                         handled = true;
                     }
                     Key::Named(NamedKey::Enter) => {

@@ -182,7 +182,13 @@ impl<Key: Eq + Hash> FormModel<Key> {
     }
     /// Returns the result when presentation policy permits it.
     pub fn visible_result(&self, key: &Key) -> Option<&ValidationResult> {
-        self.field(key).and_then(FieldState::visible_result)
+        self.field(key).and_then(|field| {
+            if self.reveal_all {
+                field.result()
+            } else {
+                field.visible_result()
+            }
+        })
     }
     /// Returns whether no current field result contains an error.
     pub fn is_valid(&self) -> bool {

@@ -50,8 +50,28 @@ impl<T: Render> EntityHarness<T> {
     /// Presses and releases the primary pointer at the labeled node's centre.
     pub fn click(&mut self, label: &str) {
         let point = centre(self.find(label).bounds);
-        let _ = self.app.dispatch_input(UiInput::PointerPressed(point));
-        self.stats = self.app.dispatch_input(UiInput::PointerReleased(point));
+        self.press_pointer_at(point);
+        self.release_pointer_at(point);
+    }
+
+    /// Presses the primary pointer at an exact window-space point.
+    pub fn press_pointer_at(&mut self, point: LogicalPoint) {
+        self.input(UiInput::PointerPressed(point));
+    }
+
+    /// Moves the pointer to an exact window-space point.
+    pub fn hover_at(&mut self, point: LogicalPoint) {
+        self.input(UiInput::PointerMoved(point));
+    }
+
+    /// Releases the primary pointer at an exact window-space point.
+    pub fn release_pointer_at(&mut self, point: LogicalPoint) {
+        self.input(UiInput::PointerReleased(point));
+    }
+
+    /// Routes one logical-pixel wheel displacement at an exact point.
+    pub fn scroll_at(&mut self, position: LogicalPoint, delta: LogicalPoint) {
+        self.input(UiInput::PointerWheel { position, delta });
     }
 
     /// Activates the labeled node through accessibility routing.

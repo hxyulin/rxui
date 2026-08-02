@@ -89,6 +89,11 @@ impl Scroll {
         self.scrolled = Some(Box::new(scrolled));
     }
 
+    /// Removes the scroll-action factory.
+    pub fn clear_scrolled_factory(&mut self) {
+        self.scrolled = None;
+    }
+
     /// Returns the clipped viewport resolved by the latest layout.
     pub const fn viewport(&self) -> LogicalSize {
         self.viewport
