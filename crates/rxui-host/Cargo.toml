@@ -11,7 +11,7 @@ publish = false
 
 [features]
 default = ["winit"]
-winit = ["dep:astrelis-platform-winit", "dep:winit"]
+winit = ["dep:astrelis-platform-winit"]
 
 [dependencies]
 astrelis-app = { workspace = true }
@@ -25,11 +25,20 @@ astrelis-platform = { workspace = true }
 astrelis-platform-winit = { workspace = true, optional = true }
 astrelis-text = { workspace = true }
 pollster = { workspace = true }
-raw-window-handle = { workspace = true }
 rxui-core = { path = "../rxui-core" }
 rxui-tree = { workspace = true }
-wgpu = { workspace = true }
-winit = { workspace = true, optional = true }
+
+[[example]]
+name = "native_counter"
+required-features = ["winit"]
+
+[[example]]
+name = "native_settings"
+required-features = ["winit"]
+
+[[example]]
+name = "native_workbench"
+required-features = ["winit"]
 
 [lints]
 workspace = true

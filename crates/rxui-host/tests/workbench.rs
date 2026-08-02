@@ -135,7 +135,7 @@ fn splitter_input_changes_the_persistent_ratio() {
 }
 
 #[test]
-fn refreshing_the_workbench_performs_no_retained_rebuilds() {
+fn refreshing_the_workbench_rebuilds_views_but_no_retained_passes() {
     let mut harness = mount();
     harness.refresh();
     let stats = harness.stats();

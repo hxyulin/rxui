@@ -2346,11 +2346,8 @@ dependencies = [
  "astrelis-platform-winit",
  "astrelis-text",
  "pollster",
- "raw-window-handle",
  "rxui-core",
  "rxui-tree",
- "wgpu",
- "winit",
 ]
 
 [[package]]

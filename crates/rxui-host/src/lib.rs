@@ -23,9 +23,11 @@ use astrelis_gpu::{
 };
 use astrelis_paint::CompositorViewId;
 use astrelis_paint_gpu::{ExternalImage, RenderStats, RenderTarget, Renderer, RendererOptions};
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
+use astrelis_platform::WindowId;
 use astrelis_platform::{
     Clipboard, CursorIcon, DeviceId, ElementState, Key, Modifiers, PointerButton, ScrollDelta,
-    Window, WindowAttributes, WindowEvent, WindowId,
+    Window, WindowAttributes, WindowEvent,
 };
 use astrelis_text::FontDatabase;
 use rxui_core::{App, Context, Entity, FlushStats, Render};
@@ -33,6 +35,8 @@ use rxui_tree::{
     AccessibilityUpdate, ClipboardOperation, NodeId, SemanticAction, SemanticNode, UiInput,
 };
 
+// Shared by the native example and headless integration tests; not host API.
+#[doc(hidden)]
 pub mod workbench;
 
 /// Adapter and logical-device preferences used when opening a GPU surface.
@@ -208,6 +212,10 @@ pub struct RetainedWork {
 
 impl RetainedWork {
     /// Inspects an application before a host flush clears pending work.
+    ///
+    /// Effects are drained eagerly when `update_cell` and `new_entity` return
+    /// to update depth zero, so a non-empty effect queue cannot hide redraw
+    /// work when the host reads these observables.
     pub fn pending(app: &App, surface_reconfigured: bool) -> Self {
         Self {
             passes: usize::from(app.needs_flush()),
@@ -223,8 +231,6 @@ pub enum HostStatus {
     Ready,
     /// The logical GPU device was lost.
     DeviceLost,
-    /// Initialization failed.
-    Failed,
 }
 
 /// Result of routing one platform event through an entity window.
@@ -254,7 +260,6 @@ pub struct WindowHost {
     window: Window,
     clipboard: Clipboard,
     gpu: Option<GpuState>,
-    failed: Option<HostError>,
     app: App,
     clear_color: Color,
     modifiers: Modifiers,
@@ -292,7 +297,6 @@ impl WindowHost {
             window,
             clipboard,
             gpu: Some(gpu),
-            failed: None,
             app,
             clear_color: options.clear_color,
             modifiers: Modifiers::default(),
@@ -330,10 +334,8 @@ impl WindowHost {
     pub fn status(&self) -> HostStatus {
         if self.gpu.as_ref().is_some_and(|gpu| gpu.device.is_lost()) {
             HostStatus::DeviceLost
-        } else if self.gpu.is_some() {
-            HostStatus::Ready
         } else {
-            HostStatus::Failed
+            HostStatus::Ready
         }
     }
 
@@ -456,10 +458,15 @@ impl WindowHost {
         }
 
         let work = RetainedWork::pending(&self.app, surface_reconfigured);
-        if work.passes != 0 {
-            let _ = self.app.flush();
-            self.publish_accessibility()?;
-        }
+        let mut retained_redraw = false;
+        consume_retained_work(
+            work,
+            || {
+                let _ = self.app.flush();
+                self.publish_accessibility()
+            },
+            || retained_redraw = true,
+        )?;
         let clipboard_changed = self.flush_clipboard()?;
         let cursor = self.app.tree().cursor_icon();
         let cursor_changed = cursor != self.cursor_icon;
@@ -470,7 +477,7 @@ impl WindowHost {
         self.last_work = work;
         Ok(HostUpdate {
             close_requested: false,
-            redraw: work.redraw || accessibility_requested,
+            redraw: retained_redraw || accessibility_requested,
             platform_state_changed: clipboard_changed || cursor_changed || accessibility_requested,
             retained: work,
         })
@@ -528,13 +535,13 @@ impl WindowHost {
     where
         E: fmt::Display,
     {
-        self.flush_pending()?;
-        if let Some(error) = &self.failed {
-            return Err(error.clone());
+        if self.gpu.is_none() {
+            return Err(HostError::new("GPU initialization failed"));
         }
         if self.gpu.as_ref().is_some_and(|gpu| gpu.device.is_lost()) {
             return Err(HostError::new("the GPU device was lost; recreate the host"));
         }
+        self.flush_pending()?;
         let list = self
             .app
             .tree()
@@ -584,13 +591,18 @@ impl WindowHost {
     fn flush_pending(&mut self) -> Result<Option<FlushStats>, HostError> {
         let work = RetainedWork::pending(&self.app, false);
         self.last_work = work;
-        if work.passes == 0 {
-            return Ok(None);
-        }
-        let stats = self.app.flush();
-        self.publish_accessibility()?;
-        self.flush_clipboard()?;
-        Ok(Some(stats))
+        let mut stats = None;
+        consume_retained_work(
+            work,
+            || {
+                stats = Some(self.app.flush());
+                self.publish_accessibility()?;
+                self.flush_clipboard()?;
+                Ok(())
+            },
+            || {},
+        )?;
+        Ok(stats)
     }
 
     fn publish_accessibility(&mut self) -> Result<(), HostError> {
@@ -620,9 +632,6 @@ impl WindowHost {
     }
 
     fn ready_gpu(&mut self) -> Result<&mut GpuState, HostError> {
-        if let Some(error) = &self.failed {
-            return Err(error.clone());
-        }
         self.gpu
             .as_mut()
             .ok_or_else(|| HostError::new("GPU initialization failed"))
@@ -666,6 +675,20 @@ impl WindowHost {
             height as f32 / scale,
         ));
     }
+}
+
+fn consume_retained_work<E>(
+    work: RetainedWork,
+    flush: impl FnOnce() -> Result<(), E>,
+    redraw: impl FnOnce(),
+) -> Result<(), E> {
+    if work.passes != 0 {
+        flush()?;
+    }
+    if work.redraw {
+        redraw();
+    }
+    Ok(())
 }
 
 /// A typed root entity hosted in one native window.
@@ -720,10 +743,10 @@ impl<T: Render> EntityWindow<T> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 type EntityInitializer<T> = dyn FnOnce(&mut Context<'_, T>) -> T;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 struct EntityApplication<T: Render> {
     graphics: GraphicsContext,
     initialize: Option<Box<EntityInitializer<T>>>,
@@ -732,7 +755,7 @@ struct EntityApplication<T: Render> {
     smoke: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 impl<T: Render> EntityApplication<T> {
     fn new(
         initialize: impl FnOnce(&mut Context<'_, T>) -> T + 'static,
@@ -748,7 +771,7 @@ impl<T: Render> EntityApplication<T> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 impl<T: Render> NativeApp for EntityApplication<T> {
     type Error = std::io::Error;
 
@@ -804,12 +827,14 @@ impl<T: Render> NativeApp for EntityApplication<T> {
         if window.window().id() != id {
             return Ok(());
         }
-        window.redraw().map_err(std::io::Error::other)?;
-        if self.smoke {
+        let rendered = window.redraw().map_err(std::io::Error::other)?;
+        if self.smoke && rendered.is_some() {
             println!("RXUI_SMOKE rendered first frame");
             self.window = None;
             context.unregister_window(id);
             context.exit();
+        } else if self.smoke {
+            context.invalidate_window(id);
         }
         Ok(())
     }
@@ -927,11 +952,14 @@ pub mod native {
 
 #[cfg(test)]
 mod tests {
-    use astrelis_core::geometry::LogicalSize;
+    use std::cell::Cell;
+
+    use astrelis_core::geometry::{LogicalPoint, LogicalSize};
     use astrelis_text::FontDatabase;
     use rxui_core::{App, Context, Element, Render, label};
+    use rxui_tree::UiInput;
 
-    use super::RetainedWork;
+    use super::{RetainedWork, consume_retained_work, workbench};
 
     struct Idle;
 
@@ -946,6 +974,30 @@ mod tests {
         let root = app.new_entity(|_| Idle);
         let _ = app.mount(&root);
         app
+    }
+
+    fn workbench_app() -> App {
+        let mut app = App::new(
+            LogicalSize::new(workbench::VIEWPORT_WIDTH, workbench::VIEWPORT_HEIGHT),
+            FontDatabase::empty(),
+        );
+        let root = app.new_entity(|_| workbench::Workbench::new());
+        let _ = app.mount(&root);
+        app
+    }
+
+    fn semantic_center(app: &App, label: &str) -> LogicalPoint {
+        let bounds = app
+            .tree()
+            .semantic_snapshot()
+            .into_iter()
+            .find(|node| node.data.label == label)
+            .unwrap_or_else(|| panic!("missing semantic node {label:?}"))
+            .bounds;
+        LogicalPoint::new(
+            bounds.origin.x + bounds.size.width * 0.5,
+            bounds.origin.y + bounds.size.height * 0.5,
+        )
     }
 
     #[test]
@@ -964,5 +1016,98 @@ mod tests {
                 redraw: true,
             }
         );
+    }
+
+    #[test]
+    fn pointer_move_inside_the_same_workbench_target_schedules_nothing() {
+        let mut app = workbench_app();
+        let save = semantic_center(&app, "Save workspace");
+        app.route_input(UiInput::PointerMoved(save));
+        let _ = app.flush();
+
+        app.route_input(UiInput::PointerMoved(LogicalPoint::new(
+            save.x + 1.0,
+            save.y,
+        )));
+
+        assert!(!app.needs_flush());
+        assert!(!app.needs_render());
+        assert!(!app.tree().needs_redraw());
+        assert_eq!(RetainedWork::pending(&app, false), RetainedWork::default());
+    }
+
+    #[test]
+    fn pointer_move_onto_save_schedules_a_pass_and_redraw() {
+        let mut app = workbench_app();
+        let save = semantic_center(&app, "Save workspace");
+
+        app.route_input(UiInput::PointerMoved(save));
+
+        assert!(app.needs_flush());
+        assert!(!app.needs_render());
+        assert!(app.tree().needs_redraw());
+        assert_eq!(
+            RetainedWork::pending(&app, false),
+            RetainedWork {
+                passes: 1,
+                redraw: true,
+            }
+        );
+    }
+
+    #[test]
+    fn flush_clears_workbench_pointer_work() {
+        let mut app = workbench_app();
+        let save = semantic_center(&app, "Save workspace");
+        app.route_input(UiInput::PointerMoved(save));
+        assert_ne!(RetainedWork::pending(&app, false), RetainedWork::default());
+
+        let _ = app.flush();
+
+        assert!(!app.needs_flush());
+        assert!(!app.needs_render());
+        assert!(!app.tree().needs_redraw());
+        assert_eq!(RetainedWork::pending(&app, false), RetainedWork::default());
+    }
+
+    // There is no semantic-only entity-model operation to port: every public
+    // Workbench semantic change either notifies its entity (and can change
+    // pixels) or changes focus on a control whose focus indicator repaints.
+    // The pass-without-redraw branch is nevertheless covered below at the host
+    // decision-consumption seam.
+
+    #[test]
+    fn host_consumes_pass_and_redraw_decisions_independently() {
+        let flushes = Cell::new(0);
+        let redraws = Cell::new(0);
+        consume_retained_work(
+            RetainedWork {
+                passes: 1,
+                redraw: false,
+            },
+            || {
+                flushes.set(flushes.get() + 1);
+                Ok::<(), ()>(())
+            },
+            || redraws.set(redraws.get() + 1),
+        )
+        .expect("consume pass-only work");
+        assert_eq!(flushes.get(), 1, "a scheduled pass must be flushed");
+        assert_eq!(redraws.get(), 0, "pass-only work must not request a frame");
+
+        consume_retained_work(
+            RetainedWork {
+                passes: 0,
+                redraw: true,
+            },
+            || {
+                flushes.set(flushes.get() + 1);
+                Ok::<(), ()>(())
+            },
+            || redraws.set(redraws.get() + 1),
+        )
+        .expect("consume redraw-only work");
+        assert_eq!(flushes.get(), 1, "zero-pass work must not be flushed");
+        assert_eq!(redraws.get(), 1, "redraw work must request a frame");
     }
 }
