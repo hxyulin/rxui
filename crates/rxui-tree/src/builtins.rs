@@ -5,14 +5,25 @@ use std::any::Any;
 use astrelis_core::{
     color::Color,
     geometry::{LogicalPoint, LogicalRect, LogicalSize},
+    math::{Affine2, Vec2},
 };
-use astrelis_paint::{Brush, Painter};
+use astrelis_paint::{Brush, FillRule, Painter, Path};
+use astrelis_platform::{CursorIcon, ElementState, Key, NamedKey};
 use astrelis_text::{ParagraphStyle, TextLayout, TextLayoutRequest, TextStyle, TextWrap};
 
 use crate::{
-    Constraints, Element, EventResult, LayoutContext, SemanticAction, SemanticActionKind,
-    SemanticData, SemanticRole, ShapingMemo, UiInput,
+    Constraints, Element, EventResult, Invalidation, LayoutContext, SemanticAction,
+    SemanticActionKind, SemanticData, SemanticRole, ShapingMemo, UiInput,
 };
+
+fn hover_color(color: Color) -> Color {
+    Color::new(
+        color.r + (1.0 - color.r) * 0.12,
+        color.g + (1.0 - color.g) * 0.12,
+        color.b + (1.0 - color.b) * 0.12,
+        color.a,
+    )
+}
 
 /// Main-axis direction for [`Flex`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -291,6 +302,264 @@ impl Element for Align {
         constraints.constrain(size)
     }
 
+    fn clips_children(&self) -> bool {
+        true
+    }
+}
+
+type KeyAction = dyn Fn() -> Box<dyn Any>;
+
+/// Transparent keyboard-bubbling boundary for overlay and command handling.
+pub struct KeyListener {
+    escape: Option<Box<KeyAction>>,
+    previous: Option<Box<KeyAction>>,
+    next: Option<Box<KeyAction>>,
+    submit: Option<Box<KeyAction>>,
+}
+
+impl KeyListener {
+    /// Creates a keyboard boundary with an Escape action.
+    pub fn on_escape(action: impl Fn() -> Box<dyn Any> + 'static) -> Self {
+        Self {
+            escape: Some(Box::new(action)),
+            previous: None,
+            next: None,
+            submit: None,
+        }
+    }
+
+    /// Replaces the Escape action.
+    pub fn set_escape(&mut self, action: impl Fn() -> Box<dyn Any> + 'static) {
+        self.escape = Some(Box::new(action));
+    }
+
+    /// Creates a keyboard boundary for list navigation and submission.
+    pub fn command_navigation(
+        previous: impl Fn() -> Box<dyn Any> + 'static,
+        next: impl Fn() -> Box<dyn Any> + 'static,
+        submit: impl Fn() -> Box<dyn Any> + 'static,
+    ) -> Self {
+        Self {
+            escape: None,
+            previous: Some(Box::new(previous)),
+            next: Some(Box::new(next)),
+            submit: Some(Box::new(submit)),
+        }
+    }
+
+    /// Replaces list-navigation and submission actions.
+    pub fn set_command_navigation(
+        &mut self,
+        previous: impl Fn() -> Box<dyn Any> + 'static,
+        next: impl Fn() -> Box<dyn Any> + 'static,
+        submit: impl Fn() -> Box<dyn Any> + 'static,
+    ) {
+        self.previous = Some(Box::new(previous));
+        self.next = Some(Box::new(next));
+        self.submit = Some(Box::new(submit));
+    }
+}
+
+impl Element for KeyListener {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn layout(&mut self, context: &mut LayoutContext<'_>, constraints: Constraints) -> LogicalSize {
+        let Some(child) = context.children().into_iter().next() else {
+            return constraints.constrain(LogicalSize::ZERO);
+        };
+        let size = context.layout_child(child, constraints);
+        context.place_child(child, LogicalPoint::ZERO);
+        constraints.constrain(size)
+    }
+    fn event(&mut self, input: UiInput) -> EventResult {
+        if let UiInput::Keyboard { input, .. } = input
+            && input.state == ElementState::Pressed
+        {
+            let action = match &input.logical_key {
+                Key::Named(NamedKey::Escape) => self.escape.as_ref(),
+                Key::Named(NamedKey::Enter) => self.submit.as_ref(),
+                Key::Named(NamedKey::Other(name)) if name == "ArrowUp" => self.previous.as_ref(),
+                Key::Named(NamedKey::Other(name)) if name == "ArrowDown" => self.next.as_ref(),
+                _ => None,
+            };
+            if let Some(action) = action {
+                return EventResult {
+                    action: Some(action()),
+                    handled: true,
+                    ..EventResult::default()
+                };
+            }
+        }
+        EventResult::default()
+    }
+}
+
+type SplitAction = dyn Fn(f32) -> Box<dyn Any>;
+
+/// Two-child resizing container with a dedicated draggable divider.
+pub struct SplitPane {
+    /// Split direction.
+    pub axis: Axis,
+    /// Fraction of content space assigned to the first child.
+    pub ratio: f32,
+    /// Visible and interactive divider thickness.
+    pub divider_extent: f32,
+    /// Divider color.
+    pub divider_color: Color,
+    size: LogicalSize,
+    dragging: bool,
+    hovered: bool,
+    drag_offset: f32,
+    changed: Box<SplitAction>,
+}
+
+impl SplitPane {
+    /// Creates a controlled split pane.
+    pub fn new(axis: Axis, ratio: f32, changed: impl Fn(f32) -> Box<dyn Any> + 'static) -> Self {
+        Self {
+            axis,
+            ratio: ratio.clamp(0.05, 0.95),
+            divider_extent: 6.0,
+            divider_color: Color::new(0.18, 0.2, 0.24, 1.0),
+            size: LogicalSize::ZERO,
+            dragging: false,
+            hovered: false,
+            drag_offset: 0.0,
+            changed: Box::new(changed),
+        }
+    }
+    /// Replaces the controlled resize action.
+    pub fn set_changed(&mut self, changed: impl Fn(f32) -> Box<dyn Any> + 'static) {
+        self.changed = Box::new(changed);
+    }
+    fn main_extent(&self) -> f32 {
+        match self.axis {
+            Axis::Horizontal => self.size.width,
+            Axis::Vertical => self.size.height,
+        }
+    }
+    fn divider_rect(&self) -> LogicalRect {
+        let divider = self.divider_extent.max(1.0).min(self.main_extent());
+        let content = (self.main_extent() - divider).max(0.0);
+        let first = content * self.ratio.clamp(0.05, 0.95);
+        match self.axis {
+            Axis::Horizontal => LogicalRect::from_xywh(first, 0.0, divider, self.size.height),
+            Axis::Vertical => LogicalRect::from_xywh(0.0, first, self.size.width, divider),
+        }
+    }
+    fn set_from_point(&mut self, point: LogicalPoint) -> EventResult {
+        let divider = self.divider_extent.max(1.0).min(self.main_extent());
+        let content = (self.main_extent() - divider).max(1.0);
+        let coordinate = match self.axis {
+            Axis::Horizontal => point.x - divider * 0.5 - self.drag_offset,
+            Axis::Vertical => point.y - divider * 0.5 - self.drag_offset,
+        };
+        self.ratio = (coordinate / content).clamp(0.05, 0.95);
+        EventResult {
+            action: Some((self.changed)(self.ratio)),
+            invalidation: Invalidation::LAYOUT_ALL,
+            handled: true,
+            ..EventResult::default()
+        }
+    }
+}
+
+impl Element for SplitPane {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn layout(&mut self, context: &mut LayoutContext<'_>, constraints: Constraints) -> LogicalSize {
+        self.size = constraints.max;
+        let divider = self.divider_extent.max(1.0).min(self.main_extent());
+        let content = (self.main_extent() - divider).max(0.0);
+        let first_main = content * self.ratio.clamp(0.05, 0.95);
+        let second_main = content - first_main;
+        let children = context.children();
+        if let Some(first) = children.first().copied() {
+            let size = match self.axis {
+                Axis::Horizontal => LogicalSize::new(first_main, self.size.height),
+                Axis::Vertical => LogicalSize::new(self.size.width, first_main),
+            };
+            context.layout_child(first, Constraints::tight(size));
+            context.place_child(first, LogicalPoint::ZERO);
+        }
+        if let Some(second) = children.get(1).copied() {
+            let size = match self.axis {
+                Axis::Horizontal => LogicalSize::new(second_main, self.size.height),
+                Axis::Vertical => LogicalSize::new(self.size.width, second_main),
+            };
+            let origin = match self.axis {
+                Axis::Horizontal => LogicalPoint::new(first_main + divider, 0.0),
+                Axis::Vertical => LogicalPoint::new(0.0, first_main + divider),
+            };
+            context.layout_child(second, Constraints::tight(size));
+            context.place_child(second, origin);
+        }
+        constraints.constrain(self.size)
+    }
+    fn paint(
+        &self,
+        painter: &mut Painter,
+        _size: LogicalSize,
+    ) -> Result<(), astrelis_paint::PaintError> {
+        painter.fill_rect(
+            self.divider_rect(),
+            Brush::Solid(if self.dragging || self.hovered {
+                hover_color(self.divider_color)
+            } else {
+                self.divider_color
+            }),
+        )
+    }
+    fn event(&mut self, input: UiInput) -> EventResult {
+        match input {
+            UiInput::HoverChanged(hovered) => {
+                self.hovered = hovered;
+                EventResult {
+                    invalidation: Invalidation::PAINT,
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            UiInput::PointerPressed(point) if self.divider_rect().contains(point) => {
+                self.dragging = true;
+                let divider = self.divider_rect();
+                self.drag_offset = match self.axis {
+                    Axis::Horizontal => point.x - (divider.origin.x + divider.size.width * 0.5),
+                    Axis::Vertical => point.y - (divider.origin.y + divider.size.height * 0.5),
+                };
+                EventResult {
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            UiInput::PointerMoved(point) if self.dragging => self.set_from_point(point),
+            UiInput::PointerReleased(point) if self.dragging => {
+                self.dragging = false;
+                self.set_from_point(point)
+            }
+            _ => EventResult::default(),
+        }
+    }
+    fn hit_test(&self, point: LogicalPoint, _size: LogicalSize) -> bool {
+        self.divider_rect().contains(point)
+    }
+    fn hit_testable(&self) -> bool {
+        true
+    }
+    fn cursor_icon(&self) -> CursorIcon {
+        match self.axis {
+            Axis::Horizontal => CursorIcon::EwResize,
+            Axis::Vertical => CursorIcon::NsResize,
+        }
+    }
     fn clips_children(&self) -> bool {
         true
     }
@@ -640,5 +909,338 @@ impl Element for Label {
             label: self.text.clone(),
             ..SemanticData::default()
         })
+    }
+}
+
+/// Vector content for a button.
+#[derive(Clone, Debug)]
+pub struct ButtonIcon {
+    /// Immutable monochrome vector path.
+    pub path: Path,
+    /// Coordinate system used by the vector path.
+    pub view_box: LogicalSize,
+    /// Requested logical square edge.
+    pub size: f32,
+    /// Path winding interpretation.
+    pub fill_rule: FillRule,
+}
+
+impl ButtonIcon {
+    /// Creates vector content for a button.
+    pub const fn new(path: Path, view_box: LogicalSize, size: f32) -> Self {
+        Self {
+            path,
+            view_box,
+            size,
+            fill_rule: FillRule::NonZero,
+        }
+    }
+    /// Selects path winding interpretation.
+    pub const fn with_fill_rule(mut self, fill_rule: FillRule) -> Self {
+        self.fill_rule = fill_rule;
+        self
+    }
+}
+
+/// Minimal activatable control for action-routing tests.
+pub struct Button {
+    /// Accessible label.
+    pub label: String,
+    /// Preferred size.
+    pub size: LogicalSize,
+    /// Normal background.
+    pub color: Color,
+    /// Pressed background.
+    pub pressed_color: Color,
+    /// Glyph color.
+    pub text_color: Color,
+    /// Glyph size.
+    pub font_size: f32,
+    /// Whether the accessible label is also painted.
+    pub show_label: bool,
+    /// Optional leading vector glyph.
+    pub icon: Option<ButtonIcon>,
+    pressed: bool,
+    hovered: bool,
+    resolved_size: LogicalSize,
+    layout: Option<TextLayout>,
+    shaped: ShapingMemo,
+    action: Option<Box<dyn Fn() -> Box<dyn Any>>>,
+}
+
+impl Button {
+    /// Creates a button which emits `action` on release.
+    pub fn new<A: Any + Clone>(
+        label: impl Into<String>,
+        size: LogicalSize,
+        color: Color,
+        pressed_color: Color,
+        action: A,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            size,
+            color,
+            pressed_color,
+            text_color: Color::WHITE,
+            font_size: 14.0,
+            show_label: true,
+            icon: None,
+            pressed: false,
+            hovered: false,
+            resolved_size: LogicalSize::ZERO,
+            layout: None,
+            shaped: ShapingMemo::default(),
+            action: Some(Box::new(move || Box::new(action.clone()))),
+        }
+    }
+
+    /// Creates a button backed by an erased action factory.
+    pub fn with_action_factory(
+        label: impl Into<String>,
+        size: LogicalSize,
+        color: Color,
+        pressed_color: Color,
+        action: impl Fn() -> Box<dyn Any> + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            size,
+            color,
+            pressed_color,
+            text_color: Color::WHITE,
+            font_size: 14.0,
+            show_label: true,
+            icon: None,
+            pressed: false,
+            hovered: false,
+            resolved_size: LogicalSize::ZERO,
+            layout: None,
+            shaped: ShapingMemo::default(),
+            action: Some(Box::new(action)),
+        }
+    }
+
+    /// Replaces the erased action factory without recreating the control.
+    pub fn set_action_factory(&mut self, action: impl Fn() -> Box<dyn Any> + 'static) {
+        self.action = Some(Box::new(action));
+    }
+    /// Adds or replaces leading vector content.
+    pub fn with_icon(mut self, icon: ButtonIcon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    /// Replaces optional leading vector content.
+    pub fn set_icon(&mut self, icon: Option<ButtonIcon>) {
+        self.icon = icon;
+    }
+    /// Selects whether the accessible label is also painted.
+    pub const fn with_label_visible(mut self, visible: bool) -> Self {
+        self.show_label = visible;
+        self
+    }
+    /// Selects whether the accessible label is also painted.
+    pub fn set_label_visible(&mut self, visible: bool) {
+        self.show_label = visible;
+    }
+}
+
+impl Element for Button {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn layout(&mut self, context: &mut LayoutContext<'_>, constraints: Constraints) -> LogicalSize {
+        self.layout = if self.label.is_empty() || !self.show_label {
+            None
+        } else {
+            let mut request = TextLayoutRequest::new(self.label.clone());
+            request.style = TextStyle {
+                size: self.font_size.max(1.0),
+                color: self.text_color,
+                ..TextStyle::default()
+            };
+            request.paragraph.wrap = TextWrap::NoWrap;
+            Some(self.shaped.shape(context, request))
+        };
+        let icon_size = self
+            .icon
+            .as_ref()
+            .map(|icon| {
+                if icon.size.is_finite() {
+                    icon.size.max(1.0)
+                } else {
+                    16.0
+                }
+            })
+            .unwrap_or(0.0);
+        let text_size = self
+            .layout
+            .as_ref()
+            .map(TextLayout::size)
+            .unwrap_or(LogicalSize::ZERO);
+        let gap = if self.icon.is_some() && self.layout.is_some() {
+            6.0
+        } else {
+            0.0
+        };
+        let horizontal_padding = if self.layout.is_some() { 24.0 } else { 12.0 };
+        let intrinsic = LogicalSize::new(
+            icon_size + gap + text_size.width + horizontal_padding,
+            icon_size.max(text_size.height) + 12.0,
+        );
+        self.resolved_size = constraints.constrain(LogicalSize::new(
+            self.size.width.max(intrinsic.width),
+            self.size.height.max(intrinsic.height),
+        ));
+        self.resolved_size
+    }
+    fn paint(
+        &self,
+        painter: &mut Painter,
+        size: LogicalSize,
+    ) -> Result<(), astrelis_paint::PaintError> {
+        painter.fill_rect(
+            LogicalRect::from_xywh(0.0, 0.0, size.width, size.height),
+            Brush::Solid(if self.pressed {
+                self.pressed_color
+            } else if self.hovered {
+                hover_color(self.color)
+            } else {
+                self.color
+            }),
+        )?;
+        let icon_size = self
+            .icon
+            .as_ref()
+            .map(|icon| {
+                if icon.size.is_finite() {
+                    icon.size.max(1.0)
+                } else {
+                    16.0
+                }
+            })
+            .unwrap_or(0.0);
+        let text_width = self
+            .layout
+            .as_ref()
+            .map(|layout| layout.size().width)
+            .unwrap_or(0.0);
+        let gap = if self.icon.is_some() && self.layout.is_some() {
+            6.0
+        } else {
+            0.0
+        };
+        let content_width = icon_size + gap + text_width;
+        let content_x = (size.width - content_width).max(0.0) * 0.5;
+        if let Some(icon) = &self.icon {
+            let view_width = icon.view_box.width.max(f32::EPSILON);
+            let view_height = icon.view_box.height.max(f32::EPSILON);
+            let scale = (icon_size / view_width).min(icon_size / view_height);
+            let offset = LogicalPoint::new(
+                content_x + (icon_size - icon.view_box.width * scale) * 0.5,
+                (size.height - icon.view_box.height * scale).max(0.0) * 0.5,
+            );
+            painter.with_save(|painter| {
+                painter.transform(
+                    Affine2::from_translation(Vec2::new(offset.x, offset.y))
+                        * Affine2::from_scale(Vec2::splat(scale)),
+                )?;
+                painter.fill_path(&icon.path, icon.fill_rule, Brush::Solid(self.text_color))
+            })?;
+        }
+        if let Some(layout) = &self.layout {
+            painter.draw_text(
+                layout,
+                LogicalPoint::new(
+                    content_x + icon_size + gap,
+                    (size.height - layout.size().height).max(0.0) * 0.5,
+                ),
+                1.0,
+            )?;
+        }
+        Ok(())
+    }
+    fn accessibility(&self) -> Option<SemanticData> {
+        Some(SemanticData {
+            role: SemanticRole::Button,
+            label: self.label.clone(),
+            ..SemanticData::default()
+        })
+    }
+    fn event(&mut self, input: UiInput) -> EventResult {
+        match input {
+            UiInput::HoverChanged(hovered) => {
+                self.hovered = hovered;
+                EventResult {
+                    invalidation: Invalidation::PAINT,
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            UiInput::PointerPressed(_) => {
+                self.pressed = true;
+                EventResult {
+                    invalidation: Invalidation::PAINT,
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            UiInput::PointerReleased(point) if self.pressed => {
+                self.pressed = false;
+                EventResult {
+                    action: LogicalRect::from_xywh(
+                        0.0,
+                        0.0,
+                        self.resolved_size.width,
+                        self.resolved_size.height,
+                    )
+                    .contains(point)
+                    .then(|| self.action.as_ref().map(|action| action()))
+                    .flatten(),
+                    invalidation: Invalidation::PAINT,
+                    clipboard: None,
+                    handled: true,
+                }
+            }
+            UiInput::Keyboard { input, .. }
+                if input.state == ElementState::Pressed
+                    && matches!(
+                        input.logical_key,
+                        Key::Named(NamedKey::Enter | NamedKey::Space)
+                    ) =>
+            {
+                EventResult {
+                    action: self.action.as_ref().map(|action| action()),
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            _ => EventResult::default(),
+        }
+    }
+    fn semantic_actions(&self) -> Vec<SemanticActionKind> {
+        vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+    }
+    fn semantic_action(&mut self, action: SemanticAction) -> EventResult {
+        match action {
+            SemanticAction::Activate => EventResult {
+                action: self.action.as_ref().map(|action| action()),
+                handled: true,
+                ..EventResult::default()
+            },
+            _ => EventResult::default(),
+        }
+    }
+    fn hit_testable(&self) -> bool {
+        true
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn cursor_icon(&self) -> CursorIcon {
+        CursorIcon::Pointer
     }
 }

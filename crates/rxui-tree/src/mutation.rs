@@ -17,7 +17,7 @@
 //! to be shaped again, and shaping happens during layout. Making a recolour
 //! paint-only needs a paint-side text brush, which does not exist yet.
 
-use std::any::Any;
+use std::{any::Any, ops::RangeInclusive};
 
 use astrelis_core::{
     color::Color,
@@ -26,10 +26,14 @@ use astrelis_core::{
 use astrelis_paint::{Image, ImageSampling};
 
 use crate::{
-    ActionBox, Align, Alignment, Axis, BoxElement, Element, Flex, Frame, ImageAlignment,
-    ImageElement, ImageFit, Invalidation, Label, NodeHandle, RenderView, RenderViewContent, Scroll,
-    ScrollAxis, SemanticData, Stack, UiInput, UiTree,
+    ActionBox, Align, Alignment, Axis, BoxElement, Button, ButtonIcon, Checkbox, Element, Flex,
+    Frame, ImageAlignment, ImageElement, ImageFit, Invalidation, KeyListener, Label, NodeHandle,
+    RenderView, RenderViewContent, Scroll, ScrollAxis, SemanticData, Slider, SplitPane, Stack,
+    TextField, UiInput, UiTree,
 };
+
+const CONTROLLED: Invalidation =
+    Invalidation::from_bits_retain(Invalidation::PAINT.bits() | Invalidation::ACCESSIBILITY.bits());
 
 /// Work a change in composed position causes: everything layout would have
 /// triggered, minus layout itself.
@@ -96,6 +100,53 @@ impl UiTree {
     pub fn render_view_mut(&mut self, handle: NodeHandle<RenderView>) -> NodeMut<'_, RenderView> {
         self.edit(handle)
     }
+
+    /// Begins property-aware mutation of a retained button.
+    pub fn button_mut(&mut self, handle: NodeHandle<Button>) -> NodeMut<'_, Button> {
+        self.edit(handle)
+    }
+    /// Begins property-aware mutation of a retained checkbox.
+    pub fn checkbox_mut(&mut self, handle: NodeHandle<Checkbox>) -> NodeMut<'_, Checkbox> {
+        self.edit(handle)
+    }
+    /// Begins property-aware mutation of a retained slider.
+    pub fn slider_mut(&mut self, handle: NodeHandle<Slider>) -> NodeMut<'_, Slider> {
+        self.edit(handle)
+    }
+    /// Begins property-aware mutation of a retained text field.
+    pub fn text_field_mut(&mut self, handle: NodeHandle<TextField>) -> NodeMut<'_, TextField> {
+        self.edit(handle)
+    }
+    /// Begins property-aware mutation of a retained split pane.
+    pub fn split_pane_mut(&mut self, handle: NodeHandle<SplitPane>) -> NodeMut<'_, SplitPane> {
+        self.edit(handle)
+    }
+    /// Begins property-aware mutation of a retained key listener.
+    pub fn key_listener_mut(
+        &mut self,
+        handle: NodeHandle<KeyListener>,
+    ) -> NodeMut<'_, KeyListener> {
+        self.edit(handle)
+    }
+}
+
+fn same_icon(left: Option<&ButtonIcon>, right: Option<&ButtonIcon>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.size == right.size
+                && left.view_box == right.view_box
+                && left.fill_rule == right.fill_rule
+                && left.path.verbs() == right.path.verbs()
+        }
+        _ => false,
+    }
+}
+
+fn ordered(range: RangeInclusive<f32>) -> RangeInclusive<f32> {
+    let start = (*range.start()).min(*range.end());
+    let end = (*range.start()).max(*range.end());
+    start..=end
 }
 
 impl<E: Element> NodeMut<'_, E> {
@@ -124,6 +175,380 @@ impl<E: Element> NodeMut<'_, E> {
     /// arbitrary-flag update API.
     pub fn mark_composition_changed(&mut self) {
         self.ui.update(self.handle, MOVED, |_| {});
+    }
+}
+
+impl NodeMut<'_, Button> {
+    /// Replaces the shaped and accessible label. `LAYOUT`.
+    pub fn set_label(&mut self, label: impl Into<String>) -> bool {
+        self.guarded(
+            label.into(),
+            Invalidation::LAYOUT,
+            |button| &button.label,
+            |button, label| button.label = label,
+        )
+    }
+    /// Replaces the preferred size. `LAYOUT`.
+    pub fn set_size(&mut self, size: LogicalSize) -> bool {
+        self.guarded(
+            size,
+            Invalidation::LAYOUT,
+            |button| &button.size,
+            |button, size| button.size = size,
+        )
+    }
+    /// Replaces the resting background. `PAINT`.
+    pub fn set_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |button| &button.color,
+            |button, color| button.color = color,
+        )
+    }
+    /// Replaces the pressed background. `PAINT`.
+    pub fn set_pressed_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |button| &button.pressed_color,
+            |button, color| button.pressed_color = color,
+        )
+    }
+    /// Replaces the glyph and icon colour. `LAYOUT`.
+    pub fn set_text_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::LAYOUT,
+            |button| &button.text_color,
+            |button, color| button.text_color = color,
+        )
+    }
+    /// Replaces the glyph size. `LAYOUT`.
+    pub fn set_font_size(&mut self, font_size: f32) -> bool {
+        self.guarded(
+            font_size,
+            Invalidation::LAYOUT,
+            |button| &button.font_size,
+            |button, font_size| button.font_size = font_size,
+        )
+    }
+    /// Selects whether the accessible label is also painted. `LAYOUT`.
+    pub fn set_label_visible(&mut self, visible: bool) -> bool {
+        self.guarded(
+            visible,
+            Invalidation::LAYOUT,
+            |button| &button.show_label,
+            |button, visible| button.set_label_visible(visible),
+        )
+    }
+    /// Replaces the optional leading vector content. `LAYOUT`.
+    pub fn set_icon(&mut self, icon: Option<ButtonIcon>) -> bool {
+        if same_icon(self.ui.element(self.handle).icon.as_ref(), icon.as_ref()) {
+            return false;
+        }
+        self.ui.update(self.handle, Invalidation::LAYOUT, |button| {
+            button.set_icon(icon)
+        });
+        true
+    }
+    /// Replaces the erased activation factory. No invalidation.
+    pub fn set_action(&mut self, action: impl Fn() -> Box<dyn Any> + 'static) {
+        self.ui
+            .update(self.handle, Invalidation::empty(), |button| {
+                button.set_action_factory(action)
+            });
+    }
+    /// Replaces every resolved button property at once.
+    pub fn set_button(
+        &mut self,
+        label: String,
+        size: LogicalSize,
+        color: Color,
+        pressed_color: Color,
+    ) {
+        self.set_label(label);
+        self.set_size(size);
+        self.set_color(color);
+        self.set_pressed_color(pressed_color);
+    }
+}
+
+impl NodeMut<'_, TextField> {
+    /// Replaces the accessible name and placeholder. `LAYOUT`.
+    pub fn set_label(&mut self, label: impl Into<String>) -> bool {
+        self.guarded(
+            label.into(),
+            Invalidation::LAYOUT,
+            |field| &field.label,
+            |field, label| field.label = label,
+        )
+    }
+    /// Replaces the controlled value. `LAYOUT`.
+    pub fn set_text(&mut self, text: impl Into<String>) -> bool {
+        self.guarded(
+            text.into(),
+            Invalidation::LAYOUT,
+            |field| &field.text,
+            |field, text| field.set_text(text),
+        )
+    }
+    /// Replaces the preferred control width. `LAYOUT`.
+    pub fn set_width(&mut self, width: f32) -> bool {
+        self.guarded(
+            width,
+            Invalidation::LAYOUT,
+            |field| &field.width,
+            |field, width| field.width = width,
+        )
+    }
+    /// Replaces the glyph size. `LAYOUT`.
+    pub fn set_font_size(&mut self, font_size: f32) -> bool {
+        self.guarded(
+            font_size,
+            Invalidation::LAYOUT,
+            |field| &field.font_size,
+            |field, font_size| field.font_size = font_size,
+        )
+    }
+    /// Replaces the glyph colour. `LAYOUT`.
+    pub fn set_text_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::LAYOUT,
+            |field| &field.text_color,
+            |field, color| field.text_color = color,
+        )
+    }
+    /// Replaces the background fill. `PAINT`.
+    pub fn set_background(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |field| &field.background,
+            |field, color| field.background = color,
+        )
+    }
+    /// Replaces the selection highlight. `PAINT`.
+    pub fn set_selection_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |field| &field.selection_color,
+            |field, color| field.selection_color = color,
+        )
+    }
+    /// Replaces the caret colour. `PAINT`.
+    pub fn set_caret_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |field| &field.caret_color,
+            |field, color| field.caret_color = color,
+        )
+    }
+    /// Replaces the erased change-action factory. No invalidation.
+    pub fn set_change_action(&mut self, changed: impl Fn(String) -> Box<dyn Any> + 'static) {
+        self.ui.update(self.handle, Invalidation::empty(), |field| {
+            field.set_changed_factory(changed)
+        });
+    }
+    /// Replaces the erased submit-action factory. No invalidation.
+    pub fn set_submit_action(&mut self, submitted: impl Fn(String) -> Box<dyn Any> + 'static) {
+        self.ui.update(self.handle, Invalidation::empty(), |field| {
+            field.set_submitted_factory(submitted)
+        });
+    }
+    /// Replaces every resolved field property at once.
+    pub fn set_field(
+        &mut self,
+        label: String,
+        value: String,
+        text_color: Color,
+        background: Color,
+        changed: impl Fn(String) -> Box<dyn Any> + 'static,
+    ) {
+        self.set_label(label);
+        self.set_text(value);
+        self.set_text_color(text_color);
+        self.set_background(background);
+        self.set_change_action(changed);
+    }
+}
+
+impl NodeMut<'_, Checkbox> {
+    /// Replaces the shaped and accessible label. `LAYOUT`.
+    pub fn set_label(&mut self, label: impl Into<String>) -> bool {
+        self.guarded(
+            label.into(),
+            Invalidation::LAYOUT,
+            |checkbox| &checkbox.label,
+            |checkbox, label| checkbox.label = label,
+        )
+    }
+    /// Replaces the controlled checked state. `PAINT | ACCESSIBILITY`.
+    pub fn set_checked(&mut self, checked: bool) -> bool {
+        self.guarded(
+            checked,
+            CONTROLLED,
+            |checkbox| &checkbox.checked,
+            |checkbox, checked| checkbox.checked = checked,
+        )
+    }
+    /// Replaces the preferred size. `LAYOUT`.
+    pub fn set_size(&mut self, size: LogicalSize) -> bool {
+        self.guarded(
+            size,
+            Invalidation::LAYOUT,
+            |checkbox| &checkbox.size,
+            |checkbox, size| checkbox.size = size,
+        )
+    }
+    /// Replaces the label colour. `LAYOUT`.
+    pub fn set_text_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::LAYOUT,
+            |checkbox| &checkbox.text_color,
+            |checkbox, color| checkbox.text_color = color,
+        )
+    }
+    /// Replaces the unchecked outline colour. `PAINT`.
+    pub fn set_outline_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |checkbox| &checkbox.outline_color,
+            |checkbox, color| checkbox.outline_color = color,
+        )
+    }
+    /// Replaces the checked fill colour. `PAINT`.
+    pub fn set_accent_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |checkbox| &checkbox.accent_color,
+            |checkbox, color| checkbox.accent_color = color,
+        )
+    }
+    /// Replaces the erased change-action factory. No invalidation.
+    pub fn set_change_action(&mut self, changed: impl Fn(bool) -> Box<dyn Any> + 'static) {
+        self.ui
+            .update(self.handle, Invalidation::empty(), |checkbox| {
+                checkbox.set_changed(changed)
+            });
+    }
+    /// Replaces every resolved checkbox property at once.
+    pub fn set_checkbox(
+        &mut self,
+        label: String,
+        checked: bool,
+        text_color: Color,
+        outline_color: Color,
+        accent_color: Color,
+    ) {
+        self.set_label(label);
+        self.set_checked(checked);
+        self.set_text_color(text_color);
+        self.set_outline_color(outline_color);
+        self.set_accent_color(accent_color);
+    }
+}
+
+impl NodeMut<'_, Slider> {
+    /// Replaces the accessible label. `ACCESSIBILITY`.
+    pub fn set_label(&mut self, label: impl Into<String>) -> bool {
+        self.guarded(
+            label.into(),
+            Invalidation::ACCESSIBILITY,
+            |slider| &slider.label,
+            |slider, label| slider.label = label,
+        )
+    }
+    /// Replaces the controlled value. `PAINT | ACCESSIBILITY`.
+    pub fn set_value(&mut self, value: f32) -> bool {
+        let slider = self.ui.element(self.handle);
+        let value = value.clamp(*slider.range.start(), *slider.range.end());
+        self.guarded(
+            value,
+            CONTROLLED,
+            |slider| &slider.value,
+            |slider, value| slider.value = value,
+        )
+    }
+    /// Replaces the accepted range. `PAINT | ACCESSIBILITY`.
+    pub fn set_range(&mut self, range: RangeInclusive<f32>) -> bool {
+        let range = ordered(range);
+        let slider = self.ui.element(self.handle);
+        let value = slider.value.clamp(*range.start(), *range.end());
+        if slider.range == range && slider.value == value {
+            return false;
+        }
+        self.ui.update(self.handle, CONTROLLED, |slider| {
+            slider.range = range;
+            slider.value = value;
+        });
+        true
+    }
+    /// Replaces the keyboard adjustment step. No invalidation.
+    pub fn set_step(&mut self, step: f32) -> bool {
+        self.guarded(
+            step.max(0.0),
+            Invalidation::empty(),
+            |slider| &slider.step,
+            |slider, step| slider.step = step,
+        )
+    }
+    /// Replaces the preferred size. `LAYOUT`.
+    pub fn set_size(&mut self, size: LogicalSize) -> bool {
+        self.guarded(
+            size,
+            Invalidation::LAYOUT,
+            |slider| &slider.size,
+            |slider, size| slider.size = size,
+        )
+    }
+    /// Replaces the unfilled track colour. `PAINT`.
+    pub fn set_track_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |slider| &slider.track_color,
+            |slider, color| slider.track_color = color,
+        )
+    }
+    /// Replaces the filled track and thumb colour. `PAINT`.
+    pub fn set_accent_color(&mut self, color: Color) -> bool {
+        self.guarded(
+            color,
+            Invalidation::PAINT,
+            |slider| &slider.accent_color,
+            |slider, color| slider.accent_color = color,
+        )
+    }
+    /// Replaces the erased change-action factory. No invalidation.
+    pub fn set_change_action(&mut self, changed: impl Fn(f32) -> Box<dyn Any> + 'static) {
+        self.ui
+            .update(self.handle, Invalidation::empty(), |slider| {
+                slider.set_changed(changed)
+            });
+    }
+    /// Replaces every resolved slider property at once.
+    pub fn set_slider(
+        &mut self,
+        label: String,
+        value: f32,
+        range: RangeInclusive<f32>,
+        step: f32,
+        track_color: Color,
+        accent_color: Color,
+    ) {
+        self.set_label(label);
+        self.set_range(range);
+        self.set_value(value);
+        self.set_step(step);
+        self.set_track_color(track_color);
+        self.set_accent_color(accent_color);
     }
 }
 

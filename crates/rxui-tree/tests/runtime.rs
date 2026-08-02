@@ -1,30 +1,51 @@
 //! Incremental retained runtime behavior.
-//!
-//! Stage 4: dropped pointer_capture_finishes_a_press_released_outside,
-//! hover_transitions_repaint_only_the_entered_and_exited_controls,
-//! hovered_and_captured_elements_select_native_cursors,
-//! keyboard_events_bubble_to_overlay_boundaries,
-//! text_fields_release_command_navigation_keys_to_their_owner,
-//! split_pane_routes_drag_outside_the_divider_and_reflows_children,
-//! clicking_a_splitter_does_not_move_it,
-//! a_press_bubbling_through_a_split_pane_neither_resizes_it_nor_steals_the_release,
-//! shaped_text_field_routes_focus_editing_and_incremental_repaint,
-//! semantic_actions_focus_and_activate_control_values,
-//! tab_focus_traversal_and_keyboard_activation_follow_tree_order, and
-//! icon_only_button_keeps_accessible_label_and_compact_geometry.
 
 use astrelis_core::{
     color::Color,
     geometry::{LogicalPoint, LogicalSize},
 };
+use astrelis_paint::{Path, PathVerb};
+use astrelis_platform::{
+    CursorIcon, DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, NamedKey,
+    PhysicalKey,
+};
 use rxui_tree::{
-    Align, Alignment, Axis, BoxElement, Constraints, Element, EventResult, Flex, Frame, Label,
-    LayoutContext, Scroll, ScrollAxis, SemanticData, SemanticRole, Stack, UiInput, UiTree,
+    Align, Alignment, Axis, BoxElement, Button, ButtonIcon, Checkbox, Constraints, Element,
+    EventResult, Flex, Frame, KeyListener, Label, LayoutContext, Scroll, ScrollAxis,
+    SemanticAction, SemanticData, SemanticRole, SplitPane, Stack, TextField, UiInput, UiTree,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 enum Action {
     Activate,
+    Edit(String),
+    Checked(bool),
+}
+
+fn key(text: &str) -> KeyboardInput {
+    KeyboardInput {
+        device_id: DeviceId(1),
+        physical_key: PhysicalKey::Unidentified,
+        logical_key: Key::Character(text.into()),
+        text: Some(text.into()),
+        location: KeyLocation::Standard,
+        state: ElementState::Pressed,
+        repeat: false,
+        synthetic: false,
+    }
+}
+
+fn named_key(key: NamedKey) -> KeyboardInput {
+    KeyboardInput {
+        device_id: DeviceId(1),
+        physical_key: PhysicalKey::Unidentified,
+        logical_key: Key::Named(key),
+        text: None,
+        location: KeyLocation::Standard,
+        state: ElementState::Pressed,
+        repeat: false,
+        synthetic: false,
+    }
 }
 
 struct TestControl {
@@ -587,4 +608,421 @@ fn node_identity_bits_survive_slot_reuse() {
         "a recycled slot must not collide with its earlier occupant",
     );
     assert_eq!(root.to_bits(), ui.root().to_bits());
+}
+
+#[test]
+fn pointer_capture_finishes_a_press_released_outside() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(200.0, 100.0));
+    ui.append(
+        ui.root(),
+        Button::new(
+            "Run",
+            LogicalSize::new(100.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        ),
+    );
+    ui.update_passes();
+    ui.dispatch(UiInput::PointerPressed(LogicalPoint::new(10.0, 10.0)));
+    assert!(
+        ui.dispatch(UiInput::PointerReleased(LogicalPoint::new(180.0, 80.0)))
+            .is_none()
+    );
+    ui.dispatch(UiInput::PointerPressed(LogicalPoint::new(10.0, 10.0)));
+    assert!(
+        ui.dispatch(UiInput::PointerReleased(LogicalPoint::new(10.0, 10.0)))
+            .is_some()
+    );
+}
+
+#[test]
+fn hover_transitions_repaint_only_the_entered_and_exited_controls() {
+    let mut ui = UiTree::new(
+        Flex {
+            axis: Axis::Horizontal,
+            ..Flex::default()
+        },
+        LogicalSize::new(240.0, 60.0),
+    );
+    ui.append(
+        ui.root(),
+        Button::new(
+            "First",
+            LogicalSize::new(100.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        ),
+    );
+    ui.append(
+        ui.root(),
+        Button::new(
+            "Second",
+            LogicalSize::new(100.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        ),
+    );
+    ui.update_passes();
+    ui.dispatch(UiInput::PointerMoved(LogicalPoint::new(10.0, 10.0)));
+    assert_eq!(ui.update_passes().stats.rebuilt_fragments, 1);
+    ui.dispatch(UiInput::PointerMoved(LogicalPoint::new(20.0, 10.0)));
+    assert_eq!(ui.update_passes().stats.rebuilt_fragments, 0);
+    ui.dispatch(UiInput::PointerMoved(LogicalPoint::new(110.0, 10.0)));
+    assert_eq!(ui.update_passes().stats.rebuilt_fragments, 2);
+    ui.dispatch(UiInput::PointerLeft);
+    assert_eq!(ui.update_passes().stats.rebuilt_fragments, 1);
+}
+
+#[test]
+fn hovered_and_captured_elements_select_native_cursors() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(200.0, 100.0));
+    ui.append(
+        ui.root(),
+        Button::new(
+            "Run",
+            LogicalSize::new(100.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        ),
+    );
+    ui.update_passes();
+    assert_eq!(ui.cursor_icon(), CursorIcon::Default);
+    ui.dispatch(UiInput::PointerMoved(LogicalPoint::new(10.0, 10.0)));
+    assert_eq!(ui.cursor_icon(), CursorIcon::Pointer);
+    ui.dispatch(UiInput::PointerLeft);
+    assert_eq!(ui.cursor_icon(), CursorIcon::Default);
+
+    let mut split = UiTree::new(
+        SplitPane::new(Axis::Horizontal, 0.5, |ratio| Box::new(ratio)),
+        LogicalSize::new(200.0, 100.0),
+    );
+    split.update_passes();
+    split.dispatch(UiInput::PointerPressed(LogicalPoint::new(100.0, 50.0)));
+    assert_eq!(split.cursor_icon(), CursorIcon::EwResize);
+    split.dispatch(UiInput::PointerMoved(LogicalPoint::new(20.0, 50.0)));
+    assert_eq!(split.cursor_icon(), CursorIcon::EwResize);
+}
+
+#[test]
+fn keyboard_events_bubble_to_overlay_boundaries() {
+    let mut ui = UiTree::new(
+        KeyListener::on_escape(|| Box::new(Action::Activate)),
+        LogicalSize::new(200.0, 100.0),
+    );
+    ui.append(
+        ui.root(),
+        Button::new(
+            "Focused",
+            LogicalSize::new(100.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        ),
+    );
+    ui.update_passes();
+    ui.focus_first_in_subtree(ui.root());
+    let action = ui
+        .dispatch(UiInput::Keyboard {
+            input: named_key(NamedKey::Escape),
+            modifiers: Modifiers::default(),
+        })
+        .unwrap();
+    assert_eq!(*action.downcast::<Action>().unwrap(), Action::Activate);
+}
+
+#[test]
+fn text_fields_release_command_navigation_keys_to_their_owner() {
+    let mut ui = UiTree::new(
+        KeyListener::command_navigation(
+            || Box::new("previous"),
+            || Box::new("next"),
+            || Box::new("submit"),
+        ),
+        LogicalSize::new(240.0, 80.0),
+    );
+    ui.append(ui.root(), TextField::new("Search", ""));
+    ui.update_passes();
+    ui.focus_first_in_subtree(ui.root());
+    let next = ui
+        .dispatch(UiInput::Keyboard {
+            input: named_key(NamedKey::Other("ArrowDown".into())),
+            modifiers: Modifiers::default(),
+        })
+        .unwrap();
+    assert_eq!(*next.downcast::<&str>().unwrap(), "next");
+    let submit = ui
+        .dispatch(UiInput::Keyboard {
+            input: named_key(NamedKey::Enter),
+            modifiers: Modifiers::default(),
+        })
+        .unwrap();
+    assert_eq!(*submit.downcast::<&str>().unwrap(), "submit");
+}
+
+#[test]
+fn split_pane_routes_drag_outside_the_divider_and_reflows_children() {
+    let mut ui = UiTree::new(
+        SplitPane::new(Axis::Horizontal, 0.25, |ratio| Box::new(ratio)),
+        LogicalSize::new(200.0, 100.0),
+    );
+    ui.append(ui.root(), Label::new("First"));
+    ui.append(ui.root(), Label::new("Second"));
+    ui.update_passes();
+    ui.dispatch(UiInput::PointerPressed(LogicalPoint::new(50.0, 50.0)));
+    let ratio = ui
+        .dispatch(UiInput::PointerMoved(LogicalPoint::new(100.0, 50.0)))
+        .unwrap();
+    assert!((*ratio.downcast::<f32>().unwrap() - 0.5).abs() < 0.02);
+    ui.dispatch(UiInput::PointerReleased(LogicalPoint::new(150.0, 50.0)));
+    ui.update_passes();
+    let second = ui
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Second")
+        .unwrap();
+    assert!(second.bounds.origin.x > 145.0);
+}
+
+#[test]
+fn clicking_a_splitter_does_not_move_it() {
+    let mut ui = UiTree::new(
+        SplitPane::new(Axis::Horizontal, 0.25, |ratio| Box::new(ratio)),
+        LogicalSize::new(200.0, 100.0),
+    );
+    ui.append(ui.root(), Label::new("First"));
+    ui.append(ui.root(), Label::new("Second"));
+    ui.update_passes();
+    let point = LogicalPoint::new(50.0, 50.0);
+    assert!(ui.dispatch(UiInput::PointerPressed(point)).is_none());
+    let ratio = ui.dispatch(UiInput::PointerReleased(point)).unwrap();
+    assert_eq!(*ratio.downcast::<f32>().unwrap(), 0.25);
+    ui.update_passes();
+    let second = ui
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Second")
+        .unwrap();
+    assert_eq!(second.bounds.origin.x, 54.5);
+}
+
+#[derive(Default)]
+struct SelectOnRelease {
+    releases: usize,
+}
+
+impl Element for SelectOnRelease {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn layout(
+        &mut self,
+        _context: &mut LayoutContext<'_>,
+        constraints: Constraints,
+    ) -> LogicalSize {
+        constraints.max
+    }
+    fn event(&mut self, input: UiInput) -> EventResult {
+        match input {
+            UiInput::PointerReleased(_) => {
+                self.releases += 1;
+                EventResult {
+                    handled: true,
+                    ..EventResult::default()
+                }
+            }
+            _ => EventResult::default(),
+        }
+    }
+    fn hit_testable(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_press_bubbling_through_a_split_pane_neither_resizes_it_nor_steals_the_release() {
+    let mut ui = UiTree::new(
+        SplitPane::new(Axis::Horizontal, 0.25, |ratio| Box::new(ratio)),
+        LogicalSize::new(200.0, 100.0),
+    );
+    let content = ui.append(ui.root(), SelectOnRelease::default());
+    ui.append(ui.root(), Label::new("Second"));
+    ui.update_passes();
+    let click = LogicalPoint::new(20.0, 50.0);
+    assert!(ui.dispatch(UiInput::PointerPressed(click)).is_none());
+    assert!(ui.dispatch(UiInput::PointerReleased(click)).is_none());
+    assert_eq!(ui.element(content).releases, 1);
+    ui.dispatch(UiInput::PointerPressed(click));
+    assert!(
+        ui.dispatch(UiInput::PointerMoved(LogicalPoint::new(180.0, 50.0)))
+            .is_none()
+    );
+    ui.dispatch(UiInput::PointerReleased(LogicalPoint::new(180.0, 50.0)));
+    ui.update_passes();
+    let second = ui
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.data.label == "Second")
+        .unwrap();
+    assert_eq!(second.bounds.origin.x, 54.5);
+    ui.dispatch(UiInput::PointerPressed(LogicalPoint::new(51.0, 50.0)));
+    let ratio = ui
+        .dispatch(UiInput::PointerMoved(LogicalPoint::new(151.0, 50.0)))
+        .unwrap();
+    assert!((*ratio.downcast::<f32>().unwrap() - 0.75).abs() < 0.02);
+}
+
+#[test]
+fn shaped_text_field_routes_focus_editing_and_incremental_repaint() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(400.0, 300.0));
+    let field = ui.append(
+        ui.root(),
+        TextField::new("Name", "Astrelis").on_changed(Action::Edit),
+    );
+    ui.update_passes();
+    ui.dispatch(UiInput::PointerPressed(LogicalPoint::new(20.0, 10.0)));
+    let action = ui
+        .dispatch(UiInput::Keyboard {
+            input: key("!"),
+            modifiers: Modifiers::default(),
+        })
+        .unwrap();
+    assert_eq!(
+        *action.downcast::<Action>().unwrap(),
+        Action::Edit("A!strelis".into())
+    );
+    let update = ui.update_passes();
+    assert!(update.scene.rebuilt(field.id()));
+    assert_eq!(ui.element(field).selection(), (2, 2));
+}
+
+#[test]
+fn semantic_actions_focus_and_activate_control_values() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(400.0, 300.0));
+    let checkbox = ui.append(
+        ui.root(),
+        Checkbox::new("Visible", false, |checked| {
+            Box::new(Action::Checked(checked))
+        }),
+    );
+    ui.update_passes();
+    ui.perform_semantic_action(checkbox.id(), SemanticAction::Focus);
+    let action = ui
+        .perform_semantic_action(checkbox.id(), SemanticAction::Activate)
+        .unwrap();
+    assert_eq!(*action.downcast::<Action>().unwrap(), Action::Checked(true));
+    let update = ui.update_passes();
+    assert!(
+        update
+            .accessibility
+            .changed
+            .iter()
+            .any(|node| node.id == checkbox.id() && node.focused)
+    );
+}
+
+#[test]
+fn tab_focus_traversal_and_keyboard_activation_follow_tree_order() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(400.0, 300.0));
+    let first = ui.append(
+        ui.root(),
+        Button::new(
+            "First",
+            LogicalSize::new(100.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        ),
+    );
+    let second = ui.append(
+        ui.root(),
+        Checkbox::new("Second", false, |checked| {
+            Box::new(Action::Checked(checked))
+        }),
+    );
+    ui.update_passes();
+    ui.dispatch(UiInput::Keyboard {
+        input: named_key(NamedKey::Tab),
+        modifiers: Modifiers::default(),
+    });
+    ui.update_passes();
+    assert_eq!(
+        ui.semantic_snapshot()
+            .into_iter()
+            .find(|node| node.focused)
+            .map(|node| node.id),
+        Some(first.id())
+    );
+    let action = ui
+        .dispatch(UiInput::Keyboard {
+            input: named_key(NamedKey::Enter),
+            modifiers: Modifiers::default(),
+        })
+        .unwrap();
+    assert_eq!(*action.downcast::<Action>().unwrap(), Action::Activate);
+    ui.dispatch(UiInput::Keyboard {
+        input: named_key(NamedKey::Tab),
+        modifiers: Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        },
+    });
+    ui.update_passes();
+    assert_eq!(
+        ui.semantic_snapshot()
+            .into_iter()
+            .find(|node| node.focused)
+            .map(|node| node.id),
+        Some(second.id())
+    );
+}
+
+#[test]
+fn icon_only_button_keeps_accessible_label_and_compact_geometry() {
+    let mut icon = Path::builder();
+    for verb in [
+        PathVerb::MoveTo(LogicalPoint::new(2.0, 2.0)),
+        PathVerb::LineTo(LogicalPoint::new(14.0, 8.0)),
+        PathVerb::LineTo(LogicalPoint::new(2.0, 14.0)),
+        PathVerb::Close,
+    ] {
+        match verb {
+            PathVerb::MoveTo(point) => icon.move_to(point),
+            PathVerb::LineTo(point) => icon.line_to(point),
+            PathVerb::Close => icon.close(),
+            _ => unreachable!(),
+        }
+        .unwrap();
+    }
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(100.0, 100.0));
+    let button = ui.append(
+        ui.root(),
+        Button::new(
+            "Run",
+            LogicalSize::new(30.0, 30.0),
+            Color::WHITE,
+            Color::BLACK,
+            Action::Activate,
+        )
+        .with_icon(ButtonIcon::new(
+            icon.finish(),
+            LogicalSize::new(16.0, 16.0),
+            16.0,
+        ))
+        .with_label_visible(false),
+    );
+    ui.update_passes();
+    let semantics = ui
+        .semantic_snapshot()
+        .into_iter()
+        .find(|node| node.id == button.id())
+        .unwrap();
+    assert_eq!(semantics.data.label, "Run");
+    assert_eq!(semantics.bounds.size, LogicalSize::new(30.0, 30.0));
 }

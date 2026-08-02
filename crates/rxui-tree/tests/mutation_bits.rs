@@ -9,21 +9,17 @@
 //! `LAYOUT_ALL` is what a layout-affecting setter is expected to read back.
 //! Those setters declare `LAYOUT` alone; `UiTree` expands it to the passes
 //! layout feeds.
-//!
-//! Stage 4: dropped button_setters, text_field_setters, checkbox_setters,
-//! slider_setters, a_guard_compares_the_value_the_element_will_hold,
-//! a_checkbox_toggle_no_longer_relayouts_its_label, and
-//! a_slider_drag_no_longer_relayouts_the_row.
 
 use astrelis_core::{
     color::Color,
     geometry::{LogicalPoint, LogicalRect, LogicalSize, Physical, Size},
 };
-use astrelis_paint::{Image, ImageSampling};
+use astrelis_paint::{FillRule, Image, ImageSampling, Path, PathBuilder};
 use rxui_tree::{
-    Align, Alignment, Axis, BoxElement, Element, Flex, Frame, ImageAlignment, ImageElement,
-    ImageFit, Invalidation, Label, NodeHandle, PassStats, RenderView, RenderViewContent, Scroll,
-    ScrollAxis, SemanticData, SemanticRole, Stack, UiInput, UiTree,
+    Align, Alignment, Axis, BoxElement, Button, ButtonIcon, Checkbox, Element, Flex, Frame,
+    ImageAlignment, ImageElement, ImageFit, Invalidation, Label, NodeHandle, PassStats, RenderView,
+    RenderViewContent, Scroll, ScrollAxis, SemanticData, SemanticRole, Slider, Stack, TextField,
+    UiInput, UiTree,
 };
 
 fn viewport() -> LogicalSize {
@@ -98,12 +94,27 @@ macro_rules! assert_setter {
     }};
 }
 
+const CONTROLLED: Invalidation =
+    Invalidation::from_bits_retain(Invalidation::PAINT.bits() | Invalidation::ACCESSIBILITY.bits());
+
 const MOVED: Invalidation = Invalidation::from_bits_retain(
     Invalidation::COMPOSE.bits()
         | Invalidation::PAINT.bits()
         | Invalidation::ACCESSIBILITY.bits()
         | Invalidation::HIT_TEST.bits(),
 );
+
+fn icon() -> ButtonIcon {
+    let mut builder = Path::builder();
+    builder
+        .move_to(LogicalPoint::new(0.0, 0.0))
+        .and_then(|builder| builder.line_to(LogicalPoint::new(16.0, 0.0)))
+        .and_then(|builder| builder.line_to(LogicalPoint::new(8.0, 16.0)))
+        .and_then(PathBuilder::close)
+        .expect("triangle");
+    ButtonIcon::new(builder.finish(), LogicalSize::new(16.0, 16.0), 16.0)
+        .with_fill_rule(FillRule::NonZero)
+}
 
 #[test]
 fn label_setters() {
@@ -127,6 +138,86 @@ fn box_setters() {
     assert_setter!(ui, Invalidation::PAINT, boxed => set_color(color(0.2)));
     assert_setter!(ui, Invalidation::ACCESSIBILITY, boxed => set_semantics(Some(named("boxed"))));
     assert_setter!(ui, Invalidation::HIT_TEST, boxed => set_interactive(true));
+}
+
+#[test]
+fn button_setters() {
+    let (mut ui, button) = settled(Button::new(
+        "Run",
+        LogicalSize::new(80.0, 30.0),
+        Color::WHITE,
+        Color::BLACK,
+        (),
+    ));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, button => set_label("Stop"));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, button => set_size(LogicalSize::new(100.0, 30.0)));
+    assert_setter!(ui, Invalidation::PAINT, button => set_color(color(0.3)));
+    assert_setter!(ui, Invalidation::PAINT, button => set_pressed_color(color(0.6)));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, button => set_text_color(color(0.9)));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, button => set_font_size(16.0));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, button => set_label_visible(false));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, button => set_icon(Some(icon())));
+    ui.button_mut(button).set_action(|| Box::new(()));
+    assert_eq!(ui.invalidation(), Invalidation::empty());
+}
+
+#[test]
+fn text_field_setters() {
+    let (mut ui, field) = settled(TextField::new("Name", "Astrelis"));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, field => set_label("Project"));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, field => set_text("Astrelis UI"));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, field => set_width(200.0));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, field => set_font_size(16.0));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, field => set_text_color(color(0.7)));
+    assert_setter!(ui, Invalidation::PAINT, field => set_background(color(0.1)));
+    assert_setter!(ui, Invalidation::PAINT, field => set_selection_color(color(0.5)));
+    assert_setter!(ui, Invalidation::PAINT, field => set_caret_color(color(0.8)));
+    ui.text_field_mut(field)
+        .set_change_action(|text| Box::new(text));
+    ui.text_field_mut(field)
+        .set_submit_action(|text| Box::new(text));
+    assert_eq!(ui.invalidation(), Invalidation::empty());
+}
+
+#[test]
+fn checkbox_setters() {
+    let (mut ui, checkbox) = settled(Checkbox::new("Visible", false, |_| Box::new(())));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, checkbox => set_label("Hidden"));
+    assert_setter!(ui, CONTROLLED, checkbox => set_checked(true));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, checkbox => set_size(LogicalSize::new(200.0, 28.0)));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, checkbox => set_text_color(color(0.45)));
+    assert_setter!(ui, Invalidation::PAINT, checkbox => set_outline_color(color(0.55)));
+    assert_setter!(ui, Invalidation::PAINT, checkbox => set_accent_color(color(0.65)));
+    ui.checkbox_mut(checkbox)
+        .set_change_action(|checked| Box::new(checked));
+    assert_eq!(ui.invalidation(), Invalidation::empty());
+}
+
+#[test]
+fn slider_setters() {
+    let (mut ui, slider) = settled(Slider::new("Volume", 5.0, 0.0..=10.0, |_| Box::new(())));
+    assert_setter!(ui, Invalidation::ACCESSIBILITY, slider => set_label("Gain"));
+    assert_setter!(ui, CONTROLLED, slider => set_value(7.0));
+    assert_setter!(ui, CONTROLLED, slider => set_range(0.0..=20.0));
+    assert_setter!(ui, Invalidation::empty(), slider => set_step(2.0));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, slider => set_size(LogicalSize::new(240.0, 28.0)));
+    assert_setter!(ui, Invalidation::PAINT, slider => set_track_color(color(0.15)));
+    assert_setter!(ui, Invalidation::PAINT, slider => set_accent_color(color(0.85)));
+    ui.slider_mut(slider)
+        .set_change_action(|value| Box::new(value));
+    assert_eq!(ui.invalidation(), Invalidation::empty());
+}
+
+#[test]
+fn a_guard_compares_the_value_the_element_will_hold() {
+    let (mut ui, slider) = settled(Slider::new("Volume", 5.0, 0.0..=10.0, |_| Box::new(())));
+    let applied = ui.slider_mut(slider).set_value(100.0);
+    changed(&mut ui, applied, CONTROLLED);
+    let applied = ui.slider_mut(slider).set_value(50.0);
+    unchanged(&mut ui, applied);
+    assert_eq!(ui.element(slider).value, 10.0);
+    let applied = ui.slider_mut(slider).set_range(10.0..=0.0);
+    unchanged(&mut ui, applied);
 }
 
 #[test]
@@ -352,6 +443,69 @@ fn a_wheel_tick_reports_the_offset_it_settled_on() {
     assert_eq!(ui.invalidation(), Invalidation::LAYOUT_ALL);
     ui.update_passes();
     assert_eq!(bounds(&ui, "content").origin.y, -40.0);
+}
+
+#[test]
+fn a_checkbox_toggle_no_longer_relayouts_its_label() {
+    let (mut ui, checkbox) = settled(Checkbox::new("Visible", false, |_| Box::new(())));
+    let applied = ui.checkbox_mut(checkbox).set_checked(true);
+    assert!(applied);
+    assert_eq!(ui.invalidation(), CONTROLLED);
+    assert_eq!(
+        ui.update_passes().stats,
+        PassStats {
+            layout_elements: 0,
+            composed_nodes: 0,
+            rebuilt_fragments: 1,
+            reused_fragments: 1,
+            hit_test_nodes: 0,
+            accessibility_nodes: 1,
+            shaped_text: 0,
+            visited_compose_nodes: 0,
+            compose_skipped_subtrees: 0,
+            visited_accessibility_nodes: 2,
+            accessibility_skipped_subtrees: 0,
+            invalidate_steps: 1,
+        }
+    );
+}
+
+fn slider_row() -> (UiTree, NodeHandle<Slider>, NodeHandle<Label>) {
+    let mut ui = UiTree::new(Flex::default(), viewport());
+    let slider = ui.append(
+        ui.root(),
+        Slider::new("Volume", 5.0, 0.0..=10.0, |_| Box::new(())),
+    );
+    let label = ui.append(ui.root(), Label::new("Volume"));
+    ui.update_passes();
+    (ui, slider, label)
+}
+
+#[test]
+fn a_slider_drag_no_longer_relayouts_the_row() {
+    let (mut ui, slider, label) = slider_row();
+    let value = ui.slider_mut(slider).set_value(7.0);
+    let text = ui.label_mut(label).set_text("Volume");
+    assert!(value);
+    assert!(!text);
+    assert_eq!(ui.invalidation(), CONTROLLED);
+    assert_eq!(
+        ui.update_passes().stats,
+        PassStats {
+            layout_elements: 0,
+            composed_nodes: 0,
+            rebuilt_fragments: 1,
+            reused_fragments: 2,
+            hit_test_nodes: 0,
+            accessibility_nodes: 1,
+            shaped_text: 0,
+            visited_compose_nodes: 0,
+            compose_skipped_subtrees: 0,
+            visited_accessibility_nodes: 2,
+            accessibility_skipped_subtrees: 1,
+            invalidate_steps: 1,
+        }
+    );
 }
 
 #[test]

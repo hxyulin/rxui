@@ -3,19 +3,33 @@
 //! `PassStats::shaped_text` counts the calls that reach parley, so it is the
 //! direct observable here: a memo hit is a pass that lays a text element out
 //! again without moving the counter.
-//!
-//! Stage 4: dropped typing_one_character_reshapes_the_value_once_and_not_the_placeholder
-//! and unwrapped_text_is_not_reshaped_when_its_available_width_changes.
 
 use std::{cell::RefCell, rc::Rc};
 
 use astrelis_core::{
     color::Color,
-    geometry::{LogicalRect, LogicalSize},
+    geometry::{LogicalPoint, LogicalRect, LogicalSize},
+};
+use astrelis_platform::{
+    DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, PhysicalKey,
 };
 use rxui_tree::{
-    Axis, BoxElement, Element, Flex, Frame, KeyedShapingMemo, Label, NodeHandle, UiTree,
+    Axis, BoxElement, Element, Flex, Frame, KeyedShapingMemo, Label, NodeHandle, TextField,
+    UiInput, UiTree,
 };
+
+fn key(text: &str) -> KeyboardInput {
+    KeyboardInput {
+        device_id: DeviceId(1),
+        physical_key: PhysicalKey::Unidentified,
+        logical_key: Key::Character(text.into()),
+        text: Some(text.into()),
+        location: KeyLocation::Standard,
+        state: ElementState::Pressed,
+        repeat: false,
+        synthetic: false,
+    }
+}
 
 /// Asks for one element's layout pass without changing any of its properties.
 ///
@@ -146,6 +160,23 @@ fn a_reused_layout_measures_the_same_as_a_freshly_shaped_one() {
 }
 
 #[test]
+fn typing_one_character_reshapes_the_value_once_and_not_the_placeholder() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(400.0, 300.0));
+    let field = ui.append(ui.root(), TextField::new("Name", "Astrelis"));
+    assert_eq!(ui.update_passes().stats.shaped_text, 2);
+    let height = bounds(&ui, "Name").size.height;
+    ui.dispatch(UiInput::PointerPressed(LogicalPoint::new(20.0, 10.0)));
+    ui.dispatch(UiInput::Keyboard {
+        input: key("!"),
+        modifiers: Modifiers::default(),
+    });
+    let stats = ui.update_passes().stats;
+    assert_eq!(stats.shaped_text, 1);
+    assert_eq!(ui.element(field).text, "A!strelis");
+    assert_eq!(bounds(&ui, "Name").size.height, height);
+}
+
+#[test]
 fn a_label_that_only_moves_is_not_reshaped() {
     let mut ui = UiTree::new(
         Flex {
@@ -250,6 +281,26 @@ fn glyph_color_stays_part_of_the_memo_key() {
     ui.edit(label)
         .set_content("Ready".into(), 14.0, Color::BLUE, None);
     assert_eq!(ui.update_passes().stats.shaped_text, 1);
+}
+
+#[test]
+fn unwrapped_text_is_not_reshaped_when_its_available_width_changes() {
+    let mut ui = UiTree::new(Flex::default(), LogicalSize::new(400.0, 300.0));
+    let field = ui.append(ui.root(), TextField::new("Name", "Astrelis"));
+    assert_eq!(ui.update_passes().stats.shaped_text, 2);
+    let height = bounds(&ui, "Name").size.height;
+    ui.text_field_mut(field).set_width(320.0);
+    let stats = ui.update_passes().stats;
+    assert!(stats.layout_elements > 0, "the field is laid out again");
+    assert_eq!(stats.shaped_text, 0);
+
+    let mut fresh = UiTree::new(Flex::default(), LogicalSize::new(400.0, 300.0));
+    let fresh_field = fresh.append(fresh.root(), TextField::new("Name", "Astrelis"));
+    fresh.text_field_mut(fresh_field).set_width(320.0);
+    fresh.update_passes();
+    assert_eq!(bounds(&ui, "Name").size, bounds(&fresh, "Name").size);
+    assert_eq!(bounds(&ui, "Name").size.width, 320.0);
+    assert_eq!(bounds(&ui, "Name").size.height, height);
 }
 
 #[test]
