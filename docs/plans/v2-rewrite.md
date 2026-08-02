@@ -1,7 +1,21 @@
 # RXUI v2: Ground-Up Rewrite
 
-Status: approved design, implementation not started.
+Status: approved design; repos restructured (2026-08-02), implementation not started.
 Companion document: [v2-implementation.md](v2-implementation.md) — the staged implementation plan.
+
+## Repo setup (done 2026-08-02)
+
+- **rxui**: `main` is a fresh root history carrying these plans. The old lines
+  are `archive/v1-main` (message/`App` framework) and
+  `archive/v1-ui-next-migration` (Elm `Component` framework — final staged work
+  committed as `4b2687d`, with two known mechanical defects noted in that
+  commit message). All eight `wip/*` branches were fully merged and deleted.
+- **astrelis**: `main` now points at the former `refactor/ui-next-migration`
+  head (`7d28fed`, the shaping-memo work — a strict superset of the old main);
+  the pre-migration main is archived as `archive/pre-ui-next-main`. The merged
+  `rewrite` branch and all seven `wip/*` branches were deleted.
+- Remotes not yet pushed — the branch renames need a default-branch switch on
+  GitHub (see the implementation plan's Stage 0 checklist).
 
 ## Context
 

@@ -23,6 +23,12 @@ Standing gates for **every** stage:
 
 The retained engine, absorbed and re-owned.
 
+- Remote sync (one-time, needs GitHub UI): push rxui `main` +
+  `archive/v1-main` + `archive/v1-ui-next-migration` and astrelis `main` +
+  `archive/pre-ui-next-main`; switch each repo's default branch on GitHub to
+  the new `main` (rxui's requires allowing the unrelated-history push or
+  deleting/recreating the branch ref); delete the stale
+  `origin/refactor/ui-next-migration` refs.
 - Workspace skeleton: `crates/rxui-tree`, workspace `Cargo.toml`, CI (fmt,
   clippy, test, boundary checks), astrelis pinned at current HEAD
   (`rxui-baseline/S0` tag on the astrelis side).
