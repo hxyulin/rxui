@@ -17,10 +17,12 @@
 
 use astrelis_core::{
     color::Color,
-    geometry::{LogicalPoint, LogicalRect, LogicalSize},
+    geometry::{LogicalPoint, LogicalRect, LogicalSize, Physical, Size},
 };
+use astrelis_paint::{Image, ImageSampling};
 use rxui_tree::{
-    Axis, BoxElement, Element, Flex, Frame, Invalidation, Label, NodeHandle, PassStats, Scroll,
+    Align, Alignment, Axis, BoxElement, Element, Flex, Frame, ImageAlignment, ImageElement,
+    ImageFit, Invalidation, Label, NodeHandle, PassStats, RenderView, RenderViewContent, Scroll,
     ScrollAxis, SemanticData, SemanticRole, Stack, UiInput, UiTree,
 };
 
@@ -168,6 +170,51 @@ fn frame_setters() {
 }
 
 #[test]
+fn align_setters() {
+    let (mut ui, align) = settled(Align::default());
+
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, align => set_alignment(Alignment::BottomTrailing));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, align => set_padding(8.0));
+}
+
+fn image(seed: u8) -> Image {
+    Image::from_rgba8(Size::<Physical, u32>::new(2, 2), vec![seed; 16]).expect("valid image")
+}
+
+#[test]
+fn image_setters() {
+    let (mut ui, image_element) = settled(ImageElement::new(image(0), "preview"));
+    let replacement = image(255);
+
+    let applied = ui.image_mut(image_element).set_image(replacement.clone());
+    changed(&mut ui, applied, Invalidation::PAINT);
+    let applied = ui.image_mut(image_element).set_image(replacement);
+    unchanged(&mut ui, applied);
+    assert_setter!(ui, Invalidation::ACCESSIBILITY, image_element => set_label("thumbnail"));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, image_element => set_size(LogicalSize::new(80.0, 60.0)));
+    assert_setter!(ui, Invalidation::PAINT, image_element => set_fit(ImageFit::Cover));
+    assert_setter!(ui, Invalidation::PAINT, image_element => set_alignment(ImageAlignment::new(0.0, 1.0)));
+    assert_setter!(ui, Invalidation::PAINT, image_element => set_sampling(ImageSampling::Nearest));
+    assert_setter!(ui, Invalidation::PAINT, image_element => set_opacity(0.5));
+}
+
+#[test]
+fn render_view_setters() {
+    let (mut ui, view) = settled(RenderView::new("scene", LogicalSize::new(80.0, 60.0)));
+
+    assert_setter!(ui, Invalidation::ACCESSIBILITY, view => set_label("viewport"));
+    assert_setter!(ui, Invalidation::LAYOUT_ALL, view => set_size(LogicalSize::new(160.0, 90.0)));
+    assert_setter!(
+        ui,
+        Invalidation::PAINT | Invalidation::ACCESSIBILITY,
+        view => set_content(RenderViewContent::Error("offline".into()))
+    );
+    ui.render_view_mut(view)
+        .set_input(|input| Box::new(input) as Box<dyn std::any::Any>);
+    assert_eq!(ui.invalidation(), Invalidation::HIT_TEST);
+}
+
+#[test]
 fn scroll_setters() {
     let (mut ui, scroll) = settled(Scroll::new(ScrollAxis::Vertical));
 
@@ -288,7 +335,7 @@ fn a_wheel_tick_reports_the_offset_it_settled_on() {
     assert_eq!(offset, LogicalPoint::new(0.0, 40.0));
     assert_eq!(ui.element(scroll).offset, offset);
 
-    // The wheel path still asks for layout, unlike `ElementMut::set_offset`: the
+    // The wheel path still asks for layout, unlike `NodeMut::set_offset`: the
     // offset reaches the children as their layout offset, and an element cannot
     // place its children outside its own `layout`.
     assert_eq!(ui.invalidation(), Invalidation::LAYOUT_ALL);

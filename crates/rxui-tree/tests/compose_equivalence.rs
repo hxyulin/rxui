@@ -27,6 +27,7 @@
 
 use std::{
     any::Any,
+    cell::Cell,
     collections::{HashMap, HashSet},
 };
 
@@ -55,9 +56,9 @@ use rxui_tree::{
 /// inherit, declaring [`Invalidation::COMPOSE`] without `LAYOUT`, so descent
 /// can only happen through `inherited_changed`.
 struct Spin {
-    angle: f32,
-    scale: f32,
-    clip: bool,
+    angle: Cell<f32>,
+    scale: Cell<f32>,
+    clip: Cell<bool>,
 }
 
 impl Element for Spin {
@@ -81,11 +82,11 @@ impl Element for Spin {
     }
 
     fn transform(&self) -> Affine2 {
-        Affine2::from_angle(self.angle) * Affine2::from_scale(Vec2::splat(self.scale))
+        Affine2::from_angle(self.angle.get()) * Affine2::from_scale(Vec2::splat(self.scale.get()))
     }
 
     fn clips_children(&self) -> bool {
-        self.clip
+        self.clip.get()
     }
 }
 
@@ -330,18 +331,7 @@ enum Edit {
 impl Edit {
     /// Whether this element exposes any property mutation.
     fn mutable(self) -> bool {
-        match self {
-            Self::Root | Self::Keys => false,
-            Self::Align(handle) => {
-                let _ = handle;
-                false
-            }
-            Self::Spin(handle) => {
-                let _ = handle;
-                false
-            }
-            _ => true,
-        }
+        !matches!(self, Self::Root | Self::Keys)
     }
 }
 
@@ -705,9 +695,9 @@ fn place_kind(ui: &mut UiTree, parent: NodeId, index: Option<usize>, kind: &Kind
         Kind::Spin { angle, scale, clip } => bind!(
             Spin,
             Spin {
-                angle: *angle,
-                scale: *scale,
-                clip: *clip,
+                angle: Cell::new(*angle),
+                scale: Cell::new(*scale),
+                clip: Cell::new(*clip),
             }
         ),
         Kind::Boxed {
@@ -1096,6 +1086,16 @@ fn randomize_paint(rng: &mut Rng, kind: &mut Kind) -> bool {
 /// transform and clip cannot change its own size or its children's constraints.
 fn push_properties(ui: &mut UiTree, bound: Bound, kind: &Kind) {
     match (bound.edit, kind) {
+        (Edit::Spin(handle), Kind::Spin { angle, scale, clip }) => {
+            let element = ui.element(handle);
+            let angle_changed = element.angle.replace(*angle) != *angle;
+            let scale_changed = element.scale.replace(*scale) != *scale;
+            let clip_changed = element.clip.replace(*clip) != *clip;
+            let changed = angle_changed || scale_changed || clip_changed;
+            if changed {
+                ui.edit(handle).mark_composition_changed();
+            }
+        }
         (
             Edit::Flex(handle),
             Kind::Flex {
@@ -1112,6 +1112,9 @@ fn push_properties(ui: &mut UiTree, bound: Bound, kind: &Kind) {
                 background,
             },
         ) => ui.edit(handle).set_stack(*padding, *background),
+        (Edit::Align(handle), Kind::Align { alignment, padding }) => {
+            ui.align_mut(handle).set_align(*alignment, *padding);
+        }
         (Edit::Scroll(handle), Kind::Scroll { axis, offset }) => {
             ui.edit(handle).set_scroll(*axis, *offset)
         }

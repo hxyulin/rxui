@@ -23,10 +23,12 @@ use astrelis_core::{
     color::Color,
     geometry::{LogicalPoint, LogicalSize},
 };
+use astrelis_paint::{Image, ImageSampling};
 
 use crate::{
-    Axis, BoxElement, Element, Flex, Frame, Invalidation, Label, NodeHandle, Scroll, ScrollAxis,
-    SemanticData, Stack, UiTree,
+    Align, Alignment, Axis, BoxElement, Element, Flex, Frame, ImageAlignment, ImageElement,
+    ImageFit, Invalidation, Label, NodeHandle, RenderView, RenderViewContent, Scroll, ScrollAxis,
+    SemanticData, Stack, UiInput, UiTree,
 };
 
 /// Work a change in composed position causes: everything layout would have
@@ -79,6 +81,21 @@ impl UiTree {
     pub fn scroll_mut(&mut self, handle: NodeHandle<Scroll>) -> NodeMut<'_, Scroll> {
         self.edit(handle)
     }
+
+    /// Begins property-aware mutation of an alignment container.
+    pub fn align_mut(&mut self, handle: NodeHandle<Align>) -> NodeMut<'_, Align> {
+        self.edit(handle)
+    }
+
+    /// Begins property-aware mutation of a retained image.
+    pub fn image_mut(&mut self, handle: NodeHandle<ImageElement>) -> NodeMut<'_, ImageElement> {
+        self.edit(handle)
+    }
+
+    /// Begins property-aware mutation of an application render viewport.
+    pub fn render_view_mut(&mut self, handle: NodeHandle<RenderView>) -> NodeMut<'_, RenderView> {
+        self.edit(handle)
+    }
 }
 
 impl<E: Element> NodeMut<'_, E> {
@@ -97,6 +114,157 @@ impl<E: Element> NodeMut<'_, E> {
         self.ui
             .update(self.handle, invalidation, |element| write(element, value));
         true
+    }
+
+    /// Reports that interior-mutable transform or clipping state changed.
+    ///
+    /// This is the typed escape hatch for custom elements whose composed state
+    /// lives behind `Cell`-like storage. It deliberately fixes the invalidation
+    /// to composition and its downstream consumers; it does not expose the raw
+    /// arbitrary-flag update API.
+    pub fn mark_composition_changed(&mut self) {
+        self.ui.update(self.handle, MOVED, |_| {});
+    }
+}
+
+impl NodeMut<'_, Align> {
+    /// Replaces child placement. `LAYOUT`.
+    pub fn set_alignment(&mut self, alignment: Alignment) -> bool {
+        self.guarded(
+            alignment,
+            Invalidation::LAYOUT,
+            |align| &align.alignment,
+            |align, alignment| align.alignment = alignment,
+        )
+    }
+
+    /// Replaces the minimum distance from each boundary. `LAYOUT`.
+    pub fn set_padding(&mut self, padding: f32) -> bool {
+        self.guarded(
+            padding,
+            Invalidation::LAYOUT,
+            |align| &align.padding,
+            |align, padding| align.padding = padding,
+        )
+    }
+
+    /// Replaces all alignment-container properties.
+    pub fn set_align(&mut self, alignment: Alignment, padding: f32) {
+        self.set_alignment(alignment);
+        self.set_padding(padding);
+    }
+}
+
+impl NodeMut<'_, ImageElement> {
+    /// Replaces the immutable image source. `PAINT`.
+    pub fn set_image(&mut self, image: Image) -> bool {
+        if self.ui.element(self.handle).image.cache_id() == image.cache_id() {
+            return false;
+        }
+        self.ui.update(self.handle, Invalidation::PAINT, |element| {
+            element.image = image;
+        });
+        true
+    }
+
+    /// Replaces the accessible label. `ACCESSIBILITY`.
+    pub fn set_label(&mut self, label: impl Into<String>) -> bool {
+        self.guarded(
+            label.into(),
+            Invalidation::ACCESSIBILITY,
+            |element| &element.label,
+            |element, label| element.label = label,
+        )
+    }
+
+    /// Replaces the preferred logical size. `LAYOUT`.
+    pub fn set_size(&mut self, size: LogicalSize) -> bool {
+        self.guarded(
+            size,
+            Invalidation::LAYOUT,
+            |element| &element.size,
+            |element, size| element.size = size,
+        )
+    }
+
+    /// Replaces the fitting policy. `PAINT`.
+    pub fn set_fit(&mut self, fit: ImageFit) -> bool {
+        self.guarded(
+            fit,
+            Invalidation::PAINT,
+            |element| &element.fit,
+            |element, fit| element.fit = fit,
+        )
+    }
+
+    /// Replaces normalized placement within the fitted bounds. `PAINT`.
+    pub fn set_alignment(&mut self, alignment: ImageAlignment) -> bool {
+        self.guarded(
+            alignment,
+            Invalidation::PAINT,
+            |element| &element.alignment,
+            |element, alignment| element.alignment = alignment,
+        )
+    }
+
+    /// Replaces the sampling policy. `PAINT`.
+    pub fn set_sampling(&mut self, sampling: ImageSampling) -> bool {
+        self.guarded(
+            sampling,
+            Invalidation::PAINT,
+            |element| &element.sampling,
+            |element, sampling| element.sampling = sampling,
+        )
+    }
+
+    /// Replaces draw opacity. `PAINT`.
+    pub fn set_opacity(&mut self, opacity: f32) -> bool {
+        self.guarded(
+            opacity.clamp(0.0, 1.0),
+            Invalidation::PAINT,
+            |element| &element.opacity,
+            |element, opacity| element.opacity = opacity,
+        )
+    }
+}
+
+impl NodeMut<'_, RenderView> {
+    /// Replaces the accessible label. `ACCESSIBILITY`.
+    pub fn set_label(&mut self, label: impl Into<String>) -> bool {
+        self.guarded(
+            label.into(),
+            Invalidation::ACCESSIBILITY,
+            |element| &element.label,
+            |element, label| element.label = label,
+        )
+    }
+
+    /// Replaces the preferred viewport size. `LAYOUT`.
+    pub fn set_size(&mut self, size: LogicalSize) -> bool {
+        self.guarded(
+            size,
+            Invalidation::LAYOUT,
+            |element| &element.size,
+            |element, size| element.size = size,
+        )
+    }
+
+    /// Replaces rendered content. `PAINT | ACCESSIBILITY`.
+    pub fn set_content(&mut self, content: RenderViewContent) -> bool {
+        self.guarded(
+            content,
+            Invalidation::PAINT | Invalidation::ACCESSIBILITY,
+            |element| &element.content,
+            |element, content| element.content = content,
+        )
+    }
+
+    /// Replaces typed-erased input routing. `HIT_TEST`.
+    pub fn set_input(&mut self, input: impl Fn(UiInput) -> Box<dyn Any> + 'static) {
+        self.ui
+            .update(self.handle, Invalidation::HIT_TEST, |element| {
+                element.set_input(input);
+            });
     }
 }
 
