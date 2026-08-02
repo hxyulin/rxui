@@ -1,11 +1,101 @@
 //! Lightweight, non-generic element descriptions and fluent builders.
 
-use std::{fmt, ops::RangeInclusive, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    fmt,
+    ops::RangeInclusive,
+    rc::Rc,
+};
 
 use astrelis_core::geometry::LogicalPoint;
-use rxui_tree::{Axis, ScrollAxis};
+use rxui_tree::{Axis, Invalidation, NodeId, ScrollAxis, UiTree};
 
-use crate::{Entity, EntityCell, Render, RoutedHandler, RoutedValueHandler};
+use crate::{Entity, EntityCell, Render, RoutedHandler, RoutedValueHandler, Theme};
+
+/// Specification for a retained element outside RXUI's built-in vocabulary.
+///
+/// There are two deliberately disjoint phases. [`create`](Self::create) and
+/// [`update`](Self::update) synchronize ordinary Rust state; neither schedules
+/// retained work. [`changed`](Self::changed) describes exactly which engine
+/// passes must observe that synchronized state. When a field feeds more than
+/// one phase, include every corresponding bit; when in doubt, widen the answer
+/// rather than risk a stale frame. [`Invalidation::LAYOUT`] is already widened
+/// by the retained tree to composition, paint, accessibility, and hit testing.
+///
+/// Child descriptions are reconciled separately through RXUI's normal keyed
+/// path. Custom elements that expose children remain responsible for laying
+/// those retained children out from their [`rxui_tree::Element::layout`]
+/// implementation.
+pub trait CustomElementSpec: 'static {
+    /// Concrete retained element created for this specification type.
+    type Element: rxui_tree::Element;
+
+    /// Creates retained state on first mount or after a specification-type change.
+    fn create(&self, theme: &Theme) -> Self::Element;
+
+    /// Synchronizes the retained element with the latest lightweight description.
+    fn update(&self, element: &mut Self::Element, theme: &Theme);
+
+    /// Reports the retained passes affected relative to `previous`.
+    fn changed(&self, previous: &Self) -> Invalidation;
+
+    /// Builds declarative children reconciled below the retained element.
+    fn children(&self) -> Vec<Element> {
+        Vec::new()
+    }
+}
+
+pub(crate) trait ErasedCustomSpec {
+    fn spec_type_id(&self) -> TypeId;
+    fn mount(&self, tree: &mut UiTree, parent: NodeId, position: usize, theme: &Theme) -> NodeId;
+    fn update(
+        &self,
+        previous: &dyn ErasedCustomSpec,
+        tree: &mut UiTree,
+        node: NodeId,
+        theme: &Theme,
+    );
+    fn children(&self) -> Vec<Element>;
+    fn as_any(&self) -> &dyn Any;
+}
+
+struct CustomSpecAdapter<S>(S);
+
+impl<S: CustomElementSpec> ErasedCustomSpec for CustomSpecAdapter<S> {
+    fn spec_type_id(&self) -> TypeId {
+        TypeId::of::<S>()
+    }
+
+    fn mount(&self, tree: &mut UiTree, parent: NodeId, position: usize, theme: &Theme) -> NodeId {
+        tree.insert_child_at(parent, position, self.0.create(theme))
+            .id()
+    }
+
+    fn update(
+        &self,
+        previous: &dyn ErasedCustomSpec,
+        tree: &mut UiTree,
+        node: NodeId,
+        theme: &Theme,
+    ) {
+        let previous = previous
+            .as_any()
+            .downcast_ref::<Self>()
+            .expect("matching custom specification TypeId must downcast");
+        let invalidation = self.0.changed(&previous.0);
+        tree.update_element::<S::Element>(node, invalidation, |element| {
+            self.0.update(element, theme);
+        });
+    }
+
+    fn children(&self) -> Vec<Element> {
+        self.0.children()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 /// Stable identity supplied to a child in a reorderable sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -71,6 +161,7 @@ pub(crate) struct EmbeddedEntity {
 }
 
 pub(crate) enum ElementKind {
+    Custom(Box<dyn ErasedCustomSpec>),
     Flex {
         axis: Axis,
         gap: f32,
@@ -145,6 +236,7 @@ impl fmt::Debug for Element {
             ElementKind::SplitPane { .. } => "SplitPane",
             ElementKind::List { .. } => "List",
             ElementKind::Entity(_) => "Entity",
+            ElementKind::Custom(_) => "Custom",
         };
         formatter
             .debug_struct("Element")
@@ -324,6 +416,14 @@ impl<T: Render> From<Entity<T>> for Element {
                 render: crate::render_entity::<T>,
             }),
         }
+    }
+}
+
+/// Creates a declarative custom retained element.
+pub fn custom<S: CustomElementSpec>(spec: S) -> Element {
+    Element {
+        key: None,
+        kind: ElementKind::Custom(Box::new(CustomSpecAdapter(spec))),
     }
 }
 

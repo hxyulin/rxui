@@ -1,0 +1,27 @@
+[package]
+name = "rxui-widgets"
+description = "Optional charts, node graphs, and docking for RXUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = ["charts", "docking", "graph"]
+charts = []
+docking = []
+graph = []
+
+[dependencies]
+rxui-core = { workspace = true }
+rxui-tree = { workspace = true }
+astrelis-core = { workspace = true }
+astrelis-paint = { workspace = true }
+astrelis-platform = { workspace = true }
+astrelis-text = { workspace = true }
+
+[lints]
+workspace = true

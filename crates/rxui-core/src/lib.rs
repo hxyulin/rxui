@@ -25,8 +25,8 @@ mod theme;
 
 pub use diagnostics::ViewStats;
 pub use element::{
-    Element, Key, button, checkbox, column, label, list, row, scroll, slider, split_pane,
-    text_field,
+    CustomElementSpec, Element, Key, button, checkbox, column, custom, label, list, row, scroll,
+    slider, split_pane, text_field,
 };
 pub use harness::{EntityHarness, HarnessScope};
 pub use rxui_tree::{Axis, ScrollAxis};
@@ -244,12 +244,23 @@ impl<V: 'static> Clone for RoutedValueHandler<V> {
 }
 
 impl<V: Clone + 'static> RoutedValueHandler<V> {
-    pub(crate) fn with(&self, value: V) -> RoutedHandler {
+    /// Binds one value to this routed listener, producing a no-argument action.
+    pub fn with(&self, value: V) -> RoutedHandler {
         let target = self.target;
         let invoke = self.invoke.clone();
         RoutedHandler {
             target,
             invoke: Rc::new(move |state, app| invoke(value.clone(), state, app)),
+        }
+    }
+
+    /// Adapts proposals of another value type before routing them to the owner.
+    pub fn map<U: Clone + 'static>(&self, map: impl Fn(U) -> V + 'static) -> RoutedValueHandler<U> {
+        let target = self.target;
+        let invoke = self.invoke.clone();
+        RoutedValueHandler {
+            target,
+            invoke: Rc::new(move |value, state, app| invoke(map(value), state, app)),
         }
     }
 }

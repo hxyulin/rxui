@@ -14,7 +14,7 @@ check_manifest() {
 
   while IFS= read -r dependency; do
     case "$dependency" in
-      astrelis-*)
+      astrelis-*|rxui-*)
         if [[ "$allowed" != *" $dependency "* ]]; then
           printf 'Boundary check failed: %s depends on disallowed crate %s\n' \
             "$manifest" "$dependency" >&2
@@ -40,16 +40,19 @@ check_manifest \
   " astrelis-core astrelis-paint astrelis-platform astrelis-text "
 check_manifest \
   "crates/rxui-core/Cargo.toml" \
-  " astrelis-core astrelis-paint astrelis-platform astrelis-text "
+  " rxui-tree astrelis-core astrelis-paint astrelis-platform astrelis-text "
+check_manifest \
+  "crates/rxui-widgets/Cargo.toml" \
+  " rxui-core rxui-tree astrelis-core astrelis-paint astrelis-platform astrelis-text "
 check_manifest \
   "crates/rxui-test/Cargo.toml" \
-  " astrelis-core astrelis-platform astrelis-text "
+  " rxui-core rxui-tree astrelis-core astrelis-platform astrelis-text "
 check_manifest \
   "crates/rxui-host/Cargo.toml" \
-  " astrelis-app astrelis-compositor astrelis-core astrelis-gpu astrelis-gpu-wgpu astrelis-paint astrelis-paint-gpu astrelis-platform astrelis-platform-winit astrelis-text astrelis-text-gpu "
+  " rxui-core rxui-tree astrelis-app astrelis-compositor astrelis-core astrelis-gpu astrelis-gpu-wgpu astrelis-paint astrelis-paint-gpu astrelis-platform astrelis-platform-winit astrelis-text astrelis-text-gpu "
 
 if (( found_disallowed )); then
   exit 1
 fi
 
-printf 'Boundary check OK: rxui-core, rxui-tree, rxui-test, and rxui-host use only allowed astrelis crates.\n'
+printf 'Boundary check OK: rxui-core, rxui-tree, rxui-widgets, rxui-test, and rxui-host use only allowed dependencies.\n'

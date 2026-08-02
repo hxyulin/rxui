@@ -100,6 +100,16 @@ impl<T: Render> EntityHarness<T> {
         self.stats = self.app.flush();
     }
 
+    /// Mutates the root model, requests a render, and settles retained work.
+    pub fn mutate(&mut self, mutate: impl FnOnce(&mut T)) {
+        let root = self.root.clone();
+        root.update(&mut self.app, |state, context| {
+            mutate(state);
+            context.notify();
+        });
+        self.stats = self.app.flush();
+    }
+
     /// Returns the labeled semantic node, panicking with available labels.
     pub fn find(&self, label: &str) -> SemanticNode {
         self.try_find(label).unwrap_or_else(|| {

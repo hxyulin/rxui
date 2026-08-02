@@ -486,6 +486,28 @@ impl UiTree {
             .expect("retained handle has the wrong element type")
     }
 
+    /// Mutates a retained element selected by its erased identity.
+    ///
+    /// This is the typed bridge used by declarative escape hatches: the caller
+    /// retains only a [`NodeId`], while the generic parameter proves the
+    /// concrete element type expected at that identity. A mismatch is an
+    /// authoring error and panics rather than silently replacing state.
+    pub fn update_element<E: Element>(
+        &mut self,
+        id: NodeId,
+        invalidation: Invalidation,
+        update: impl FnOnce(&mut E),
+    ) {
+        let element = self
+            .node_mut(id)
+            .element
+            .as_deref_mut()
+            .and_then(|element| element.as_any_mut().downcast_mut::<E>())
+            .expect("retained identity has the wrong element type");
+        update(element);
+        self.invalidate(id, invalidation);
+    }
+
     /// Returns whether an identity is still live.
     pub fn contains(&self, id: NodeId) -> bool {
         self.slots

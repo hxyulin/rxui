@@ -11,7 +11,7 @@ use rxui_tree::{
 use crate::{
     App, Element, EntityId, Key, RoutedHandler,
     diagnostics::ViewStats,
-    element::{ElementKind, EmbeddedEntity},
+    element::{ElementKind, EmbeddedEntity, ErasedCustomSpec},
 };
 
 /// Strategy chosen for one child-list reconciliation pass.
@@ -27,6 +27,10 @@ enum ChildStrategy {
 }
 
 pub(crate) enum MountedKind {
+    Custom {
+        spec: Box<dyn ErasedCustomSpec>,
+        children: MountedChildren,
+    },
     Flex {
         handle: NodeHandle<Flex>,
         children: MountedChildren,
@@ -77,6 +81,7 @@ impl Mounted {
     pub(crate) fn forget(self, app: &mut App, remove_node: bool) {
         match self.kind {
             MountedKind::Flex { children, .. }
+            | MountedKind::Custom { children, .. }
             | MountedKind::Scroll { children, .. }
             | MountedKind::SplitPane { children, .. }
             | MountedKind::List { children, .. } => children.forget(app),
@@ -409,6 +414,17 @@ pub(crate) fn mount_element(
                 kind: MountedKind::Flex { handle, children },
             }
         }
+        ElementKind::Custom(spec) => {
+            let elements = spec.children();
+            let node = spec.mount(&mut app.tree, parent, position, &app.theme);
+            let mut children = MountedChildren::new();
+            children.build(elements, node, owner_depth, app);
+            Mounted {
+                key,
+                node,
+                kind: MountedKind::Custom { spec, children },
+            }
+        }
         ElementKind::Label { text } => {
             let handle = app.tree.insert_child_at(parent, position, Label::new(text));
             Mounted {
@@ -609,6 +625,19 @@ fn reconcile_element(
 ) {
     let key = element.key.clone();
     match (&mut retained.kind, element.kind) {
+        (
+            MountedKind::Custom {
+                spec: previous,
+                children,
+            },
+            ElementKind::Custom(spec),
+        ) if previous.spec_type_id() == spec.spec_type_id() => {
+            ViewStats::record_node_rebuilt();
+            spec.update(previous.as_ref(), &mut app.tree, retained.node, &app.theme);
+            children.reconcile(spec.children(), retained.node, owner_depth, app);
+            *previous = spec;
+            retained.key = key;
+        }
         (
             MountedKind::Flex { handle, children },
             ElementKind::Flex {
@@ -824,6 +853,7 @@ fn make_button(text: String, action: RoutedHandler) -> Button {
 fn element_entity_id(element: &Element) -> Option<EntityId> {
     match &element.kind {
         ElementKind::Entity(entity) => Some(entity.cell.id),
+        ElementKind::Custom(_) => None,
         _ => None,
     }
 }
