@@ -389,7 +389,7 @@ impl NodeMut<'_, BoxElement> {
     }
 }
 
-impl<A: 'static> NodeMut<'_, ActionBox<A>> {
+impl<A: Clone + 'static> NodeMut<'_, ActionBox<A>> {
     /// Replaces the visual and semantic surface through equality-guarded
     /// property setters.
     pub fn set_surface(&mut self, surface: BoxElement) {

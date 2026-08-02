@@ -28,9 +28,23 @@ half-written state.
 
 An entity boundary is an isolation gate. If a parent renders and inserts the
 same child `Entity`, reconciliation retains the boundary without calling the
-child's `Render` implementation. Conversely, notifying a child does not call
-its parent's `Render` implementation. State ownership, rather than a props
+child’s `Render` implementation. Conversely, notifying a child does not call
+its parent’s `Render` implementation. State ownership, rather than a props
 comparison, tells the runtime which output may have changed.
+
+Depth is derived when an entity boundary is mounted, not when its handle was
+created. An entity created directly by `App` and later inserted by a parent is
+therefore ordered after that parent. Descendant depths are derived in turn as
+their boundaries mount, so creation order cannot defeat parent-before-child
+flushing.
+
+An entity has one mounted boundary. Moving it among positions in the same
+container is supported (keyed or by the unkeyed fallback below). Moving an
+already mounted entity directly between two different containers in one parent
+render remains an authoring error when the destination reconciles before the
+source has unmounted it; `register_renderer` detects that collision. Model such
+moves as a keyed collection under one common container, or remove it in one
+flush and insert it in the next.
 
 Batches cost one render per distinct notified entity and one retained pass.
 Perform the updates first and call `App::flush()` after the batch. Input driven
@@ -99,6 +113,12 @@ Keys govern identity only among siblings in a reorderable collection. Static
 children remain positional. A dynamic sibling list must key either every child
 or none; mixed and duplicate keys panic because either case makes retained
 identity ambiguous.
+
+Unkeyed entity children are still matched by `EntityId` when positions shift,
+which prevents renderer-registration collisions and preserves their state and
+`NodeId`. Debug builds print a warning for every such shift: stateful,
+reorderable collections should carry explicit keys even though the fallback is
+safe.
 
 On a keyed reverse, reconciliation matches existing children by key, updates
 them in place, and publishes the new order once. The `NodeId` attached to each

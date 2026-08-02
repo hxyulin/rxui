@@ -50,6 +50,13 @@ impl Mounted {
         self.node
     }
 
+    fn entity_id(&self) -> Option<EntityId> {
+        match self.kind {
+            MountedKind::Entity(id) => Some(id),
+            _ => None,
+        }
+    }
+
     pub(crate) fn forget(self, app: &mut App, remove_node: bool) {
         match self.kind {
             MountedKind::Flex { children, .. } => children.forget(app),
@@ -66,12 +73,13 @@ pub(crate) fn reconcile_root(
     mounted: &mut Option<Mounted>,
     element: Element,
     parent: NodeId,
+    owner_depth: u32,
     app: &mut App,
 ) {
     if let Some(retained) = mounted {
-        reconcile_element(retained, element, parent, 0, app);
+        reconcile_element(retained, element, parent, 0, owner_depth, app);
     } else {
-        *mounted = Some(mount_element(element, parent, 0, app));
+        *mounted = Some(mount_element(element, parent, 0, owner_depth, app));
     }
 }
 
@@ -110,12 +118,12 @@ impl MountedChildren {
     ///
     /// The engine appends children in order, so the published order is recorded
     /// rather than set: there is nothing to reorder yet.
-    fn build(&mut self, elements: Vec<Element>, parent: NodeId, app: &mut App) {
+    fn build(&mut self, elements: Vec<Element>, parent: NodeId, owner_depth: u32, app: &mut App) {
         let _ = self.validate(&elements);
         self.mounted.reserve(elements.len());
         self.published.reserve(elements.len());
         for element in elements {
-            let built = mount_element(element, parent, usize::MAX, app);
+            let built = mount_element(element, parent, usize::MAX, owner_depth, app);
             self.published.push(built.node());
             self.mounted.push(built);
         }
@@ -126,11 +134,19 @@ impl MountedChildren {
     /// Panics when the sequence is partially keyed or carries a duplicate key,
     /// which are authoring mistakes rather than recoverable conditions: both
     /// silently lose retained identity on the next insertion.
-    fn reconcile(&mut self, elements: Vec<Element>, parent: NodeId, app: &mut App) {
+    fn reconcile(
+        &mut self,
+        elements: Vec<Element>,
+        parent: NodeId,
+        owner_depth: u32,
+        app: &mut App,
+    ) {
         ViewStats::record_container_reconciled();
         match self.validate(&elements) {
-            ChildStrategy::Positional => self.reconcile_positional(elements, parent, app),
-            ChildStrategy::Remap => self.reconcile_keyed(elements, parent, app),
+            ChildStrategy::Positional => {
+                self.reconcile_positional(elements, parent, owner_depth, app)
+            }
+            ChildStrategy::Remap => self.reconcile_keyed(elements, parent, owner_depth, app),
         }
         self.publish(parent, app);
     }
@@ -175,14 +191,31 @@ impl MountedChildren {
         }
     }
 
-    fn reconcile_positional(&mut self, elements: Vec<Element>, parent: NodeId, app: &mut App) {
+    fn reconcile_positional(
+        &mut self,
+        elements: Vec<Element>,
+        parent: NodeId,
+        owner_depth: u32,
+        app: &mut App,
+    ) {
+        if elements
+            .iter()
+            .any(|element| element_entity_id(element).is_some())
+            || self
+                .mounted
+                .iter()
+                .any(|mounted| mounted.entity_id().is_some())
+        {
+            self.reconcile_positional_with_entities(elements, parent, owner_depth, app);
+            return;
+        }
         let kept = elements.len();
         for (position, element) in elements.into_iter().enumerate() {
             if let Some(retained) = self.mounted.get_mut(position) {
-                reconcile_element(retained, element, parent, position, app);
+                reconcile_element(retained, element, parent, position, owner_depth, app);
             } else {
                 self.mounted
-                    .push(mount_element(element, parent, position, app));
+                    .push(mount_element(element, parent, position, owner_depth, app));
             }
         }
         while self.mounted.len() > kept {
@@ -193,7 +226,68 @@ impl MountedChildren {
         }
     }
 
-    fn reconcile_keyed(&mut self, elements: Vec<Element>, parent: NodeId, app: &mut App) {
+    /// Preserves entity identity when an unkeyed stateful collection shifts.
+    fn reconcile_positional_with_entities(
+        &mut self,
+        elements: Vec<Element>,
+        parent: NodeId,
+        owner_depth: u32,
+        app: &mut App,
+    ) {
+        self.scratch.clear();
+        self.scratch.extend(self.mounted.drain(..).map(Some));
+
+        for (position, element) in elements.into_iter().enumerate() {
+            let entity = element_entity_id(&element);
+            let retained_slot = if let Some(id) = entity {
+                self.scratch.iter().position(|slot| {
+                    slot.as_ref()
+                        .and_then(Mounted::entity_id)
+                        .is_some_and(|retained| retained == id)
+                })
+            } else {
+                self.scratch
+                    .get(position)
+                    .filter(|slot| {
+                        slot.as_ref()
+                            .is_some_and(|mounted| mounted.entity_id().is_none())
+                    })
+                    .map(|_| position)
+            };
+
+            if let Some(slot) = retained_slot {
+                if entity.is_some() && slot != position {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "rxui: unkeyed stateful child shifted from position {slot} to {position}; add .key(...) to make reorder intent explicit"
+                    );
+                }
+                let mut retained = self.scratch[slot]
+                    .take()
+                    .expect("selected retained slot must be occupied");
+                reconcile_element(&mut retained, element, parent, position, owner_depth, app);
+                self.mounted.push(retained);
+            } else {
+                self.mounted
+                    .push(mount_element(element, parent, usize::MAX, owner_depth, app));
+            }
+        }
+
+        for slot in &mut self.scratch {
+            if let Some(extra) = slot.take() {
+                extra.forget(app, true);
+            }
+        }
+        self.scratch.clear();
+    }
+
+    fn reconcile_keyed(
+        &mut self,
+        elements: Vec<Element>,
+        parent: NodeId,
+        owner_depth: u32,
+        app: &mut App,
+    ) {
         // Re-purpose the index built by `validate` as retained key -> slot.
         self.index.clear();
         self.scratch.clear();
@@ -212,12 +306,13 @@ impl MountedChildren {
             match retained {
                 Some(mut retained) => {
                     let position = self.mounted.len();
-                    reconcile_element(&mut retained, element, parent, position, app);
+                    reconcile_element(&mut retained, element, parent, position, owner_depth, app);
                     self.mounted.push(retained);
                 }
-                None => self
-                    .mounted
-                    .push(mount_element(element, parent, usize::MAX, app)),
+                None => {
+                    self.mounted
+                        .push(mount_element(element, parent, usize::MAX, owner_depth, app))
+                }
             }
         }
         for slot in &mut self.scratch {
@@ -261,6 +356,7 @@ pub(crate) fn mount_element(
     element: Element,
     parent: NodeId,
     position: usize,
+    owner_depth: u32,
     app: &mut App,
 ) -> Mounted {
     ViewStats::record_node_built();
@@ -281,7 +377,7 @@ pub(crate) fn mount_element(
                 },
             );
             let mut children = MountedChildren::new();
-            children.build(elements, handle.id(), app);
+            children.build(elements, handle.id(), owner_depth, app);
             Mounted {
                 key,
                 node: handle.id(),
@@ -301,14 +397,18 @@ pub(crate) fn mount_element(
             let surface = app
                 .tree
                 .append(frame.id(), ActionBox::new(button_surface(&text), on_click));
-            let label = app.tree.append(frame.id(), Label::new(text));
+            let label = app
+                .tree
+                .append(frame.id(), Label::new(text).without_semantics());
             Mounted {
                 key,
                 node: frame.id(),
                 kind: MountedKind::Button { surface, label },
             }
         }
-        ElementKind::Entity(entity) => mount_entity(key, entity, parent, position, app),
+        ElementKind::Entity(entity) => {
+            mount_entity(key, entity, parent, position, owner_depth, app)
+        }
     }
 }
 
@@ -317,10 +417,12 @@ fn mount_entity(
     entity: EmbeddedEntity,
     parent: NodeId,
     position: usize,
+    owner_depth: u32,
     app: &mut App,
 ) -> Mounted {
     let boundary = app.tree.insert_child_at(parent, position, Frame::default());
     let id = entity.cell.id;
+    app.set_entity_depth(&entity.cell, owner_depth.saturating_add(1));
     app.register_renderer(entity, boundary);
     Mounted {
         key,
@@ -334,6 +436,7 @@ fn reconcile_element(
     element: Element,
     parent: NodeId,
     position: usize,
+    owner_depth: u32,
     app: &mut App,
 ) {
     let key = element.key.clone();
@@ -349,7 +452,7 @@ fn reconcile_element(
             ViewStats::record_node_rebuilt();
             app.tree.flex_mut(*handle).set_axis(axis);
             app.tree.flex_mut(*handle).set_gap(gap);
-            children.reconcile(elements, handle.id(), app);
+            children.reconcile(elements, handle.id(), owner_depth, app);
             retained.key = key;
         }
         (MountedKind::Label(handle), ElementKind::Label { text }) => {
@@ -367,6 +470,7 @@ fn reconcile_element(
         (MountedKind::Entity(id), ElementKind::Entity(entity)) if *id == entity.cell.id => {
             // Entity boundaries are update-isolation gates. Encountering an
             // unchanged child handle does not reconcile or count its subtree.
+            app.set_entity_depth(&entity.cell, owner_depth.saturating_add(1));
             retained.key = key;
         }
         (_, kind) => {
@@ -377,7 +481,7 @@ fn reconcile_element(
                 kind: std::mem::replace(&mut retained.kind, MountedKind::Vacant),
             };
             old.forget(app, true);
-            *retained = mount_element(replacement, parent, position, app);
+            *retained = mount_element(replacement, parent, position, owner_depth, app);
         }
     }
 }
@@ -392,5 +496,12 @@ fn button_surface(text: &str) -> BoxElement {
             ..SemanticData::default()
         }),
         interactive: true,
+    }
+}
+
+fn element_entity_id(element: &Element) -> Option<EntityId> {
+    match &element.kind {
+        ElementKind::Entity(entity) => Some(entity.cell.id),
+        _ => None,
     }
 }

@@ -166,6 +166,32 @@ fn dropped_subscription_stops_delivery() {
 }
 
 #[test]
+fn panicking_subscriber_does_not_destroy_other_subscriptions() {
+    let mut app = app();
+    let source = app.new_entity(|_| Source);
+    let panicker = app.new_entity(|_| Target::default());
+    let survivor = app.new_entity(|_| Target::default());
+    let first = panicker.update(&mut app, |_, cx| {
+        cx.subscribe(&source, |_, _, _, _| panic!("subscriber panic"))
+    });
+    let second = survivor.update(&mut app, |_, cx| {
+        cx.subscribe(&source, |target, _, _, _| target.updates += 1)
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        source.update(&mut app, |_, cx| cx.emit(Ping));
+    }));
+    assert!(panic.is_err());
+    assert_eq!(app.subscription_count(), 2);
+
+    drop(first);
+    source.update(&mut app, |_, cx| cx.emit(Ping));
+    assert_eq!(survivor.read(&app).updates, 1);
+    assert_eq!(app.subscription_count(), 1);
+    drop(second);
+}
+
+#[test]
 fn routed_handler_updates_its_live_target_and_ignores_a_dropped_target() {
     let mut app = app();
     let target = app.new_entity(|_| Target::default());
@@ -196,37 +222,45 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
     #[test]
-    fn random_entity_effect_sequences_obey_runtime_properties(operations in prop::collection::vec(0_u8..10, 1..128)) {
+    fn random_entity_effect_sequences_obey_runtime_properties(
+        operations in prop::collection::vec((0_u8..12, any::<u8>(), any::<u8>()), 1..128)
+    ) {
         let mut app = app();
-        let mut source: Option<Entity<Source>> = None;
-        let mut target: Option<Entity<ProbeTarget>> = None;
+        let mut sources: Vec<Option<Entity<Source>>> = Vec::new();
+        let mut targets: Vec<Option<Entity<ProbeTarget>>> = Vec::new();
         let mut subscriptions: Vec<Option<Subscription>> = Vec::new();
         let mut dropped_probes: Vec<(Rc<Cell<usize>>, usize)> = Vec::new();
-        let mut defined_reentrancy_panics = 0;
 
-        for operation in operations {
+        for (operation, first_selector, second_selector) in operations {
             let result = catch_unwind(AssertUnwindSafe(|| match operation {
-                0 => source = Some(app.new_entity(|_| Source)),
-                1 => target = Some(app.new_entity(|_| ProbeTarget::default())),
+                0 => insert_in_pool(&mut sources, app.new_entity(|_| Source)),
+                1 => insert_in_pool(&mut targets, app.new_entity(|_| ProbeTarget::default())),
                 2 => {
-                    if let Some(target) = &target {
+                    if let Some(target) = select(&targets, first_selector) {
                         target.update(&mut app, |target, _| {
                             target.deliveries.set(target.deliveries.get() + 1);
                         });
                     }
                 }
                 3 => {
-                    if let Some(target) = &target {
-                        target.update(&mut app, |_, cx| cx.notify());
+                    if let Some(target) = select(&targets, first_selector) {
+                        app.effects.push_back(DeferredEffect::Notify(target.id()));
                     }
                 }
                 4 => {
-                    if let Some(source) = &source {
-                        source.update(&mut app, |_, cx| cx.emit(Ping));
+                    if let Some(source) = select(&sources, first_selector) {
+                        app.effects.push_back(DeferredEffect::Emit {
+                            emitter: source.id(),
+                            event_type: TypeId::of::<Ping>(),
+                            event: Box::new(Ping),
+                        });
                     }
                 }
                 5 => {
-                    if let (Some(source), Some(target)) = (&source, &target) {
+                    if let (Some(source), Some(target)) = (
+                        select(&sources, first_selector),
+                        select(&targets, second_selector),
+                    ) {
                         subscriptions.push(Some(target.update(&mut app, |_, cx| {
                             cx.subscribe(source, |target, _, _, _| {
                                 target.deliveries.set(target.deliveries.get() + 1);
@@ -235,40 +269,78 @@ proptest! {
                     }
                 }
                 6 => {
-                    if let Some(target) = target.take() {
+                    if let Some(target) = take_selected(&mut targets, first_selector) {
                         let probe = target.read(&app).deliveries.clone();
                         dropped_probes.push((probe.clone(), probe.get()));
                         drop(target);
                     }
                 }
-                7 => drop(source.take()),
+                7 => drop(take_selected(&mut sources, first_selector)),
                 8 => {
-                    if let Some(subscription) = subscriptions.iter_mut().find(|item| item.is_some()) {
-                        drop(subscription.take());
+                    if !subscriptions.is_empty() {
+                        let index = usize::from(first_selector) % subscriptions.len();
+                        drop(subscriptions[index].take());
                     }
                 }
                 9 => {
-                    if let Some(target) = &target {
+                    if let Some(target) = select(&targets, first_selector) {
                         let nested = target.clone();
                         let panic = catch_unwind(AssertUnwindSafe(|| {
                             target.update(&mut app, |_, cx| cx.update(&nested, |_, _| {}));
                         }));
                         assert!(panic.is_err());
-                        defined_reentrancy_panics += 1;
+                    }
+                }
+                10 => { app.flush(); }
+                11 => {
+                    if let Some(source) = select(&sources, first_selector) {
+                        app.effects.push_back(DeferredEffect::Emit {
+                            emitter: source.id(),
+                            event_type: TypeId::of::<Ping>(),
+                            event: Box::new(Ping),
+                        });
+                    }
+                    if let Some(target) = select(&targets, second_selector) {
+                        app.effects.push_back(DeferredEffect::Notify(target.id()));
                     }
                 }
                 _ => unreachable!(),
             }));
 
             prop_assert!(result.is_ok(), "operation {operation} caused an unexpected panic");
-            app.flush();
-            prop_assert_eq!(app.pending_effect_count(), 0, "queued effect neither ran nor was pruned");
             for (probe, count_at_drop) in &dropped_probes {
                 prop_assert_eq!(probe.get(), *count_at_drop, "a dropped entity received an effect");
             }
         }
 
-        prop_assert!(defined_reentrancy_panics <= 127);
+        app.flush();
+        prop_assert_eq!(app.pending_effect_count(), 0, "queued effect neither ran nor was pruned");
+        for (probe, count_at_drop) in &dropped_probes {
+            prop_assert_eq!(probe.get(), *count_at_drop, "a dropped entity received an effect");
+        }
+    }
+}
+
+fn insert_in_pool<T>(pool: &mut Vec<Option<Entity<T>>>, entity: Entity<T>) {
+    if let Some(slot) = pool.iter_mut().find(|slot| slot.is_none()) {
+        *slot = Some(entity);
+    } else if pool.len() < 4 {
+        pool.push(Some(entity));
+    }
+}
+
+fn select<T>(pool: &[Option<Entity<T>>], selector: u8) -> Option<&Entity<T>> {
+    (!pool.is_empty())
+        .then(|| usize::from(selector) % pool.len())
+        .and_then(|index| pool[index].as_ref())
+}
+
+fn take_selected<T>(pool: &mut [Option<Entity<T>>], selector: u8) -> Option<Entity<T>> {
+    if pool.is_empty() {
+        None
+    } else {
+        let index = usize::from(selector) % pool.len();
+        pool[index].take()
     }
 }
 
@@ -517,6 +589,142 @@ fn dirty_entities_flush_in_parent_before_child_order() {
 
     assert_eq!(&*order.borrow(), &["parent", "child"]);
     assert_eq!(stats.views.component_views, 2);
+}
+
+#[test]
+fn mount_depth_overrides_app_creation_order() {
+    let mut app = app();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let child = app.new_entity({
+        let order = order.clone();
+        move |_| OrderedChild { order }
+    });
+    let parent = app.new_entity({
+        let child = child.clone();
+        let order = order.clone();
+        move |_| OrderedParent { child, order }
+    });
+    app.mount(&parent);
+    order.borrow_mut().clear();
+
+    // The child has the lower EntityId, so creation-depth ordering would run
+    // it first. Mount-derived depth must still put the parent first.
+    child.update(&mut app, |_, cx| cx.notify());
+    parent.update(&mut app, |_, cx| cx.notify());
+    app.flush();
+    assert_eq!(&*order.borrow(), &["parent", "child"]);
+}
+
+struct PanickyRender {
+    panic_next: bool,
+    attempts: Rc<Cell<usize>>,
+}
+
+impl Render for PanickyRender {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        self.attempts.set(self.attempts.get() + 1);
+        if self.panic_next {
+            self.panic_next = false;
+            panic!("render panic");
+        }
+        label("render recovered")
+    }
+}
+
+#[test]
+fn panicking_render_is_reinserted_and_can_render_again() {
+    let mut app = app();
+    let attempts = Rc::new(Cell::new(0));
+    let root = app.new_entity({
+        let attempts = attempts.clone();
+        move |_| PanickyRender {
+            panic_next: false,
+            attempts,
+        }
+    });
+    app.mount(&root);
+    root.update(&mut app, |root, cx| {
+        root.panic_next = true;
+        cx.notify();
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| app.flush()));
+    assert!(panic.is_err());
+    root.update(&mut app, |_, cx| cx.notify());
+    let recovered = app.flush();
+
+    assert_eq!(attempts.get(), 3);
+    assert_eq!(recovered.views.component_views, 1);
+    assert!(
+        app.tree()
+            .semantic_snapshot()
+            .iter()
+            .any(|node| node.data.label == "render recovered")
+    );
+}
+
+struct StatefulChildren {
+    children: Vec<Entity<RenderProbe>>,
+}
+
+impl Render for StatefulChildren {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        column().children(self.children.iter().cloned())
+    }
+}
+
+fn mount_unkeyed_entities() -> (App, Entity<StatefulChildren>) {
+    let mut app = app();
+    let root = app.new_entity(|cx| StatefulChildren {
+        children: vec![
+            cx.new(|_| RenderProbe {
+                renders: Rc::new(Cell::new(0)),
+            }),
+            cx.new(|_| RenderProbe {
+                renders: Rc::new(Cell::new(0)),
+            }),
+        ],
+    });
+    app.mount(&root);
+    (app, root)
+}
+
+#[test]
+fn reversing_unkeyed_entity_children_preserves_state_and_identity() {
+    let (mut app, root) = mount_unkeyed_entities();
+    let column = rendered_root(&app);
+    let before = app.tree().children(column).to_vec();
+    let entities = root.read(&app).children.clone();
+
+    root.update(&mut app, |root, cx| {
+        root.children.reverse();
+        cx.notify();
+    });
+    app.flush();
+
+    assert_eq!(
+        app.tree().children(column),
+        before.iter().rev().copied().collect::<Vec<_>>()
+    );
+    assert_eq!(root.read(&app).children[0].id(), entities[1].id());
+    assert_eq!(root.read(&app).children[1].id(), entities[0].id());
+}
+
+#[test]
+fn removing_first_unkeyed_entity_child_does_not_collide_on_remount() {
+    let (mut app, root) = mount_unkeyed_entities();
+    let column = rendered_root(&app);
+    let before = app.tree().children(column).to_vec();
+    let survivor = root.read(&app).children[1].clone();
+
+    root.update(&mut app, |root, cx| {
+        root.children.remove(0);
+        cx.notify();
+    });
+    app.flush();
+
+    assert_eq!(root.read(&app).children[0].id(), survivor.id());
+    assert_eq!(app.tree().children(column), &[before[1]]);
 }
 
 struct ButtonView {

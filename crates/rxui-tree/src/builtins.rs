@@ -441,7 +441,7 @@ impl Element for BoxElement {
     }
 }
 
-/// A box that owns one typed, one-shot activation payload.
+/// A box that owns one typed, reusable activation payload.
 ///
 /// Frameworks replace the payload while reconciling a freshly described
 /// listener. Replacing it requests no retained pass: routing data changes
@@ -449,7 +449,7 @@ impl Element for BoxElement {
 pub struct ActionBox<A: 'static> {
     /// Visual, semantic, and hit-test properties.
     pub surface: BoxElement,
-    /// Payload emitted by the next pointer or semantic activation.
+    /// Payload cloned by every pointer or semantic activation.
     pub action: Option<A>,
 }
 
@@ -460,7 +460,7 @@ impl<A: 'static> ActionBox<A> {
     }
 }
 
-impl<A: 'static> Element for ActionBox<A> {
+impl<A: Clone + 'static> Element for ActionBox<A> {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -489,7 +489,7 @@ impl<A: 'static> Element for ActionBox<A> {
         if matches!(input, UiInput::PointerReleased(_)) {
             return self
                 .action
-                .take()
+                .clone()
                 .map(EventResult::action)
                 .unwrap_or_default();
         }
@@ -504,7 +504,7 @@ impl<A: 'static> Element for ActionBox<A> {
         if matches!(action, SemanticAction::Activate) {
             return self
                 .action
-                .take()
+                .clone()
                 .map(EventResult::action)
                 .unwrap_or_default();
         }
@@ -529,6 +529,8 @@ pub struct Label {
     pub font_size: f32,
     /// Optional paint color for a deterministic placeholder glyph bar.
     pub color: Option<Color>,
+    /// Whether this painted text publishes its own accessible label.
+    pub semantic: bool,
     preferred_width: Option<f32>,
     layout: Option<TextLayout>,
     shaped: ShapingMemo,
@@ -541,6 +543,7 @@ impl Label {
             text: text.into(),
             font_size: 14.0,
             color: Some(Color::WHITE),
+            semantic: true,
             preferred_width: None,
             layout: None,
             shaped: ShapingMemo::default(),
@@ -562,6 +565,15 @@ impl Label {
     /// Constrains wrapping and reserves a preferred width.
     pub fn with_width(mut self, width: f32) -> Self {
         self.preferred_width = Some(width.max(0.0));
+        self
+    }
+
+    /// Keeps the text visible while suppressing its accessibility node.
+    ///
+    /// Use this when an enclosing semantic control already carries the same
+    /// accessible name, such as the painted label inside an action box.
+    pub fn without_semantics(mut self) -> Self {
+        self.semantic = false;
         self
     }
 
@@ -623,7 +635,7 @@ impl Element for Label {
     }
 
     fn accessibility(&self) -> Option<SemanticData> {
-        Some(SemanticData {
+        self.semantic.then(|| SemanticData {
             role: SemanticRole::Label,
             label: self.text.clone(),
             ..SemanticData::default()

@@ -146,7 +146,7 @@ impl Element {
         self
     }
 
-    /// Installs the one-shot routed activation produced by [`crate::Context::listener`].
+    /// Installs the reusable routed activation produced by [`crate::Context::listener`].
     pub fn on_click(mut self, handler: RoutedHandler) -> Self {
         match &mut self.kind {
             ElementKind::Button { on_click, .. } => *on_click = Some(handler),

@@ -64,7 +64,7 @@ impl fmt::Debug for EntityId {
 
 struct EntityCell {
     id: EntityId,
-    depth: u32,
+    depth: Cell<u32>,
     type_id: TypeId,
     type_name: &'static str,
     updating: Cell<bool>,
@@ -153,7 +153,7 @@ impl<T: 'static> Entity<T> {
             let mut context = Context {
                 app,
                 current: id,
-                depth: self.cell.depth,
+                depth: self.cell.depth.get(),
                 marker: PhantomData,
             };
             update(state, &mut context)
@@ -212,13 +212,14 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, context: &mut Context<'_, Self>) -> Element;
 }
 
-/// One-shot UI action addressed to the entity that created it.
-type RoutedInvoke = dyn FnOnce(&mut dyn Any, &mut App);
+/// Reusable UI action addressed to the entity that created it.
+type RoutedInvoke = dyn Fn(&mut dyn Any, &mut App);
 
-/// One-shot UI action addressed to the entity that created it.
+/// Cloneable, reusable UI action addressed to the entity that created it.
+#[derive(Clone)]
 pub struct RoutedHandler {
     target: EntityId,
-    invoke: Box<RoutedInvoke>,
+    invoke: Rc<RoutedInvoke>,
 }
 
 impl fmt::Debug for RoutedHandler {
@@ -383,7 +384,7 @@ impl App {
         let id = self.allocate_id();
         let cell = Rc::new(EntityCell {
             id,
-            depth,
+            depth: Cell::new(depth),
             type_id: TypeId::of::<T>(),
             type_name: type_name::<T>(),
             updating: Cell::new(true),
@@ -452,7 +453,7 @@ impl App {
         self.notified.extend(
             self.renderers
                 .iter()
-                .map(|(id, renderer)| (renderer.cell.depth, *id)),
+                .map(|(id, renderer)| (renderer.cell.depth.get(), *id)),
         );
     }
 
@@ -510,7 +511,7 @@ impl App {
                     match effect {
                         DeferredEffect::Notify(id) => {
                             if let Some(cell) = self.resolve(id) {
-                                self.notified.insert((cell.depth, id));
+                                self.notified.insert((cell.depth.get(), id));
                             }
                         }
                         DeferredEffect::Emit {
@@ -529,10 +530,22 @@ impl App {
                 let Some(mut renderer) = self.renderers.remove(&id) else {
                     continue;
                 };
-                ViewStats::record_component_view();
-                let element = (renderer.render)(renderer.cell.clone(), self);
-                reconcile::reconcile_root(&mut renderer.mounted, element, renderer.boundary, self);
+                let owner_depth = renderer.cell.depth.get();
+                let rendered = catch_unwind(AssertUnwindSafe(|| {
+                    ViewStats::record_component_view();
+                    let element = (renderer.render)(renderer.cell.clone(), self);
+                    reconcile::reconcile_root(
+                        &mut renderer.mounted,
+                        element,
+                        renderer.boundary,
+                        owner_depth,
+                        self,
+                    );
+                }));
                 self.renderers.insert(id, renderer);
+                if let Err(panic) = rendered {
+                    resume_unwind(panic);
+                }
             }
             self.prune_subscriptions();
             self.prune_dropped_entities();
@@ -631,20 +644,39 @@ impl App {
         if self.resolve(emitter).is_none() {
             return;
         }
-        let entries = std::mem::take(&mut self.subscriptions);
-        let mut retained = Vec::with_capacity(entries.len());
-        for entry in entries {
+        // Remove only the callback currently being invoked, so it cannot alias
+        // the app borrow. Every other entry stays owned by the app throughout;
+        // on unwind the current entry is restored before the panic resumes.
+        let mut remaining = self.subscriptions.len();
+        let mut index = 0;
+        while remaining != 0 {
+            remaining -= 1;
+            let entry = &self.subscriptions[index];
             if !(entry.alive)() || entry.active.upgrade().is_none() {
+                self.subscriptions.remove(index);
                 continue;
             }
             let matching = entry.emitter == emitter && entry.event_type == event_type;
-            let keep = !matching || (entry.invoke)(event, self);
-            if keep && (entry.alive)() && entry.active.upgrade().is_some() {
-                retained.push(entry);
+            if !matching {
+                index += 1;
+                continue;
+            }
+
+            let entry = self.subscriptions.remove(index);
+            let invoked = catch_unwind(AssertUnwindSafe(|| (entry.invoke)(event, self)));
+            match invoked {
+                Ok(keep) => {
+                    if keep && (entry.alive)() && entry.active.upgrade().is_some() {
+                        self.subscriptions.insert(index, entry);
+                        index += 1;
+                    }
+                }
+                Err(panic) => {
+                    self.subscriptions.insert(index, entry);
+                    resume_unwind(panic);
+                }
             }
         }
-        retained.append(&mut self.subscriptions);
-        self.subscriptions = retained;
     }
 
     fn prune_subscriptions(&mut self) {
@@ -734,7 +766,14 @@ impl App {
                 .is_none(),
             "entity {id:?} is already mounted"
         );
-        self.notified.insert((entity.cell.depth, id));
+        self.notified.insert((entity.cell.depth.get(), id));
+    }
+
+    fn set_entity_depth(&mut self, cell: &Rc<EntityCell>, depth: u32) {
+        let previous = cell.depth.replace(depth);
+        if previous != depth && self.notified.remove(&(previous, cell.id)) {
+            self.notified.insert((depth, cell.id));
+        }
     }
 
     fn unregister_renderer(&mut self, id: EntityId) {
@@ -749,7 +788,7 @@ impl App {
 
 fn render_entity<T: Render>(cell: Rc<EntityCell>, app: &mut App) -> Element {
     let id = cell.id;
-    let depth = cell.depth;
+    let depth = cell.depth.get();
     app.update_cell(cell, move |state, app| {
         let state = state
             .downcast_mut::<T>()
@@ -847,16 +886,16 @@ impl<T: 'static> Context<'_, T> {
         subscription
     }
 
-    /// Creates a one-shot routed handler bound to this entity's weak identity.
+    /// Creates a reusable routed handler bound to this entity's weak identity.
     pub fn listener(
         &self,
-        listener: impl FnOnce(&mut T, (), &mut Context<'_, T>) + 'static,
+        listener: impl Fn(&mut T, (), &mut Context<'_, T>) + 'static,
     ) -> RoutedHandler {
         let target = self.current;
         let depth = self.depth;
         RoutedHandler {
             target,
-            invoke: Box::new(move |state, app| {
+            invoke: Rc::new(move |state, app| {
                 let state = state
                     .downcast_mut::<T>()
                     .expect("routed handler target type mismatch");

@@ -44,7 +44,7 @@ struct Observer;
 
 #[test]
 fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
-    let observed = Rc::new(Cell::new(None));
+    let observed = Rc::new(Cell::new((0, None)));
     let mut observer = None;
     let mut subscription: Option<Subscription> = None;
     let mut harness = EntityHarness::new(|cx| {
@@ -52,7 +52,9 @@ fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
         let sink = cx.new(|_| Observer);
         let observed = observed.clone();
         subscription = Some(cx.update(&sink, |_, cx| {
-            cx.subscribe(&counter, move |_, _, saved, _| observed.set(Some(saved.0)))
+            cx.subscribe(&counter, move |_, _, saved, _| {
+                observed.set((observed.get().0 + 1, Some(saved.0)));
+            })
         }));
         observer = Some(sink);
         counter
@@ -105,17 +107,47 @@ fn clicks_have_exact_cost_and_save_is_observed_by_subscription() {
         }
     );
 
-    harness.activate("Save");
-    let save = harness.stats();
-    assert_eq!(observed.get(), Some(0));
-    assert_eq!(save.views, ViewStats::new());
+    harness.click("Save");
+    let first_click = harness.stats();
+    harness.click("Save");
+    let second_click = harness.stats();
+    assert_eq!(observed.get(), (2, Some(0)));
+    assert_eq!(first_click.views, ViewStats::new());
+    assert_eq!(second_click.views, ViewStats::new());
+    assert_eq!(first_click, second_click);
     assert_eq!(
-        save.passes,
+        first_click.passes,
         PassStats {
             reused_fragments: 14,
-            invalidate_steps: 4,
+            hit_test_nodes: 7,
             ..PassStats::default()
         }
+    );
+
+    harness.activate("Save");
+    let first_semantic = harness.stats();
+    harness.activate("Save");
+    let second_semantic = harness.stats();
+    assert_eq!(observed.get(), (4, Some(0)));
+    assert_eq!(first_semantic.views, ViewStats::new());
+    assert_eq!(second_semantic.views, ViewStats::new());
+    assert_eq!(first_semantic, second_semantic);
+    assert_eq!(
+        first_semantic.passes,
+        PassStats {
+            reused_fragments: 14,
+            ..PassStats::default()
+        }
+    );
+
+    assert_eq!(
+        harness
+            .semantics()
+            .iter()
+            .filter(|node| node.data.label == "Save")
+            .count(),
+        1,
+        "button must publish one accessible name"
     );
 
     drop((observer, subscription));
