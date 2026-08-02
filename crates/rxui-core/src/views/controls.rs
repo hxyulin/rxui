@@ -7,6 +7,7 @@ use astrelis_ui_next::{
     Button, ButtonIcon, Checkbox, Invalidation, NodeHandle, Slider, TextField, UiError,
 };
 
+use super::resolved_icon_size;
 use crate::{
     ButtonStyle, ButtonVariant, ColorRole, Icon, IconButtonStyle, View,
     view::{ActionCell, AnyView, MapCell, Mounted, ViewContext, ViewNode, leaf_mounted_state},
@@ -148,19 +149,6 @@ leaf_mounted_state!(ButtonState<Action> where Action: Clone);
 /// fresh `Path` each time `view()` calls them.
 fn button_icon_state(icon: Option<&Icon>, icon_size: f32) -> Option<(Icon, f32)> {
     icon.map(|icon| (icon.clone(), resolved_icon_size(icon_size)))
-}
-
-/// Mirrors the glyph edge `Button::layout` derives from a requested size.
-///
-/// Resolving it here rather than at the comparison site is what lets two
-/// requests the control cannot distinguish - a negative edge and a NaN one both
-/// land on the same fallback - compare equal instead of forcing a relayout.
-fn resolved_icon_size(icon_size: f32) -> f32 {
-    if icon_size.is_finite() {
-        icon_size.max(1.0)
-    } else {
-        16.0
-    }
 }
 
 /// Projects the part of a button's icon state that `Button::layout` measures.

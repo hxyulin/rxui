@@ -2,10 +2,10 @@
 
 use std::num::NonZeroUsize;
 
-use astrelis_core::geometry::LogicalSize;
 use rxui::{
-    Component, ComponentContext, ComponentWithProps, MemoryClipboard, Theme, UndoHistory, View,
-    button, component,
+    Component, ComponentContext, ComponentWithProps, Theme, View, button, component,
+    geometry::LogicalSize,
+    services::{MemoryClipboard, UndoHistory},
 };
 use rxui_test_support::Harness;
 

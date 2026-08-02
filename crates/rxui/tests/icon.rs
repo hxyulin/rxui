@@ -1,8 +1,13 @@
 //! Vector icon validation and retained semantics.
 
-use astrelis_core::geometry::LogicalSize;
-use astrelis_paint::Path;
-use rxui::{Component, ComponentContext, Icon, IconSpec, Theme, icon, icon_button, icons};
+use rxui::{
+    Component, ComponentContext, Icon, Theme,
+    geometry::LogicalSize,
+    icon, icon_button,
+    icons::{self, IconSpec},
+    paint::Path,
+    semantics::SemanticRole,
+};
 use rxui_test_support::Harness;
 
 #[test]
@@ -47,6 +52,6 @@ impl Component for SearchButton {
 fn compact_icon_button_keeps_button_semantics_without_painting_its_label() {
     let harness = Harness::new(SearchButton, LogicalSize::new(100.0, 100.0)).unwrap();
     let button = harness.find("Search");
-    assert_eq!(button.data.role, astrelis_ui_next::SemanticRole::Button);
+    assert_eq!(button.data.role, SemanticRole::Button);
     assert_eq!(button.bounds.size, LogicalSize::new(30.0, 30.0));
 }

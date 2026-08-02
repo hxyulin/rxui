@@ -5,11 +5,12 @@
 //! therefore assert on the pair that matters - what the tree publishes for a
 //! given value, and what intent an interaction reports back.
 
-use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-use rxui::core::SemanticRole;
 use rxui::{
-    Choice, ComboOption, Component, ComponentContext, Theme, View, checkbox, column, combo_box,
-    numeric_field, radio_group, slider,
+    Component, ComponentContext, Theme, View, checkbox, column,
+    controls::{Choice, ComboOption, combo_box, numeric_field, radio_group},
+    geometry::{LogicalPoint, LogicalSize},
+    semantics::SemanticRole,
+    slider,
 };
 use rxui_test_support::Harness;
 

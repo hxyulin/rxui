@@ -8,13 +8,16 @@
 //! `#[path]`. An example is a separate crate root, so its modules cannot be
 //! imported; a second compilation of the same file is the only way to share it
 //! without moving the component into a library. That costs one extra build of
-//! the module and forbids it from naming anything outside `rxui` and
-//! `astrelis-core`, both of which are cheap next to letting 23 public items go
-//! untested on every platform without a GPU.
+//! the module and forbids it from naming anything outside `rxui`, which is cheap
+//! next to letting 23 public items go untested on every platform without a GPU -
+//! and is no longer a real restriction now that the facade re-exports the whole
+//! geometry, input, and semantics vocabulary itself.
 
-use astrelis_core::geometry::{LogicalPoint, LogicalRect, LogicalSize};
-use astrelis_platform::{CursorIcon, NamedKey};
-use rxui::core::{SemanticNode, SemanticRole};
+use rxui::{
+    geometry::{LogicalPoint, LogicalRect, LogicalSize},
+    input::{CursorIcon, NamedKey},
+    semantics::{SemanticNode, SemanticRole},
+};
 use rxui_test_support::Harness;
 
 #[path = "../examples/native_workbench/model.rs"]

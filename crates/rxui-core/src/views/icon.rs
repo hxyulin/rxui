@@ -168,7 +168,11 @@ impl IconSpec {
 /// element cannot act on - a NaN edge, or one below a single logical unit -
 /// compares equal to any other request resolving the same way instead of
 /// relayouting the icon on every pass.
-fn resolved_icon_size(size: f32) -> f32 {
+///
+/// [`crate::views`]'s icon button shares it: the engine resolves a requested
+/// glyph edge identically for [`IconElement`] and for its `Button`, and two
+/// copies of that rule would be free to drift apart silently.
+pub(crate) fn resolved_icon_size(size: f32) -> f32 {
     if size.is_finite() {
         size.max(1.0)
     } else {

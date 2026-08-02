@@ -2116,14 +2116,6 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 name = "rxui"
 version = "0.1.0-rc.1"
 dependencies = [
- "astrelis-app",
- "astrelis-core",
- "astrelis-paint",
- "astrelis-platform",
- "astrelis-platform-winit",
- "astrelis-ui-next",
- "rxui-charts",
- "rxui-controls",
  "rxui-core",
  "rxui-native",
  "rxui-test-support",
@@ -2133,32 +2125,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "rxui-charts"
-version = "0.1.0-rc.1"
-dependencies = [
- "astrelis-core",
- "astrelis-paint",
- "astrelis-platform",
- "astrelis-ui-next",
- "rxui-core",
-]
-
-[[package]]
-name = "rxui-controls"
-version = "0.1.0-rc.1"
-dependencies = [
- "astrelis-core",
- "astrelis-ui-next",
- "rxui-core",
-]
-
-[[package]]
 name = "rxui-core"
 version = "0.1.0-rc.1"
 dependencies = [
  "astrelis-core",
  "astrelis-paint",
  "astrelis-platform",
+ "astrelis-text",
  "astrelis-ui-next",
 ]
 

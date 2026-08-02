@@ -17,8 +17,31 @@ use crate::{
         container_mounted_state, leaf_mounted_state,
     },
 };
-/// Creates a semantic colored box.
-pub fn panel<Action: 'static>(
+/// Creates a sized, colored box that announces nothing.
+///
+/// This is the common case by a wide margin - a divider, a swatch, a spacer with
+/// a background - and it used to require passing `None` for semantics it never
+/// had. Use [`panel_with_semantics`] to annotate one.
+pub fn panel<Action: 'static>(size: LogicalSize, role: ColorRole) -> AnyView<Action> {
+    box_view(size, role, None)
+}
+
+/// Creates a sized, colored box that announces itself.
+///
+/// There is no `.label()` builder on [`AnyView`], and deliberately so: a node's
+/// semantics come from its element's `accessibility` method, and only an element
+/// that *stores* them - which is to say this one - can be annotated from
+/// outside. A generic builder would compile against a `label` or a `button` and
+/// then silently do nothing, because those compute their own announcement.
+pub fn panel_with_semantics<Action: 'static>(
+    size: LogicalSize,
+    role: ColorRole,
+    semantics: SemanticData,
+) -> AnyView<Action> {
+    box_view(size, role, Some(semantics))
+}
+
+fn box_view<Action: 'static>(
     size: LogicalSize,
     role: ColorRole,
     semantics: Option<SemanticData>,
@@ -60,7 +83,7 @@ pub fn row_with<Action: 'static>(
 
 /// Creates a fixed empty layout region.
 pub fn spacer<Action: 'static>(size: LogicalSize) -> AnyView<Action> {
-    panel(size, ColorRole::Transparent, None)
+    panel(size, ColorRole::Transparent)
 }
 /// Overlays children in paint order at one shared origin.
 pub fn stack<Action: 'static>(children: impl IntoChildren<Action>) -> AnyView<Action> {

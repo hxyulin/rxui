@@ -4,15 +4,6 @@ use astrelis_ui_next::Axis;
 
 use rxui_core::{FrameStyle, View, button, column, label, row, split_pane, views};
 
-/// Dock split direction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DockAxis {
-    /// Children are arranged left-to-right.
-    Horizontal,
-    /// Children are arranged top-to-bottom.
-    Vertical,
-}
-
 /// One application-owned dock pane.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DockPane<Pane> {
@@ -34,7 +25,7 @@ pub enum DockNode<Pane> {
         /// Stable split identity.
         id: u64,
         /// Split direction.
-        axis: DockAxis,
+        axis: Axis,
         /// Fraction assigned to the first descendant.
         ratio: f32,
         /// First descendant.
@@ -150,13 +141,9 @@ where
             let resize = on_resize.clone();
             let second_view =
                 dock_workspace(second, render_pane, on_select, on_resize).key("second");
-            split_pane(
-                dock_axis(*axis),
-                *ratio,
-                first_view,
-                second_view,
-                move |ratio| resize(split, ratio),
-            )
+            split_pane(*axis, *ratio, first_view, second_view, move |ratio| {
+                resize(split, ratio)
+            })
             .key(*id)
         }
         DockNode::Tabs { id, active, panes } => {
@@ -179,14 +166,6 @@ where
     }
 }
 
-/// Converts dock direction to the retained flex axis.
-pub const fn dock_axis(axis: DockAxis) -> Axis {
-    match axis {
-        DockAxis::Horizontal => Axis::Horizontal,
-        DockAxis::Vertical => Axis::Vertical,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,12 +182,12 @@ mod tests {
     fn layout() -> DockNode<&'static str> {
         DockNode::Split {
             id: 1,
-            axis: DockAxis::Horizontal,
+            axis: Axis::Horizontal,
             ratio: 0.5,
             first: Box::new(DockNode::Pane(pane(10))),
             second: Box::new(DockNode::Split {
                 id: 2,
-                axis: DockAxis::Vertical,
+                axis: Axis::Vertical,
                 ratio: 0.5,
                 first: Box::new(DockNode::Pane(pane(20))),
                 second: Box::new(DockNode::Tabs {
@@ -329,7 +308,7 @@ mod tests {
     fn select_only_touches_the_group_holding_the_pane() {
         let mut layout = DockNode::Split {
             id: 1,
-            axis: DockAxis::Horizontal,
+            axis: Axis::Horizontal,
             ratio: 0.5,
             first: Box::new(DockNode::Tabs {
                 id: 2,

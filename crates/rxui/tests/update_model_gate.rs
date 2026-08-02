@@ -33,16 +33,17 @@
 
 mod support;
 
-use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-use astrelis_platform::{
-    DeviceId, ElementState, Key, KeyLocation, KeyboardInput, Modifiers, PhysicalKey,
-};
-use astrelis_ui_next::{
-    NodeId, PassStats, SemanticAction, SemanticData, SemanticNode, SemanticRole, UiInput,
-};
 use rxui::{
     ColorRole, Component, ComponentContext, ComponentHost, ComponentWithProps, Theme, View, button,
-    column, component, diagnostics::ViewStats, label, panel, row, text_field, views,
+    color::Color,
+    column, component,
+    engine::{NodeId, PassStats},
+    geometry::{LogicalPoint, LogicalSize},
+    input,
+    inspect::ViewStats,
+    label, panel_with_semantics, row,
+    semantics::{SemanticAction, SemanticData, SemanticNode, SemanticRole},
+    text_field, views,
 };
 
 use support::assert_incremental_matches_fresh;
@@ -60,12 +61,12 @@ const ROWS: usize = 12;
 fn light_theme() -> Theme {
     Theme {
         revision: 2,
-        background: astrelis_core::color::Color::from_hex(0xf4f5f7),
-        surface: astrelis_core::color::Color::from_hex(0xffffff),
-        text: astrelis_core::color::Color::from_hex(0x1c1f24),
-        muted: astrelis_core::color::Color::from_hex(0x6b7280),
-        accent: astrelis_core::color::Color::from_hex(0x2563eb),
-        danger: astrelis_core::color::Color::from_hex(0xdc2626),
+        background: Color::from_hex(0xf4f5f7),
+        surface: Color::from_hex(0xffffff),
+        text: Color::from_hex(0x1c1f24),
+        muted: Color::from_hex(0x6b7280),
+        accent: Color::from_hex(0x2563eb),
+        danger: Color::from_hex(0xdc2626),
     }
 }
 
@@ -174,19 +175,19 @@ impl Component for Workspace {
                 let id = index as u64;
                 let selected = self.selected == id;
                 row((
-                    panel(
+                    panel_with_semantics(
                         LogicalSize::new(14.0, 18.0),
                         if selected {
                             ColorRole::Accent
                         } else {
                             ColorRole::Surface
                         },
-                        Some(SemanticData {
+                        SemanticData {
                             role: SemanticRole::Row,
                             label: format!("Row {index}"),
                             selected: Some(selected),
                             ..SemanticData::default()
-                        }),
+                        },
                     )
                     .keyed("mark"),
                     label(format!("Row {index}")).keyed("label"),
@@ -248,22 +249,6 @@ fn trailing_edge(node: &SemanticNode) -> LogicalPoint {
     )
 }
 
-fn keystroke(text: &str) -> UiInput {
-    UiInput::Keyboard {
-        input: KeyboardInput {
-            device_id: DeviceId(1),
-            physical_key: PhysicalKey::Unidentified,
-            logical_key: Key::Character(text.into()),
-            text: Some(text.into()),
-            location: KeyLocation::Standard,
-            state: ElementState::Pressed,
-            repeat: false,
-            synthetic: false,
-        },
-        modifiers: Modifiers::default(),
-    }
-}
-
 /// Asserts the counters that no producer exists for yet.
 ///
 /// Memoization and row virtualization arrive in later phases. Pinning these to
@@ -293,7 +278,7 @@ fn hover_over_a_control_does_no_view_work() {
     let point = center(&find(&host, "Save"));
 
     let ((), view) = ViewStats::measure(|| {
-        host.input(UiInput::PointerMoved(point)).expect("hover");
+        host.input(input::pointer_moved(point)).expect("hover");
     });
     let pass = host.ui().stats();
 
@@ -338,7 +323,7 @@ fn hover_over_a_control_does_no_view_work() {
             // Replay the pointer move so the reference tree carries the same
             // engine-owned hover state.
             let point = center(&find(fresh, "Save"));
-            fresh.input(UiInput::PointerMoved(point)).expect("hover");
+            fresh.input(input::pointer_moved(point)).expect("hover");
         },
     );
 }
@@ -347,10 +332,10 @@ fn hover_over_a_control_does_no_view_work() {
 fn keystroke_into_a_nested_child_field_rebuilds_only_the_root_and_that_child() {
     let mut host = mount_workspace(Theme::dark());
     let point = trailing_edge(&find(&host, "Note"));
-    host.input(UiInput::PointerPressed(point)).expect("focus");
+    host.input(input::pointer_pressed(point)).expect("focus");
 
     let ((), view) = ViewStats::measure(|| {
-        host.input(keystroke("!")).expect("keystroke");
+        host.input(input::text("!")).expect("keystroke");
     });
     let pass = host.ui().stats();
 
@@ -416,7 +401,7 @@ fn keystroke_into_a_nested_child_field_rebuilds_only_the_root_and_that_child() {
             // Replay the press so the reference field is focused with its
             // caret at the same offset.
             let point = trailing_edge(&find(fresh, "Note"));
-            fresh.input(UiInput::PointerPressed(point)).expect("focus");
+            fresh.input(input::pointer_pressed(point)).expect("focus");
         },
     );
 }
@@ -692,7 +677,7 @@ fn one_action_into_one_panel_is_independent_of_sibling_count() {
     // 2, independent of N:
     //   1 for the root re-render - `BoardAction::Bumped` really does change
     //     `PanelBoard::counts`, so the root's view is genuinely stale;
-    //   1 for the bumped panel, whose props changed.
+    //   1 for the bumped panel_with_semantics, whose props changed.
     // Every other panel's props compare equal, its theme revision is unchanged,
     // and it reduced nothing, so its `ComponentView` is skipped. The bumped
     // panel's own dirty entry is cleared by the same pass, so the depth-ordered

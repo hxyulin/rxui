@@ -1,4 +1,4 @@
-//! The reconciliation contract every [`rxui::RetainedSpec`] owes the engine.
+//! The reconciliation contract every [`rxui::view::RetainedSpec`] owes the engine.
 //!
 //! A specialized element is the one place where RXUI hands a third party direct
 //! control over invalidation: `changed()` is the entire answer, and a `true` it
@@ -6,17 +6,19 @@
 //! subtree. Each spec below is therefore refreshed against an identical
 //! configuration and required to produce *no* retained work at all.
 
-use astrelis_core::{
-    color::Color,
-    geometry::{LogicalPoint, LogicalSize, Size},
-};
-use astrelis_paint::{Image, PathVerb};
-use rxui::core::PassStats;
 use rxui::{
-    ChartAction, ChartOptions, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec, Component,
-    ComponentContext, GraphEdge, GraphNode, GraphViewport, Icon, IconSpec, ImageSpec,
-    NodeGraphAction, NodeGraphSpec, RenderViewContent, RenderViewSpec, Theme, View, chart, icon,
-    icons, image, node_graph, render_surface,
+    Component, ComponentContext, Icon, Theme, View,
+    charts::{
+        ChartAction, ChartOptions, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec, chart,
+    },
+    color::Color,
+    engine::PassStats,
+    geometry::{LogicalPoint, LogicalSize, Size},
+    graph::{GraphEdge, GraphNode, GraphViewport, NodeGraphAction, NodeGraphSpec, node_graph},
+    icon,
+    icons::{self, IconSpec},
+    media::{Image, ImageSpec, RenderViewContent, RenderViewSpec, image, render_view},
+    paint::PathVerb,
 };
 use rxui_test_support::Harness;
 
@@ -738,7 +740,7 @@ impl Component for RenderViewScene {
     }
 
     fn view(&self, _theme: &Theme) -> View<()> {
-        render_surface(RenderViewSpec::new(
+        render_view(RenderViewSpec::new(
             self.label.clone(),
             self.size,
             self.content.clone(),

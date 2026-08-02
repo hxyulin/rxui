@@ -82,9 +82,75 @@ jobs:
             echo "::error::Restore it with: git checkout Cargo.lock"
             exit 1
           fi
-      # TODO(phase-7): once the facade is feature-gated, also assert that
-      # `cargo tree -p rxui --no-default-features` reaches neither wgpu nor
-      # winit, and add the full feature matrix here.
+      # The facade's whole claim. `native` is the only real dependency cliff in
+      # the repo, so a default-features-off build has to actually clear it -
+      # otherwise the feature table is decoration. Measured today: 172 crates
+      # with defaults, 79 without.
+      - name: rxui without default features must clear the cliff
+        run: |
+          cargo tree -p rxui --no-default-features --edges normal --prefix none \
+            | awk '{print $1}' | sort -u > min.txt
+          if grep -xE 'wgpu|winit|arboard|taffy|astrelis-ui-core' min.txt; then
+            echo "::error::rxui --no-default-features still reaches a heavy dependency (listed above)"
+            exit 1
+          fi
+      # A library that depends on `rxui` with narrowed features makes its own
+      # surface depend on its consumer's feature choices, because Cargo unifies
+      # them. The documented policy is that such a library depends on rxui-core
+      # instead, and that policy is only enforceable while rxui-core has no
+      # features of its own - which the check above asserts.
+      - name: every public crate must document its features
+        run: |
+          for crate in rxui rxui-widgets rxui-native; do
+            if ! grep -q '^\[features\]' "crates/${crate}/Cargo.toml"; then
+              echo "::error::crates/${crate}/Cargo.toml lost its [features] table"
+              exit 1
+            fi
+          done
+
+  # Every feature is a configuration someone can ship, so every feature has to
+  # compile alone. `--all-features` proves none of this: it is a single
+  # configuration in which nothing is ever absent.
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev \
+            libxrandr-dev libxi-dev libxcursor-dev libvulkan-dev
+      # The bare minimum is the configuration the README promises: the whole
+      # component model, headless, with no window system at all.
+      # `--lib --examples` rather than `--all-targets`: the integration tests
+      # name optional surfaces unconditionally and only run at `--all-features`
+      # in the `test` job. Examples are covered because each one that needs an
+      # optional surface declares `required-features`, so it is skipped rather
+      # than failed.
+      - run: cargo clippy -p rxui --no-default-features --lib --examples -- -D warnings
+      - name: Each rxui feature alone
+        run: |
+          for feature in charts docking graph devtools widgets native native-embedded; do
+            echo "::group::rxui/${feature}"
+            cargo clippy -p rxui --no-default-features --features "${feature}" \
+              --lib --examples -- -D warnings
+            echo "::endgroup::"
+          done
+      - name: Each rxui-widgets feature alone
+        run: |
+          cargo clippy -p rxui-widgets --no-default-features --all-targets -- -D warnings
+          for feature in charts docking graph devtools; do
+            echo "::group::rxui-widgets/${feature}"
+            cargo clippy -p rxui-widgets --no-default-features --features "${feature}" \
+              --all-targets -- -D warnings
+            echo "::endgroup::"
+          done
+      # Embedding RXUI in an event loop you already own must not require winit.
+      - run: cargo clippy -p rxui-native --no-default-features --all-targets -- -D warnings
 
   hygiene:
     runs-on: ubuntu-latest
@@ -104,11 +170,14 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-      # Type-checks the library surface for the web. This does NOT prove the web
-      # target works: rxui provides no way to obtain an `AppContext` on wasm yet,
-      # and the native examples compile there only via empty `main` stubs. Phase 9
-      # of the refactor plan replaces this with a real `web_counter` build.
-      - run: cargo check --workspace --all-features --target wasm32-unknown-unknown
+      # Type-checks the library *and every target* for the web. `--all-targets`
+      # is load-bearing: `cargo check` skips examples by default, which is how a
+      # facade re-export that was over-gated for wasm reached this file
+      # undetected. It still does not prove the web target *works* - rxui offers
+      # no way to obtain an `AppContext` on wasm, and the native examples compile
+      # there only via empty `main` stubs - but it does prove every public name
+      # they reach for resolves.
+      - run: cargo check --workspace --all-features --all-targets --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest

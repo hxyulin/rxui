@@ -7,7 +7,9 @@ use astrelis_platform::{
 };
 use rxui_core::{
     Clipboard, Component, ComponentHost, Theme,
-    core::{NodeId, PassStats, SemanticAction, SemanticNode, UiError, UiInput, UiRoot},
+    engine::{NodeId, PassStats, UiError, UiRoot},
+    input::UiInput,
+    semantics::{SemanticAction, SemanticNode},
 };
 
 use crate::SemanticScene;

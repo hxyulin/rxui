@@ -1,4 +1,4 @@
-//! Reconciled adapters for specialized retained media and render workloads.
+//! Retained media and application-rendered viewports.
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ pub use astrelis_paint::{CompositorViewId, ExternalImage, Image, ImageSampling};
 pub use astrelis_ui_next::{ImageAlignment, ImageFit, RenderViewContent};
 use astrelis_ui_next::{ImageElement, RenderView, UiInput};
 
-use rxui_core::{ActionEmitter, RetainedSpec, View, retained};
+use crate::{ActionEmitter, RetainedSpec, Theme, View, retained};
 
 /// Controlled raster-image presentation.
 #[derive(Clone)]
@@ -59,7 +59,7 @@ impl ImageSpec {
 impl<Action: 'static> RetainedSpec<Action> for ImageSpec {
     type Element = ImageElement;
 
-    fn create(&self, _emitter: &ActionEmitter<Action>, _theme: &rxui_core::Theme) -> Self::Element {
+    fn create(&self, _emitter: &ActionEmitter<Action>, _theme: &Theme) -> Self::Element {
         ImageElement {
             image: self.image.clone(),
             label: self.label.clone(),
@@ -75,7 +75,7 @@ impl<Action: 'static> RetainedSpec<Action> for ImageSpec {
         &self,
         element: &mut Self::Element,
         _emitter: &ActionEmitter<Action>,
-        _theme: &rxui_core::Theme,
+        _theme: &Theme,
     ) {
         element.image = self.image.clone();
         element.label.clone_from(&self.label);
@@ -169,7 +169,7 @@ impl<Action: 'static> RenderViewSpec<Action> {
 impl<Action: 'static> RetainedSpec<Action> for RenderViewSpec<Action> {
     type Element = RenderView;
 
-    fn create(&self, emitter: &ActionEmitter<Action>, _theme: &rxui_core::Theme) -> Self::Element {
+    fn create(&self, emitter: &ActionEmitter<Action>, _theme: &Theme) -> Self::Element {
         let mut element = RenderView::new(self.label.clone(), self.size);
         element.content = self.content.clone();
         let on_input = self.on_input.clone();
@@ -178,12 +178,7 @@ impl<Action: 'static> RetainedSpec<Action> for RenderViewSpec<Action> {
         element
     }
 
-    fn update(
-        &self,
-        element: &mut Self::Element,
-        emitter: &ActionEmitter<Action>,
-        _theme: &rxui_core::Theme,
-    ) {
+    fn update(&self, element: &mut Self::Element, emitter: &ActionEmitter<Action>, _theme: &Theme) {
         element.label.clone_from(&self.label);
         element.size = self.size;
         element.content = self.content.clone();
@@ -223,6 +218,10 @@ impl<Action: 'static> RetainedSpec<Action> for RenderViewSpec<Action> {
 }
 
 /// Builds an interactive retained render viewport.
-pub fn render_surface<Action: 'static>(spec: RenderViewSpec<Action>) -> View<Action> {
+///
+/// This is the real thing: an [`astrelis_ui_next::RenderView`] element the
+/// application draws into. [`crate::data::render_view_placeholder`] is the
+/// inert panel that only reserves the space and announces the role.
+pub fn render_view<Action: 'static>(spec: RenderViewSpec<Action>) -> View<Action> {
     retained(spec)
 }

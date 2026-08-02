@@ -1,9 +1,6 @@
 //! Dynamic keyed collection whose order changes without losing retained identity.
 
-use astrelis_core::geometry::LogicalSize;
-use rxui::{
-    Component, ComponentContext, ComponentHost, Theme, View, button, column, label, row, views,
-};
+use rxui::{ComponentHost, prelude::*, semantics::SemanticRole};
 
 #[derive(Clone)]
 enum Action {
@@ -59,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ui()
         .semantic_snapshot()
         .into_iter()
-        .filter(|node| node.data.role == rxui::core::SemanticRole::Label)
+        .filter(|node| node.data.role == SemanticRole::Label)
         .map(|node| (node.data.label, node.id))
         .collect::<std::collections::HashMap<_, _>>();
 
@@ -69,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ui()
         .semantic_snapshot()
         .into_iter()
-        .filter(|node| node.data.role == rxui::core::SemanticRole::Label)
+        .filter(|node| node.data.role == SemanticRole::Label)
         .map(|node| (node.data.label, node.id))
         .collect::<std::collections::HashMap<_, _>>();
 

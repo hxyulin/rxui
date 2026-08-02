@@ -5,11 +5,14 @@
 //! pass. Anything it drops is invisible to the inspector, so these tests pin
 //! what it must carry and how faithfully it must track the live tree.
 
-use astrelis_core::geometry::LogicalSize;
-use rxui::core::SemanticRole;
 use rxui::{
-    ButtonVariant, Component, ComponentContext, DialogAction, InspectionSnapshot, Theme, View,
-    column, dialog, label, text_field,
+    ButtonVariant, Component, ComponentContext, Theme, View, column,
+    geometry::LogicalSize,
+    inspect::InspectionSnapshot,
+    label,
+    semantics::SemanticRole,
+    surfaces::{DialogAction, dialog},
+    text_field,
 };
 use rxui_test_support::Harness;
 
@@ -209,12 +212,12 @@ struct InspectorPane {
 }
 
 impl Component for InspectorPane {
-    type Action = rxui::core::NodeId;
+    type Action = rxui::engine::NodeId;
     type Effect = ();
 
     fn update(&mut self, _action: Self::Action, _context: &mut ComponentContext<'_, ()>) {}
 
     fn view(&self, _theme: &Theme) -> View<Self::Action> {
-        rxui::inspection_view(&self.snapshot, None, |id| id)
+        rxui::devtools::inspection_view(&self.snapshot, None, |id| id)
     }
 }

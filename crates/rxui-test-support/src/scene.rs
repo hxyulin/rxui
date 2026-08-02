@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use astrelis_core::geometry::LogicalRect;
-use rxui_core::core::SemanticNode;
+use rxui_core::semantics::SemanticNode;
 
 /// One labeled accessible landmark with its resolved window-space geometry.
 #[derive(Clone, Debug, PartialEq)]

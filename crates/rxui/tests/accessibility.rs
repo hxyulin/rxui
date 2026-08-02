@@ -1,9 +1,10 @@
 //! Component-level accessibility tree and action routing.
 
-use astrelis_core::geometry::LogicalSize;
-use astrelis_ui_next::{SemanticAction, SemanticActionKind, SemanticRole};
 use rxui::{
-    Component, ComponentContext, Theme, View, button, checkbox, column, slider, text_field,
+    Component, ComponentContext, Theme, View, button, checkbox, column,
+    geometry::LogicalSize,
+    semantics::{SemanticAction, SemanticActionKind, SemanticRole},
+    slider, text_field,
 };
 use rxui_test_support::Harness;
 

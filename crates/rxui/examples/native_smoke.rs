@@ -12,16 +12,19 @@
 
 use std::io;
 
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
-use astrelis_core::geometry::Size;
-// `WindowEvent` and `WindowId` appear in `ComponentWindow`'s signature but are
-// not re-exported by `rxui`, so a consumer must depend on `astrelis-platform`
-// directly. Phase 7 of the refactor plan re-exports them under `rxui::native`.
-use astrelis_platform::{WindowAttributes, WindowEvent, WindowId};
 use rxui::{
-    ColorRole, Component, ComponentContext, ComponentWindow, ContainerStyle, GraphicsContext,
-    Space, Theme, View, WindowHostOptions, column_with, label,
+    ColorRole, Component, ComponentContext, ContainerStyle, Space, Theme, View, column_with,
+    geometry::Size,
+    label,
+    native::{
+        App, AppContext, ComponentWindow, GraphicsContext, Runtime, RuntimeConfig, RuntimeError,
+        WindowAttributes, WindowEvent, WindowHostOptions, WindowId,
+    },
 };
+// Driving the loop ourselves is the one genuinely winit-only thing here; the
+// rest of the windowing vocabulary is portable, and `main` is stubbed on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+use rxui::native::run_return;
 
 const DEFAULT_FRAMES: u32 = 3;
 
@@ -148,8 +151,8 @@ impl App for SmokeApp {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
+fn main() -> Result<(), RuntimeError<io::Error>> {
+    Runtime::finish(run_return(Runtime::new(
         SmokeApp::new(),
         RuntimeConfig::default(),
     )))

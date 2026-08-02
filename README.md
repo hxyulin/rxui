@@ -47,19 +47,42 @@ The public API includes:
 - headless `ComponentHost` and native `ComponentWindow` runtimes;
 - deterministic interaction, semantic, and layout golden tests.
 
-The low-level Astrelis retained core is available through `rxui::core` for
-specialized elements. The former message-application and mutable widget-tree
-APIs have been removed; `rxui::*` and `rxui::prelude::*` expose only the
-component API.
+The Astrelis vocabulary RXUI's own signatures speak is re-exported closed, as
+`rxui::{geometry, color, input, semantics, paint}` plus `rxui::engine` for
+authoring a retained element of your own. Nothing in RXUI's public API forces a
+direct dependency on an Astrelis crate.
 
-Internally, the implementation is split by responsibility:
+## Crates and features
 
-- `rxui-core` owns components, reconciliation, styles, icons, and services;
-- `rxui-controls` owns composite controls and validation;
-- `rxui-widgets` owns rich media, node graphs, docking, and editor surfaces;
-- `rxui-charts` owns chart models, rendering, and interaction;
-- `rxui-native` owns native window/runtime integration;
-- `rxui` is the stable aggregate facade application code should depend on.
+Four published packages, on one axis: **what an application cannot do without,
+versus what it can.**
+
+- `rxui-core` is everything unconditional - components, the view protocol,
+  styles, icons, services, and every composition built from them. It has **no
+  `[features]` table**, and CI asserts both that and that it never reaches wgpu,
+  winit, taffy, or the deprecated retained engine.
+- `rxui-widgets` holds every surface an application can drop, one feature each:
+  `charts`, `graph`, `docking`, and the non-default `devtools`.
+- `rxui-native` opens windows. Its default `winit` feature drives an event loop;
+  turn it off to embed a `ComponentWindow` in a loop you already own.
+- `rxui` is the facade application code depends on, with features `native`,
+  `native-embedded`, `widgets`, `charts`, `docking`, `graph`, and `devtools`.
+
+`native` is the only real dependency cliff in the repo, and turning it off is
+measurable: `rxui` resolves 172 crates with default features and 79 with
+`default-features = false`, which is the whole component model, headless, with no
+wgpu, winit, taffy, or clipboard. The widget features buy public API surface and
+compile time rather than fewer dependencies - inside this workspace `rxui-core`
+and `rxui-widgets` have identical dependency closures.
+
+One caveat stated plainly: **"no text shaping" is not a configuration RXUI
+offers.** `astrelis-paint` depends on `astrelis-text` and therefore parley
+unconditionally, so no feature removes it.
+
+Features are for *applications*. A library should depend on `rxui-core` directly
+rather than on `rxui` with narrowed features: Cargo unifies features across a
+dependency graph, so a library that narrows them makes its own surface depend on
+whatever its consumer chose. That policy is why `rxui-core` stays feature-free.
 
 `rxui-test-support` is unpublished scaffolding for RXUI's own suites. It sits
 below `rxui` in the graph, which is what lets integration tests share a headless

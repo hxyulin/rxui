@@ -1,11 +1,13 @@
 //! Component and keyed reconciliation tests.
 
-use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-use astrelis_platform::NamedKey;
 use rxui::{
-    CommandItem, CommandPaletteNavigation, Component, ComponentContext, ComponentWithProps,
-    PropertyField, Theme, button, checkbox, column, command_palette, component, label,
-    property_grid, slider, stack, text_field,
+    Component, ComponentContext, ComponentWithProps, Theme, button, checkbox, column, component,
+    data::{PropertyField, property_grid},
+    geometry::{LogicalPoint, LogicalSize},
+    input::NamedKey,
+    label, slider, stack,
+    surfaces::{CommandItem, CommandPaletteNavigation, command_palette},
+    text_field,
 };
 use rxui_test_support::Harness;
 

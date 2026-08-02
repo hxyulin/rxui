@@ -1,6 +1,8 @@
 # Releasing RXUI
 
-RXUI uses one synchronized version across its seven-package graph. The first
+RXUI uses one synchronized version across its four published packages
+(`rxui-core`, `rxui-widgets`, `rxui-native`, `rxui`; `rxui-test-support` is
+unpublished scaffolding). The first
 public candidate is `0.1.0-rc.1` and requires Astrelis `=0.3.0-rc.1`.
 
 ## Publishing is currently blocked
@@ -9,8 +11,9 @@ Two upstream conditions must be met before any RXUI package can be published,
 and neither is satisfied today:
 
 1. **`astrelis-ui-next` sets `publish = false`.** `rxui-core` depends on it
-   non-optionally and re-exports it as `rxui::core`, so `cargo publish -p
-   rxui-core` cannot succeed. `astrelis-ui-host` inherits the same block, which
+   non-optionally, so `cargo publish -p rxui-core` cannot succeed. The blanket
+   `rxui::core` re-export is gone, but that was never the blocker - the
+   dependency itself is. `astrelis-ui-host` inherits the same block, which
    extends it to `rxui-native` and the `rxui` facade.
 2. **Astrelis is consumed as a pinned git revision, not a registry version.**
    `cargo publish` rejects git dependencies. See `[workspace.dependencies]` in
@@ -54,6 +57,6 @@ confirmation between layers. An upload error stops immediately and is never
 retried automatically; rerun the command after rate limits or registry
 propagation delays.
 
-After all seven packages are visible, test a fresh crates.io-only consumer. Then
+After all four packages are visible, test a fresh crates.io-only consumer. Then
 tag the published commit as `v0.1.0-rc.1` and create the matching GitHub
 prerelease. Never tag before the complete registry graph succeeds.

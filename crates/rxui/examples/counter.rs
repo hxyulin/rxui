@@ -1,7 +1,6 @@
 //! Minimal typed component using tuple children and application effects.
 
-use astrelis_core::geometry::LogicalSize;
-use rxui::{Component, ComponentContext, ComponentHost, Theme, View, button, column, label, row};
+use rxui::{ComponentHost, prelude::*};
 
 #[derive(Clone)]
 enum Action {

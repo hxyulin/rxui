@@ -1,6 +1,6 @@
 [package]
 name = "rxui-widgets"
-description = "Rich data, editor, media, and workspace widgets for RXUI"
+description = "Optional charts, node graphs, docking, and devtools for RXUI"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,6 +10,16 @@ homepage.workspace = true
 readme.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[features]
+# Every surface here is one an application can do without, which is the reason
+# this crate exists separately from `rxui-core`. `devtools` is off by default
+# because a shipped application has no reason to carry its own tree inspector.
+default = ["charts", "docking", "graph"]
+charts = []
+docking = []
+graph = []
+devtools = []
 
 [dependencies]
 rxui-core = { workspace = true }

@@ -5,9 +5,9 @@
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use astrelis_core::geometry::LogicalSize;
-use astrelis_ui_next::UiRoot;
-use rxui::{Component, ComponentHost, Theme, diagnostics::ViewStats};
+use rxui::{
+    Component, ComponentHost, Theme, engine::UiRoot, geometry::LogicalSize, inspect::ViewStats,
+};
 
 /// Canonical, identity-free rendering of the engine's semantic snapshot.
 ///

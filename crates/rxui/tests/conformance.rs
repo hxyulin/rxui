@@ -1,12 +1,14 @@
 //! Component synthetic scene goldens and interaction traces.
 
-use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-use astrelis_platform::{CursorIcon, NamedKey};
-use rxui::core::{Axis, SemanticData, SemanticRole};
 use rxui::{
-    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ContainerStyle,
-    DialogAction, FrameStyle, Space, Theme, View, button, button_with, dialog, label, panel,
-    row_with, split_pane, stack,
+    Axis, ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ContainerStyle,
+    FrameStyle, Space, Theme, View, button, button_with,
+    geometry::{LogicalPoint, LogicalSize},
+    input::{CursorIcon, NamedKey},
+    label, panel_with_semantics, row_with,
+    semantics::{SemanticData, SemanticRole},
+    split_pane, stack,
+    surfaces::{DialogAction, dialog},
 };
 use rxui_test_support::{Harness, assert_text_golden};
 
@@ -33,23 +35,23 @@ impl Component for SplitScene {
         split_pane(
             Axis::Horizontal,
             self.ratio,
-            panel(
+            panel_with_semantics(
                 LogicalSize::new(1.0, 1.0),
                 rxui::ColorRole::Surface,
-                Some(SemanticData {
+                SemanticData {
                     role: SemanticRole::Group,
                     label: "First pane".into(),
                     ..SemanticData::default()
-                }),
+                },
             ),
-            panel(
+            panel_with_semantics(
                 LogicalSize::new(1.0, 1.0),
                 rxui::ColorRole::Background,
-                Some(SemanticData {
+                SemanticData {
                     role: SemanticRole::Group,
                     label: "Second pane".into(),
                     ..SemanticData::default()
-                }),
+                },
             ),
             SplitAction::Resize,
         )
@@ -137,14 +139,14 @@ impl Component for GrowScene {
 
     fn view(&self, _theme: &Theme) -> View<()> {
         let region = |label: &str, grow| {
-            panel(
+            panel_with_semantics(
                 LogicalSize::new(1.0, 1.0),
                 ColorRole::Surface,
-                Some(SemanticData {
+                SemanticData {
                     role: SemanticRole::Group,
                     label: label.into(),
                     ..SemanticData::default()
-                }),
+                },
             )
             .frame(FrameStyle::new().grow(grow))
         };

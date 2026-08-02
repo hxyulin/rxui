@@ -8,10 +8,9 @@
 //! its geometry outright, and the intrinsic form asserts the usability policy
 //! that had no cross-implementation answer in the first place.
 
-use astrelis_core::geometry::LogicalSize;
 use rxui::{
     ButtonStyle, Component, ComponentContext, ContainerStyle, Space, Theme, View, button,
-    button_with, checkbox, column_with, label, row_with, slider, text_field,
+    button_with, checkbox, column_with, geometry::LogicalSize, label, row_with, slider, text_field,
 };
 use rxui_test_support::{Harness, assert_text_golden};
 

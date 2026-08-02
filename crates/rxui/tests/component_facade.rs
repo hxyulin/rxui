@@ -1,7 +1,8 @@
 //! Public facade coverage for the component-native API.
 
-use astrelis_core::geometry::LogicalSize;
-use rxui::{Component, ComponentContext, Theme, View, button, column, label};
+use rxui::{
+    Component, ComponentContext, Theme, View, button, column, geometry::LogicalSize, label,
+};
 use rxui_test_support::Harness;
 
 #[derive(Clone)]

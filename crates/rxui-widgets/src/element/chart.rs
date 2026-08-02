@@ -15,6 +15,8 @@ use astrelis_ui_next::{
 
 use rxui_core::{ActionEmitter, RetainedSpec, View, retained};
 
+use super::canvas::{self, Hover};
+
 /// One chart-domain point.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ChartPoint {
@@ -64,7 +66,7 @@ impl Default for ChartOptions {
     fn default() -> Self {
         Self {
             size: LogicalSize::new(640.0, 320.0),
-            background: Color::from_hex(0x16181d),
+            background: canvas::surface_fill(),
             stroke_width: 1.5,
         }
     }
@@ -90,7 +92,7 @@ pub struct ChartElement<Action: 'static> {
     series: Vec<ChartSeries>,
     options: ChartOptions,
     size: LogicalSize,
-    hovered: Option<(u64, usize)>,
+    hovered: Hover<(u64, usize)>,
     emitter: ActionEmitter<Action>,
     map_action: Arc<dyn Fn(ChartAction) -> Action>,
 }
@@ -187,12 +189,7 @@ impl<Action: 'static> Element for ChartElement<Action> {
         painter: &mut Painter,
         size: LogicalSize,
     ) -> Result<(), astrelis_paint::PaintError> {
-        painter.with_save(|painter| {
-            painter.clip_rect(LogicalRect::from_xywh(0.0, 0.0, size.width, size.height))?;
-            painter.fill_rect(
-                LogicalRect::from_xywh(0.0, 0.0, size.width, size.height),
-                Brush::Solid(self.options.background),
-            )?;
+        canvas::draw(painter, size, self.options.background, |painter| {
             for series in &self.series {
                 match series.kind {
                     ChartSeriesKind::Line if series.points.len() > 1 => {
@@ -221,7 +218,7 @@ impl<Action: 'static> Element for ChartElement<Action> {
                     }
                 }
             }
-            if let Some((series_id, point_index)) = self.hovered
+            if let Some(&(series_id, point_index)) = self.hovered.current()
                 && let Some(point) = self
                     .series
                     .iter()
@@ -249,28 +246,15 @@ impl<Action: 'static> Element for ChartElement<Action> {
 
     fn event(&mut self, input: UiInput) -> EventResult {
         match input {
-            UiInput::HoverChanged(false) => {
-                let changed = self.hovered.take().is_some();
-                EventResult {
-                    invalidation: if changed {
-                        Invalidation::PAINT
-                    } else {
-                        Invalidation::empty()
-                    },
-                    handled: true,
-                    ..EventResult::default()
-                }
-            }
+            UiInput::HoverChanged(false) => EventResult {
+                invalidation: self.hovered.set(None),
+                handled: true,
+                ..EventResult::default()
+            },
             UiInput::PointerMoved(position) => {
-                let hovered = self.nearest(position);
-                let changed = hovered != self.hovered;
-                self.hovered = hovered;
+                let nearest = self.nearest(position);
                 EventResult {
-                    invalidation: if changed {
-                        Invalidation::PAINT
-                    } else {
-                        Invalidation::empty()
-                    },
+                    invalidation: self.hovered.set(nearest),
                     handled: true,
                     ..EventResult::default()
                 }
@@ -348,7 +332,7 @@ impl<Action: 'static> RetainedSpec<Action> for ChartSpec<Action> {
             series: self.series.clone(),
             options: self.options,
             size: LogicalSize::ZERO,
-            hovered: None,
+            hovered: Hover::default(),
             emitter: emitter.clone(),
             map_action: self.map_action.clone(),
         }

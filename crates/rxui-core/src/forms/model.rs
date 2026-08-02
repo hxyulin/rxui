@@ -1,11 +1,6 @@
-//! Controlled form-validation models and presentation.
+//! Application-owned validation state.
 
 use std::{collections::HashSet, hash::Hash};
-
-use rxui_core::{
-    ColorRole, ContainerStyle, LabelStyle, Space, View, column_with, label_with_style, text_field,
-    views,
-};
 
 /// Validation urgency.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,39 +142,6 @@ impl<Key: Eq + Hash> FormValidation<Key> {
             .find(|(entry, _)| entry == key)
             .map(|(_, result)| result)
     }
-}
-
-/// Builds a controlled text field with visible validation messages.
-pub fn validated_text_field<Action: 'static>(
-    label: impl Into<String>,
-    value: impl Into<String>,
-    result: Option<&ValidationResult>,
-    on_changed: impl Fn(String) -> Action + 'static,
-) -> View<Action> {
-    let label = label.into();
-    let messages = result
-        .into_iter()
-        .flat_map(|result| &result.issues)
-        .enumerate()
-        .map(|(index, issue)| {
-            let role = match issue.severity {
-                ValidationSeverity::Error => ColorRole::Danger,
-                ValidationSeverity::Warning => ColorRole::Accent,
-            };
-            label_with_style(
-                issue.message.clone(),
-                LabelStyle::standard().font_size(12.0).role(role),
-            )
-            .key(index as u64)
-        })
-        .collect::<Vec<_>>();
-    column_with(
-        ContainerStyle::new().gap(Space::Xs),
-        (
-            text_field(label, value, on_changed).key("field"),
-            column_with(ContainerStyle::new().gap(Space::Xs), views(messages)).key("issues"),
-        ),
-    )
 }
 
 #[cfg(test)]

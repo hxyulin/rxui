@@ -4,13 +4,16 @@
 //! scoping, escape dismissal, background disablement - and policy is exactly
 //! what a golden cannot check. Each test below drives one policy decision.
 
-use astrelis_core::geometry::LogicalSize;
-use astrelis_paint::PathVerb;
-use astrelis_platform::NamedKey;
-use rxui::core::{PassStats, SemanticRole};
 use rxui::{
-    ButtonVariant, Component, ComponentContext, DialogAction, Icon, IconButtonStyle, Theme, Toast,
-    ToastLevel, ToolbarItem, View, dialog, icons, label, toasts, toolbar,
+    ButtonVariant, Component, ComponentContext, Icon, IconButtonStyle, Theme, View,
+    engine::PassStats,
+    geometry::LogicalSize,
+    icons,
+    input::NamedKey,
+    label,
+    paint::PathVerb,
+    semantics::SemanticRole,
+    surfaces::{DialogAction, Toast, ToastLevel, ToolbarItem, dialog, toasts, toolbar},
 };
 use rxui_test_support::Harness;
 

@@ -15,6 +15,10 @@ publish.workspace = true
 astrelis-core = { workspace = true }
 astrelis-paint = { workspace = true }
 astrelis-platform = { workspace = true }
+# Not optional: parley already arrives unconditionally through astrelis-paint, so
+# gating this would remove no dependency, only the `engine` text vocabulary a
+# custom element needs to shape a string.
+astrelis-text = { workspace = true }
 astrelis-ui-next = { workspace = true }
 
 [lints]

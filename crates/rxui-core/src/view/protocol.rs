@@ -148,7 +148,7 @@ impl_tuple_children!(A, B, C, D, E, F, G, H);
 ///
 /// use rxui_core::{
 ///     AnyView, Mounted, MountedChildren, MountedState, ViewContext, ViewNode,
-///     core::{Axis, Flex, NodeHandle, UiError},
+///     engine::{Axis, Flex, NodeHandle, UiError},
 /// };
 ///
 /// struct Strip<Action: 'static> {

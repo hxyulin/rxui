@@ -1,59 +1,11 @@
-//! Component-native retained-tree inspection.
+//! Interactive viewer for a retained-tree [`InspectionSnapshot`].
 
-use astrelis_core::geometry::LogicalRect;
-use astrelis_ui_next::{NodeId, PassStats, SemanticRole, UiRoot};
+use astrelis_ui_next::NodeId;
 
-use rxui_core::{ColorRole, ContainerStyle, Space, View, button, column_with, label, views};
-
-/// One flattened retained semantic node.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InspectionNode {
-    /// Stable retained identity.
-    pub id: NodeId,
-    /// Semantic role.
-    pub role: SemanticRole,
-    /// Accessible label.
-    pub label: String,
-    /// Accessible value.
-    pub value: Option<String>,
-    /// Window-space bounds.
-    pub bounds: LogicalRect,
-    /// Effective interaction enablement.
-    pub enabled: bool,
-    /// Keyboard focus state.
-    pub focused: bool,
-}
-
-/// Deterministic retained runtime snapshot.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InspectionSnapshot {
-    /// Most recent incremental work counters.
-    pub stats: PassStats,
-    /// Semantic nodes in retained order.
-    pub nodes: Vec<InspectionNode>,
-}
-
-impl InspectionSnapshot {
-    /// Captures one incremental UI root.
-    pub fn capture(ui: &UiRoot) -> Self {
-        Self {
-            stats: ui.stats(),
-            nodes: ui
-                .semantic_snapshot()
-                .into_iter()
-                .map(|node| InspectionNode {
-                    id: node.id,
-                    role: node.data.role,
-                    label: node.data.label,
-                    value: node.data.value,
-                    bounds: node.bounds,
-                    enabled: node.enabled,
-                    focused: node.focused,
-                })
-                .collect(),
-        }
-    }
-}
+use rxui_core::{
+    ColorRole, ContainerStyle, Space, View, button, column_with, inspect::InspectionSnapshot,
+    label, views,
+};
 
 /// Builds an interactive semantic-tree inspector.
 pub fn inspection_view<Action: Clone + 'static>(
@@ -99,8 +51,11 @@ pub fn inspection_view<Action: Clone + 'static>(
 #[cfg(test)]
 mod tests {
     use astrelis_core::geometry::LogicalSize;
-    use astrelis_ui_next::SemanticNode;
-    use rxui_core::{Component, ComponentContext, ComponentHost, Theme, button, column, views};
+    use astrelis_ui_next::{PassStats, SemanticNode, SemanticRole};
+    use rxui_core::{
+        Component, ComponentContext, ComponentHost, Theme, button, column, inspect::InspectionNode,
+        views,
+    };
 
     use super::*;
 

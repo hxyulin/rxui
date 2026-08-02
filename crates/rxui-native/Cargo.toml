@@ -11,6 +11,13 @@ readme.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# `ComponentWindow::open` needs only an `AppContext`, so embedding RXUI in an
+# event loop you already own does not need winit. Without this feature it was
+# linked unconditionally as a bare `cfg(not(wasm32))` target dependency.
+default = ["winit"]
+winit = ["dep:astrelis-platform-winit"]
+
 [dependencies]
 rxui-core = { workspace = true }
 astrelis-app = { workspace = true }
@@ -24,7 +31,7 @@ astrelis-ui-host = { workspace = true }
 astrelis-ui-next = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-astrelis-platform-winit = { workspace = true }
+astrelis-platform-winit = { workspace = true, optional = true }
 
 [lints]
 workspace = true

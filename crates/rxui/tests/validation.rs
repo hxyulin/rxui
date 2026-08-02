@@ -1,9 +1,9 @@
 //! Controlled validation behavior.
 
-use astrelis_core::geometry::LogicalSize;
 use rxui::{
-    Component, ComponentContext, FormValidation, Theme, ValidationIssue, ValidationResult,
-    validated_text_field,
+    Component, ComponentContext, Theme,
+    forms::{FormValidation, ValidationIssue, ValidationResult, validated_text_field},
+    geometry::LogicalSize,
 };
 use rxui_test_support::Harness;
 

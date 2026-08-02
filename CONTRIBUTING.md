@@ -42,9 +42,22 @@ cargo build -p rxui --all-features --examples
 cargo run -p rxui --example native_smoke
 ```
 
-CI additionally asserts two crate-boundary invariants: `rxui-core` must not
-reach wgpu, winit, arboard, taffy, or `astrelis-ui-core`, and `rxui-core` must
-not declare a `[features]` table. Optional surfaces belong in `rxui-widgets`.
+Every feature also has to compile alone, which `--all-features` cannot show
+because it is a single configuration in which nothing is ever absent:
+
+```sh
+cargo clippy -p rxui --no-default-features --lib --examples -- -D warnings
+cargo clippy -p rxui-widgets --no-default-features --all-targets -- -D warnings
+cargo clippy -p rxui-native --no-default-features --all-targets -- -D warnings
+```
+
+CI asserts the crate-boundary invariants mechanically: `rxui-core` must not
+reach wgpu, winit, arboard, taffy, or `astrelis-ui-core`; `rxui-core` must not
+declare a `[features]` table; `rxui` with `--no-default-features` must clear the
+same list; and `rxui`, `rxui-widgets`, and `rxui-native` must each keep a
+`[features]` table. Optional surfaces belong in `rxui-widgets`, one feature
+each, and that only stays enforceable while `rxui-core` has no features of its
+own.
 
 Use conventional commit prefixes such as `feat:`, `fix:`, `docs:`, `test:`,
 and `refactor:`.
@@ -52,6 +65,11 @@ and `refactor:`.
 ## API stability
 
 During `0.x`, breaking changes are allowed only when documented in release
-notes and accompanied by migration guidance. Public types should live in the
+notes and accompanied by migration guidance in `docs/migrations/` - see
+`docs/migrations/0.2-crate-recut.md` for the shape one takes.
+
+One documented exception: `rxui::engine` is semver-exempt while RXUI is on
+`0.x`. It is the surface a custom `Element` is written against, and that surface
+belongs to Astrelis, which is developed alongside RXUI and not yet published. Public types should live in the
 lowest crate that owns their policy. Generic engine capabilities belong in
 Astrelis; application and editor conventions belong in RXUI.

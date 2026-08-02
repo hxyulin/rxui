@@ -1,15 +1,14 @@
-//! Rich data, editor, media, and workspace widgets for RXUI.
+//! Optional RXUI surfaces, one Cargo feature each.
+//!
+//! This crate holds every widget an application can do without. `rxui-core`
+//! carries the component model, the view protocol, and everything unconditional;
+//! anything here is opt-out. That is the whole axis, and it is why this crate
+//! has a `[features]` table and `rxui-core` deliberately has none.
 
 #![warn(missing_docs)]
 
-mod editor;
-mod inspection;
-mod node_graph;
-mod specialized;
-mod workspace;
+pub mod compose;
+pub mod element;
 
-pub use editor::*;
-pub use inspection::*;
-pub use node_graph::*;
-pub use specialized::*;
-pub use workspace::*;
+#[cfg(feature = "devtools")]
+pub mod inspector;

@@ -9,17 +9,21 @@
 // reachable there.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
-use astrelis_core::{
-    color::Color,
-    geometry::{LogicalPoint, LogicalSize},
-};
 use rxui::{
-    ButtonStyle, ButtonVariant, ChartAction, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec,
-    Choice, CommandItem, CommandPaletteNavigation, Component, ComponentContext, ContainerStyle,
-    DialogAction, DockAxis, DockNode, DockPane, FrameStyle, GraphEdge, GraphNode, IconButtonStyle,
-    NodeGraphAction, NodeGraphSpec, Space, StackStyle, Theme, Toast, ToastLevel, ToolbarItem, View,
-    chart, command_palette, dialog, dock_workspace, form_section, icons, node_graph, radio_group,
-    stack_with, toasts, toolbar,
+    Axis, ButtonStyle, ButtonVariant, Component, ComponentContext, ContainerStyle, FrameStyle,
+    IconButtonStyle, Space, StackStyle, Theme, View,
+    charts::{ChartAction, ChartPoint, ChartSeries, ChartSeriesKind, ChartSpec, chart},
+    color::Color,
+    controls::{Choice, radio_group},
+    docking::{DockNode, DockPane, dock_workspace},
+    forms::form_section,
+    geometry::{LogicalPoint, LogicalSize},
+    graph::{GraphEdge, GraphNode, NodeGraphAction, NodeGraphSpec, node_graph},
+    icons, stack_with,
+    surfaces::{
+        CommandItem, CommandPaletteNavigation, DialogAction, Toast, ToastLevel, ToolbarItem,
+        command_palette, dialog, toasts, toolbar,
+    },
 };
 
 /// Identity of the split holding the two dock groups.
@@ -97,7 +101,7 @@ impl Workbench {
         Self {
             layout: DockNode::Split {
                 id: ROOT_SPLIT,
-                axis: DockAxis::Horizontal,
+                axis: Axis::Horizontal,
                 ratio: 0.5,
                 first: Box::new(DockNode::Tabs {
                     id: 11,

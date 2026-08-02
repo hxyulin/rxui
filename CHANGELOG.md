@@ -4,6 +4,95 @@ All notable public RXUI changes are documented here.
 
 ## 0.1.0-rc.1 - Unreleased
 
+### The crate graph and the public API
+
+See `docs/migrations/0.2-crate-recut.md` for the full mapping.
+
+- **`rxui-charts` and `rxui-controls` are deleted.** Four published packages
+  remain, on one stated axis: what an application cannot do without, versus what
+  it can. `rxui-controls` folded into `rxui-core` because its entire foreign
+  surface was two imports already present there; `rxui-charts` was 554 lines with
+  a dependency closure identical to `rxui-widgets`, where its structural twin
+  already lived. The editor, media, and inspection *data* halves moved down into
+  `rxui-core`; the node graph, docking, and the inspector *view* stayed in
+  `rxui-widgets`, one Cargo feature each.
+- **`rxui-core` has no `[features]` table, and CI asserts it** along with the
+  rule that its dependency closure never reaches wgpu, winit, taffy, arboard, or
+  the deprecated retained engine. That is what makes the documented policy -
+  libraries depend on `rxui-core`, applications narrow `rxui`'s features -
+  enforceable rather than aspirational.
+- **New features.** `rxui`: `native`, `native-embedded`, `widgets`, `charts`,
+  `docking`, `graph`, `devtools`, with `default = ["native", "widgets"]` so an
+  existing dependency is unaffected. `rxui-widgets`: `charts`, `docking`, `graph`,
+  and the non-default `devtools`. `rxui-native`: `winit`, on by default -
+  `ComponentWindow::open` needs only an `AppContext`, so embedding RXUI in an
+  event loop you already own no longer links winit and arboard. `rxui` resolves
+  172 crates with default features and **79** with `default-features = false`,
+  which is the whole component model, headless. A new CI job compiles every
+  feature alone, which `--all-features` cannot do because it is one configuration
+  in which nothing is ever absent.
+- **The five glob re-exports and the byte-identical prelude are gone.** The
+  facade root keeps what an application writes constantly; everything else is
+  grouped into `view`, `controls`, `forms`, `surfaces`, `data`, `media`, `icons`,
+  `style`, `services`, and `inspect`, with the optional surfaces in modules named
+  after the features that enable them (`charts`, `graph`, `docking`, `devtools`,
+  `native`) so a missing item names its own fix. `prelude` is now enough to write
+  a component and nothing more.
+- **`rxui::core` is deleted.** It re-exported an entire unpublished crate's
+  unbounded surface from a 1.0-track facade, and it was insufficient anyway:
+  `LogicalSize`, `Color`, `Path`, and every keyboard type live in crates
+  `astrelis-ui-next` does not re-export, so all 25 tests and examples depended on
+  Astrelis directly. In its place are the closed modules `rxui::{geometry, color,
+  input, semantics, paint}` plus `rxui::engine`, documented **semver-exempt while
+  RXUI is on `0.x`** because it is the surface a custom `Element` is written
+  against. `rxui::native` re-exports the twenty-plus foreign types that appear in
+  `ComponentWindow`'s own signatures. The measurable result: **all six
+  `astrelis-*` dev-dependencies are gone from `crates/rxui/Cargo.toml`**, and no
+  test or example names an Astrelis crate.
+- `rxui::input` gained constructors - `text`, `key`, `named_key`,
+  `pointer_moved`, `pointer_pressed`, `pointer_released`, `pointer_wheel`,
+  `with_modifiers`. A `KeyboardInput` has eight fields, six of which no caller
+  has an opinion about, so synthesizing one keystroke previously meant a
+  fifteen-line struct literal and a seven-type import.
+- New `crates/rxui/tests/public_api.rs`: an explicit import of every intended
+  public name, under the same `cfg`s the facade uses. It compile-fails the moment
+  a name disappears, which is the direction that is invisible in review.
+
+### Breaking
+
+- `panel(size, role, Option<SemanticData>)` is now `panel(size, role)`, with
+  `panel_with_semantics(size, role, semantics)` for an annotated one. This
+  removes `SemanticData` from every required argument position. There is
+  deliberately no `.label()` builder on `AnyView`: a node's semantics come from
+  its element's `accessibility` method, so only an element that stores them can
+  be annotated from outside, and a generic builder would compile against a
+  `label` or a `button` and silently do nothing.
+- `render_surface` is `media::render_view` and the old `render_view` is
+  `data::render_view_placeholder`. The pair was inverted: the shorter name was an
+  inert panel and the longer one the real GPU-backed viewport.
+- `DockAxis` and `dock_axis` are deleted; `DockNode::Split` carries `Axis`, and
+  `Axis` and `Alignment` are at the facade root. A two-variant shadow of a
+  two-variant enum plus a public converter bought nothing.
+- `rxui-native` aliases the engine's codenames away: `NextWindowHost` is
+  `WindowHost`, `NextAccessibilityAdapter` is `AccessibilityAdapter`,
+  `NextAccessibilityRequest` is `AccessibilityRequest`.
+- `rxui_core::icon` moved to `rxui_core::views::icon`; the composites from the
+  deleted crates live in `rxui_core::{controls, surfaces, forms, data, media,
+  inspect}`. Application code using the `rxui` facade is unaffected by both.
+
+### Fixed
+
+- `rxui::engine::ShapingMemo` and `KeyedShapingMemo` are reachable, and the node
+  graph's hand-rolled title memo is replaced by the engine's keyed one.
+- The chart and node-graph elements share their hover state machine and their
+  clip-and-fill prologue instead of duplicating both. Their invalidation bits are
+  unchanged.
+- `rxui-core`'s two private copies of the icon-edge resolution rule - one for the
+  icon element, one for the button's glyph - are now one, so they cannot drift.
+- The wasm target now type-checks *examples*, not only libraries. `cargo check`
+  skips examples by default, which is how the previous job passed while several
+  examples named items that did not resolve there.
+
 ### The view set is open
 
 - New public `ViewNode<Action>` trait, replacing the private `DynView`. All

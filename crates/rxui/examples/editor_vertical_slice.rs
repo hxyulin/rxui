@@ -2,10 +2,13 @@
 
 use std::time::Instant;
 
-use astrelis_core::geometry::LogicalSize;
 use rxui::{
-    Component, ComponentContext, ComponentHost, PropertyField, TableRow, Theme, TreeRow, column,
-    editable_property_grid, render_view, virtual_table_with_widths, virtual_tree,
+    Component, ComponentContext, ComponentHost, Theme, View, column,
+    data::{
+        PropertyField, TableRow, TreeRow, editable_property_grid, render_view_placeholder,
+        virtual_table_with_widths, virtual_tree,
+    },
+    geometry::LogicalSize,
 };
 
 const ITERATIONS: usize = 500;
@@ -50,7 +53,7 @@ impl Component for Editor {
         }
     }
 
-    fn view(&self, _theme: &Theme) -> rxui::View<Action> {
+    fn view(&self, _theme: &Theme) -> View<Action> {
         column((
             virtual_tree(&self.tree, 0..40, Some(self.selected)).key("tree"),
             virtual_table_with_widths(&self.table, 0..30, Some(self.selected), &self.table_widths)
@@ -58,7 +61,7 @@ impl Component for Editor {
             editable_property_grid(&self.fields, InspectorAction::SetProperty)
                 .map_action(Action::Inspector)
                 .key("properties"),
-            render_view("Scene").key("scene"),
+            render_view_placeholder("Scene").key("scene"),
         ))
     }
 }

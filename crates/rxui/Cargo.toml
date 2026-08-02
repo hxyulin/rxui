@@ -13,20 +13,40 @@ keywords.workspace = true
 categories.workspace = true
 publish.workspace = true
 
-[dependencies]
-rxui-charts = { workspace = true }
-rxui-controls = { workspace = true }
-rxui-core = { workspace = true }
-rxui-native = { workspace = true }
-rxui-widgets = { workspace = true }
+[features]
+# Features are for *applications*. A library should depend on `rxui-core`
+# directly instead of on `rxui` with narrowed features, because Cargo unifies
+# features across the graph and the narrowing would then depend on the
+# application that consumes the library.
+#
+# Honest scope: inside this workspace `rxui-core` and `rxui-widgets` have
+# identical dependency closures, so `charts`/`docking`/`graph`/`devtools` buy
+# public-API surface and compile time, not fewer dependencies. `native` is the
+# only real dependency cliff - it is what pulls wgpu, winit, and arboard.
+default = ["native", "widgets"]
 
+native = ["dep:rxui-native", "rxui-native/winit"]
+native-embedded = ["dep:rxui-native"]
+
+widgets = ["charts", "docking", "graph"]
+charts = ["dep:rxui-widgets", "rxui-widgets/charts"]
+docking = ["dep:rxui-widgets", "rxui-widgets/docking"]
+graph = ["dep:rxui-widgets", "rxui-widgets/graph"]
+devtools = ["dep:rxui-widgets", "rxui-widgets/devtools"]
+
+[dependencies]
+rxui-core = { workspace = true }
+rxui-native = { workspace = true, optional = true }
+rxui-widgets = { workspace = true, optional = true }
+
+# Six Astrelis dev-dependencies used to live here: `astrelis-app`,
+# `astrelis-core`, `astrelis-paint`, `astrelis-platform`,
+# `astrelis-platform-winit`, and `astrelis-ui-next`. Every test and example
+# needed them because `rxui` re-exported only `astrelis-ui-next` and none of the
+# crates that define `LogicalSize`, `Color`, `Path`, or the keyboard types. They
+# are gone now, and their absence is the check: any consumer reaching past the
+# facade is a compile error rather than a style opinion.
 [dev-dependencies]
-astrelis-app = { workspace = true }
-astrelis-core = { workspace = true }
-astrelis-paint = { workspace = true }
-astrelis-platform = { workspace = true }
-astrelis-platform-winit = { workspace = true }
-astrelis-ui-next = { workspace = true }
 rxui-test-support = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
@@ -35,3 +55,23 @@ web-sys = { workspace = true, features = ["Document", "Element", "HtmlCanvasElem
 
 [lints]
 workspace = true
+
+# Declared so `cargo build --examples` stays honest under a reduced feature set:
+# without `required-features` an example that names an optional surface is a hard
+# error rather than a skip, which would make the feature matrix untestable.
+[[example]]
+name = "native_counter"
+required-features = ["native"]
+
+[[example]]
+name = "native_settings"
+required-features = ["native"]
+
+[[example]]
+name = "native_smoke"
+required-features = ["native"]
+
+[[example]]
+name = "native_workbench"
+path = "examples/native_workbench/main.rs"
+required-features = ["native", "charts", "graph", "docking"]

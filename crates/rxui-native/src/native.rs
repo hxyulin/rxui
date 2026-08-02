@@ -1,7 +1,7 @@
 //! Native component window integration.
 
 use astrelis_app::{App, AppContext};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 use astrelis_app::{Runtime, RuntimeConfig, RuntimeError};
 use astrelis_compositor::{CompositionStats, ViewOptions, ViewRenderTarget};
 use astrelis_core::geometry::LogicalSize;
@@ -11,10 +11,8 @@ use astrelis_paint_gpu::RenderStats;
 #[cfg(not(target_arch = "wasm32"))]
 use astrelis_platform::WindowId;
 use astrelis_platform::{Window, WindowEvent};
-pub use astrelis_ui_host::{
-    GraphicsContext, NextAccessibilityAdapter, NextAccessibilityRequest, WindowHostOptions,
-};
-use astrelis_ui_host::{HostError, HostUpdate, NextWindowHost};
+pub use astrelis_ui_host::{GraphicsContext, WindowHostOptions};
+use astrelis_ui_host::{HostError, HostUpdate, NextAccessibilityAdapter, NextWindowHost};
 use astrelis_ui_next::{Flex, FrameUpdate, UiError, UiRoot};
 
 use rxui_core::{Component, ComponentRuntime, ComponentServiceRequest, Theme};
@@ -272,7 +270,11 @@ impl<C: Component<Effect = ()>> App for ComponentApplication<C> {
 }
 
 /// Runs one effect-free component in a native window.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// This is the only item in the crate that needs winit. `ComponentWindow` and
+/// `ComponentApplication` need an `AppContext`, so embedding RXUI in an event
+/// loop you already drive works with `default-features = false`.
+#[cfg(all(not(target_arch = "wasm32"), feature = "winit"))]
 pub fn run_component<C: Component<Effect = ()>>(
     component: C,
     theme: Theme,

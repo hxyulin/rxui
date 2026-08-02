@@ -2,8 +2,6 @@
 resolver = "3"
 members = [
   "crates/rxui",
-  "crates/rxui-charts",
-  "crates/rxui-controls",
   "crates/rxui-core",
   "crates/rxui-native",
   "crates/rxui-test-support",
@@ -24,11 +22,12 @@ categories = ["gui", "development-tools"]
 publish = ["crates-io"]
 
 [workspace.dependencies]
-rxui-charts = { path = "crates/rxui-charts", version = "=0.1.0-rc.1" }
-rxui-controls = { path = "crates/rxui-controls", version = "=0.1.0-rc.1" }
 rxui-core = { path = "crates/rxui-core", version = "=0.1.0-rc.1" }
-rxui-native = { path = "crates/rxui-native", version = "=0.1.0-rc.1" }
-rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1" }
+# `default-features = false` here rather than at each use site: a workspace
+# dependency cannot be overridden downstream, and the facade turns individual
+# features on explicitly.
+rxui-native = { path = "crates/rxui-native", version = "=0.1.0-rc.1", default-features = false }
+rxui-widgets = { path = "crates/rxui-widgets", version = "=0.1.0-rc.1", default-features = false }
 # Unpublished, so deliberately carries no `version`: cargo strips path-only
 # dev-dependencies when packaging.
 rxui-test-support = { path = "crates/rxui-test-support" }

@@ -1,9 +1,9 @@
 //! Controlled settings form with a reusable local action scope.
 
-use astrelis_core::geometry::LogicalSize;
 use rxui::{
-    Component, ComponentContext, ComponentHost, ComponentWithProps, PropertyField, Theme, View,
-    button, column, component, editable_property_grid, label, row,
+    ComponentHost,
+    data::{PropertyField, editable_property_grid},
+    prelude::*,
 };
 
 #[derive(Clone)]

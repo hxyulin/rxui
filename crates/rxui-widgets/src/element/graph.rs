@@ -16,6 +16,8 @@ use astrelis_ui_next::{
 
 use rxui_core::{ActionEmitter, RetainedSpec, View, retained};
 
+use super::canvas::{self, Hover};
+
 /// One positioned graph node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GraphNode<Id> {
@@ -93,7 +95,7 @@ where
     edges: Vec<GraphEdge<Id>>,
     viewport: GraphViewport,
     selected: Option<Id>,
-    hovered: Option<Id>,
+    hovered: Hover<Id>,
     size: LogicalSize,
     labels: Vec<TextLayout>,
     titles: KeyedShapingMemo<Id>,
@@ -156,12 +158,7 @@ where
         painter: &mut Painter,
         size: LogicalSize,
     ) -> Result<(), astrelis_paint::PaintError> {
-        painter.with_save(|painter| {
-            painter.clip_rect(LogicalRect::from_xywh(0.0, 0.0, size.width, size.height))?;
-            painter.fill_rect(
-                LogicalRect::from_xywh(0.0, 0.0, size.width, size.height),
-                Brush::Solid(Color::from_hex(0x16181d)),
-            )?;
+        canvas::draw(painter, size, canvas::surface_fill(), |painter| {
             for edge in &self.edges {
                 let Some(from) = self.nodes.iter().find(|node| node.id == edge.from) else {
                     continue;
@@ -197,7 +194,7 @@ where
                     rect,
                     Brush::Solid(if self.selected.as_ref() == Some(&node.id) {
                         Color::from_hex(0x4c8dff)
-                    } else if self.hovered.as_ref() == Some(&node.id) {
+                    } else if self.hovered.current() == Some(&node.id) {
                         Color::from_hex(0x343944)
                     } else {
                         Color::from_hex(0x23262e)
@@ -231,33 +228,20 @@ where
 
     fn event(&mut self, input: UiInput) -> EventResult {
         match input {
-            UiInput::HoverChanged(false) => {
-                let changed = self.hovered.take().is_some();
-                EventResult {
-                    invalidation: if changed {
-                        Invalidation::PAINT
-                    } else {
-                        Invalidation::empty()
-                    },
-                    handled: true,
-                    ..EventResult::default()
-                }
-            }
+            UiInput::HoverChanged(false) => EventResult {
+                invalidation: self.hovered.set(None),
+                handled: true,
+                ..EventResult::default()
+            },
             UiInput::PointerMoved(point) => {
-                let hovered = self
+                let topmost = self
                     .nodes
                     .iter()
                     .rev()
                     .find(|node| self.rect(node).contains(point))
                     .map(|node| node.id.clone());
-                let changed = hovered != self.hovered;
-                self.hovered = hovered;
                 EventResult {
-                    invalidation: if changed {
-                        Invalidation::PAINT
-                    } else {
-                        Invalidation::empty()
-                    },
+                    invalidation: self.hovered.set(topmost),
                     handled: true,
                     ..EventResult::default()
                 }
@@ -285,7 +269,7 @@ where
     }
 
     fn cursor_icon(&self) -> CursorIcon {
-        if self.hovered.is_some() {
+        if self.hovered.current().is_some() {
             CursorIcon::Pointer
         } else {
             CursorIcon::Move
@@ -360,7 +344,7 @@ where
             edges: self.edges.clone(),
             viewport: self.viewport,
             selected: self.selected.clone(),
-            hovered: None,
+            hovered: Hover::default(),
             size: LogicalSize::ZERO,
             labels: Vec::new(),
             titles: KeyedShapingMemo::default(),

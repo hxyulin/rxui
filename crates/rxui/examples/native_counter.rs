@@ -2,13 +2,17 @@
 
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
-use astrelis_core::geometry::Size;
-use astrelis_platform::WindowAttributes;
 use rxui::{
     ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ContainerStyle, Space,
-    Theme, View, WindowHostOptions, button, button_with, checkbox, column_with, label, row,
-    run_component, slider_with_step,
+    Theme, View, button, button_with, checkbox, column_with,
+    geometry::Size,
+    label,
+    native::{RuntimeError, WindowAttributes, WindowHostOptions},
+    row, slider_with_step,
 };
+// The only winit-only name in the file, and `main` is stubbed on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+use rxui::native::run_component;
 
 #[derive(Clone)]
 enum Action {
@@ -65,7 +69,7 @@ impl Component for Counter {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<std::io::Error>> {
+fn main() -> Result<(), RuntimeError<std::io::Error>> {
     run_component(
         Counter {
             value: 0,

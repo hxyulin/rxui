@@ -4,14 +4,21 @@
 
 use std::io;
 
-use astrelis_app::{App, AppContext, Runtime, RuntimeConfig};
-use astrelis_core::geometry::Size;
-use astrelis_platform::{WindowAttributes, WindowEvent, WindowId};
 use rxui::{
-    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ComponentWindow,
-    ComponentWithProps, ContainerStyle, GraphicsContext, Space, Theme, View, WindowHostOptions,
-    button_with, checkbox, column_with, component, label, slider_with_step, text_field,
+    ButtonStyle, ButtonVariant, ColorRole, Component, ComponentContext, ComponentWithProps,
+    ContainerStyle, Space, Theme, View, button_with, checkbox, column_with, component,
+    geometry::Size,
+    label,
+    native::{
+        App, AppContext, ComponentWindow, GraphicsContext, Runtime, RuntimeConfig, RuntimeError,
+        WindowAttributes, WindowEvent, WindowHostOptions, WindowId,
+    },
+    slider_with_step, text_field,
 };
+// Driving the loop ourselves is the one genuinely winit-only thing here; the
+// rest of the windowing vocabulary is portable, and `main` is stubbed on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+use rxui::native::run_return;
 
 #[derive(Clone, Debug, PartialEq)]
 struct PreferencesProps {
@@ -233,8 +240,8 @@ impl App for NativeSettings {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<io::Error>> {
-    Runtime::finish(astrelis_platform_winit::run_return(Runtime::new(
+fn main() -> Result<(), RuntimeError<io::Error>> {
+    Runtime::finish(run_return(Runtime::new(
         NativeSettings::new(),
         RuntimeConfig::default(),
     )))

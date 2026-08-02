@@ -5,14 +5,22 @@
 //! Keeping the window, the theme, and the event loop out of that module is what
 //! makes the same component testable on three operating systems with no GPU.
 
-use astrelis_core::geometry::Size;
-use astrelis_platform::WindowAttributes;
-use rxui::{Theme, WindowHostOptions, run_component};
+// The wasm build has an empty `main`, so nothing here is reachable there.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
+use rxui::{
+    Theme,
+    geometry::Size,
+    native::{RuntimeError, WindowAttributes, WindowHostOptions},
+};
+// The only winit-only name in the file, and `main` is stubbed on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+use rxui::native::run_component;
 
 mod model;
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), astrelis_app::RuntimeError<std::io::Error>> {
+fn main() -> Result<(), RuntimeError<std::io::Error>> {
     run_component(
         model::Workbench::new(),
         Theme::dark(),
