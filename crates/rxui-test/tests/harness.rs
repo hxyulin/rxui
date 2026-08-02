@@ -1,7 +1,7 @@
 //! Label-addressed retained-tree harness behavior.
 
 use astrelis_core::geometry::{LogicalPoint, LogicalSize};
-use astrelis_platform::{CursorIcon, Key, NamedKey};
+use astrelis_platform::{CursorIcon, Key, Modifiers, NamedKey};
 use rxui_test::{
     Harness, MemoryClipboard,
     probe::{Probe, ProbeEvent, ProbeLog},
@@ -129,6 +129,16 @@ fn focus_traversal_keyboard_activation_and_snapshot_follow_tree_order() {
 
     harness.press(NamedKey::Tab);
     assert_eq!(harness.focused(), Some(harness.find("Second").id));
+    harness.press_with_modifiers(
+        NamedKey::Tab,
+        Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        },
+    );
+    assert_eq!(harness.focused(), Some(harness.find("First").id));
+    harness.press(NamedKey::Tab);
+    assert_eq!(harness.focused(), Some(harness.find("Second").id));
     harness.press(NamedKey::Enter);
     assert_eq!(logs[1].activations(), 1);
     assert_eq!(logs[2].activations(), 0);
@@ -189,4 +199,15 @@ fn settled_pointer_move_reports_exactly_hit_test_work() {
             ..PassStats::default()
         }
     );
+}
+
+#[test]
+fn non_pointer_input_does_not_reuse_pointer_hit_test_stats() {
+    let (mut harness, _) = probes(&[("Target", CursorIcon::Pointer)]);
+    harness.hover("Target");
+    assert_eq!(harness.stats().hit_test_nodes, 2);
+
+    harness.press(NamedKey::Escape);
+
+    assert_eq!(harness.stats(), PassStats::default());
 }

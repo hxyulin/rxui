@@ -34,19 +34,32 @@ impl Harness {
     }
 
     fn input(&mut self, input: UiInput) {
+        let hit_tested = matches!(
+            &input,
+            UiInput::PointerMoved(_)
+                | UiInput::PointerPressed(_)
+                | UiInput::PointerReleased(_)
+                | UiInput::PointerWheel { .. }
+        );
         self.tree.dispatch(input);
-        self.settle();
+        self.settle(hit_tested);
     }
 
-    fn settle(&mut self) {
-        self.stats = if self.tree.needs_update() {
+    fn settle(&mut self, hit_tested: bool) {
+        let mut stats = if self.tree.needs_update() {
             self.tree.update_passes().stats
-        } else {
+        } else if hit_tested {
             PassStats {
                 hit_test_nodes: self.tree.stats().hit_test_nodes,
                 ..PassStats::default()
             }
+        } else {
+            PassStats::default()
         };
+        if !hit_tested {
+            stats.hit_test_nodes = 0;
+        }
+        self.stats = stats;
     }
 
     /// Presses and releases the primary pointer button over `label`'s centre.
@@ -55,6 +68,10 @@ impl Harness {
     }
 
     /// Presses and releases the primary pointer button at an exact point.
+    ///
+    /// Use this when the position within a control is what is under test, such
+    /// as caret placement inside a text field or grabbing a splitter that owns
+    /// no accessible node of its own.
     pub fn click_at(&mut self, point: LogicalPoint) {
         self.input(UiInput::PointerPressed(point));
         self.input(UiInput::PointerReleased(point));
@@ -87,9 +104,14 @@ impl Harness {
 
     /// Presses one named key with no active modifiers.
     pub fn press(&mut self, key: NamedKey) {
+        self.press_with_modifiers(key, Modifiers::default());
+    }
+
+    /// Presses one named key with explicit modifier state.
+    pub fn press_with_modifiers(&mut self, key: NamedKey, modifiers: Modifiers) {
         self.input(UiInput::Keyboard {
             input: key_press(Key::Named(key), None),
-            modifiers: Modifiers::default(),
+            modifiers,
         });
     }
 
@@ -113,18 +135,21 @@ impl Harness {
     pub fn semantic_action(&mut self, label: &str, action: SemanticAction) {
         let target = self.find(label).id;
         self.tree.perform_semantic_action(target, action);
-        self.settle();
+        self.settle(false);
     }
 
     /// Moves keyboard focus to the first focusable element in the whole tree.
     pub fn focus_first(&mut self) {
         let root = self.tree.root();
         self.tree.focus_first_in_subtree(root);
-        self.settle();
+        self.settle(false);
     }
 
     /// Applies pending engine clipboard writes synchronously and returns their count.
     pub fn run_pending_services(&mut self, clipboard: &mut impl Clipboard) -> usize {
+        // `read_text` is currently unreachable because the engine exposes only
+        // `ClipboardOperation::WriteText`. It remains on `Clipboard` for v1 API
+        // parity and Stage 4 text-field paste support.
         let operations = self.tree.drain_clipboard().collect::<Vec<_>>();
         let count = operations.len();
         for operation in operations {
@@ -187,6 +212,10 @@ impl Harness {
     }
 
     /// Returns engine counters from the most recently completed harness operation.
+    ///
+    /// An operation that performs no hit test reports zero `hit_test_nodes`
+    /// rather than retaining a previous pointer event's traversal count, so a
+    /// budget assertion can never pass on stale numbers.
     pub const fn stats(&self) -> PassStats {
         self.stats
     }
@@ -246,6 +275,10 @@ fn centre(bounds: LogicalRect) -> LogicalPoint {
     )
 }
 
+/// Synthesizes a key press.
+///
+/// The physical key is left unidentified: RXUI routes on the logical key, and
+/// inventing a scancode would imply a keyboard layout the test never chose.
 fn key_press(logical_key: Key, text: Option<String>) -> KeyboardInput {
     KeyboardInput {
         device_id: DeviceId(1),

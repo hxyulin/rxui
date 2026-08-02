@@ -44,16 +44,21 @@ fn incremental(criterion: &mut Criterion) {
     });
 
     let mut hit_tree = hit_test_tree();
-    let point = LogicalPoint::new(95.0, 487.5);
+    let point = LogicalPoint::new(5.0, 492.5);
     criterion.bench_function("rxui_tree/pointer_hit_test_pruned_1000", |bencher| {
         bencher.iter(|| black_box(hit_tree.hit_test(black_box(point))));
     });
 }
 
 /// Builds exactly 1,000 nodes: a root, ten spatially disjoint panels, and 989
-/// leaves. The target is the final leaf of the final panel, so reverse paint
-/// order reaches it after visiting only the root, that panel, and that leaf.
+/// leaves. The target is in the first panel, so reverse paint order visits and
+/// rejects all nine later panels by subtree bounds before descending into it.
+///
+/// Keep this arithmetic and target synchronized with the pruning assertion in
+/// `tests/invalidation.rs`.
 fn hit_test_tree() -> UiTree {
+    const PANELS: usize = 10;
+    const REGULAR_LEAVES: usize = 99;
     let mut ui = UiTree::new(
         Flex {
             axis: Axis::Horizontal,
@@ -62,7 +67,7 @@ fn hit_test_tree() -> UiTree {
         LogicalSize::new(100.0, 500.0),
     );
     let root = ui.root();
-    for panel_index in 0..10 {
+    for panel_index in 0..PANELS {
         let panel = ui.append(
             root,
             Flex {
@@ -70,7 +75,12 @@ fn hit_test_tree() -> UiTree {
                 ..Flex::default()
             },
         );
-        let leaves = if panel_index == 9 { 98 } else { 99 };
+        // 1 root + 10 panels + (9 * 99 + 98) leaves = 1,000 nodes.
+        let leaves = if panel_index + 1 == PANELS {
+            REGULAR_LEAVES - 1
+        } else {
+            REGULAR_LEAVES
+        };
         for _ in 0..leaves {
             let mut leaf = BoxElement::new(LogicalSize::new(10.0, 5.0), Color::WHITE);
             leaf.interactive = true;

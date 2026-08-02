@@ -636,6 +636,7 @@ fn hit_test_counter_survives_the_pass_that_follows_it() {
 
 #[test]
 fn hit_testing_rejects_wide_subtrees_before_visiting_their_children() {
+    // Keep this arithmetic and target synchronized with `benches/incremental.rs`.
     const PANELS: usize = 10;
     const REGULAR_LEAVES: usize = 99;
     let mut ui = UiTree::new(
@@ -654,6 +655,7 @@ fn hit_testing_rejects_wide_subtrees_before_visiting_their_children() {
                 ..Flex::default()
             },
         );
+        // 1 root + 10 panels + (9 * 99 + 98) leaves = 1,000 nodes.
         let leaves = if panel_index + 1 == PANELS {
             REGULAR_LEAVES - 1
         } else {
@@ -667,10 +669,10 @@ fn hit_testing_rejects_wide_subtrees_before_visiting_their_children() {
     }
     ui.update_passes();
 
-    assert!(ui.hit_test(LogicalPoint::new(95.0, 487.5)).is_some());
+    assert!(ui.hit_test(LogicalPoint::new(5.0, 492.5)).is_some());
     assert_eq!(
         ui.stats().hit_test_nodes,
-        3,
-        "only the root, containing panel, and containing leaf are visited"
+        12,
+        "the root, nine rejected panels, containing panel, and target leaf are visited"
     );
 }
