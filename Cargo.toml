@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rxui-tree"]
+members = ["crates/rxui-test", "crates/rxui-tree"]
 
 [workspace.package]
 version = "0.2.0-alpha.1"
@@ -19,6 +19,7 @@ astrelis-core = { path = "/Users/hxyulin/Documents/Personal/Development/games/as
 astrelis-paint = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-paint" }
 astrelis-platform = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-platform" }
 astrelis-text = { path = "/Users/hxyulin/Documents/Personal/Development/games/astrelis/crates/astrelis-text" }
+rxui-tree = { path = "crates/rxui-tree" }
 # Intended git pins once the revision is available remotely:
 # astrelis-core = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }
 # astrelis-paint = { git = "https://github.com/hxyulin/astrelis", rev = "7d28feddeb5fca258c1f1bedcf0287145194e009", version = "=0.3.0-rc.1" }

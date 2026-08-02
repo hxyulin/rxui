@@ -1,0 +1,14 @@
+[ratio split 1-3]
+Group label="First pane" value=None bounds=(0.00,0.00) 98.50x240.00 enabled=true focused=false
+Group label="Second pane" value=None bounds=(104.50,0.00) 295.50x240.00 enabled=true focused=false
+[grow 1-2-1]
+Group label="Grow 1a" value=None bounds=(0.00,0.00) 100.00x120.00 enabled=true focused=false
+Group label="Grow 2" value=None bounds=(100.00,0.00) 200.00x120.00 enabled=true focused=false
+Group label="Grow 1b" value=None bounds=(300.00,0.00) 100.00x120.00 enabled=true focused=false
+[stack overlap]
+Group label="Back layer" value=None bounds=(0.00,0.00) 120.00x40.00 enabled=true focused=false
+Group label="Front layer" value=None bounds=(0.00,0.00) 120.00x40.00 enabled=true focused=false
+[labeled form]
+Label label="Account" value=None bounds=(12.00,12.00) 57.81x16.00 enabled=true focused=false
+Field label="Name" value=None bounds=(12.00,36.00) 236.00x28.00 enabled=true focused=false
+Field label="Email" value=None bounds=(12.00,72.00) 236.00x28.00 enabled=true focused=false

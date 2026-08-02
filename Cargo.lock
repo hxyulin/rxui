@@ -796,6 +796,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "rxui-test"
+version = "0.2.0-alpha.1"
+dependencies = [
+ "astrelis-core",
+ "astrelis-text",
+ "rxui-tree",
+]
+
+[[package]]
 name = "rxui-tree"
 version = "0.2.0-alpha.1"
 dependencies = [

@@ -1,0 +1,20 @@
+[package]
+name = "rxui-test"
+description = "Deterministic test support for RXUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+astrelis-core = { workspace = true }
+rxui-tree = { workspace = true }
+
+[dev-dependencies]
+astrelis-text = { workspace = true }
+
+[lints]
+workspace = true
