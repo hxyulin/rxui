@@ -5,7 +5,7 @@
 use std::{
     any::{Any, TypeId, type_name},
     cell::{Cell, Ref, RefCell},
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     marker::PhantomData,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
@@ -14,7 +14,17 @@ use std::{
 
 use astrelis_core::geometry::LogicalSize;
 use astrelis_text::FontDatabase;
-use rxui_tree::{Flex, UiTree};
+use rxui_tree::{Flex, NodeId, PassStats, UiTree};
+
+pub mod diagnostics;
+mod element;
+mod reconcile;
+
+pub use diagnostics::ViewStats;
+pub use element::{Element, Key, button, column, label, row};
+
+use element::{EmbeddedEntity, RenderFn};
+use reconcile::Mounted;
 
 /// Maximum number of deferred effects one flush may execute.
 ///
@@ -192,13 +202,6 @@ impl<T: 'static> WeakEntity<T> {
 /// Marker implemented by an entity state for every event type it may emit.
 pub trait EventEmitter<E: 'static>: 'static {}
 
-/// A lightweight UI description returned by [`Render`].
-///
-/// Stage 3B adds the concrete element kinds and fluent builders while
-/// preserving this type and the `Render` signature.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Element;
-
 /// Stateful entity whose current state can produce a UI description.
 pub trait Render: 'static + Sized {
     /// Builds the entity's current lightweight UI description.
@@ -288,6 +291,22 @@ struct EntitySlot {
     free: bool,
 }
 
+struct Renderer {
+    cell: Rc<EntityCell>,
+    render: RenderFn,
+    boundary: NodeId,
+    mounted: Option<Mounted>,
+}
+
+/// Deterministic work counters returned by one application flush.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FlushStats {
+    /// Work performed by retained layout, composition, paint, and semantics.
+    pub passes: PassStats,
+    /// Work performed by entity rendering and description reconciliation.
+    pub views: ViewStats,
+}
+
 /// Application-owned entity runtime, retained tree, and deferred work queues.
 pub struct App {
     entities: Vec<EntitySlot>,
@@ -296,6 +315,7 @@ pub struct App {
     effects: VecDeque<DeferredEffect>,
     subscriptions: Vec<SubscriptionEntry>,
     notified: BTreeSet<(u32, EntityId)>,
+    renderers: BTreeMap<EntityId, Renderer>,
     update_depth: usize,
     flushing: bool,
 }
@@ -310,6 +330,7 @@ impl App {
             effects: VecDeque::new(),
             subscriptions: Vec::new(),
             notified: BTreeSet::new(),
+            renderers: BTreeMap::new(),
             update_depth: 0,
             flushing: false,
         }
@@ -321,6 +342,30 @@ impl App {
         initialize: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Entity<T> {
         self.new_entity_at(0, initialize)
+    }
+
+    /// Mounts a renderable entity below the retained root and renders it.
+    ///
+    /// The application retains the mounted entity until its boundary is
+    /// removed. Mounting the same entity more than once is an authoring error.
+    pub fn mount<T: Render>(&mut self, entity: &Entity<T>) -> FlushStats {
+        self.assert_registered(&entity.cell);
+        assert!(
+            !self.renderers.contains_key(&entity.id()),
+            "entity {:?} is already mounted",
+            entity.id()
+        );
+        let boundary = self
+            .tree
+            .append(self.tree.root(), rxui_tree::Frame::default());
+        self.register_renderer(
+            EmbeddedEntity {
+                cell: entity.cell.clone(),
+                render: render_entity::<T>,
+            },
+            boundary,
+        );
+        self.flush()
     }
 
     fn new_entity_at<T: 'static>(
@@ -361,7 +406,7 @@ impl App {
             Err(panic) => resume_unwind(panic),
         }
         if self.update_depth == 0 && !self.flushing {
-            self.flush();
+            self.flush_effects();
         }
         entity
     }
@@ -382,38 +427,78 @@ impl App {
     /// Calls made while a flush is already active simply return: the outer
     /// drain observes the shared queue. A flush panics after 65,536 effects to
     /// diagnose a cyclic emitter graph instead of hanging indefinitely.
-    pub fn flush(&mut self) {
+    pub fn flush(&mut self) -> FlushStats {
+        self.flush_internal(true)
+    }
+
+    fn flush_effects(&mut self) {
+        let _ = self.flush_internal(false);
+    }
+
+    fn flush_internal(&mut self, render: bool) -> FlushStats {
         if self.flushing || self.update_depth != 0 {
-            return;
+            return FlushStats::default();
+        }
+        if render {
+            let _ = ViewStats::take();
         }
         self.flushing = true;
         let result = catch_unwind(AssertUnwindSafe(|| {
             let mut processed = 0;
-            while let Some(effect) = self.effects.pop_front() {
-                processed += 1;
-                assert!(
-                    processed <= MAX_EFFECTS_PER_FLUSH,
-                    "deferred-effect flush exceeded {MAX_EFFECTS_PER_FLUSH} entries; probable emit cycle"
-                );
-                match effect {
-                    DeferredEffect::Notify(id) => {
-                        if let Some(cell) = self.resolve(id) {
-                            self.notified.insert((cell.depth, id));
+            loop {
+                while let Some(effect) = self.effects.pop_front() {
+                    processed += 1;
+                    assert!(
+                        processed <= MAX_EFFECTS_PER_FLUSH,
+                        "deferred-effect flush exceeded {MAX_EFFECTS_PER_FLUSH} entries; probable emit cycle"
+                    );
+                    match effect {
+                        DeferredEffect::Notify(id) => {
+                            if let Some(cell) = self.resolve(id) {
+                                self.notified.insert((cell.depth, id));
+                            }
                         }
+                        DeferredEffect::Emit {
+                            emitter,
+                            event_type,
+                            event,
+                        } => self.deliver_event(emitter, event_type, event.as_ref()),
                     }
-                    DeferredEffect::Emit {
-                        emitter,
-                        event_type,
-                        event,
-                    } => self.deliver_event(emitter, event_type, event.as_ref()),
                 }
+                if !render {
+                    break;
+                }
+                let Some((_, id)) = self.notified.pop_first() else {
+                    break;
+                };
+                let Some(mut renderer) = self.renderers.remove(&id) else {
+                    continue;
+                };
+                ViewStats::record_component_view();
+                let element = (renderer.render)(renderer.cell.clone(), self);
+                reconcile::reconcile_root(&mut renderer.mounted, element, renderer.boundary, self);
+                self.renderers.insert(id, renderer);
             }
             self.prune_subscriptions();
             self.prune_dropped_entities();
+            if render {
+                self.tree.update_passes().stats
+            } else {
+                PassStats::default()
+            }
         }));
         self.flushing = false;
-        if let Err(panic) = result {
-            resume_unwind(panic);
+        match result {
+            Ok(passes) => FlushStats {
+                passes,
+                views: render.then(ViewStats::take).unwrap_or_default(),
+            },
+            Err(panic) => {
+                if render {
+                    let _ = ViewStats::take();
+                }
+                resume_unwind(panic)
+            }
         }
     }
 
@@ -479,7 +564,7 @@ impl App {
         match result {
             Ok(value) => {
                 if self.update_depth == 0 && !self.flushing {
-                    self.flush();
+                    self.flush_effects();
                 }
                 value
             }
@@ -573,6 +658,55 @@ impl App {
             }
         }
     }
+
+    fn register_renderer(
+        &mut self,
+        entity: EmbeddedEntity,
+        boundary: rxui_tree::NodeHandle<rxui_tree::Frame>,
+    ) {
+        let id = entity.cell.id;
+        assert!(
+            self.renderers
+                .insert(
+                    id,
+                    Renderer {
+                        cell: entity.cell.clone(),
+                        render: entity.render,
+                        boundary: boundary.id(),
+                        mounted: None,
+                    },
+                )
+                .is_none(),
+            "entity {id:?} is already mounted"
+        );
+        self.notified.insert((entity.cell.depth, id));
+    }
+
+    fn unregister_renderer(&mut self, id: EntityId) {
+        self.notified.retain(|(_, queued)| *queued != id);
+        if let Some(renderer) = self.renderers.remove(&id)
+            && let Some(mounted) = renderer.mounted
+        {
+            mounted.forget(self, false);
+        }
+    }
+}
+
+fn render_entity<T: Render>(cell: Rc<EntityCell>, app: &mut App) -> Element {
+    let id = cell.id;
+    let depth = cell.depth;
+    app.update_cell(cell, move |state, app| {
+        let state = state
+            .downcast_mut::<T>()
+            .expect("entity state type must match its render entry point");
+        let mut context = Context {
+            app,
+            current: id,
+            depth,
+            marker: PhantomData,
+        };
+        state.render(&mut context)
+    })
 }
 
 /// Services available while initializing or updating one entity.

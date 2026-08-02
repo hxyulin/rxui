@@ -26,9 +26,9 @@ use astrelis_core::{
 use astrelis_paint::{Image, ImageSampling};
 
 use crate::{
-    Align, Alignment, Axis, BoxElement, Element, Flex, Frame, ImageAlignment, ImageElement,
-    ImageFit, Invalidation, Label, NodeHandle, RenderView, RenderViewContent, Scroll, ScrollAxis,
-    SemanticData, Stack, UiInput, UiTree,
+    ActionBox, Align, Alignment, Axis, BoxElement, Element, Flex, Frame, ImageAlignment,
+    ImageElement, ImageFit, Invalidation, Label, NodeHandle, RenderView, RenderViewContent, Scroll,
+    ScrollAxis, SemanticData, Stack, UiInput, UiTree,
 };
 
 /// Work a change in composed position causes: everything layout would have
@@ -386,6 +386,44 @@ impl NodeMut<'_, BoxElement> {
         self.set_color(color);
         self.set_semantics(semantics);
         self.set_interactive(interactive);
+    }
+}
+
+impl<A: 'static> NodeMut<'_, ActionBox<A>> {
+    /// Replaces the visual and semantic surface through equality-guarded
+    /// property setters.
+    pub fn set_surface(&mut self, surface: BoxElement) {
+        let current = &self.ui.element(self.handle).surface;
+        let size_changed = current.size != surface.size;
+        let color_changed = current.color != surface.color;
+        let semantics_changed = current.semantics != surface.semantics;
+        let interactive_changed = current.interactive != surface.interactive;
+        if size_changed || color_changed || semantics_changed || interactive_changed {
+            let mut invalidation = Invalidation::empty();
+            if size_changed {
+                invalidation |= Invalidation::LAYOUT;
+            }
+            if color_changed {
+                invalidation |= Invalidation::PAINT;
+            }
+            if semantics_changed {
+                invalidation |= Invalidation::ACCESSIBILITY;
+            }
+            if interactive_changed {
+                invalidation |= Invalidation::HIT_TEST;
+            }
+            self.ui.update(self.handle, invalidation, |box_element| {
+                box_element.surface = surface;
+            });
+        }
+    }
+
+    /// Replaces routing data without requesting a retained pass.
+    pub fn set_action(&mut self, action: Option<A>) {
+        self.ui
+            .update(self.handle, Invalidation::empty(), |box_element| {
+                box_element.action = action;
+            });
     }
 }
 

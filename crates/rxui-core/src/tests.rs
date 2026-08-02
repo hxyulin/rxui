@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
 };
@@ -7,6 +7,7 @@ use std::{
 use astrelis_core::geometry::LogicalSize;
 use astrelis_text::FontDatabase;
 use proptest::prelude::*;
+use rxui_tree::PassStats;
 
 use super::*;
 
@@ -279,4 +280,274 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
             Err(_) => "non-string panic".to_owned(),
         },
     }
+}
+
+#[derive(Default)]
+struct StaticView;
+
+impl Render for StaticView {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        column().gap(4.0).child(label("one")).child(label("two"))
+    }
+}
+
+#[test]
+fn unchanged_rerender_has_zero_retained_mutations() {
+    let mut app = app();
+    let root = app.new_entity(|_| StaticView);
+    let mounted = app.mount(&root);
+    assert_eq!(mounted.views.component_views, 1);
+
+    root.update(&mut app, |_, cx| cx.notify());
+    let stats = app.flush();
+
+    assert_eq!(
+        stats.passes,
+        PassStats {
+            reused_fragments: 5,
+            ..PassStats::default()
+        }
+    );
+    assert_eq!(
+        stats.views,
+        ViewStats {
+            component_views: 1,
+            nodes_built: 0,
+            nodes_rebuilt: 3,
+            containers_reconciled: 1,
+            set_children_calls: 0,
+            memo_hits: 0,
+            memo_misses: 0,
+            rows_realized: 0,
+            rows_recycled: 0,
+        }
+    );
+}
+
+struct KeyedList {
+    values: Vec<u64>,
+}
+
+impl Render for KeyedList {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        column().children(
+            self.values
+                .iter()
+                .map(|value| label(value.to_string()).key(*value)),
+        )
+    }
+}
+
+fn rendered_root(app: &App) -> rxui_tree::NodeId {
+    let boundary = app.tree().children(app.tree().root())[0];
+    app.tree().children(boundary)[0]
+}
+
+#[test]
+fn keyed_reverse_preserves_retained_node_ids_and_moves_them() {
+    let mut app = app();
+    let root = app.new_entity(|_| KeyedList {
+        values: vec![1, 2, 3, 4],
+    });
+    app.mount(&root);
+    let column = rendered_root(&app);
+    let before = app.tree().children(column).to_vec();
+
+    root.update(&mut app, |list, cx| {
+        list.values.reverse();
+        cx.notify();
+    });
+    let stats = app.flush();
+    let after = app.tree().children(column).to_vec();
+
+    assert_eq!(after, before.iter().rev().copied().collect::<Vec<_>>());
+    assert_eq!(stats.views.component_views, 1);
+    assert_eq!(stats.views.containers_reconciled, 1);
+    assert_eq!(stats.views.set_children_calls, 1);
+    assert_eq!(stats.views.nodes_built, 0);
+    assert_eq!(stats.views.nodes_rebuilt, 5);
+}
+
+struct PositionalList {
+    values: Vec<&'static str>,
+}
+
+impl Render for PositionalList {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        column().children(self.values.iter().copied().map(label))
+    }
+}
+
+#[test]
+fn unkeyed_children_use_the_positional_fast_path() {
+    let mut app = app();
+    let root = app.new_entity(|_| PositionalList {
+        values: vec!["a", "b", "c"],
+    });
+    app.mount(&root);
+    let column = rendered_root(&app);
+    let before = app.tree().children(column).to_vec();
+
+    root.update(&mut app, |list, cx| {
+        list.values = vec!["c", "b", "a"];
+        cx.notify();
+    });
+    let stats = app.flush();
+
+    assert_eq!(app.tree().children(column), before);
+    assert_eq!(stats.views.nodes_built, 0);
+    assert_eq!(stats.views.nodes_rebuilt, 4);
+    assert_eq!(stats.views.containers_reconciled, 1);
+    assert_eq!(stats.views.set_children_calls, 0);
+}
+
+#[test]
+fn keyed_aligned_order_uses_the_published_order_memo() {
+    let mut app = app();
+    let root = app.new_entity(|_| KeyedList {
+        values: vec![7, 8, 9],
+    });
+    app.mount(&root);
+
+    root.update(&mut app, |_, cx| cx.notify());
+    let stats = app.flush();
+
+    assert_eq!(
+        stats.passes,
+        PassStats {
+            reused_fragments: 6,
+            ..PassStats::default()
+        }
+    );
+    assert_eq!(stats.views.containers_reconciled, 1);
+    assert_eq!(stats.views.set_children_calls, 0);
+}
+
+struct RenderProbe {
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for RenderProbe {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        self.renders.set(self.renders.get() + 1);
+        label("child")
+    }
+}
+
+struct ProbeParent {
+    child: Entity<RenderProbe>,
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for ProbeParent {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        self.renders.set(self.renders.get() + 1);
+        column().child(self.child.clone())
+    }
+}
+
+#[test]
+fn notifying_a_child_does_not_render_its_parent() {
+    let mut app = app();
+    let parent_renders = Rc::new(Cell::new(0));
+    let child_renders = Rc::new(Cell::new(0));
+    let child_renders_for_init = child_renders.clone();
+    let parent_renders_for_init = parent_renders.clone();
+    let parent = app.new_entity(|cx| ProbeParent {
+        child: cx.new(|_| RenderProbe {
+            renders: child_renders_for_init,
+        }),
+        renders: parent_renders_for_init,
+    });
+    let child = parent.read(&app).child.clone();
+    app.mount(&parent);
+    assert_eq!(parent_renders.get(), 1);
+    assert_eq!(child_renders.get(), 1);
+
+    child.update(&mut app, |_, cx| cx.notify());
+    let stats = app.flush();
+
+    assert_eq!(parent_renders.get(), 1);
+    assert_eq!(child_renders.get(), 2);
+    assert_eq!(stats.views.component_views, 1);
+    assert_eq!(stats.views.nodes_rebuilt, 1);
+    assert_eq!(stats.views.containers_reconciled, 0);
+}
+
+struct OrderedChild {
+    order: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl Render for OrderedChild {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        self.order.borrow_mut().push("child");
+        label("child")
+    }
+}
+
+struct OrderedParent {
+    child: Entity<OrderedChild>,
+    order: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl Render for OrderedParent {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> Element {
+        self.order.borrow_mut().push("parent");
+        column().child(self.child.clone())
+    }
+}
+
+#[test]
+fn dirty_entities_flush_in_parent_before_child_order() {
+    let mut app = app();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let child_order = order.clone();
+    let parent_order = order.clone();
+    let parent = app.new_entity(|cx| OrderedParent {
+        child: cx.new(|_| OrderedChild { order: child_order }),
+        order: parent_order,
+    });
+    let child = parent.read(&app).child.clone();
+    app.mount(&parent);
+    order.borrow_mut().clear();
+
+    child.update(&mut app, |_, cx| cx.notify());
+    parent.update(&mut app, |_, cx| cx.notify());
+    let stats = app.flush();
+
+    assert_eq!(&*order.borrow(), &["parent", "child"]);
+    assert_eq!(stats.views.component_views, 2);
+}
+
+struct ButtonView {
+    clicks: usize,
+}
+
+impl Render for ButtonView {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> Element {
+        button("increment").on_click(cx.listener(|this, (), cx| {
+            this.clicks += 1;
+            cx.notify();
+        }))
+    }
+}
+
+#[test]
+fn button_builder_routes_a_listener_from_semantic_activation() {
+    let mut app = app();
+    let root = app.new_entity(|_| ButtonView { clicks: 0 });
+    app.mount(&root);
+    let frame = rendered_root(&app);
+    let surface = app.tree().children(frame)[0];
+    let action = app
+        .tree_mut()
+        .perform_semantic_action(surface, rxui_tree::SemanticAction::Activate)
+        .expect("button activation should emit its routed handler");
+    let handler = *action
+        .downcast::<RoutedHandler>()
+        .expect("button action should be a routed handler");
+
+    assert!(app.dispatch(handler));
+    app.flush();
+    assert_eq!(root.read(&app).clicks, 1);
 }

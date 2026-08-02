@@ -267,6 +267,11 @@ impl UiTree {
         self.root
     }
 
+    /// Returns one node's retained children in paint order.
+    pub fn children(&self, id: NodeId) -> &[NodeId] {
+        &self.node(id).children
+    }
+
     /// Returns the logical viewport.
     pub const fn viewport(&self) -> LogicalSize {
         self.viewport

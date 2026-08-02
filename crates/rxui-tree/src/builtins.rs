@@ -9,7 +9,10 @@ use astrelis_core::{
 use astrelis_paint::{Brush, Painter};
 use astrelis_text::{ParagraphStyle, TextLayout, TextLayoutRequest, TextStyle, TextWrap};
 
-use crate::{Constraints, Element, LayoutContext, SemanticData, SemanticRole, ShapingMemo};
+use crate::{
+    Constraints, Element, EventResult, LayoutContext, SemanticAction, SemanticActionKind,
+    SemanticData, SemanticRole, ShapingMemo, UiInput,
+};
 
 /// Main-axis direction for [`Flex`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -435,6 +438,85 @@ impl Element for BoxElement {
 
     fn hit_testable(&self) -> bool {
         self.interactive
+    }
+}
+
+/// A box that owns one typed, one-shot activation payload.
+///
+/// Frameworks replace the payload while reconciling a freshly described
+/// listener. Replacing it requests no retained pass: routing data changes
+/// neither layout nor pixels, hit testing, or accessibility.
+pub struct ActionBox<A: 'static> {
+    /// Visual, semantic, and hit-test properties.
+    pub surface: BoxElement,
+    /// Payload emitted by the next pointer or semantic activation.
+    pub action: Option<A>,
+}
+
+impl<A: 'static> ActionBox<A> {
+    /// Creates an action-bearing box.
+    pub fn new(surface: BoxElement, action: Option<A>) -> Self {
+        Self { surface, action }
+    }
+}
+
+impl<A: 'static> Element for ActionBox<A> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn layout(&mut self, context: &mut LayoutContext<'_>, constraints: Constraints) -> LogicalSize {
+        self.surface.layout(context, constraints)
+    }
+
+    fn paint(
+        &self,
+        painter: &mut Painter,
+        size: LogicalSize,
+    ) -> Result<(), astrelis_paint::PaintError> {
+        self.surface.paint(painter, size)
+    }
+
+    fn accessibility(&self) -> Option<SemanticData> {
+        self.surface.accessibility()
+    }
+
+    fn event(&mut self, input: UiInput) -> EventResult {
+        if matches!(input, UiInput::PointerReleased(_)) {
+            return self
+                .action
+                .take()
+                .map(EventResult::action)
+                .unwrap_or_default();
+        }
+        EventResult::default()
+    }
+
+    fn semantic_actions(&self) -> Vec<SemanticActionKind> {
+        vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+    }
+
+    fn semantic_action(&mut self, action: SemanticAction) -> EventResult {
+        if matches!(action, SemanticAction::Activate) {
+            return self
+                .action
+                .take()
+                .map(EventResult::action)
+                .unwrap_or_default();
+        }
+        EventResult::default()
+    }
+
+    fn hit_testable(&self) -> bool {
+        self.surface.interactive
+    }
+
+    fn focusable(&self) -> bool {
+        true
     }
 }
 
