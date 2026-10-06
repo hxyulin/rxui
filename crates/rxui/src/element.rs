@@ -51,6 +51,17 @@ macro_rules! integer_keys {
 }
 integer_keys!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, i128);
 
+/// Default control appearance; explicit paint builders/state patches override it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ButtonVariant {
+    /// Bordered control with neutral state fills.
+    #[default]
+    Default,
+    /// Inverted foreground/background for the primary action.
+    Primary,
+    /// Text/content without a resting fill/border; hover/pressed still show feedback.
+    Quiet,
+}
 /// Semantic button activation, shared by pointer and keyboard dispatch.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ClickEvent;
@@ -82,8 +93,9 @@ pub(crate) enum ElementKind {
     Row,
     Column,
     Label(String),
+    Image(Box<crate::image::Properties>),
     Button {
-        text: String,
+        text: Option<String>,
         listener: Option<Listener<ClickEvent>>,
         disabled: bool,
     },
@@ -111,6 +123,7 @@ pub struct Element {
     pub(crate) theme: Option<Theme>,
     pub(crate) font_size: Option<f32>,
     pub(crate) layout_overrides: u8,
+    pub(crate) button_variant: ButtonVariant,
     pub(crate) clip: bool,
     pub(crate) scroll: Option<ScrollAxes>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
@@ -118,6 +131,21 @@ pub struct Element {
 impl IntoElement for Element {
     fn into_element(self) -> Element {
         self
+    }
+}
+impl IntoElement for String {
+    fn into_element(self) -> Element {
+        label(self)
+    }
+}
+impl IntoElement for &str {
+    fn into_element(self) -> Element {
+        label(self)
+    }
+}
+impl IntoElement for &String {
+    fn into_element(self) -> Element {
+        label(self.clone())
     }
 }
 impl<T: View> IntoElement for Entity<T> {
@@ -141,6 +169,7 @@ impl Element {
             theme: None,
             font_size: None,
             layout_overrides: 0,
+            button_variant: ButtonVariant::Default,
             clip: false,
             scroll: None,
             semantics: None,
@@ -370,6 +399,52 @@ impl Element {
         }
         self
     }
+    /// Chooses default button paint, independent of dimensions or interaction.
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        assert!(
+            matches!(self.kind, ElementKind::Button { .. }),
+            "variant requires a button"
+        );
+        self.button_variant = variant;
+        self
+    }
+    /// Image aspect mapping into its content box.
+    pub fn fit(mut self, fit: crate::ImageFit) -> Self {
+        self.image_properties().fit = fit;
+        self
+    }
+    /// Image alignment (0 start, 0.5 center, 1 end) for contain space or cover crop.
+    pub fn image_align(mut self, x: f32, y: f32) -> Self {
+        self.image_properties().align = [x, y];
+        self
+    }
+    /// Normalized source crop `[u, v, width, height]`, contained in 0..1.
+    pub fn source_region(mut self, uv: [f32; 4]) -> Self {
+        self.image_properties().uv = uv;
+        self
+    }
+    /// Image tint, literal or theme-bound; independent of inherited text color.
+    pub fn tint(mut self, color: impl Into<StyleColor>) -> Self {
+        self.image_properties().tint = color.into();
+        self
+    }
+    /// Image sampling; bindings are cached by source and sampling options.
+    pub fn filter(mut self, filter: crate::ImageFilter) -> Self {
+        self.image_properties().filter = filter;
+        self
+    }
+    /// Explicit source alpha encoding for application textures/custom shaders.
+    pub fn image_alpha(mut self, alpha: crate::ImageAlpha) -> Self {
+        self.image_properties().alpha = alpha;
+        self
+    }
+    fn image_properties(&mut self) -> &mut crate::image::Properties {
+        if let ElementKind::Image(props) = &mut self.kind {
+            props
+        } else {
+            panic!("image property requires an image element")
+        }
+    }
     /// Installs semantic activation on a button; other element kinds reject it.
     pub fn on_click(mut self, listener: Listener<ClickEvent>) -> Self {
         if let ElementKind::Button {
@@ -484,6 +559,9 @@ impl Element {
         {
             return Err(UiError::InvalidStyle);
         }
+        if let ElementKind::Image(props) = &self.kind {
+            props.validate()?;
+        }
         self.paint.validate()?;
         if let Some(states) = &self.states {
             states.hover.validate()?;
@@ -502,7 +580,8 @@ impl Element {
             && matches!(
                 self.kind,
                 ElementKind::Label(_)
-                    | ElementKind::Button { .. }
+                    | ElementKind::Button { text: Some(_), .. }
+                    | ElementKind::Image(_)
                     | ElementKind::TextInput { .. }
                     | ElementKind::Component(_)
             )
@@ -511,6 +590,10 @@ impl Element {
         }
         if self.scroll.is_some() && !matches!(self.kind, ElementKind::Row | ElementKind::Column) {
             return Err(UiError::InvalidStyle);
+        }
+        if matches!(self.kind, ElementKind::Button { .. }) && self.children.iter().any(has_control)
+        {
+            return Err(UiError::NestedControl);
         }
         let mut keys = HashSet::new();
         for child in &self.children {
@@ -539,13 +622,49 @@ pub fn column() -> Element {
 pub fn label(text: impl Into<String>) -> Element {
     Element::new(ElementKind::Label(text.into()))
 }
-/// Button leaf with default padding/background, activated via on_click.
-pub fn button(text: impl Into<String>) -> Element {
+/// Button with a caption or composed content, default padding and themed state paint.
+/// Plain strings retain the leaf fast path; composed content cannot contain controls.
+/// Use `button(row().child(...))` for composition. Label descendants supply its
+/// accessible name; name icon-only buttons with `accessibility_label`. Descendant
+/// text inherits the button's current state foreground unless explicitly colored.
+/// A caption button is a leaf and rejects additional children during preparation.
+///
+/// ```
+/// use rxui::prelude::*;
+/// let pixels = Image::from_rgba8(1, 1, vec![255; 4]).unwrap();
+/// let action = button(row().gap(8.)
+///     .child(image(pixels).width(16.).height(16.).accessibility_hidden(true))
+///     .child(label("Save")))
+///     .variant(ButtonVariant::Primary);
+/// ```
+pub fn button(content: impl IntoElement) -> Element {
+    let content = content.into_element();
+    let plain = matches!(content.kind, ElementKind::Label(_))
+        && content.style == Element::new(ElementKind::Label(String::new())).style
+        && content.paint == PaintStyle::default()
+        && content.font_size.is_none()
+        && content.key.is_none()
+        && content.semantics.is_none()
+        && content.theme.is_none()
+        && content.states.is_none()
+        && content.children.is_empty()
+        && !content.clip
+        && content.scroll.is_none()
+        && content.layout_overrides == 0;
+    let (text, children) = if plain {
+        let ElementKind::Label(text) = content.kind else {
+            unreachable!()
+        };
+        (Some(text), Vec::new())
+    } else {
+        (None, vec![content])
+    };
     let mut element = Element::new(ElementKind::Button {
-        text: text.into(),
+        text,
         listener: None,
         disabled: false,
     });
+    element.children = children;
     element.control_defaults(false);
     element
 }
@@ -577,4 +696,18 @@ pub fn text_input(value: impl Into<String>) -> Element {
     });
     element.control_defaults(true);
     element
+}
+
+/// Shared raster/GPU image leaf. Use explicit sizing for high-DPI assets and framebuffer outputs.
+pub fn image(source: crate::Image) -> Element {
+    Element::new(ElementKind::Image(Box::new(crate::image::Properties::new(
+        source,
+    ))))
+}
+
+fn has_control(element: &Element) -> bool {
+    matches!(
+        element.kind,
+        ElementKind::Button { .. } | ElementKind::TextInput { .. }
+    ) || element.children.iter().any(has_control)
 }

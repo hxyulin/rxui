@@ -3,7 +3,10 @@ use astrelis::{
     GraphicsContext, Painter, PreparedText, Rect, RenderFormat, RenderPass, Stroke, TextBuffer,
     TextDraw, TextLayout, TextRasterOptions, TextStyle, TextSystem, TextWrap, Transform2D,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 impl From<astrelis::Error> for UiError {
     fn from(error: astrelis::Error) -> Self {
@@ -57,6 +60,33 @@ impl TextResource {
     }
 }
 
+/// Cumulative image preparation work. Placements share uploaded pixels and bindings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImageStats {
+    /// CPU images uploaded to this painter's device.
+    pub uploads: u64,
+    /// Uploaded CPU RGBA byte count.
+    pub uploaded_bytes: u64,
+    /// Created source/sampler bindings, including storage replacement.
+    pub bindings: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ImageKey {
+    id: crate::ImageId,
+    filter: crate::ImageFilter,
+    alpha: crate::ImageAlpha,
+}
+struct ImageResource {
+    texture: Option<astrelis::Texture>,
+    view: Option<astrelis::wgpu::TextureView>,
+}
+fn image_key(image: &crate::ImageInfo<'_>) -> ImageKey {
+    ImageKey {
+        id: image.source.id(),
+        filter: image.filter,
+        alpha: image.alpha,
+    }
+}
 /// Explicit Astrelis text measurement and painting adapter for a retained Ui.
 /// It owns fonts and caches, but no window or application lifecycle. Call Ui::prepare
 /// using this as TextMeasure, then prepare GPU resources before frame acquisition.
@@ -66,6 +96,11 @@ pub struct UiPainter {
     generation: u64,
     painter: Painter,
     texts: HashMap<ElementId, TextResource>,
+    graphics: GraphicsContext,
+    images: HashMap<crate::ImageId, ImageResource>,
+    image_bindings: HashMap<ImageKey, astrelis::TextureBinding>,
+    image_placements: HashMap<ElementId, ImageKey>,
+    image_stats: ImageStats,
 }
 impl UiPainter {
     /// Creates empty fonts and renderer caches for this graphics device.
@@ -75,7 +110,16 @@ impl UiPainter {
             generation: 0,
             painter: Painter::new(graphics),
             texts: HashMap::new(),
+            graphics: graphics.clone(),
+            images: HashMap::new(),
+            image_bindings: HashMap::new(),
+            image_placements: HashMap::new(),
+            image_stats: ImageStats::default(),
         }
+    }
+    /// Cumulative image upload/binding counters.
+    pub fn image_stats(&self) -> ImageStats {
+        self.image_stats
     }
     /// Font loading/configuration access. Each call advances measurement generation,
     /// invalidating text measurements on the next prepare. Load/discover once at startup.
@@ -113,8 +157,10 @@ impl UiPainter {
         self.texts
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
         self.painter.prepare(format)?;
+        self.prepare_images(ui, format)?;
         for element in ui.elements() {
             let Some(text) = element.text else {
+                self.texts.remove(&element.id);
                 continue;
             };
             let resource = self.texts.entry(element.id).or_default();
@@ -161,6 +207,100 @@ impl UiPainter {
         }
         Ok(())
     }
+    fn prepare_images<T: View>(
+        &mut self,
+        ui: &Ui<T>,
+        format: &RenderFormat,
+    ) -> Result<(), UiError> {
+        self.image_placements
+            .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
+        let mut seen = HashSet::new();
+        for element in ui.elements() {
+            let Some(image) = element.image else {
+                self.image_placements.remove(&element.id);
+                continue;
+            };
+            let key = image_key(&image);
+            self.image_placements.insert(element.id, key);
+            if !seen.insert(key) {
+                continue;
+            }
+            let resource = self.images.entry(key.id).or_insert(ImageResource {
+                texture: None,
+                view: None,
+            });
+            let current = match image.source.source() {
+                crate::image::Source::Rgba { size, bytes } => {
+                    if resource.texture.is_none() {
+                        let texture = self
+                            .graphics
+                            .create_texture(astrelis::TextureOptions::new(size[0], size[1]))?;
+                        texture.write(bytes)?;
+                        self.image_stats.uploads += 1;
+                        self.image_stats.uploaded_bytes += bytes.len() as u64;
+                        resource.texture = Some(texture);
+                    }
+                    Some(resource.texture.as_ref().unwrap().view().clone())
+                }
+                crate::image::Source::Texture(texture) => Some(texture.view().clone()),
+                crate::image::Source::View { view, .. } => Some(view.clone()),
+                crate::image::Source::Framebuffer(source) => match source.view() {
+                    Ok(view) => Some(view),
+                    Err(astrelis::Error::TargetSuspended) => None,
+                    Err(e) => return Err(e.into()),
+                },
+            };
+            if resource.view != current {
+                for filter in [crate::ImageFilter::Linear, crate::ImageFilter::Nearest] {
+                    for alpha in [
+                        crate::ImageAlpha::Straight,
+                        crate::ImageAlpha::Premultiplied,
+                    ] {
+                        self.image_bindings.remove(&ImageKey {
+                            id: key.id,
+                            filter,
+                            alpha,
+                        });
+                    }
+                }
+                resource.view = current;
+            }
+            let Some(view) = &resource.view else {
+                continue;
+            };
+            if !self.image_bindings.contains_key(&key) {
+                let options = astrelis::TextureBindingOptions::new()
+                    .filter(match key.filter {
+                        crate::ImageFilter::Nearest => astrelis::TextureFilter::Nearest,
+                        crate::ImageFilter::Linear => astrelis::TextureFilter::Linear,
+                    })
+                    .alpha(match key.alpha {
+                        crate::ImageAlpha::Straight => astrelis::TextureAlpha::Straight,
+                        crate::ImageAlpha::Premultiplied => astrelis::TextureAlpha::Premultiplied,
+                    });
+                let binding =
+                    if let crate::image::Source::Framebuffer(source) = image.source.source() {
+                        self.painter
+                            .textures()
+                            .create_sampled_binding_with_options(source, options)?
+                    } else {
+                        self.painter.create_image_binding(view, options)?
+                    };
+                self.image_bindings.insert(key, binding);
+                self.image_stats.bindings += 1;
+            }
+            self.painter
+                .prepare_image(&self.image_bindings[&key], format)?;
+        }
+        self.prune_images();
+        Ok(())
+    }
+    fn prune_images(&mut self) {
+        let keys: HashSet<_> = self.image_placements.values().copied().collect();
+        let ids: HashSet<_> = keys.iter().map(|key| key.id).collect();
+        self.images.retain(|id, _| ids.contains(id));
+        self.image_bindings.retain(|key, _| keys.contains(key));
+    }
     /// Draws the prepared snapshot into an existing pass using one logical-to-physical
     /// transform. The host supplies clipping and controls submission/presentation.
     pub fn paint<T: View>(
@@ -175,6 +315,17 @@ impl UiPainter {
         // Validate the complete snapshot before recording any draws. A caller that
         // changed layout/text must prepare its matching resources first.
         for element in ui.elements() {
+            if let Some(image) = &element.image {
+                let key = image_key(image);
+                if self.image_placements.get(&element.id) != Some(&key)
+                    || !self.images.contains_key(&key.id)
+                {
+                    return Err(UiError::InvalidGeometry);
+                }
+                if image.source.pixel_size().is_some() && !self.image_bindings.contains_key(&key) {
+                    return Err(UiError::InvalidGeometry);
+                }
+            }
             if element.text.is_some() {
                 let resource = self
                     .texts
@@ -253,6 +404,42 @@ impl UiPainter {
                                 }
                             }
                         }
+                    }
+                }
+                if let Some(image) = &element.image
+                    && image.source.pixel_size().is_some()
+                    && image.destination.width > 0.
+                    && image.destination.height > 0.
+                {
+                    let key = image_key(image);
+                    let d = image.destination;
+                    let image_clip = physical_clip(
+                        element.clip_bounds.intersection(element.content_bounds),
+                        scale,
+                        [viewport[0], viewport[1]],
+                        original_scissor,
+                    );
+                    if image_clip[2] > 0 && image_clip[3] > 0 {
+                        paint.pass().set_scissor_rect(
+                            image_clip[0],
+                            image_clip[1],
+                            image_clip[2],
+                            image_clip[3],
+                        )?;
+                        paint.draw_image(
+                            &self.image_bindings[&key],
+                            astrelis::TextureDraw::new(Rect::new(d.x, d.y, d.width, d.height))
+                                .uv(astrelis::UvRect::new(
+                                    image.uv[0],
+                                    image.uv[1],
+                                    image.uv[2],
+                                    image.uv[3],
+                                ))
+                                .tint(image.tint),
+                        )?;
+                        paint
+                            .pass()
+                            .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
                     }
                 }
                 if let Some(editing) = &element.editing {
@@ -440,6 +627,8 @@ impl UiPainter {
     /// the same painter. Previously recorded resources retain GPU completion leases.
     pub fn forget<T: View>(&mut self, ui: &Ui<T>) {
         self.texts.retain(|id, _| !ui.owns_element(*id));
+        self.image_placements.retain(|id, _| !ui.owns_element(*id));
+        self.prune_images();
     }
 }
 fn ast_position(p: crate::TextPosition) -> astrelis::TextPosition {
@@ -1018,3 +1207,7 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "image_gpu_tests.rs"]
+mod image_gpu_tests;

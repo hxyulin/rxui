@@ -74,6 +74,11 @@ impl From<UiError> for ApplicationError {
         Self::Ui(e)
     }
 }
+impl From<astrelis::Error> for ApplicationError {
+    fn from(e: astrelis::Error) -> Self {
+        Self::Ui(e.into())
+    }
+}
 impl From<crate::AccessError> for ApplicationError {
     fn from(e: crate::AccessError) -> Self {
         Self::Ui(e.into())
@@ -643,6 +648,25 @@ fn clipboard(
     }
     Ok(slot.as_mut().unwrap())
 }
+/// Graphics preparation data before surface acquisition. Hooks may create/resize
+/// resources and update models; no entity borrow or render pass spans this call.
+pub struct GraphicsPrepareContext<'a> {
+    /// Explicit source window; AppContext has no implicit listener source here.
+    pub window: &'a WindowHandle,
+    /// Shared device used by the window and UiPainter.
+    pub graphics: &'a GraphicsContext,
+    /// Logical/physical size and DPI for backing-resolution choices.
+    pub metrics: WindowMetrics,
+    /// Surface attachment format for custom pipeline preparation.
+    pub format: &'a astrelis::RenderFormat,
+}
+type GraphicsPrepareHook =
+    dyn FnMut(GraphicsPrepareContext<'_>, &mut AppContext<'_>) -> Result<(), ApplicationError>;
+type GraphicsRenderHook = dyn FnMut(
+    &WindowHandle,
+    WindowInfo<'_>,
+    &mut Frame<'_, 'static>,
+) -> Result<(), ApplicationError>;
 type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
 type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type ExitHook = dyn FnOnce(&mut AppContext<'_>);
@@ -657,6 +681,8 @@ pub struct Application {
     executor: Option<Arc<dyn TaskExecutor>>,
     graphics: Option<GraphicsContext>,
     runner_options: RunnerOptions,
+    prepare_graphics: Option<Box<GraphicsPrepareHook>>,
+    render_graphics: Option<Box<GraphicsRenderHook>>,
     created: Option<Box<CreatedHook>>,
     close: Option<Box<CloseHook>>,
     exiting: Option<Box<ExitHook>>,
@@ -678,6 +704,8 @@ impl Application {
             executor: None,
             graphics: None,
             runner_options: RunnerOptions::default(),
+            prepare_graphics: None,
+            render_graphics: None,
             created: None,
             close: None,
             exiting: None,
@@ -687,6 +715,38 @@ impl Application {
     #[must_use]
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
+        self
+    }
+    /// Runs GPU resource preparation before acquisition and before UiPainter's GPU
+    /// preparation. It may run on retries without a presented frame. Model updates
+    /// are flushed/reconciled afterward; use the supplied window as event source.
+    #[must_use]
+    pub fn prepare_graphics(
+        mut self,
+        hook: impl FnMut(
+            GraphicsPrepareContext<'_>,
+            &mut AppContext<'_>,
+        ) -> Result<(), ApplicationError>
+        + 'static,
+    ) -> Self {
+        self.prepare_graphics = Some(Box::new(hook));
+        self
+    }
+    /// Records application GPU work before the UI pass in the same frame/encoder.
+    /// Prepare/resize sources in prepare_graphics; this hook gets no mutable model
+    /// context so recording cannot invalidate the prepared UI. It must not finish
+    /// the host frame or sample a texture while writing it in the same pass.
+    #[must_use]
+    pub fn render_graphics(
+        mut self,
+        hook: impl FnMut(
+            &WindowHandle,
+            WindowInfo<'_>,
+            &mut Frame<'_, 'static>,
+        ) -> Result<(), ApplicationError>
+        + 'static,
+    ) -> Self {
+        self.render_graphics = Some(Box::new(hook));
         self
     }
     /// Adds application font data, selecting it instead of default system discovery.
@@ -791,6 +851,8 @@ impl Application {
             fonts: self.fonts,
             system_fonts: self.system_fonts,
             active: false,
+            prepare_graphics: self.prepare_graphics,
+            render_graphics: self.render_graphics,
             created: self.created,
             close: self.close,
             exiting: self.exiting,
@@ -837,6 +899,8 @@ struct Host<F> {
     fonts: Vec<Arc<[u8]>>,
     system_fonts: bool,
     active: bool,
+    prepare_graphics: Option<Box<GraphicsPrepareHook>>,
+    render_graphics: Option<Box<GraphicsRenderHook>>,
     created: Option<Box<CreatedHook>>,
     close: Option<Box<CloseHook>>,
     exiting: Option<Box<ExitHook>>,
@@ -1053,15 +1117,9 @@ impl<F> Host<F> {
         if cx.event_loop().exiting() {
             return Ok(());
         }
-        let accessible: Vec<_> = self
-            .windows
-            .iter()
-            .filter(|(_, w)| w.accessibility_active && !w.life.closing.get())
-            .map(|(id, _)| *id)
-            .collect();
-        for id in accessible {
-            self.publish_accessibility(cx, id)?;
-        }
+        // Queue visual work before accessibility preparation consumes component
+        // dirtiness. Semantic publication may prepare CPU snapshots for every active
+        // adapter; it must not erase another window's shared-model redraw request.
         for (id, window) in &self.windows {
             if Some(*id) != preparing
                 && !window.life.closing.get()
@@ -1074,6 +1132,15 @@ impl<F> Host<F> {
                 cx.request_redraw(*id)
                     .map_err(|e| ApplicationError::Native(Box::new(e)))?;
             }
+        }
+        let accessible: Vec<_> = self
+            .windows
+            .iter()
+            .filter(|(_, w)| w.accessibility_active && !w.life.closing.get())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in accessible {
+            self.publish_accessibility(cx, id)?;
         }
         Ok(())
     }
@@ -1453,6 +1520,29 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         let Some(native) = cx.window(id) else {
             return Ok(PrepareAction::Skip);
         };
+        if let Some(hook) = &mut self.prepare_graphics {
+            let handle = WindowHandle {
+                life: self.windows[&id].life.clone(),
+            };
+            let graphics = native.graphics().clone();
+            let metrics = native.metrics();
+            let format = native.render_format().unwrap().clone();
+            self.runtime.update(|cx| {
+                hook(
+                    GraphicsPrepareContext {
+                        window: &handle,
+                        graphics: &graphics,
+                        metrics,
+                        format: &format,
+                    },
+                    cx,
+                )
+            })?;
+            self.progress(cx, Some(id))?;
+        }
+        let Some(native) = cx.window(id) else {
+            return Ok(PrepareAction::Skip);
+        };
         let window = self.windows.get_mut(&id).unwrap();
         if window.life.closing.get() {
             return Ok(PrepareAction::Skip);
@@ -1482,6 +1572,12 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         window: WindowInfo<'_>,
         frame: &mut Frame<'_, 'static>,
     ) -> Result<(), Self::Error> {
+        if let Some(hook) = &mut self.render_graphics {
+            let handle = WindowHandle {
+                life: self.windows[&window.id()].life.clone(),
+            };
+            hook(&handle, window, frame)?;
+        }
         let hosted = &self.windows[&window.id()];
         let c = hosted
             .background

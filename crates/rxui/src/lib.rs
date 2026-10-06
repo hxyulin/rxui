@@ -107,6 +107,8 @@ mod element;
 mod entity;
 mod error;
 mod id;
+#[cfg(feature = "layout")]
+mod image;
 mod listener;
 #[cfg(feature = "native")]
 mod native;
@@ -137,17 +139,21 @@ pub use editing::{
 };
 #[cfg(feature = "layout")]
 pub use element::{
-    ClickEvent, Color, Element, IntoElement, Key, ScrollAxes, View, button, column, label, row,
-    text_input,
+    ButtonVariant, ClickEvent, Color, Element, IntoElement, Key, ScrollAxes, View, button, column,
+    image, label, row, text_input,
 };
 pub use entity::{Entity, Read, WeakEntity};
 pub use error::{AccessError, EffectCycle};
 pub use id::{EntityId, MountId};
+#[cfg(feature = "layout")]
+pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
 pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
-pub use native::{Application, ApplicationError, WindowHandle, WindowId, WindowOptions};
+pub use native::{
+    Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
+};
 #[cfg(feature = "rendering")]
-pub use painting::UiPainter;
+pub use painting::{ImageStats, UiPainter};
 pub use runtime::{Mount, Runtime, Subscription};
 #[cfg(feature = "layout")]
 pub use semantics::{SemanticAction, SemanticNode, SemanticRole};
@@ -174,9 +180,10 @@ pub mod prelude {
     #[cfg(feature = "native")]
     pub use crate::{Application, ApplicationError, CloseResponse, WindowHandle, WindowOptions};
     pub use crate::{
-        ClickEvent, Context, Entity, IntoElement, Listener, PaintStyle, Runtime, SemanticRole,
-        TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, button, column,
-        label, rgb8, rgba8, row, text_input,
+        ButtonVariant, ClickEvent, Context, Entity, Image, ImageAlpha, ImageFilter, ImageFit,
+        IntoElement, Listener, PaintStyle, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent,
+        Theme, ThemeColor, Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row,
+        text_input,
     };
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
@@ -207,3 +214,6 @@ mod semantic_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod theme_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod image_tests;

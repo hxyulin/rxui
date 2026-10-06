@@ -555,3 +555,14 @@ the new declarative/state API.
   [shared state ownership](https://react.dev/learn/sharing-state-between-components):
   context for declarative data flow. RXUI's live mutable update references do not
   have React function components' render-snapshot setter semantics.
+
+### Images, custom rendering and composed controls
+
+Implemented shared Image handles with intrinsic/cropped sizing, contain/cover/stretch,
+filter/tint/alpha options, upload/binding reuse and live framebuffer color sources.
+Optional PNG/JPEG decoding runs explicitly outside views. Application prepare/render
+hooks support caller-owned resources and same-frame offscreen work. Composed button
+content preserves the caption fast path, rejects nested controls, derives names and
+inherits control state foreground; Default/Primary/Quiet variants follow themes.
+Contracts and validation are in [images.md](images.md), [styling.md](styling.md) and
+[performance/images.md](performance/images.md).

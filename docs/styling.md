@@ -207,3 +207,33 @@ cargo bench -p rxui --bench elements --features accessibility --locked
 
 The standalone gallery has no smoke-test flags or shared support module. The
 [performance report](performance/themes.md) records timings, sources and limits.
+
+## Composable buttons and variants
+
+`button("Save")` preserves the caption leaf fast path. Composed content uses the
+same listener, focus, keyboard and pointer behavior:
+
+```rust
+button(row().gap(8.)
+    .child(image(self.icon.clone()).width(20.).height(20.).accessibility_hidden(true))
+    .child(label("Save")))
+    .variant(ButtonVariant::Primary)
+    .on_click(cx.listener(|this, _, _| this.save_requested = true))
+```
+
+Descendant labels supply the accessible name, including entity-backed components;
+explicit accessibility labels override that name. Hidden/decorative subtrees are
+excluded. Icon-only buttons need an explicit label. Nested buttons and text inputs
+are rejected even through component boundaries. A caption button remains a leaf;
+pass a container as its content to add children.
+
+Content text inherits the button's resolved normal/hover/pressed/disabled foreground.
+An explicit `.color(...)` on a descendant overrides that inheritance. Image tint is
+independent; bind `.tint(ThemeColor::Text)` or provide an application tint when needed.
+Pointer/focus state changes select cached paint without layout or new descriptions.
+Default is the neutral bordered control, Primary inverts the foreground/background,
+and Quiet removes resting fill/border while keeping hover/pressed/focus feedback.
+All use the same box metrics, retaining a stable border inset even for Quiet.
+Explicit paint/state builders override variant defaults, following normal precedence.
+Composition adds retained nodes and accessible-name work; the caption fast path
+remains useful for large simple lists. See [measurements](performance/images.md).

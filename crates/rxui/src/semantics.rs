@@ -17,6 +17,8 @@ pub enum SemanticRole {
     ListItem,
     /// Section heading; initially published at level one.
     Heading,
+    /// Named raster or custom-rendered image.
+    Image,
     /// Static text.
     Label,
     /// Activatable button.

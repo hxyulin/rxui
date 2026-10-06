@@ -103,3 +103,15 @@ The [single-line text-input contract](text-input.md) describes implemented editi
 selection and IME behavior. This slice does not implement multiline/undo editing,
 scrollbars or virtualization. Those are independent
 UI features rather than obligations of the native surface runner.
+
+## Application-owned GPU work
+
+`.prepare_graphics(...)` creates/resizes/uploads application resources before
+acquisition and UI GPU preparation. It receives compatible graphics, window
+metrics/format, an explicit WindowHandle and mutable AppContext. Updates are flushed
+before preparing the UI; it may run on acquisition retries without a presentation.
+`.render_graphics(...)` records before UI painting into the host's Frame, so offscreen
+output and its image placement can share one submission. The recording hook receives
+no mutable model context and leaves finish/presentation to the host. Custom hosts
+can continue to own the entire sequence. See [images and graphics output](images.md)
+and the standalone [framebuffer chart](../crates/rxui/examples/framebuffer_window.rs).

@@ -456,6 +456,7 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::ListItem => Role::ListItem,
         SemanticRole::Heading => Role::Heading,
         SemanticRole::Label => Role::Label,
+        SemanticRole::Image => Role::Image,
         SemanticRole::Button => Role::Button,
         SemanticRole::TextInput => Role::TextInput,
     }

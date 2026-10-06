@@ -175,3 +175,12 @@ cargo test -p rxui --all-features semantic_tests --locked
 cargo bench -p rxui --bench elements --features accessibility --locked
 cargo run -p rxui --example text_input_window --features native --locked
 ```
+
+## Image and composed-control names
+
+Images infer Image role. Supply `accessibility_label` for meaningful content and
+hide decorative icons. Composed buttons infer their name from visible, non-hidden
+label descendants, including component descriptions; an explicit name overrides
+it. Their content is not separately focusable. Nested interactive controls are
+rejected to keep activation and focus unambiguous. Native AccessKit maps images
+to its Image role and button actions keep using the existing listener path.

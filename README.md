@@ -18,7 +18,9 @@ clipping, focus traversal and button activation are implemented. Controlled
 single-line editing, selection, clipboard and IME are implemented.
 Portable semantics, accessible names/roles, focus, activation, controlled values,
 selection and scrolling are implemented. Themes, inherited text styling, control
-state paints and grayscale dark/light presets are implemented. Virtualization
+state paints and grayscale dark/light presets are implemented. Shared RGBA/GPU
+images, live framebuffer output, composed buttons and application graphics hooks
+are implemented. Optional `image-decoding` adds PNG/JPEG decoding. Virtualization
 remains a following milestone.
 
 ## Declarative views and a window
@@ -260,3 +262,23 @@ preserves the previous tracked source. A separate local export preserves the
 previous working documentation and untracked prototype as well. The old remote
 `main` has not been replaced. No compatibility layer with the former RXUI API is
 part of this rewrite.
+
+## Images and custom rendering
+
+Keep shared `Image` handles in state, then use
+`image(source.clone()).width(240.).height(160.).fit(ImageFit::Cover)`. Sources can
+be RGBA pixels, optional decoded PNG/JPEG bytes, textures/views or a live framebuffer
+color output. `button(row().child(image(icon)).child(label("Save")))` composes content
+with normal control behavior; `.variant(ButtonVariant::Primary)` or Quiet selects
+themed appearances.
+
+`Application::prepare_graphics` owns allocation, resize and data uploads.
+`Application::render_graphics` records application passes before UI painting in the
+same frame. The [image contract](docs/images.md) covers layout, alpha, ownership,
+clipping, caching and hooks. The [performance report](docs/performance/images.md)
+records costs and workload boundaries. Both examples are standalone:
+
+```sh
+cargo run -p rxui --example images_window --features native --locked
+cargo run -p rxui --example framebuffer_window --features native --locked
+```

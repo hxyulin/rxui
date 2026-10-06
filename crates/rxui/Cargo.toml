@@ -13,11 +13,13 @@ publish = false
 default = ["layout"]
 rendering = ["layout", "dep:astrelis"]
 native = ["accessibility", "dep:accesskit_winit", "rendering", "tasks", "dep:astrelis-winit", "dep:arboard"]
+image-decoding = ["layout", "dep:image_codec"]
 accessibility = ["layout", "dep:accesskit"]
 layout = ["dep:taffy", "dep:unicode-segmentation"]
 tasks = ["dep:async-executor", "dep:async-channel", "dep:futures-lite", "dep:futures-util", "dep:async-io"]
 
 [dependencies]
+image_codec = { package = "image", version = "=0.25.10", default-features = false, features = ["png", "jpeg"], optional = true }
 astrelis = { workspace = true, optional = true }
 astrelis-winit = { workspace = true, optional = true }
 accesskit = { version = "=0.25.1", optional = true }
@@ -62,3 +64,16 @@ required-features = ["native"]
 [[example]]
 name = "theme_gallery"
 required-features = ["native"]
+
+[[example]]
+name = "images_window"
+required-features = ["native"]
+
+[[example]]
+name = "framebuffer_window"
+required-features = ["native"]
+
+[[bench]]
+name = "images"
+harness = false
+required-features = ["layout"]

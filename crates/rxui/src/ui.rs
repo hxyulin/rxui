@@ -26,7 +26,14 @@ pub enum UiError {
     RecursiveComponent(crate::EntityId),
     /// A style has non-finite, out-of-range, or negative size/spacing values.
     InvalidStyle,
-    /// A text/button/component leaf was given children.
+    /// Invalid image dimensions, byte length or placement parameters.
+    InvalidImage,
+    /// Encoded image could not be decoded.
+    #[cfg(feature = "image-decoding")]
+    ImageDecode(Box<dyn Error>),
+    /// A button contains another button/input, also through a component boundary.
+    NestedControl,
+    /// A label/image/input/component/caption-button leaf was given children.
     LeafChildren,
     /// Viewport or input coordinates are invalid.
     InvalidGeometry,
@@ -74,7 +81,13 @@ impl fmt::Display for UiError {
                 f.write_str("single-line input value contains control characters")
             }
             Self::InvalidStyle => f.write_str("invalid RXUI element style"),
-            Self::LeafChildren => f.write_str("only row and column elements accept children"),
+            Self::NestedControl => f.write_str("buttons cannot contain interactive controls"),
+            Self::InvalidImage => f.write_str("invalid image data or placement"),
+            #[cfg(feature = "image-decoding")]
+            Self::ImageDecode(e) => e.fmt(f),
+            Self::LeafChildren => f.write_str(
+                "leaf elements cannot contain children; compose button content with a container",
+            ),
             Self::InvalidGeometry => f.write_str("invalid RXUI viewport or input geometry"),
         }
     }
@@ -85,6 +98,8 @@ impl Error for UiError {
             Self::Access(e) => Some(e),
             Self::Layout(e) => Some(e),
             Self::Measurement(e) => Some(e.as_ref()),
+            #[cfg(feature = "image-decoding")]
+            Self::ImageDecode(e) => Some(e.as_ref()),
             #[cfg(feature = "rendering")]
             Self::Graphics(e) => Some(e),
             #[cfg(feature = "rendering")]
@@ -212,7 +227,9 @@ pub enum ElementType {
     Column,
     /// Text leaf.
     Label,
-    /// Activatable text/button leaf.
+    /// Shared raster/GPU image leaf.
+    Image,
+    /// Activatable caption or composed-content button.
     Button,
     /// Controlled single-line editable text leaf.
     TextInput,
@@ -239,6 +256,8 @@ pub struct ElementInfo<'a> {
     pub scroll_range: [f32; 2],
     /// Owned node text, borrowed for the snapshot.
     pub text: Option<&'a str>,
+    /// Image source and resolved placement, absent for other kinds.
+    pub image: Option<crate::ImageInfo<'a>>,
     /// Selection/composition retained by this text input placement.
     pub editing: Option<TextInputInfo>,
     /// Leaf font size.
@@ -334,6 +353,7 @@ fn kind(element: &Element) -> ElementType {
         ElementKind::Row => ElementType::Row,
         ElementKind::Column => ElementType::Column,
         ElementKind::Label(_) => ElementType::Label,
+        ElementKind::Image(_) => ElementType::Image,
         ElementKind::TextInput { .. } => ElementType::TextInput,
         ElementKind::Button { .. } => ElementType::Button,
         ElementKind::Component(_) => ElementType::Component,
@@ -341,10 +361,16 @@ fn kind(element: &Element) -> ElementType {
 }
 fn text(element: &Element) -> Option<&str> {
     match &element.kind {
-        ElementKind::Label(text)
-        | ElementKind::Button { text, .. }
-        | ElementKind::TextInput { value: text, .. } => Some(text),
+        ElementKind::Label(text) | ElementKind::TextInput { value: text, .. } => Some(text),
+        ElementKind::Button { text, .. } => text.as_deref(),
         _ => None,
+    }
+}
+fn image_properties(element: &Element) -> Option<&crate::image::Properties> {
+    if let ElementKind::Image(props) = &element.kind {
+        Some(props)
+    } else {
+        None
     }
 }
 fn compatible(old: &Element, new: &Element) -> bool {
@@ -377,6 +403,11 @@ struct Node {
     state_paints: Option<Box<[ResolvedPaint; 3]>>,
     border: [f32; 4],
     layout_dirty: bool,
+    image_size: [f32; 2],
+    image_tint: Color,
+    button_owner: Option<ElementId>,
+    control_color: bool,
+    button_name: String,
 }
 
 impl Node {
@@ -420,6 +451,9 @@ pub struct Ui<T: View> {
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
     editor_nodes: Vec<ElementId>,
+    image_nodes: Vec<ElementId>,
+    live_image_nodes: Vec<ElementId>,
+    composed_buttons: Vec<ElementId>,
     order_dirty: bool,
     active: bool,
     caret_visible: bool,
@@ -452,6 +486,9 @@ impl<T: View> Ui<T> {
             active_views: Vec::new(),
             component_nodes: Vec::new(),
             editor_nodes: Vec::new(),
+            image_nodes: Vec::new(),
+            live_image_nodes: Vec::new(),
+            composed_buttons: Vec::new(),
             order_dirty: true,
             active: true,
             caret_visible: true,
@@ -508,6 +545,15 @@ impl<T: View> Ui<T> {
             || runtime.is_dirty(&self.owner)?
         {
             return Ok(true);
+        }
+        for id in &self.live_image_nodes {
+            if let Some(node) = self.nodes.get(id)
+                && let Some(props) = image_properties(&node.element)
+                && let Some(size) = props.source.pixel_size()
+                && node.image_size != [size[0] as f32, size[1] as f32]
+            {
+                return Ok(true);
+            }
         }
         for id in &self.component_nodes {
             if let Some(node) = self.nodes.get(id)
@@ -571,8 +617,10 @@ impl<T: View> Ui<T> {
         if viewport.iter().any(|v| !v.is_finite() || *v < 0.) {
             return Err(UiError::InvalidGeometry);
         }
+        let evaluated = self.stats.component_evaluations;
         self.refresh_descriptions(runtime, force_evaluation)?;
         self.resolve_styles()?;
+        self.refresh_images(evaluated != self.stats.component_evaluations)?;
         let root = self.root.expect("initially dirty root");
         let generation = measurer.generation();
         if generation != self.measurement_generation {
@@ -603,6 +651,27 @@ impl<T: View> Ui<T> {
                                 return Size::ZERO;
                             };
                             let node = &nodes[id];
+                            if let ElementKind::Image(props) = &node.element.kind {
+                                let [w, h] = [
+                                    node.image_size[0] * props.uv[2],
+                                    node.image_size[1] * props.uv[3],
+                                ];
+                                return match (known.width, known.height) {
+                                    (Some(width), Some(height)) => Size { width, height },
+                                    (Some(width), None) => Size {
+                                        width,
+                                        height: if w > 0. { width * h / w } else { 0. },
+                                    },
+                                    (None, Some(height)) => Size {
+                                        width: if h > 0. { height * w / h } else { 0. },
+                                        height,
+                                    },
+                                    _ => Size {
+                                        width: w,
+                                        height: h,
+                                    },
+                                };
+                            }
                             let Some(text) = node.displayed_text() else {
                                 return Size::ZERO;
                             };
@@ -690,6 +759,7 @@ impl<T: View> Ui<T> {
         runtime: &mut Runtime,
         force_evaluation: bool,
     ) -> Result<(), UiError> {
+        let before = self.stats.component_evaluations;
         self.active_views.clear();
         self.active_views.push(self.owner.entity().id());
         if runtime.is_dirty(&self.owner)? || force_evaluation {
@@ -707,7 +777,36 @@ impl<T: View> Ui<T> {
             }
             index += 1;
         }
+        if before != self.stats.component_evaluations {
+            self.composed_buttons.retain(|id| {
+                self.nodes.get(id).is_some_and(|n| {
+                    matches!(n.element.kind, ElementKind::Button { text: None, .. })
+                })
+            });
+            self.composed_buttons.sort_unstable_by_key(|id| id.serial);
+            self.composed_buttons.dedup();
+            for id in self.composed_buttons.clone() {
+                let mut labels = Vec::new();
+                self.button_labels(id, &mut labels);
+                let name = labels.join(" ");
+                self.nodes.get_mut(&id).unwrap().button_name = name;
+            }
+        }
         Ok(())
+    }
+    fn button_labels(&self, id: ElementId, labels: &mut Vec<String>) {
+        let node = &self.nodes[&id];
+        if node.element.style.display == Display::None
+            || node.element.semantics.as_ref().is_some_and(|s| s.hidden)
+        {
+            return;
+        }
+        if let ElementKind::Label(text) = &node.element.kind {
+            labels.push(text.clone());
+        }
+        for child in &node.children {
+            self.button_labels(*child, labels);
+        }
     }
     fn reconcile(
         &mut self,
@@ -716,6 +815,19 @@ impl<T: View> Ui<T> {
         mut element: Element,
         parent: Option<ElementId>,
     ) -> Result<ElementId, UiError> {
+        if matches!(
+            element.kind,
+            ElementKind::Button { .. } | ElementKind::TextInput { .. }
+        ) {
+            let mut ancestor = parent;
+            while let Some(id) = ancestor {
+                let node = &self.nodes[&id];
+                if matches!(node.element.kind, ElementKind::Button { .. }) {
+                    return Err(UiError::NestedControl);
+                }
+                ancestor = node.parent;
+            }
+        }
         if let ElementKind::Component(component) = &element.kind
             && self.active_views.contains(&component.entity_id())
         {
@@ -732,10 +844,19 @@ impl<T: View> Ui<T> {
                 || node.element.paint != element.paint
                 || node.element.font_size != element.font_size
                 || node.element.theme != element.theme
+                || node.element.button_variant != element.button_variant
                 || node.element.states != element.states
+                || image_properties(&node.element) != image_properties(&element)
                 || node.element.layout_overrides != element.layout_overrides
             {
                 self.style_roots.insert(id);
+            }
+            if let (Some(old), Some(new)) =
+                (image_properties(&node.element), image_properties(&element))
+                && (old.uv[2..] != new.uv[2..])
+                && (element.style.size.width.is_auto() || element.style.size.height.is_auto())
+            {
+                self.taffy.mark_dirty(node.layout)?;
             }
             if text(&node.element) != text(&element) {
                 self.taffy.mark_dirty(node.layout)?;
@@ -765,6 +886,11 @@ impl<T: View> Ui<T> {
                     self.taffy.mark_dirty(node.layout)?;
                 }
                 editor.reconcile(old, new);
+            }
+            if matches!(element.kind, ElementKind::Button { text: None, .. })
+                && !matches!(node.element.kind, ElementKind::Button { text: None, .. })
+            {
+                self.composed_buttons.push(id);
             }
             node.element = element;
             self.stats.reused_nodes += 1;
@@ -801,6 +927,12 @@ impl<T: View> Ui<T> {
             } else {
                 None
             };
+            if matches!(element.kind, ElementKind::Button { text: None, .. }) {
+                self.composed_buttons.push(id);
+            }
+            if matches!(element.kind, ElementKind::Image(_)) {
+                self.image_nodes.push(id);
+            }
             self.style_roots.insert(id);
             self.nodes.insert(
                 id,
@@ -828,6 +960,11 @@ impl<T: View> Ui<T> {
                     state_paints: None,
                     border: [0.; 4],
                     layout_dirty: true,
+                    image_size: [0.; 2],
+                    image_tint: [1.; 4],
+                    button_owner: None,
+                    control_color: false,
+                    button_name: String::new(),
                 },
             );
             if let Some(parent) = parent {
@@ -1011,6 +1148,21 @@ impl<T: View> Ui<T> {
             paint.border_color = Some(theme.palette().border);
             paint.radius = metrics.radius;
         }
+        if matches!(element.kind, ElementKind::Button { .. }) {
+            match element.button_variant {
+                crate::ButtonVariant::Primary => {
+                    paint.background = Some(theme.palette().text);
+                    paint.color = theme.palette().background;
+                    paint.border_color = Some(theme.palette().text);
+                    paint.focus_color = theme.palette().background;
+                }
+                crate::ButtonVariant::Quiet => {
+                    paint.background = None;
+                    paint.border_color = None;
+                }
+                crate::ButtonVariant::Default => {}
+            }
+        }
         let states = if control || element.states.is_some() {
             let mut states = [paint; 3];
             if control {
@@ -1019,6 +1171,19 @@ impl<T: View> Ui<T> {
                 states[2].background = Some(theme.palette().control_disabled);
                 states[2].color = theme.palette().text_disabled;
                 states[2].border_color = Some(theme.palette().border_disabled);
+            }
+            if matches!(element.kind, ElementKind::Button { .. }) {
+                match element.button_variant {
+                    crate::ButtonVariant::Primary => {
+                        states[0].background = Some(theme.palette().text_muted);
+                        states[1].background = Some(theme.palette().text_disabled);
+                        states[2].focus_color = theme.palette().focus;
+                    }
+                    crate::ButtonVariant::Quiet => {
+                        states[2].background = None;
+                    }
+                    crate::ButtonVariant::Default => {}
+                }
             }
             for state in &mut states {
                 element.paint.apply(&theme, state);
@@ -1040,7 +1205,20 @@ impl<T: View> Ui<T> {
         {
             self.taffy.set_style(layout_id, layout)?;
         }
+        let (button_owner, control_color) = self.nodes[&id]
+            .parent
+            .and_then(|p| self.nodes.get(&p).map(|n| (p, n)))
+            .map_or((None, false), |(parent, n)| {
+                if matches!(n.element.kind, ElementKind::Button { .. }) {
+                    (Some(parent), true)
+                } else {
+                    (n.button_owner, n.control_color)
+                }
+            });
+        let control_color = control_color && self.nodes[&id].element.paint.color.is_none();
         let node = self.nodes.get_mut(&id).unwrap();
+        node.button_owner = button_owner;
+        node.control_color = control_color;
         if node.font_size != font_size && node.displayed_text().is_some() {
             self.taffy.mark_dirty(layout_id)?;
             node.text_revision = node
@@ -1053,11 +1231,49 @@ impl<T: View> Ui<T> {
         node.font_binding = font;
         node.layout_dirty = false;
         node.font_size = font_size;
+        node.image_tint = if let ElementKind::Image(props) = &node.element.kind {
+            props.tint.resolve(&theme)
+        } else {
+            [1.; 4]
+        };
         node.paint = paint;
         node.state_paints = states;
         self.stats.style_resolutions += 1;
         for child in children {
             self.resolve_subtree(child, &theme, color, font)?;
+        }
+        Ok(())
+    }
+    fn refresh_images(&mut self, refresh_all: bool) -> Result<(), UiError> {
+        if refresh_all {
+            self.image_nodes.retain(|id| self.nodes.contains_key(id));
+            self.live_image_nodes.clear();
+            self.live_image_nodes
+                .extend(self.image_nodes.iter().copied().filter(|id| {
+                    image_properties(&self.nodes[id].element)
+                        .is_some_and(|props| props.source.is_live())
+                }));
+        }
+        let ids = if refresh_all {
+            &self.image_nodes
+        } else {
+            &self.live_image_nodes
+        };
+        for id in ids {
+            let node = self.nodes.get_mut(id).unwrap();
+            let ElementKind::Image(props) = &node.element.kind else {
+                continue;
+            };
+            if let Some(size) = props.source.pixel_size() {
+                let size = [size[0] as f32, size[1] as f32];
+                if size != node.image_size {
+                    node.image_size = size;
+                    let style = self.taffy.style(node.layout)?;
+                    if style.size.width.is_auto() || style.size.height.is_auto() {
+                        self.taffy.mark_dirty(node.layout)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1230,7 +1446,7 @@ impl<T: View> Ui<T> {
             ElementKind::Button { disabled: true, .. }
                 | ElementKind::TextInput { disabled: true, .. }
         );
-        let paint = node.state_paints.as_ref().map_or(node.paint, |states| {
+        let mut paint = node.state_paints.as_ref().map_or(node.paint, |states| {
             if disabled {
                 states[2]
             } else if self.pressed == Some(id) {
@@ -1241,6 +1457,27 @@ impl<T: View> Ui<T> {
                 node.paint
             }
         });
+        if let Some(owner) = node.button_owner
+            && node.control_color
+        {
+            let owner = &self.nodes[&owner];
+            let owner_id = node.button_owner.unwrap();
+            let is_disabled = matches!(
+                owner.element.kind,
+                ElementKind::Button { disabled: true, .. }
+            );
+            if let Some(states) = &owner.state_paints {
+                paint.color = if is_disabled {
+                    states[2].color
+                } else if self.pressed == Some(owner_id) {
+                    states[1].color
+                } else if self.hovered == Some(owner_id) {
+                    states[0].color
+                } else {
+                    owner.paint.color
+                };
+            }
+        }
         Some(ElementInfo {
             id,
             key: node.element.key.as_ref(),
@@ -1251,6 +1488,20 @@ impl<T: View> Ui<T> {
             scroll_offset: node.scroll_offset,
             scroll_range: node.scroll_range,
             text: node.displayed_text(),
+            image: if let ElementKind::Image(props) = &node.element.kind {
+                let (destination, uv) =
+                    crate::image::placement(node.content_bounds, node.image_size, props);
+                Some(crate::ImageInfo {
+                    source: &props.source,
+                    destination,
+                    uv,
+                    tint: node.image_tint,
+                    filter: props.filter,
+                    alpha: props.alpha,
+                })
+            } else {
+                None
+            },
             editing: node.editor.as_ref().map(|e| {
                 e.info(
                     matches!(
@@ -1994,6 +2245,7 @@ impl<T: View> Ui<T> {
                 crate::SemanticRole::Container
             }
             ElementKind::Label(_) => crate::SemanticRole::Label,
+            ElementKind::Image(_) => crate::SemanticRole::Image,
             ElementKind::Button { .. } => crate::SemanticRole::Button,
             ElementKind::TextInput { .. } => crate::SemanticRole::TextInput,
         };
@@ -2002,7 +2254,12 @@ impl<T: View> Ui<T> {
             properties
                 .and_then(|p| p.label.as_deref())
                 .or_else(|| match &node.element.kind {
-                    ElementKind::Button { text, .. } => Some(text.as_str()),
+                    ElementKind::Button {
+                        text: Some(text), ..
+                    } => Some(text.as_str()),
+                    ElementKind::Button { text: None, .. } if !node.button_name.is_empty() => {
+                        Some(node.button_name.as_str())
+                    }
                     ElementKind::Label(text) if role == crate::SemanticRole::Heading => {
                         Some(text.as_str())
                     }
