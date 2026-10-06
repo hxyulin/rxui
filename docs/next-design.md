@@ -1,14 +1,14 @@
 # RXUI next: architecture and application API
 
-Status: agreed architectural direction; the headless state milestone is implemented
-on the new orphan `main`. The application/element examples below remain API
-sketches, not compile-checked interfaces. They do not describe the previous RXUI
+Status: agreed architectural direction; the headless state and initial declarative milestones are implemented
+on the new `main`, alongside the native host, scoped tasks and scrolling/clipping.
+Examples of advanced controls/platform services below remain design targets. Element/view signatures are implemented and exercised by consumers. They do not describe the previous RXUI
 release or preserved prototype. No compatibility layer is required for the
 existing retained, message-driven API.
 
 ## Implemented state contracts
 
-The initial workspace contains one `rxui` crate. `Runtime`, `Entity<T>`,
+The workspace contains one `rxui` crate. `Runtime`, `Entity<T>`,
 `WeakEntity<T>`, `Mount<T>`, `AppContext`, `Context<T>`, `ViewContext<T>`,
 `Listener<E>` and `Subscription` provide the headless foundation. The standalone
 [console example](../crates/rxui/examples/counter_state.rs) uses actual APIs.
@@ -17,8 +17,8 @@ The initial workspace contains one `rxui` crate. `Runtime`, `Entity<T>`,
   on invalid access; `try_read`/`try_update` return `AccessError`. Weak `update`
   returns a `Result`. A read guard is tied to both the entity and read context.
 - A listener dispatch returns `Handled` or `TargetGone`, with an access error for
-  invalid runtime/borrowing. The binding is weak and mount-scoped. Element-level
-  routing and disposal are the next milestone.
+  invalid runtime/borrowing. The binding is weak and mount-scoped. Ui now routes basic activation
+  through surviving retained button identities. Full event propagation is later work.
 - Mutations and dependent-mount invalidation happen immediately. Observers and
   deferred work run only at explicit `Runtime::flush`, after update scopes end.
   Sources coalesce pending notifications; a bounded callback budget preserves
@@ -34,9 +34,18 @@ The initial workspace contains one `rxui` crate. `Runtime`, `Entity<T>`,
   Read tracking and dependency sets are reused across evaluations. The runtime
   stores weak entity references and runs without native or GPU initialization.
 
-Element builders, reconciliation, Taffy layout, widgets and the native application
-host remain planned. Optional features currently expose the pinned dependencies;
-they do not implement those integrations.
+The declarative core now implements View/IntoElement, row/column/label/button
+builders, keyed reconciliation, entity-backed child mounts, Taffy flex layout,
+measurement invalidation, retained button focus/capture and semantic activation.
+The optional UiPainter integrates retained Astrelis text/painting caches. The
+convenient native Application host runs over astrelis-winit and demonstrates two
+windows sharing one entity while retaining independent interaction state. Scoped
+tasks support custom execution adapters, weak live-state completions and cancellation.
+Scrolling/clipping, focus reveal and controlled single-line editing/selection/IME
+are implemented, along with portable semantics and lazy native AccessKit integration.
+Themes and inherited text styling are implemented; virtualization remains planned. See
+[the current README](../README.md), [application contract](application.md) and
+[task contract](async.md) for implemented APIs and current limitations.
 
 The priorities are API clarity, simplicity, and predictable performance. RXUI
 will provide declarative, builder-based UI composition over persistent typed
@@ -75,8 +84,10 @@ Application initialization runs once on the initial active lifecycle. Repeated
 native resume restores presentation; it does not recreate models or windows that
 remain registered.
 
-The native host installs accessibility adapters in the hidden `window_created`
-phase before showing a managed window. Model state survives surface replacement,
+The native host exposes a hidden `window_created` hook before showing a managed
+window. RXUI installs its AccessKit adapter before that hook by default;
+`.accessibility(false)` allows a custom host hook to own that integration. Portable
+semantics and lazy native publication are implemented. Model state survives surface replacement,
 MSAA changes and presentation suspension. Initial GPU setup may synchronously
 wait through astrelis-winit's desktop convenience path; this is startup behavior,
 not a per-frame completion wait.
@@ -129,7 +140,7 @@ impl View for Counter {
     }
 }
 
-fn main() -> rxui::Result<()> {
+fn main() -> Result<(), ApplicationError> {
     Application::new().run(|cx| {
         let counter = cx.new(|_| Counter::default());
         cx.open_window(
@@ -195,8 +206,9 @@ during updates. Contexts carry runtime capabilities and ownership information;
 they are not a substitute for direct access to the component's fields.
 
 The first slice validates the state-context split and scoped read guards through
-executable and compile-fail tests. Window/environment and dispatch capabilities
-will extend it in following milestones. References and update scopes must not
+executable and compile-fail tests. Native listener dispatch now exposes the source window, including nested updates;
+initialization and background completion have no implicit source window. Further
+environment capabilities remain following milestones. References and update scopes must not
 survive event dispatch, an await, or disposal.
 
 ## Update semantics and transactions
@@ -333,8 +345,9 @@ Its description is evaluated in its caller's component scope. Stateful child
 components can be composed through `.child(self.editor.clone())`. Entity-backed
 component props/reconfiguration need an explicit design before implementation;
 passing an entity handle does not itself synchronize new constructor arguments.
-Typed scoped providers for themes or shared services are a possible later API,
-not a prerequisite for ordinary explicit data flow.
+Theme scopes and inherited text styling are implemented in the retained placement
+through element builders; see [the styling contract](styling.md). Generic typed
+providers for shared services remain a possible later API.
 
 ## Identity, reconciliation and retained widget state
 
@@ -424,8 +437,9 @@ painting and semantic publication are distinct dirty states.
 
 UI mutation scopes cannot cross an await or move onto worker threads. Background
 jobs compute owned data; completions return to the UI thread and enter a new
-update scope. Exact executor/proxy APIs are open. Jobs/subscriptions need explicit
-entity- or mount-scoped ownership and cancellation/disposal behavior. Out-of-order
+update scope. The implemented task API is documented in [async.md](async.md). Jobs have entity-
+or application-scoped ownership and cancellation/disposal behavior; mount-scoped
+work is a future extension. Out-of-order
 results require application/request generation checks where relevant; reading
 live state in a listener does not solve asynchronous result races.
 
@@ -450,14 +464,24 @@ snapshots; preparation and presentation are not rollback transactions.
 1. **Headless state runtime (implemented):** entity ownership/generations, read/update leases,
    transactions, weak targets, deferred notifications, dependency replacement and
    disposal. Settle return/error types with executable API tests.
-2. **Declarative core:** View/IntoElement, builders, scoped identity, keyed
-   reconciliation, Taffy integration and incremental measurement/cache behavior.
-3. **Essential controls:** labels, buttons, text input, focus traversal, clipping,
-   controlled editing/IME behavior and a semantic model.
-4. **Native host:** lifecycle over astrelis-winit, default fonts/theme, adapter
-   setup, platform input/output and custom-loop embedding.
-5. **Validation application:** shared data in two windows, keyed editable items,
-   background completion and a custom chart. Add virtualization before large-data
+2. **Declarative core (initial slice implemented):** View/IntoElement, builders,
+   scoped identity, keyed reconciliation, Taffy integration and incremental
+   measurement/cache behavior. Basic buttons and an explicit native example
+   validate composition. The native Application host and scoped tasks are implemented;
+   richer controls remain next.
+3. **Essential controls (partial):** labels/buttons, focus traversal, scrolling and
+   clipping and controlled single-line editing/selection/IME are implemented.
+   Initial portable semantics and AccessKit publication/actions are implemented.
+   Undo/multiline editing remain next.
+4. **Native host (initial slice implemented):** lifecycle over astrelis-winit,
+   default fonts, close/exit hooks, button input and custom-loop embedding. Theme
+   inheritance and live application/window theme switching are implemented. Lazy
+   AccessKit adapters are implemented, including
+   independent CPU preparation during surface unavailability. Clipboard/IME output
+   and caret blink deadlines are implemented for single-line inputs.
+5. **Validation application (partial):** shared data in two windows, keyed buttons
+   and background completion are implemented. A separate shared-window editing
+   example exercises controlled values/selection/IME. A custom chart remains next. Add virtualization before large-data
    list benchmarks; rendering every row is not a scalability strategy.
 
 Acceptance includes:
@@ -486,12 +510,14 @@ are later work. They must build on the same state/identity/access contracts.
 ## Open API details for following milestones
 
 - Routed handler errors and non-component dispatch capabilities.
-- Window/environment capabilities added to the implemented context split.
+- Environment capabilities beyond implemented source-window dispatch.
 - Element/listener representation, closures and reconciliation storage.
 - Stateful child props, mount hooks and scoped disposal APIs.
-- Style/value types, inherited theme/default fonts and logical unit types.
-- Event propagation/default actions and editable-value reconciliation policy.
-- Task execution, completion proxies, cancellation and effect ordering.
+- Broader typography inheritance, generic scoped providers and logical unit types.
+- Event propagation/default actions, multiline/undo editing and extensions to the
+  implemented synchronous controlled-value reconciliation policy.
+- Mount-scoped/local tasks and async shutdown orchestration beyond implemented
+  entity/application-scoped execution and completion ordering.
 - Exact embedded preparation/platform-output/custom-element interfaces.
 
 These refine the agreed model; they should be resolved through small consumer

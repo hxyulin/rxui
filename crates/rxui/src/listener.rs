@@ -51,7 +51,10 @@ impl<E> Listener<E> {
                 let Some(entity) = owner.upgrade() else {
                     return Ok(Dispatch::TargetGone);
                 };
-                entity.try_update(cx, |state, cx| callback(state, event, cx))?;
+                entity.try_update(cx, |state, cx| {
+                    cx.bind_dispatch_mount(Some(mount.id));
+                    callback(state, event, cx)
+                })?;
                 Ok(Dispatch::Handled)
             }),
         }

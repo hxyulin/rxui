@@ -1,5 +1,9 @@
 # Initial headless state baseline
 
+This historical baseline corresponds to the state-only foundation committed in
+`108de04`. New declarative-core sources have separate measurements; its source
+fingerprints below identify the original run rather than the current tree.
+
 Recorded on 2026-10-06 on Apple M3 Pro/macOS with Rust 1.98.1, the default
 headless feature set, and the optimized Cargo bench profile. Three consecutive
 runs were made after compilation completed. Raw CSV and source/environment

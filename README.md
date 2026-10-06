@@ -4,11 +4,144 @@ RXUI is being rebuilt as a declarative desktop UI framework over Astrelis, with
 builder-based composition, persistent typed state, and context/closure updates.
 Taffy is the selected layout engine. The agreed architecture is recorded in
 [the design document](docs/next-design.md).
+The [declarative core contract](docs/declarative-core.md) describes the implemented
+hosting sequence, identity, resource reuse, input and current limitations.
 
-This workspace implements the first milestone: a headless, single-thread state
-runtime. It does not yet provide element builders, widgets, layout integration,
-painting, or an application/window host. The `rendering`, `layout`, and `native`
-features expose the selected dependencies for those later milestones.
+This workspace implements typed state, declarative element builders, keyed
+reconciliation, Taffy flex layout, and basic button input. The default `layout`
+feature works headlessly with host-supplied text measurement. `rendering` adds
+`UiPainter` over Astrelis. `tasks` adds scoped background futures and blocking
+jobs; `native` adds the desktop Application host over astrelis-winit, including
+those features and lazy native AccessKit integration. `accessibility` adds AccessKit
+translation independently of the native host. `--no-default-features` retains the state-only runtime. Scrolling,
+clipping, focus traversal and button activation are implemented. Controlled
+single-line editing, selection, clipboard and IME are implemented.
+Portable semantics, accessible names/roles, focus, activation, controlled values,
+selection and scrolling are implemented. Themes, inherited text styling, control
+state paints and grayscale dark/light presets are implemented. Virtualization
+remains a following milestone.
+
+## Declarative views and a window
+
+```rust
+use rxui::prelude::*;
+
+struct Counter { value: i32 }
+
+impl View for Counter {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column().padding(24.).gap(12.)
+            .child(label(format!("Count: {}", self.value)))
+            .child(button("Increase").key("increase")
+                .on_click(cx.listener(|this, _, _cx| this.value += 1)))
+    }
+}
+
+fn main() -> Result<(), ApplicationError> {
+    Application::new().run(|cx| {
+        let counter = cx.new(|_| Counter { value: 0 });
+        cx.open_window(WindowOptions::new().title("Counter"), counter)?;
+        Ok(())
+    })
+}
+```
+
+Use `Ui::new(&mut runtime, root)` for one retained placement. Hosts call
+`Ui::prepare` with a logical viewport and `TextMeasure`, then inspect the retained
+snapshot or prepare/paint it with `UiPainter`. Child `Entity<View>` values can be
+passed directly to `.child(...)`; separately placed entities get independent
+component mounts. Keyed children preserve compatible node identity across reorder.
+Duplicate sibling keys and recursive component placement are diagnosed.
+
+The [single-file window example](crates/rxui/examples/counter_window.rs) uses
+Application for native input, Tab/Shift-Tab focus, Enter/Space activation, scrollable
+keyed items, resize, and a cancellable background future. It can open a second
+window sharing the same model. Application discovers system fonts once by default;
+`.font(...)` selects application-provided fonts, with `.system_fonts(true)` allowing
+additional discovery explicitly.
+
+```sh
+cargo run -p rxui --example counter_window --features native --locked
+```
+
+Cloning an entity shares data, including any Task stored in that entity. Each
+window creates its own Ui placement and retains independent focus, pointer capture
+and scroll offsets. `cx.window()` inside a listener resolves the window where the
+event originated, including nested updates. Initialization, ordinary updates and
+task completions have no implicit source window.
+
+[The application contract](docs/application.md) documents queued creation, native
+handles, close policy and custom hosting. [The task contract](docs/async.md)
+documents `cx.spawn`, live-state completions, cancellation, weak owner bindings,
+error handling and executor customization. The separate
+[custom host example](crates/rxui/examples/counter_custom_host.rs) implements its own
+astrelis-winit Handler and completion proxy, keeping direct embedding available.
+Both examples are standalone files with no test-only mode or support module.
+
+## Controlled text input
+
+```rust
+text_input(self.name.clone()).key("name").fill_width()
+    .accessibility_label("Name")
+    .on_change(cx.listener(|this, edit: &TextChangeEvent, _| {
+        this.name = edit.value.clone();
+    }))
+```
+
+The application owns the value and can accept, normalize or reject each proposal.
+Selection, composition and horizontal scrolling remain local to a placement.
+Ordered edits reconcile the application answer without waiting for a frame. The
+[text-input contract](docs/text-input.md) documents Unicode geometry, controlled
+reconciliation, native IME, clipboard and the current single-line scope.
+
+The [single-file editing example](crates/rxui/examples/text_input_window.rs) includes
+shared windows, uppercase normalization, digit-only rejection, read-only state
+and external replacement:
+
+```sh
+cargo run -p rxui --example text_input_window --features native --locked
+```
+
+## Semantics and accessibility
+
+Buttons infer their accessible name from their caption. Name text inputs explicitly
+with `.accessibility_label("Name")`; `.accessibility_description(...)` supplies help,
+`.accessibility_role(SemanticRole::Form)` describes a container, and
+`.accessibility_hidden(true)` excludes decorative subtrees from assistive navigation.
+These builders do not change layout or create control behavior.
+
+Application manages one AccessKit adapter per window by default and publishes only
+while assistive technology is active. Accessibility actions use the same live
+listeners and controlled editing path as pointer/keyboard input. Custom hosts can
+read `Ui::semantics()` directly or use `AccessKitTree`. See the
+[semantics contract](docs/semantics.md) for actions, identity, hosting and text limits.
+The [accessibility performance report](docs/performance/accessibility.md) records
+warm-cache costs and the initial-tree boundary.
+
+## Themes and styling
+
+`Application::new().theme(Theme::dark())` chooses the default. `Theme::light()` uses
+matching metrics. Elements accept semantic tokens such as `.color(ThemeColor::TextMuted)`
+and `.background(ThemeColor::Surface)`, or literal linear RGBA values. `rgb8`/`rgba8`
+convert sRGB byte colors for the renderer. Text color/size inherit across component
+boundaries; backgrounds, borders and dimensions stay local.
+
+Use `.theme(...)` for a subtree and `WindowOptions::theme(...)` for a window override.
+`cx.set_theme`, `cx.set_window_theme` and `cx.use_application_theme` update native
+placements live. `Ui::set_theme` supports custom hosts. Explicit element overrides
+remain stable, while palette-only switches preserve text measurement/layout caches.
+`PaintStyle` supplies local and hover/pressed/disabled patches, with focus painted
+independently. Uniform borders and corner radii are supported.
+
+The [styling contract](docs/styling.md) explains inheritance, state precedence,
+selection colors, native updates and limitations. Try the standalone gallery:
+
+```sh
+cargo run -p rxui --example theme_gallery --features native --locked
+```
+
+The [theme measurements](docs/performance/themes.md) record palette/font switch
+costs and the retained-cache boundary.
 
 ## State and live listeners
 
@@ -36,7 +169,9 @@ An `Entity<T>` owns persistent state; cloning it shares that state. A `Mount<T>`
 retains one placement of an entity. Separately mounting the same entity creates
 independent mount identities. Listeners bind weakly to their owner and mount,
 receive the owner's current `&mut T`, and stop dispatching when that mount is
-removed. Element routing and keyed widget lifetimes will build on this contract.
+removed. Ui routes activation through surviving retained button identities;
+replacing or removing an element clears its focus/capture. Scroll offsets follow
+retained identity; focused buttons are revealed through scroll ancestors.
 
 Updates mutate synchronously and conservatively invalidate dependent mounts.
 Reads during `Runtime::evaluate` register dependencies; each normally returned
@@ -69,6 +204,7 @@ cargo test --workspace --locked
 cargo run -p rxui --example counter_state --locked
 cargo check --workspace --all-features --locked
 cargo bench -p rxui --bench state --locked
+cargo bench -p rxui --bench elements --locked
 ```
 
 [The standalone console example](crates/rxui/examples/counter_state.rs) exercises
@@ -76,17 +212,28 @@ live listeners, shared-model reads, and dirty evaluation without native/GPU
 setup. Use `+`, `-`, `s` to change the step, and `q` to quit. It is a normal
 interactive example, with no smoke-test mode or support module.
 
-The benchmark measures state-runtime operations only. It excludes UI description
+The state benchmark measures state-runtime operations only. It excludes UI description
 construction, Taffy layout, shaping, GPU preparation, and presentation. Its CSV
 median/p95 values describe averages across timed batches, not individual-event
 latency percentiles.
 
 The [initial baseline report](docs/performance/state-runtime.md) includes three
 runs, raw results, reproduction instructions, and the measurement boundaries.
+The [elements baseline](docs/performance/elements.md) additionally measures
+builder/reconciliation/layout work using deterministic mock text sizing; it does
+not measure real shaping or GPU work. The [host and scrolling check](docs/performance/host-scroll.md)
+adds retained-scroll geometry costs and compares state dispatch with all features
+compiled in.
+
+The GPU cache test is opt-in on a machine with a native adapter:
+
+```sh
+cargo test -p rxui --features rendering painting::tests --locked -- --ignored
+```
 
 ## Astrelis dependency and local development
 
-The workspace manifest and committed-source lockfile pin both Astrelis crates to
+The workspace manifest and lockfile pin both Astrelis crates to
 Git revision
 [`1f773d4a13057db8e15adc768c1d59cf979e65ed`](https://github.com/hxyulin/astrelis/commit/1f773d4a13057db8e15adc768c1d59cf979e65ed).
 An ordinary clone builds against that Git source.
@@ -101,10 +248,10 @@ cargo --config .cargo/local.toml test --workspace --all-features
 
 The patch expects `../astrelis` with `crates/astrelis` and
 `crates/astrelis-winit`. The override changes Cargo.lock's source entries when
-used. Restore the canonical Git-source lockfile before committing; do not commit
-the local override. During this initial uncommitted workspace, save a copy of
-Cargo.lock before using the patch. After the first commit, `git restore Cargo.lock`
-restores the canonical version.
+used. Save the canonical Git-source lockfile before using the override and restore that
+copy afterward; do not commit the local override. `git restore Cargo.lock` is
+appropriate only when the committed lockfile already contains all dependency changes
+you intend to keep.
 
 ## Rewrite history
 

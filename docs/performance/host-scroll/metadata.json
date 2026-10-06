@@ -1,0 +1,37 @@
+{
+  "recorded_at": "2026-10-06T12:16:07.528282+00:00",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cpu": "Apple M3 Pro",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "base_commit": "108de045b7bcef7b177cff0e6d3369a7c2623628",
+  "working_tree": "declarative core, native host, tasks and scrolling uncommitted; fingerprints identify sources",
+  "features": "default (layout); state-native uses all-features with no configured host/executor",
+  "commands": [
+    "cargo bench -p rxui --bench elements --locked",
+    "cargo bench -p rxui --bench state --locked",
+    "cargo bench -p rxui --bench state --all-features --locked"
+  ],
+  "percentiles": "Percentiles of per-operation batch averages, not individual event latencies",
+  "source_sha256": {
+    "crates/rxui/src/context.rs": "0fea793560af07adc231fa2f2e03a0b04a997a7de7d1327ccc41daa62373137d",
+    "crates/rxui/src/element.rs": "e010c8b7e404d6c06477dc86ac8c46653c92c8a8a082ab6e46807df8b2e4c87a",
+    "crates/rxui/src/entity.rs": "1d1acf95b9967392768055191299ebaf244f87d790f9034fc2fb6a18c89288a2",
+    "crates/rxui/src/error.rs": "0a23b3f6421b2ab4de7533411ebfd212f3edd52c20f705d495609e340d986990",
+    "crates/rxui/src/id.rs": "d81c06aeb531468de36918b18efb09cc37967391bcb4a5d955b306f2829377c9",
+    "crates/rxui/src/lib.rs": "74e890673d543f13391b16af20fd6975282b5f1f800958890591c8205de99709",
+    "crates/rxui/src/listener.rs": "897ee01e5541cecdf6b8b02598bc114059698b026316e8746784615b29d7f441",
+    "crates/rxui/src/native.rs": "6faa4c52d9ea7d5e616166836562e149c6ea1751a78f11335c00b59e17139be8",
+    "crates/rxui/src/painting.rs": "314add3f42eeac9edf4c4a2f7b8de076cb46aa1a378fcd546820800e31f7e0db",
+    "crates/rxui/src/runtime.rs": "c075d7c004939d7e2fb8ace3aaa0e43d71dfc8ba03382202698f3035b7408dc3",
+    "crates/rxui/src/task_tests.rs": "7b0b00419c3a0b97700630a64481163ef07ad113dda8c72331441af392a25acf",
+    "crates/rxui/src/tasks.rs": "61c67b04d09fe9aaf43114df1622a31a553cfe420d6dd1ec195b337469ca63ad",
+    "crates/rxui/src/tests.rs": "4178b81c225e9908dec9fe4340f1542fbd85180ca67ea56e8177f8c6f5991a11",
+    "crates/rxui/src/ui.rs": "48ce88ddbee690c5b6562e9449c9d60d61f5792522d388754991ec23d512cdda",
+    "crates/rxui/src/ui_tests.rs": "f04423b93480258a48543e8943b21ad449142c0ed9e95b6b685eb5c7480b121d",
+    "crates/rxui/benches/elements.rs": "bd24af9c007763666c2895e65ef8230744b22f436dbc69a3ec150d5c2d885cb7",
+    "crates/rxui/benches/state.rs": "ce783f4882c91266e632edf7757f26499ea179af143238600bf60ff4478e1ce8",
+    "Cargo.toml": "1eec6880ea51f9f3054c8366b04b1567b9cdd510b986b1b04969290cf52a0c09",
+    "Cargo.lock": "4b41fea2458a844fbb45d2078bcae7aed20d459b6cfcbfe50ff4c408df718cbf",
+    "crates/rxui/Cargo.toml": "5cee3963d29cacb07702c94882ce769cee486f0ebe233761589db6911b4ca844"
+  }
+}

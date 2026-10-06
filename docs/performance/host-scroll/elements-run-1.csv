@@ -1,0 +1,16 @@
+operation,items,samples,iterations_per_sample,median_us,p95_us
+idle_prepare,16,20,100,0.037,0.037
+unchanged_description,16,20,100,6.601,6.780
+keyed_reorder,16,20,100,9.357,9.832
+scroll_geometry,16,20,100,0.860,0.901
+single_label_update,16,20,100,9.295,9.767
+idle_prepare,256,20,100,0.036,0.037
+unchanged_description,256,20,100,95.618,97.635
+keyed_reorder,256,20,100,137.373,138.851
+scroll_geometry,256,20,100,13.815,14.432
+single_label_update,256,20,100,133.768,136.697
+idle_prepare,1000,20,100,0.040,0.040
+unchanged_description,1000,20,100,382.460,386.191
+keyed_reorder,1000,20,100,540.048,545.442
+scroll_geometry,1000,20,100,55.028,58.094
+single_label_update,1000,20,100,527.646,532.680

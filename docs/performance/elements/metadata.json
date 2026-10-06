@@ -1,0 +1,33 @@
+{
+  "recorded_at": "2026-10-06T11:11:00.737749+00:00",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cpu": "Apple M3 Pro",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "base_commit": "108de045b7bcef7b177cff0e6d3369a7c2623628",
+  "working_tree": "declarative core changes uncommitted; fingerprints identify measured sources",
+  "features": "default (layout); no rendering/native",
+  "commands": [
+    "cargo bench -p rxui --bench elements --locked",
+    "cargo bench -p rxui --bench state --locked"
+  ],
+  "percentiles": "Percentiles of per-operation batch averages, not individual event latencies",
+  "source_sha256": {
+    "crates/rxui/src/context.rs": "afa6c2993548ca79869f2fe4c1ec707dcbdfeeb52d5b9cce3c091d66392b344f",
+    "crates/rxui/src/element.rs": "ea088f612da42b9544e2497b1eedcc3df34d02e7592b4167dc744e9038e404c4",
+    "crates/rxui/src/entity.rs": "ffebed57c47484cc46d903e758286d777d216ec41785234663e796e12907744c",
+    "crates/rxui/src/error.rs": "0a23b3f6421b2ab4de7533411ebfd212f3edd52c20f705d495609e340d986990",
+    "crates/rxui/src/id.rs": "d81c06aeb531468de36918b18efb09cc37967391bcb4a5d955b306f2829377c9",
+    "crates/rxui/src/lib.rs": "c2d45bf31bc4bf57d22d05b7bc5cbefb904c2f5a36b2fc1f5e66a227fd574dc0",
+    "crates/rxui/src/listener.rs": "312420dc1912e3c1c2b4cd464a78e5d9527a29f35affe672c31d0ac60490b33f",
+    "crates/rxui/src/painting.rs": "89a37677bc743dd83c0ea2b0cf892187d4e324920458c4445108e1e41b59e62d",
+    "crates/rxui/src/runtime.rs": "dd68eb5ff5ca4ae6c0ee04140f6ef751ec210e4f59fc37e6a900a5ee28d30846",
+    "crates/rxui/src/tests.rs": "4178b81c225e9908dec9fe4340f1542fbd85180ca67ea56e8177f8c6f5991a11",
+    "crates/rxui/src/ui.rs": "53c1e5037a0ee3b1f5b5b9aef82016112bbc6fe12d0093bf4f1410a62e8e7c79",
+    "crates/rxui/src/ui_tests.rs": "a1df1a16e9443aac40136554247131327b4e92c531412c7b5836810ad5b81a2a",
+    "crates/rxui/benches/elements.rs": "dd7968e92f22b97a93541bea7e963647c85fc6ccff87f28aaef99b286946e14d",
+    "crates/rxui/benches/state.rs": "ce783f4882c91266e632edf7757f26499ea179af143238600bf60ff4478e1ce8",
+    "Cargo.toml": "1eec6880ea51f9f3054c8366b04b1567b9cdd510b986b1b04969290cf52a0c09",
+    "Cargo.lock": "db3fffd24ceda200abda6d2b29534d9081c64fd595f9db36470ff876426fff22",
+    "crates/rxui/Cargo.toml": "b8468c16fd500a7b6c9fe9d793f54dacbf3533d6b6461914ba0a804761585cbd"
+  }
+}

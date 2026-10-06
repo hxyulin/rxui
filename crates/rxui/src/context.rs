@@ -28,6 +28,7 @@ pub trait ReadContext: sealed::Sealed {
 /// It creates entities/mounts and queues effects without owning a native loop.
 pub struct AppContext<'a> {
     pub(crate) runtime: &'a Rc<RuntimeInner>,
+    pub(crate) dispatch_mount: Option<MountId>,
 }
 impl sealed::Sealed for AppContext<'_> {}
 impl ReadContext for AppContext<'_> {
@@ -37,6 +38,55 @@ impl ReadContext for AppContext<'_> {
     fn track(&self, _entity: EntityId) {}
 }
 impl AppContext<'_> {
+    /// Launches an application-scoped Send future. Retain its Task or detach explicitly.
+    /// Panics if execution is not configured/rejected; try_spawn provides fallible setup.
+    #[cfg(feature = "tasks")]
+    pub fn spawn<R: Send + 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + Send + 'static,
+        completion: impl FnOnce(crate::TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> crate::Task {
+        self.try_spawn(future, completion)
+            .unwrap_or_else(|e| panic!("cannot spawn RXUI task: {e}"))
+    }
+    /// Fallible application task setup. Completion executes only at poll_tasks.
+    #[cfg(feature = "tasks")]
+    pub fn try_spawn<R: Send + 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + Send + 'static,
+        completion: impl FnOnce(crate::TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> Result<crate::Task, crate::SpawnError> {
+        crate::tasks::start(
+            self.runtime,
+            None,
+            completion,
+            crate::tasks::Work::Future(Box::pin(future)),
+        )
+    }
+    /// Launches application-scoped blocking work on the executor's separate pool.
+    #[cfg(feature = "tasks")]
+    pub fn spawn_blocking<R: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> R + Send + 'static,
+        completion: impl FnOnce(crate::TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> crate::Task {
+        self.try_spawn_blocking(work, completion)
+            .unwrap_or_else(|e| panic!("cannot spawn RXUI blocking task: {e}"))
+    }
+    /// Fallible blocking-job setup.
+    #[cfg(feature = "tasks")]
+    pub fn try_spawn_blocking<R: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> R + Send + 'static,
+        completion: impl FnOnce(crate::TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> Result<crate::Task, crate::SpawnError> {
+        crate::tasks::start(
+            self.runtime,
+            None,
+            completion,
+            crate::tasks::Work::Blocking(Box::new(work)),
+        )
+    }
     /// Creates one persistent value. The typed context identifies the value before
     /// initialization completes, but attempts to read/update it then are Borrowed.
     #[expect(
@@ -73,9 +123,84 @@ pub struct Context<'a, T: 'static> {
     owner: WeakEntity<T>,
 }
 impl<'a, T> Context<'a, T> {
+    pub(crate) fn bind_dispatch_mount(&mut self, mount: Option<MountId>) {
+        self.app.dispatch_mount = mount;
+    }
+    /// Launches an owner-scoped future with a weak completion binding to current T.
+    /// Keep the Task (usually in T) or detach it explicitly. Updates never cross awaits.
+    /// Owned snapshots can cross an await; borrowed component state cannot:
+    ///
+    /// ```compile_fail
+    /// use rxui::Runtime;
+    /// let mut runtime = Runtime::new();
+    /// let model = runtime.update(|cx| cx.new(|_| String::from("hello")));
+    /// runtime.update(|cx| model.update(cx, |state, cx| {
+    ///     cx.spawn(async { state.len() }, |_, _, _| {}).detach();
+    /// }));
+    /// ```
+    #[cfg(feature = "tasks")]
+    pub fn spawn<R: Send + 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + Send + 'static,
+        completion: impl FnOnce(&mut T, crate::TaskResult<R>, &mut Context<'_, T>) + 'static,
+    ) -> crate::Task {
+        self.try_spawn(future, completion)
+            .unwrap_or_else(|e| panic!("cannot spawn RXUI task: {e}"))
+    }
+    /// Fallible owner-scoped future setup.
+    #[cfg(feature = "tasks")]
+    pub fn try_spawn<R: Send + 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + Send + 'static,
+        completion: impl FnOnce(&mut T, crate::TaskResult<R>, &mut Context<'_, T>) + 'static,
+    ) -> Result<crate::Task, crate::SpawnError> {
+        let owner = self.owner.clone();
+        crate::tasks::start(
+            self.app.runtime,
+            Some(owner.id()),
+            move |outcome, cx| {
+                if let Some(entity) = owner.upgrade() {
+                    entity.update(cx, |state, cx| completion(state, outcome, cx));
+                }
+            },
+            crate::tasks::Work::Future(Box::pin(future)),
+        )
+    }
+    /// Launches blocking work with a weak completion binding to current T.
+    #[cfg(feature = "tasks")]
+    pub fn spawn_blocking<R: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> R + Send + 'static,
+        completion: impl FnOnce(&mut T, crate::TaskResult<R>, &mut Context<'_, T>) + 'static,
+    ) -> crate::Task {
+        self.try_spawn_blocking(work, completion)
+            .unwrap_or_else(|e| panic!("cannot spawn RXUI blocking task: {e}"))
+    }
+    /// Fallible owner-scoped blocking-job setup.
+    #[cfg(feature = "tasks")]
+    pub fn try_spawn_blocking<R: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> R + Send + 'static,
+        completion: impl FnOnce(&mut T, crate::TaskResult<R>, &mut Context<'_, T>) + 'static,
+    ) -> Result<crate::Task, crate::SpawnError> {
+        let owner = self.owner.clone();
+        crate::tasks::start(
+            self.app.runtime,
+            Some(owner.id()),
+            move |outcome, cx| {
+                if let Some(entity) = owner.upgrade() {
+                    entity.update(cx, |state, cx| completion(state, outcome, cx));
+                }
+            },
+            crate::tasks::Work::Blocking(Box::new(work)),
+        )
+    }
     pub(crate) fn new(runtime: &'a Rc<RuntimeInner>, owner: WeakEntity<T>) -> Self {
         Self {
-            app: AppContext { runtime },
+            app: AppContext {
+                runtime,
+                dispatch_mount: None,
+            },
             owner,
         }
     }

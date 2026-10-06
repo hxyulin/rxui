@@ -50,13 +50,17 @@ pub(crate) struct RuntimeInner {
     pub(crate) state: RefCell<Bookkeeping>,
     pub(crate) releases: RefCell<Vec<Release>>,
     flushing: Cell<bool>,
+    #[cfg(feature = "tasks")]
+    pub(crate) tasks: RefCell<Option<crate::tasks::Tasks>>,
+    #[cfg(feature = "native")]
+    pub(crate) native: RefCell<Option<std::rc::Rc<crate::native::Commands>>>,
 }
 
 /// Headless, single-UI-thread state runtime. It owns metadata, not strong entities.
 /// Mutations invalidate immediately; effect flushing is explicit so a future
 /// host can batch all input before evaluating/presenting. Native/GPU work is absent.
 pub struct Runtime {
-    inner: Rc<RuntimeInner>,
+    pub(crate) inner: Rc<RuntimeInner>,
 }
 impl Default for Runtime {
     fn default() -> Self {
@@ -82,6 +86,10 @@ impl Runtime {
                 }),
                 releases: RefCell::new(Vec::new()),
                 flushing: Cell::new(false),
+                #[cfg(feature = "tasks")]
+                tasks: RefCell::new(None),
+                #[cfg(feature = "native")]
+                native: RefCell::new(None),
             }),
         }
     }
@@ -92,6 +100,7 @@ impl Runtime {
         self.inner.synchronize();
         let result = f(&mut AppContext {
             runtime: &self.inner,
+            dispatch_mount: None,
         });
         self.inner.synchronize();
         result
@@ -105,6 +114,13 @@ impl Runtime {
         mount: &Mount<T>,
         f: impl FnOnce(&T, &mut ViewContext<'_, T>) -> R,
     ) -> Result<R, AccessError> {
+        self.evaluate_checked(mount, |state, cx| Ok(f(state, cx)))
+    }
+    pub(crate) fn evaluate_checked<T: 'static, R, E: From<AccessError>>(
+        &mut self,
+        mount: &Mount<T>,
+        f: impl FnOnce(&T, &mut ViewContext<'_, T>) -> Result<R, E>,
+    ) -> Result<R, E> {
         self.inner.synchronize();
         self.inner.validate(mount.owner.id())?;
         let scratch = {
@@ -114,7 +130,7 @@ impl Runtime {
                 .get_mut(&mount.id())
                 .ok_or(AccessError::Disposed)?;
             if record.evaluating {
-                return Err(AccessError::Evaluating);
+                return Err(AccessError::Evaluating.into());
             }
             record.evaluating = true;
             record.dirty = true;
@@ -138,7 +154,7 @@ impl Runtime {
             .try_borrow()
             .map_err(|_| AccessError::Borrowed)?;
         let value_ref = value.as_ref().ok_or(AccessError::Borrowed)?;
-        let result = f(value_ref, &mut cx);
+        let result = f(value_ref, &mut cx)?;
         cx.commit();
         drop(value);
         drop(cx);
@@ -227,6 +243,7 @@ impl Runtime {
                         executed += 1;
                         (observer.callback)(&mut AppContext {
                             runtime: &self.inner,
+                            dispatch_mount: None,
                         });
                     }
                 }
@@ -242,6 +259,7 @@ impl Runtime {
                     executed += 1;
                     callback(&mut AppContext {
                         runtime: &self.inner,
+                        dispatch_mount: None,
                     });
                 }
             }
@@ -539,6 +557,8 @@ impl RuntimeInner {
             return;
         }
         let mut state = self.state.borrow_mut();
+        #[cfg(feature = "tasks")]
+        let mut disposed_owners = Vec::new();
         for release in releases {
             match release {
                 Release::Entity(id) => {
@@ -565,6 +585,8 @@ impl RuntimeInner {
                         }
                     }
                     state.observers.remove(&id);
+                    #[cfg(feature = "tasks")]
+                    disposed_owners.push(id);
                 }
                 Release::Mount(id) => {
                     if let Some(record) = state.mounts.remove(&id) {
@@ -587,6 +609,22 @@ impl RuntimeInner {
                     }
                 }
             }
+        }
+        drop(state);
+        #[cfg(feature = "tasks")]
+        {
+            let callbacks = {
+                let mut slot = self.tasks.borrow_mut();
+                if let Some(tasks) = slot.as_mut() {
+                    disposed_owners
+                        .into_iter()
+                        .flat_map(|id| tasks.cancel_owner(id))
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                }
+            };
+            drop(callbacks);
         }
     }
 }

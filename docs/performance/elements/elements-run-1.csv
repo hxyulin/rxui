@@ -1,0 +1,13 @@
+operation,items,samples,iterations_per_sample,median_us,p95_us
+idle_prepare,16,20,100,0.033,0.033
+unchanged_description,16,20,100,6.707,6.942
+keyed_reorder,16,20,100,9.203,9.625
+single_label_update,16,20,100,9.009,9.513
+idle_prepare,256,20,100,0.031,0.032
+unchanged_description,256,20,100,94.731,96.902
+keyed_reorder,256,20,100,136.179,138.364
+single_label_update,256,20,100,131.044,132.621
+idle_prepare,1000,20,100,0.031,0.031
+unchanged_description,1000,20,100,381.169,386.434
+keyed_reorder,1000,20,100,533.594,538.007
+single_label_update,1000,20,100,518.000,525.647

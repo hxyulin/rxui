@@ -138,6 +138,7 @@ impl<T: 'static> Entity<T> {
             runtime: cx.runtime,
         };
         let mut context = Context::new(cx.runtime, self.downgrade());
+        context.bind_dispatch_mount(cx.dispatch_mount);
         Ok(f(lease.value.as_mut().expect("leased value"), &mut context))
     }
 }
