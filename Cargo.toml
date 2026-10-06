@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/rxui"]
+
+[workspace.package]
+version = "0.2.0-dev.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+authors = ["hxyulin <hxyulin@proton.me>"]
+repository = "https://github.com/hxyulin/rxui"
+
+[workspace.dependencies]
+astrelis = { git = "https://github.com/hxyulin/astrelis", rev = "1f773d4a13057db8e15adc768c1d59cf979e65ed", version = "=0.4.0-dev.0" }
+astrelis-winit = { git = "https://github.com/hxyulin/astrelis", rev = "1f773d4a13057db8e15adc768c1d59cf979e65ed", version = "=0.4.0-dev.0" }
+taffy = "=0.14.0"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

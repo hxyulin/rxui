@@ -1,0 +1,26 @@
+{
+  "recorded_at": "2026-10-06T10:38:38.805310+00:00",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cpu": "Apple M3 Pro",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "command": "cargo bench -p rxui --bench state --locked",
+  "features": "default (headless)",
+  "warmup_operations": 1000,
+  "samples": 40,
+  "iterations_per_sample": 10000,
+  "percentiles": "Percentiles of per-operation batch averages, not individual-operation latencies",
+  "source_sha256": {
+    "crates/rxui/src/context.rs": "afa6c2993548ca79869f2fe4c1ec707dcbdfeeb52d5b9cce3c091d66392b344f",
+    "crates/rxui/src/entity.rs": "ffebed57c47484cc46d903e758286d777d216ec41785234663e796e12907744c",
+    "crates/rxui/src/error.rs": "0a23b3f6421b2ab4de7533411ebfd212f3edd52c20f705d495609e340d986990",
+    "crates/rxui/src/id.rs": "d81c06aeb531468de36918b18efb09cc37967391bcb4a5d955b306f2829377c9",
+    "crates/rxui/src/lib.rs": "5a97366b4cd26c0089b5f555e26c61f61a30ff2ee0b4a38897e2d5c3698877d2",
+    "crates/rxui/src/listener.rs": "312420dc1912e3c1c2b4cd464a78e5d9527a29f35affe672c31d0ac60490b33f",
+    "crates/rxui/src/runtime.rs": "ff5816a80ac2158b4bb1d0dfce310efbf66c2aecf0a566abf7a13719bcd6ccec",
+    "crates/rxui/src/tests.rs": "4178b81c225e9908dec9fe4340f1542fbd85180ca67ea56e8177f8c6f5991a11",
+    "crates/rxui/benches/state.rs": "ce783f4882c91266e632edf7757f26499ea179af143238600bf60ff4478e1ce8",
+    "Cargo.toml": "c6e118fe897630fa4a1d702ec70ffd0392df2ff6648eccae0dc0274930fd4063",
+    "crates/rxui/Cargo.toml": "4a8d7a01ad92d0d753ea3f100f9abccff6e0f7ffa9f66831b04cef89d99a8c2c",
+    "Cargo.lock": "ab20cf5e7fce49d7d02e2e14d2d2c80b0c47d5d40516eeb880ad0e26ca25ae9f"
+  }
+}

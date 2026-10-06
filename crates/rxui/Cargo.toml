@@ -1,0 +1,29 @@
+[package]
+name = "rxui"
+description = "Declarative UI state and component runtime over Astrelis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# Reserved integration dependencies; the first milestone is the headless runtime.
+rendering = ["dep:astrelis"]
+native = ["rendering", "dep:astrelis-winit"]
+layout = ["dep:taffy"]
+
+[dependencies]
+astrelis = { workspace = true, optional = true }
+astrelis-winit = { workspace = true, optional = true }
+taffy = { workspace = true, optional = true }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "state"
+harness = false

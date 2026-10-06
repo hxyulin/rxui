@@ -1,0 +1,7 @@
+# Optional local override. Copy to the ignored .cargo/local.toml and use:
+# cargo --config .cargo/local.toml test --workspace
+# The committed manifests and canonical lockfile use the pinned Git revision.
+# A local patch may change lockfile source entries; restore those before committing.
+[patch."https://github.com/hxyulin/astrelis"]
+astrelis = { path = "../astrelis/crates/astrelis" }
+astrelis-winit = { path = "../astrelis/crates/astrelis-winit" }
