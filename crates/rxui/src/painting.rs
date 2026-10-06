@@ -1211,3 +1211,7 @@ mod tests {
 #[cfg(test)]
 #[path = "image_gpu_tests.rs"]
 mod image_gpu_tests;
+
+#[cfg(test)]
+#[path = "layout_gpu_tests.rs"]
+mod layout_gpu_tests;

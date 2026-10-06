@@ -139,8 +139,8 @@ pub use editing::{
 };
 #[cfg(feature = "layout")]
 pub use element::{
-    ButtonVariant, ClickEvent, Color, Element, IntoElement, Key, ScrollAxes, View, button, column,
-    image, label, row, text_input,
+    ButtonVariant, ClickEvent, Color, Element, IntoElement, Key, PointerEvents, ScrollAxes, View,
+    button, column, image, label, row, stack, text_input,
 };
 pub use entity::{Entity, Read, WeakEntity};
 pub use error::{AccessError, EffectCycle};
@@ -181,9 +181,9 @@ pub mod prelude {
     pub use crate::{Application, ApplicationError, CloseResponse, WindowHandle, WindowOptions};
     pub use crate::{
         ButtonVariant, ClickEvent, Context, Entity, Image, ImageAlpha, ImageFilter, ImageFit,
-        IntoElement, Listener, PaintStyle, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent,
-        Theme, ThemeColor, Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row,
-        text_input,
+        IntoElement, Listener, PaintStyle, PointerEvents, Runtime, SemanticRole, TextChangeEvent,
+        TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, button, column, image, label,
+        rgb8, rgba8, row, stack, text_input,
     };
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
@@ -217,3 +217,6 @@ mod theme_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod image_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod layout_tests;

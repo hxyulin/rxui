@@ -13,7 +13,7 @@ repository = "https://github.com/hxyulin/rxui"
 [workspace.dependencies]
 astrelis = { git = "https://github.com/hxyulin/astrelis", rev = "1f773d4a13057db8e15adc768c1d59cf979e65ed", version = "=0.4.0-dev.0" }
 astrelis-winit = { git = "https://github.com/hxyulin/astrelis", rev = "1f773d4a13057db8e15adc768c1d59cf979e65ed", version = "=0.4.0-dev.0" }
-taffy = { version = "=0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "content_size"] }
+taffy = { version = "=0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

@@ -62,6 +62,17 @@ pub enum ButtonVariant {
     /// Text/content without a resting fill/border; hover/pressed still show feedback.
     Quiet,
 }
+/// Pointer participation of an element and its subtree. Keyboard/semantic focus is separate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PointerEvents {
+    /// Controls receive pointer input; passive content lets lower siblings receive clicks.
+    #[default]
+    Auto,
+    /// Ignore this complete subtree for pointer targeting and wheel scrolling.
+    None,
+    /// Block lower siblings within this element's clipped border box; children still work.
+    Block,
+}
 /// Semantic button activation, shared by pointer and keyboard dispatch.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ClickEvent;
@@ -92,6 +103,7 @@ impl ScrollAxes {
 pub(crate) enum ElementKind {
     Row,
     Column,
+    Stack,
     Label(String),
     Image(Box<crate::image::Properties>),
     Button {
@@ -124,6 +136,9 @@ pub struct Element {
     pub(crate) font_size: Option<f32>,
     pub(crate) layout_overrides: u8,
     pub(crate) button_variant: ButtonVariant,
+    pub(crate) z_index: i32,
+    pub(crate) pointer_events: PointerEvents,
+    pub(crate) inert: bool,
     pub(crate) clip: bool,
     pub(crate) scroll: Option<ScrollAxes>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
@@ -170,6 +185,9 @@ impl Element {
             font_size: None,
             layout_overrides: 0,
             button_variant: ButtonVariant::Default,
+            z_index: 0,
+            pointer_events: PointerEvents::Auto,
+            inert: false,
             clip: false,
             scroll: None,
             semantics: None,
@@ -211,6 +229,161 @@ impl Element {
         self.children
             .extend(children.into_iter().map(IntoElement::into_element));
         self
+    }
+    /// Paint this complete subtree after lower-z siblings. Equal values preserve description order.
+    /// Every parent scopes its children's order; z does not affect layout, Tab or semantics.
+    pub fn z_index(mut self, value: i32) -> Self {
+        self.z_index = value;
+        self
+    }
+    /// Pointer participation, independently of keyboard/assistive focus or painting.
+    pub fn pointer_events(mut self, value: PointerEvents) -> Self {
+        self.pointer_events = value;
+        self
+    }
+    /// Disables pointer, keyboard and assistive interaction for this subtree and excludes
+    /// it from semantics, while preserving layout, painting, state and retained identity.
+    /// Use on background content while an overlay owns interaction. Focus/capture is cleared;
+    /// restoring the subtree does not automatically restore focus.
+    pub fn inert(mut self, inert: bool) -> Self {
+        self.inert = inert;
+        self
+    }
+    /// Fixed dimensions in logical units.
+    pub fn size(self, width: f32, height: f32) -> Self {
+        self.width(width).height(height)
+    }
+    /// Width as a fraction of the containing block (1.0 is 100%).
+    pub fn width_percent(mut self, fraction: f32) -> Self {
+        self.layout_overrides |= 2;
+        self.style.size.width = percent(fraction);
+        self
+    }
+    /// Height as a fraction of the containing block (1.0 is 100%).
+    pub fn height_percent(mut self, fraction: f32) -> Self {
+        self.layout_overrides |= 4;
+        self.style.size.height = percent(fraction);
+        self
+    }
+    /// Minimum width in logical units; zero permits flex shrinking below intrinsic content.
+    pub fn min_width(mut self, value: f32) -> Self {
+        self.style.min_size.width = length(value);
+        self
+    }
+    /// Minimum height in logical units.
+    pub fn min_height(mut self, value: f32) -> Self {
+        self.style.min_size.height = length(value);
+        self
+    }
+    /// Maximum width in logical units.
+    pub fn max_width(mut self, value: f32) -> Self {
+        self.style.max_size.width = length(value);
+        self
+    }
+    /// Maximum height in logical units.
+    pub fn max_height(mut self, value: f32) -> Self {
+        self.style.max_size.height = length(value);
+        self
+    }
+    /// Share of positive free space along a flex parent's main axis. Default is zero.
+    pub fn flex_grow(mut self, value: f32) -> Self {
+        self.style.flex_grow = value;
+        self
+    }
+    /// Shrink factor along a flex parent's main axis. RXUI defaults to zero.
+    pub fn flex_shrink(mut self, value: f32) -> Self {
+        self.style.flex_shrink = value;
+        self
+    }
+    /// Initial main-axis size for flex distribution, in logical units.
+    pub fn flex_basis(mut self, value: f32) -> Self {
+        self.style.flex_basis = length(value);
+        self
+    }
+    /// Override the parent's cross-axis alignment (vertical in a stack).
+    pub fn align_self(mut self, value: AlignSelf) -> Self {
+        self.style.align_self = Some(value);
+        self
+    }
+    /// Horizontal child alignment for a stack/grid container.
+    pub fn justify_items(mut self, value: AlignItems) -> Self {
+        self.style.justify_items = Some(value);
+        self
+    }
+    /// Horizontal alignment of this element in a stack/grid parent.
+    pub fn justify_self(mut self, value: AlignSelf) -> Self {
+        self.style.justify_self = Some(value);
+        self
+    }
+    /// Horizontal padding; vertical padding remains unchanged.
+    pub fn padding_x(mut self, value: f32) -> Self {
+        self.layout_overrides |= 1;
+        self.style.padding.left = length(value);
+        self.style.padding.right = length(value);
+        self
+    }
+    /// Vertical padding; horizontal padding remains unchanged.
+    pub fn padding_y(mut self, value: f32) -> Self {
+        self.layout_overrides |= 1;
+        self.style.padding.top = length(value);
+        self.style.padding.bottom = length(value);
+        self
+    }
+    /// Uniform external spacing. Negative margins are supported.
+    pub fn margin(mut self, value: f32) -> Self {
+        self.style.margin = taffy::geometry::Rect {
+            left: length(value),
+            right: length(value),
+            top: length(value),
+            bottom: length(value),
+        };
+        self
+    }
+    /// Horizontal external spacing.
+    pub fn margin_x(mut self, value: f32) -> Self {
+        self.style.margin.left = length(value);
+        self.style.margin.right = length(value);
+        self
+    }
+    /// Vertical external spacing.
+    pub fn margin_y(mut self, value: f32) -> Self {
+        self.style.margin.top = length(value);
+        self.style.margin.bottom = length(value);
+        self
+    }
+    /// Removes this element from flow. Insets anchor it in its parent's containing block.
+    pub fn absolute(mut self) -> Self {
+        self.style.position = Position::Absolute;
+        self
+    }
+    /// Restores flow participation. Insets offset its placement while retaining its flow slot.
+    pub fn relative(mut self) -> Self {
+        self.style.position = Position::Relative;
+        self
+    }
+    /// Left inset/relative offset in logical units.
+    pub fn left(mut self, value: f32) -> Self {
+        self.style.inset.left = length(value);
+        self
+    }
+    /// Right inset/relative offset in logical units.
+    pub fn right(mut self, value: f32) -> Self {
+        self.style.inset.right = length(value);
+        self
+    }
+    /// Top inset/relative offset in logical units.
+    pub fn top(mut self, value: f32) -> Self {
+        self.style.inset.top = length(value);
+        self
+    }
+    /// Bottom inset/relative offset in logical units.
+    pub fn bottom(mut self, value: f32) -> Self {
+        self.style.inset.bottom = length(value);
+        self
+    }
+    /// Anchors all four edges equally. Auto-sized absolute children stretch between opposite edges.
+    pub fn inset(self, value: f32) -> Self {
+        self.left(value).right(value).top(value).bottom(value)
     }
     /// Uniform padding in logical units.
     pub fn padding(mut self, value: f32) -> Self {
@@ -559,6 +732,29 @@ impl Element {
         {
             return Err(UiError::InvalidStyle);
         }
+        let valid_track = |track: &taffy::style::TrackSizingFunction| {
+            let valid = |v: CompactLength| v.is_intrinsic() || nonnegative(v);
+            valid(track.min.into_raw()) && valid(track.max.into_raw())
+        };
+        let valid_template = |track: &taffy::style::GridTemplateComponent<String>| match track {
+            taffy::style::GridTemplateComponent::Single(track) => valid_track(track),
+            taffy::style::GridTemplateComponent::Repeat(repeat) => {
+                !repeat.tracks.is_empty() && repeat.tracks.iter().all(valid_track)
+            }
+        };
+        if !s
+            .grid_template_rows
+            .iter()
+            .chain(&s.grid_template_columns)
+            .all(valid_template)
+            || !s
+                .grid_auto_rows
+                .iter()
+                .chain(&s.grid_auto_columns)
+                .all(valid_track)
+        {
+            return Err(UiError::InvalidStyle);
+        }
         if let ElementKind::Image(props) = &self.kind {
             props.validate()?;
         }
@@ -588,7 +784,12 @@ impl Element {
         {
             return Err(UiError::LeafChildren);
         }
-        if self.scroll.is_some() && !matches!(self.kind, ElementKind::Row | ElementKind::Column) {
+        if self.scroll.is_some()
+            && !matches!(
+                self.kind,
+                ElementKind::Row | ElementKind::Column | ElementKind::Stack
+            )
+        {
             return Err(UiError::InvalidStyle);
         }
         if matches!(self.kind, ElementKind::Button { .. }) && self.children.iter().any(has_control)
@@ -617,6 +818,23 @@ pub fn row() -> Element {
 /// Flex column, with children in description order.
 pub fn column() -> Element {
     Element::new(ElementKind::Column)
+}
+/// Overlapping content sized by its in-flow children. Each child occupies the same grid cell.
+/// Absolute children do not contribute intrinsic size. Later/elevated siblings paint above earlier ones.
+/// `align_items` controls vertical placement; `justify_items` controls horizontal placement.
+///
+/// ```
+/// use rxui::prelude::*;
+/// let panel = stack().size(320., 200.)
+///     .child(column().fill_width().fill_height().background(ThemeColor::Surface))
+///     .child(button("Close").absolute().top(8.).right(8.).z_index(1));
+/// ```
+pub fn stack() -> Element {
+    let mut element = Element::new(ElementKind::Stack);
+    element.style.display = Display::Grid;
+    element.style.align_items = Some(AlignItems::START);
+    element.style.justify_items = Some(AlignItems::START);
+    element
 }
 /// Owned text leaf measured by the host's text measurer.
 pub fn label(text: impl Into<String>) -> Element {
@@ -650,7 +868,10 @@ pub fn button(content: impl IntoElement) -> Element {
         && content.children.is_empty()
         && !content.clip
         && content.scroll.is_none()
-        && content.layout_overrides == 0;
+        && content.layout_overrides == 0
+        && content.z_index == 0
+        && content.pointer_events == PointerEvents::Auto
+        && !content.inert;
     let (text, children) = if plain {
         let ElementKind::Label(text) = content.kind else {
             unreachable!()

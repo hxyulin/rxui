@@ -92,10 +92,11 @@ whole-tree rollback transaction. Geometry is unavailable after failure until a
 successful retry. A recovered retry also restores partially changed tree
 relationships. UiPainter rejects stale/missing resources before recording draws.
 
-The initial layout is flex-based. Builders provide padding, gaps, fixed/fill sizes,
-alignment, colors and leaf font size, with `.layout(...)` exposing Taffy style
-customization. Colors/font sizes apply to the current leaf rather than cascading
-through containers. Taffy customization alone does not supply text alignment or
+Layout uses Taffy flex rows/columns and single-cell stacks. Builders provide
+spacing, fixed/percent/min/max sizing, flex distribution, positioning and alignment,
+with `.layout(...)` exposing Taffy style customization. Text colors/font sizes
+inherit through containers. Sibling z order affects painting/pointer targeting;
+Tab and semantics keep description order. See [layout.md](layout.md). Taffy customization alone does not supply text alignment or
 UI overflow behavior; use explicit clipping/scroll builders for that behavior.
 
 ## Scrolling and clipping

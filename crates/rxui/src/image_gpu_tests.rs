@@ -2,13 +2,13 @@ use super::*;
 use crate::*;
 use astrelis::{FramebufferOptions, wgpu};
 
-struct Page(Element);
+pub(super) struct Page(pub(super) Element);
 impl View for Page {
     fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
         self.0.clone()
     }
 }
-fn prepare(
+pub(super) fn prepare(
     runtime: &mut Runtime,
     ui: &mut Ui<Page>,
     painter: &mut UiPainter,
@@ -17,7 +17,7 @@ fn prepare(
     ui.prepare(runtime, [64., 64.], painter).unwrap();
     painter.prepare(ui, format, 1.).unwrap();
 }
-fn read_pixel(
+pub(super) fn read_pixel(
     graphics: &GraphicsContext,
     frame: &mut astrelis::Frame<'_, 'static>,
     texture: &wgpu::Texture,
@@ -47,7 +47,7 @@ fn read_pixel(
     );
     buffer
 }
-fn pixels(
+pub(super) fn pixels(
     graphics: &GraphicsContext,
     buffer: &wgpu::Buffer,
     submission: wgpu::SubmissionIndex,

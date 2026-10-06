@@ -77,3 +77,12 @@ required-features = ["native"]
 name = "images"
 harness = false
 required-features = ["layout"]
+
+[[example]]
+name = "layout_window"
+required-features = ["native"]
+
+[[bench]]
+name = "layout"
+harness = false
+required-features = ["layout"]

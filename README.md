@@ -282,3 +282,16 @@ records costs and workload boundaries. Both examples are standalone:
 cargo run -p rxui --example images_window --features native --locked
 cargo run -p rxui --example framebuffer_window --features native --locked
 ```
+
+## Layout and stacked overlays
+
+Rows/columns support flex growth/shrink/basis, min/max constraints, percentage sizes
+and axis spacing. `stack()` overlaps children with natural sizing; `.absolute()`
+and edge insets anchor overlays. `.z_index(...)` changes sibling paint and pointer
+order while Tab/semantics retain description order. `PointerEvents::Block` covers
+underlying content; `.inert(true)` disables background interaction/semantics without
+removing its layout or painting. See [the layout contract](docs/layout.md).
+
+```sh
+cargo run -p rxui --example layout_window --features native --locked
+```

@@ -184,3 +184,11 @@ label descendants, including component descriptions; an explicit name overrides
 it. Their content is not separately focusable. Nested interactive controls are
 rejected to keep activation and focus unambiguous. Native AccessKit maps images
 to its Image role and button actions keep using the existing listener path.
+
+## Layout ordering and inert subtrees
+
+Visual z order does not change description/semantic child order or sequential focus.
+Pointer transparency/blocking is independent of assistive and keyboard focus.
+An inert subtree is excluded from semantics and cannot receive actions while its
+geometry and painting remain present. Inertness crosses component boundaries and
+is local to each placement. See [the layout contract](layout.md).

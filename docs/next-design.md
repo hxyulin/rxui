@@ -566,3 +566,12 @@ content preserves the caption fast path, rejects nested controls, derives names 
 inherits control state foreground; Default/Primary/Quiet variants follow themes.
 Contracts and validation are in [images.md](images.md), [styling.md](styling.md) and
 [performance/images.md](performance/images.md).
+
+### Layout and ordering foundation
+
+Implemented flex/percent/min/max sizing and spacing helpers, Taffy single-cell
+stacks, absolute/relative placement, sibling-scoped z ordering and independent
+description/paint order. Pointer policies and inherited placement-local inertness
+support blocking overlays without disabling separately mounted shared components.
+Contracts/examples are in [layout.md](layout.md). True isolated group opacity is
+the next compositing step; rounded masking and general transforms remain separate.

@@ -225,6 +225,8 @@ pub enum ElementType {
     Row,
     /// Vertical flex container.
     Column,
+    /// Overlapping single-cell container.
+    Stack,
     /// Text leaf.
     Label,
     /// Shared raster/GPU image leaf.
@@ -256,6 +258,12 @@ pub struct ElementInfo<'a> {
     pub scroll_range: [f32; 2],
     /// Owned node text, borrowed for the snapshot.
     pub text: Option<&'a str>,
+    /// Sibling-scoped paint order; layout and focus retain description order.
+    pub z_index: i32,
+    /// Pointer targeting policy, independent of keyboard/semantic focus.
+    pub pointer_events: crate::PointerEvents,
+    /// Effective subtree inertness; painting and geometry are preserved.
+    pub inert: bool,
     /// Image source and resolved placement, absent for other kinds.
     pub image: Option<crate::ImageInfo<'a>>,
     /// Selection/composition retained by this text input placement.
@@ -352,6 +360,7 @@ fn kind(element: &Element) -> ElementType {
     match element.kind {
         ElementKind::Row => ElementType::Row,
         ElementKind::Column => ElementType::Column,
+        ElementKind::Stack => ElementType::Stack,
         ElementKind::Label(_) => ElementType::Label,
         ElementKind::Image(_) => ElementType::Image,
         ElementKind::TextInput { .. } => ElementType::TextInput,
@@ -407,6 +416,8 @@ struct Node {
     image_tint: Color,
     button_owner: Option<ElementId>,
     control_color: bool,
+    inert: bool,
+    pointer_allowed: bool,
     button_name: String,
 }
 
@@ -438,6 +449,7 @@ pub struct Ui<T: View> {
     root: Option<ElementId>,
     nodes: HashMap<ElementId, Node>,
     order: Vec<ElementId>,
+    paint_order: Option<Vec<ElementId>>,
     taffy: TaffyTree<ElementId>,
     viewport: Option<[f32; 2]>,
     measurement_generation: u64,
@@ -473,6 +485,7 @@ impl<T: View> Ui<T> {
             root: None,
             nodes: HashMap::new(),
             order: Vec::new(),
+            paint_order: None,
             taffy,
             viewport: None,
             measurement_generation: 0,
@@ -741,9 +754,7 @@ impl<T: View> Ui<T> {
         self.viewport = Some(viewport);
         self.measurement_generation = generation;
         if self.order_dirty {
-            self.order.clear();
-            self.collect_order(root);
-            self.order_dirty = false;
+            self.rebuild_order(root);
         }
         self.clear_invalid_interaction();
         self.editor_nodes.retain(|id| self.nodes.contains_key(id));
@@ -815,6 +826,12 @@ impl<T: View> Ui<T> {
         mut element: Element,
         parent: Option<ElementId>,
     ) -> Result<ElementId, UiError> {
+        if parent.is_some_and(|id| matches!(self.nodes[&id].element.kind, ElementKind::Stack))
+            && element.style.position != taffy::style::Position::Absolute
+        {
+            element.style.grid_row = taffy::prelude::line(1);
+            element.style.grid_column = taffy::prelude::line(1);
+        }
         if matches!(
             element.kind,
             ElementKind::Button { .. } | ElementKind::TextInput { .. }
@@ -838,12 +855,15 @@ impl<T: View> Ui<T> {
             && compatible(&self.nodes[&id].element, &element)
         {
             let node = self.nodes.get_mut(&id).unwrap();
+            self.order_dirty |= node.element.z_index != element.z_index;
             node.layout_dirty |= node.element.style != element.style
                 || node.element.layout_overrides != element.layout_overrides;
             if node.element.style != element.style
                 || node.element.paint != element.paint
                 || node.element.font_size != element.font_size
                 || node.element.theme != element.theme
+                || node.element.inert != element.inert
+                || node.element.pointer_events != element.pointer_events
                 || node.element.button_variant != element.button_variant
                 || node.element.states != element.states
                 || image_properties(&node.element) != image_properties(&element)
@@ -964,6 +984,8 @@ impl<T: View> Ui<T> {
                     image_tint: [1.; 4],
                     button_owner: None,
                     control_color: false,
+                    inert: false,
+                    pointer_allowed: true,
                     button_name: String::new(),
                 },
             );
@@ -1097,6 +1119,14 @@ impl<T: View> Ui<T> {
         parent_color: StyleColor,
         parent_font: Option<f32>,
     ) -> Result<(), UiError> {
+        let inert = self.nodes[&id].element.inert
+            || self.nodes[&id]
+                .parent
+                .is_some_and(|parent| self.nodes[&parent].inert);
+        // Cancel preedit before layout rather than while clearing focus afterward.
+        if inert {
+            self.cancel_composition(id);
+        }
         let node = &self.nodes[&id];
         let element = &node.element;
         let theme = element.theme.as_ref().unwrap_or(parent_theme).clone();
@@ -1215,8 +1245,15 @@ impl<T: View> Ui<T> {
                     (n.button_owner, n.control_color)
                 }
             });
+        let inherited = self.nodes[&id].parent.map(|parent| &self.nodes[&parent]);
+        let inert = self.nodes[&id].element.inert || inherited.is_some_and(|n| n.inert);
+        let pointer_allowed = !inert
+            && self.nodes[&id].element.pointer_events != crate::PointerEvents::None
+            && inherited.is_none_or(|n| n.pointer_allowed);
         let control_color = control_color && self.nodes[&id].element.paint.color.is_none();
         let node = self.nodes.get_mut(&id).unwrap();
+        node.inert = inert;
+        node.pointer_allowed = pointer_allowed;
         node.button_owner = button_owner;
         node.control_color = control_color;
         if node.font_size != font_size && node.displayed_text().is_some() {
@@ -1380,11 +1417,52 @@ impl<T: View> Ui<T> {
             self.collect_order(child);
         }
     }
+    fn rebuild_order(&mut self, root: ElementId) {
+        self.order.clear();
+        self.collect_order(root);
+        if self.nodes.values().any(|n| n.element.z_index != 0) {
+            let mut order = self.paint_order.take().unwrap_or_default();
+            order.clear();
+            self.collect_paint_order(root, &mut order);
+            self.paint_order = Some(order);
+        } else {
+            self.paint_order = None;
+        }
+        self.order_dirty = false;
+    }
+    fn collect_paint_order(&self, id: ElementId, order: &mut Vec<ElementId>) {
+        order.push(id);
+        let mut children = self.nodes[&id].children.clone();
+        children.sort_by_key(|child| self.nodes[child].element.z_index);
+        for child in children {
+            self.collect_paint_order(child, order);
+        }
+    }
+    fn painting_order(&self) -> &[ElementId] {
+        self.paint_order.as_deref().unwrap_or(&self.order)
+    }
+    fn pointer_allowed(&self, id: ElementId) -> bool {
+        self.nodes[&id].pointer_allowed
+    }
+    fn pointer_target(&self, point: [f32; 2]) -> Option<ElementId> {
+        self.painting_order().iter().rev().copied().find(|id| {
+            let n = &self.nodes[id];
+            n.visible
+                && n.bounds.contains(point)
+                && n.clip_bounds.contains(point)
+                && (matches!(
+                    n.element.kind,
+                    ElementKind::Button { .. } | ElementKind::TextInput { .. }
+                ) || n.element.pointer_events == crate::PointerEvents::Block)
+                && self.pointer_allowed(*id)
+        })
+    }
     fn enabled(&self, id: ElementId) -> bool {
         let Some(node) = self.nodes.get(&id) else {
             return false;
         };
         if !node.visible
+            || node.inert
             || !matches!(
                 node.element.kind,
                 ElementKind::Button {
@@ -1409,19 +1487,27 @@ impl<T: View> Ui<T> {
         true
     }
     fn clear_invalid_interaction(&mut self) {
-        if self.hovered.is_some_and(|id| !self.enabled(id)) {
+        if self
+            .hovered
+            .is_some_and(|id| !self.enabled(id) || !self.pointer_allowed(id))
+        {
             self.hovered = None;
         }
-        if self.pressed.is_some_and(|id| !self.enabled(id)) {
+        if self
+            .pressed
+            .is_some_and(|id| !self.enabled(id) || !self.pointer_allowed(id))
+        {
             self.pressed = None;
         }
         if self.focused.is_some_and(|id| !self.enabled(id)) {
             self.change_focus(None);
         }
     }
-    /// Iterates visible retained elements in tree order after successful preparation.
+    /// Iterates visible retained elements in paint order after successful preparation.
     pub fn elements(&self) -> impl Iterator<Item = ElementInfo<'_>> {
-        self.order.iter().filter_map(|id| self.element(*id))
+        self.painting_order()
+            .iter()
+            .filter_map(|id| self.element(*id))
     }
     /// Whether a retained identity still exists, including hidden/unprepared nodes.
     /// Hosts can use this to dispose per-node measurement and GPU caches.
@@ -1487,6 +1573,9 @@ impl<T: View> Ui<T> {
             clip_bounds: node.clip_bounds,
             scroll_offset: node.scroll_offset,
             scroll_range: node.scroll_range,
+            z_index: node.element.z_index,
+            pointer_events: node.element.pointer_events,
+            inert: node.inert,
             text: node.displayed_text(),
             image: if let ElementKind::Image(props) = &node.element.kind {
                 let (destination, uv) =
@@ -1543,11 +1632,7 @@ impl<T: View> Ui<T> {
         {
             return None;
         }
-        self.order.iter().rev().copied().find(|id| {
-            self.enabled(*id)
-                && self.nodes[id].bounds.contains(point)
-                && self.nodes[id].clip_bounds.contains(point)
-        })
+        self.pointer_target(point).filter(|id| self.enabled(*id))
     }
     /// Scrolls the innermost hit container, chaining unconsumed motion to ancestors.
     /// Delta is logical content motion: positive values move toward later content.
@@ -1559,9 +1644,12 @@ impl<T: View> Ui<T> {
         if !self.geometry_ready {
             return Ok(false);
         }
-        let mut current = self.order.iter().rev().copied().find(|id| {
+        let mut current = self.painting_order().iter().rev().copied().find(|id| {
             let n = &self.nodes[id];
-            n.visible && n.bounds.contains(point) && n.clip_bounds.contains(point)
+            n.visible
+                && n.bounds.contains(point)
+                && n.clip_bounds.contains(point)
+                && self.pointer_allowed(*id)
         });
         let mut changed = false;
         while let Some(id) = current {
@@ -1765,9 +1853,7 @@ impl<T: View> Ui<T> {
         self.resolve_styles()?;
         if let Some(root) = self.root {
             if self.order_dirty {
-                self.order.clear();
-                self.collect_order(root);
-                self.order_dirty = false;
+                self.rebuild_order(root);
             }
             if self.taffy.dirty(self.nodes[&root].layout)? {
                 self.geometry_ready = false;
@@ -2212,7 +2298,7 @@ impl<T: View> Ui<T> {
         let Some(node) = self.nodes.get(&id) else {
             return false;
         };
-        if !node.visible {
+        if !node.visible || node.inert {
             return false;
         }
         let mut current = Some(id);
@@ -2241,9 +2327,10 @@ impl<T: View> Ui<T> {
         let node = &self.nodes[&id];
         let properties = node.element.semantics.as_deref();
         let inferred = match node.element.kind {
-            ElementKind::Row | ElementKind::Column | ElementKind::Component(_) => {
-                crate::SemanticRole::Container
-            }
+            ElementKind::Row
+            | ElementKind::Column
+            | ElementKind::Stack
+            | ElementKind::Component(_) => crate::SemanticRole::Container,
             ElementKind::Label(_) => crate::SemanticRole::Label,
             ElementKind::Image(_) => crate::SemanticRole::Image,
             ElementKind::Button { .. } => crate::SemanticRole::Button,
