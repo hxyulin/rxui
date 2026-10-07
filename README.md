@@ -122,6 +122,17 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 
 `cargo doc -p rxui --all-features --open` builds the API reference.
 
+## Acknowledgements
+
+RXUI's application API is modeled on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui),
+the framework behind the Zed editor. Designing for Rust's ownership rules led to
+the same shape GPUI had already settled on: state owned by the application,
+`Entity<T>` handles, context-based updates and `cx.listener` callbacks. RXUI
+then used GPUI as its reference for naming and API. The two diverge below that
+layer. RXUI tracks dependencies automatically instead of requiring explicit
+notification, reconciles a retained element tree by key, and renders through
+Astrelis and wgpu in a frame your own passes can join.
+
 ## Contributing
 
 Bug reports, examples and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
