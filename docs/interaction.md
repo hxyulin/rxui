@@ -11,7 +11,7 @@ Try the standalone [workspace example](../crates/rxui/examples/workspace_window.
 cargo run -p rxui --example workspace_window --features native --locked
 ```
 
-It includes a controlled sidebar, a nested vertical split, two scroll areas,
+It includes a controlled sidebar, a nested vertical split, two fixed-height virtual lists,
 programmatic scrolling, an editable name and a captured draggable card. A second
 window shares pane sizes, selection and card position, while the framework keeps
 scroll, capture, hover and focus separate. Custom interaction values stored in the

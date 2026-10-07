@@ -116,12 +116,13 @@ logical clips to physical scissor rectangles, intersects the caller's original
 scissor and restores that scissor after painting. A GPU readback test checks both
 ancestor clipping and caller clipping before and after scrolling.
 
-Visible scroll areas/bars and placement-scoped handles are implemented. Kinetic
-scrolling and virtualized children remain following work.
-Scrolling refreshes retained geometry across the tree; GPU preparation retains all
-laid-out text, including offscreen rows. This first slice avoids reshaping on scroll,
-but is not a constant-cost viewport or a large-list solution. Virtualization will
-need a separate API and representative benchmarks.
+Visible scroll areas/bars and placement-scoped handles are implemented. Ordinary
+scroll containers retain all children, and their geometry work scales with those
+children. [Fixed-height virtual lists](virtual-lists.md) describe only viewport
+rows plus overscan, preserving overlapping keys and disposing rows which leave
+that range. Their retained node count and mock-layout CPU work scale with viewport
+size rather than total item count. Kinetic scrolling and variable-height lists
+remain future work.
 
 ## Native hosting and async work
 
@@ -141,4 +142,4 @@ Portable semantic output and optional AccessKit translation are implemented; see
 [the semantics contract](semantics.md). Native Application hosting manages lazy
 publication and assistive actions. Themes and inherited text styling are implemented;
 [the styling contract](styling.md) describes retained resolution and live switching.
-Multiline/undo editing and virtualization remain next milestones.
+Multiline/undo editing remain following milestones.

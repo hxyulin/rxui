@@ -27,8 +27,9 @@
 //! Native window geometry snapshots support application-owned persistence and
 //! monitor-aware restoration; file-drop hooks deliver window-level native paths.
 //! Portable semantics are part of layout; the optional accessibility feature adds
-//! AccessKit translation for custom hosts. Multiline/undo editing and virtualization
-//! remain following milestones.
+//! AccessKit translation for custom hosts. Fixed-height virtual lists describe only
+//! viewport rows plus overscan; shared windows retain independent scroll offsets.
+//! Multiline/undo editing and variable-height virtualization remain following milestones.
 //!
 //! Declarative components own their descriptions and bind live-state listeners:
 //!
@@ -154,6 +155,8 @@ mod tasks;
 mod theme;
 #[cfg(feature = "layout")]
 mod ui;
+#[cfg(feature = "layout")]
+mod virtual_list;
 
 #[cfg(feature = "accessibility")]
 pub use accessibility::{AccessKitStats, AccessKitTree};
@@ -245,6 +248,8 @@ pub use ui::{
     Bounds, ElementId, ElementInfo, ElementType, PointerEvent, TextMeasure, TextRequest, TextWidth,
     Ui, UiError, UiStats,
 };
+#[cfg(feature = "layout")]
+pub use virtual_list::{VirtualList, virtual_list};
 
 #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
 pub use native::{
@@ -270,8 +275,8 @@ pub mod prelude {
     };
     pub use crate::{
         Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollError,
-        ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, scroll_area, scrollbar,
-        split_column, split_row,
+        ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, VirtualList, scroll_area,
+        scrollbar, split_column, split_row, virtual_list,
     };
     pub use crate::{
         ButtonVariant, ClickEvent, Context, Cursor, Entity, Image, ImageAlpha, ImageFilter,
@@ -346,3 +351,6 @@ mod control_tests;
 mod dock_tests;
 #[cfg(all(test, feature = "layout"))]
 mod focus_tab_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod virtual_list_tests;

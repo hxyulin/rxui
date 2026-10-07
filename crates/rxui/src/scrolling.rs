@@ -109,6 +109,17 @@ impl ScrollHandle {
     pub fn scroll_by(&self, cx: &mut AppContext<'_>, delta: [f32; 2]) -> Result<(), ScrollError> {
         self.placement(cx)?.scroll_by(cx, delta)
     }
+    /// Reveals a fixed-height row in the source placement, moving the minimum distance.
+    /// The index is application-owned; offsets clamp to the current scroll range.
+    /// Invalid height or an extent beyond 2^24 logical pixels returns InvalidOffset.
+    pub fn reveal_row(
+        &self,
+        cx: &mut AppContext<'_>,
+        index: usize,
+        row_height: f32,
+    ) -> Result<(), ScrollError> {
+        self.placement(cx)?.reveal_row(cx, index, row_height)
+    }
     pub(crate) fn state_in(&self, tree: u64) -> Option<ScrollState> {
         self.0.borrow().bindings.get(&tree).map(|b| b.state)
     }
@@ -161,6 +172,29 @@ impl ScrollPlacement {
     /// Queue relative motion through an explicit source.
     pub fn scroll_by(&self, cx: &mut AppContext<'_>, delta: [f32; 2]) -> Result<(), ScrollError> {
         self.command(cx, delta, true)
+    }
+    /// Reveals a fixed-height row through this explicit weak placement.
+    /// The index must describe application data; actual offsets clamp at application.
+    pub fn reveal_row(
+        &self,
+        cx: &mut AppContext<'_>,
+        index: usize,
+        row_height: f32,
+    ) -> Result<(), ScrollError> {
+        let end = (index as f64 + 1.) * f64::from(row_height);
+        if !row_height.is_finite() || row_height <= 0. || end > 16_777_216. {
+            return Err(ScrollError::InvalidOffset);
+        }
+        let state = self.state()?;
+        let start = (index as f64 * f64::from(row_height)) as f32;
+        let y = if start < state.offset[1] || row_height > state.viewport[1] {
+            start
+        } else if end as f32 > state.offset[1] + state.viewport[1] {
+            end as f32 - state.viewport[1]
+        } else {
+            state.offset[1]
+        };
+        self.scroll_to(cx, [state.offset[0], y])
     }
     fn command(
         &self,

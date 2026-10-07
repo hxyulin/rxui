@@ -140,3 +140,81 @@ fn scroll_thumbs_split_lines_and_isolated_clipping_follow_live_geometry() {
         assert!(errors.pop().await.is_none());
     });
 }
+
+struct VirtualColors {
+    handle: ScrollHandle,
+}
+impl View for VirtualColors {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        virtual_list(100_000, 32., &self.handle, cx, |i| {
+            column().background(if i % 2 == 0 {
+                [1., 0., 0., 1.]
+            } else {
+                [0., 1., 0., 1.]
+            })
+        })
+        .scrollbars(false)
+        .size(64., 64.)
+        .into_element()
+        .opacity(0.5)
+    }
+}
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn virtual_rows_render_fractional_slots_after_large_jumps_with_msaa_and_opacity() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut target = graphics
+            .create_framebuffer(
+                FramebufferOptions::new(64, 64)
+                    .sample_count(4)
+                    .usage(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC),
+            )
+            .unwrap();
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| {
+            cx.new(|_| VirtualColors {
+                handle: ScrollHandle::new(),
+            })
+        });
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
+        for jumped in [false, true] {
+            if jumped {
+                ui.scroll([10., 10.], [0., 1_600_016.5]).unwrap();
+                ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
+            }
+            assert!(ui.elements().count() < 25);
+            painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+            let texture = target.color_texture().unwrap().clone();
+            let mut frame = target.begin_frame().unwrap();
+            painter
+                .compose(&ui, &mut frame, 1., |frame, composed| {
+                    let mut pass = frame
+                        .render_pass()
+                        .clear_color(wgpu::Color::BLACK)
+                        .begin()?;
+                    composed.paint(&mut pass)
+                })
+                .unwrap();
+            let buffer = read_pixel(&graphics, &mut frame, &texture);
+            let bytes = pixels(&graphics, &buffer, frame.finish().unwrap());
+            let at = |y: usize| &bytes[y * 256 + 10 * 4..y * 256 + 10 * 4 + 4];
+            assert_eq!(at(10), [128, 0, 0, 255]);
+            assert_eq!(
+                at(24),
+                if jumped {
+                    [0, 128, 0, 255]
+                } else {
+                    [128, 0, 0, 255]
+                }
+            );
+            assert_eq!(at(40), [0, 128, 0, 255]);
+        }
+        assert!(errors.pop().await.is_none());
+    });
+}

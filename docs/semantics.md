@@ -215,3 +215,17 @@ to its tab roles and relationships. Activation still uses source-window listener
 and `.tab_stop(false)` preserves assistive focus and activation. See
 [focus groups and controlled tabs](focus-and-tabs.md) for keyboard and lifetime
 contracts and the native/automated checks.
+
+## Virtual lists
+
+Fixed-height virtual lists publish only mounted viewport/overscan rows. Their List
+container has `set_size` for the complete item count; ListItem wrappers have a
+zero-based `position_in_set`. AccessKit translates these to SizeOfSet on the
+container and PositionInSet on each mounted item. Removed identities reject stale
+assistive actions. Ordinary retained scroll containers still publish all children.
+
+An unmounted row has no Focus or ScrollIntoView target. Scroll actions on the
+viewport/scrollbar mount another range; applications can use `reveal_row` for a
+known data index. Indexed assistive navigation to unmounted rows and focus pinning
+are not implemented. Metadata/consumer validation does not establish complete
+screen-reader usability for arbitrarily large lists.

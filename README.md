@@ -31,8 +31,9 @@ Portable semantics, accessible names/roles, focus, activation, controlled values
 selection and scrolling are implemented. Themes, inherited text styling, control
 state paints and grayscale dark/light presets are implemented. Shared RGBA/GPU
 images, live framebuffer output, composed buttons and application graphics hooks
-are implemented. Optional `image-decoding` adds PNG/JPEG decoding. Virtualization
-remains a following milestone.
+are implemented. Optional `image-decoding` adds PNG/JPEG decoding. Fixed-height
+virtual lists build only nearby rows; see [virtual lists](docs/virtual-lists.md)
+and [scaling measurements](docs/performance/virtual-lists.md).
 
 ## Declarative views and a window
 

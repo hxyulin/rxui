@@ -163,6 +163,12 @@ impl AccessKitTree {
             let id = self.ids[&semantic.id];
             reverse.insert(id, semantic.id);
             let mut node = Node::new(role(semantic.role));
+            if let Some(size) = semantic.set_size {
+                node.set_size_of_set(size);
+            }
+            if let Some(index) = semantic.position_in_set {
+                node.set_position_in_set(index);
+            }
             node.set_bounds(rect(
                 crate::Bounds {
                     x: 0.,

@@ -2674,6 +2674,8 @@ impl<T: View> Ui<T> {
             .filter(|e| e.composition.is_none())
             .map(|e| e.selection);
         Some(crate::SemanticNode {
+            set_size: properties.and_then(|p| p.set_size),
+            position_in_set: properties.and_then(|p| p.position_in_set),
             viewport_overlay: self.is_overlay(id),
             modal: node
                 .parent

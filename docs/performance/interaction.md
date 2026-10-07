@@ -51,7 +51,9 @@ for captured scrollbar motion with preparation, and 0.39 ms for controlled split
 resizing. Their different targeting paths make the wheel/drag figures unsuitable
 for a claim that dragging is inherently faster. These are not GPU timings or proof
 of a complete frame/input-to-presentation budget. All rows are retained; geometry
-refresh still scales with the tree, and virtualization remains future work.
+refresh still scales with the tree. These measurements predate the separate
+[fixed-height virtualization milestone](virtual-lists.md), which now bounds mounted
+rows to the viewport and overscan.
 
 ## Existing elements regression check
 

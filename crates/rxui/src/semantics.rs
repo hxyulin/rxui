@@ -49,12 +49,18 @@ pub(crate) struct Properties {
     pub role: Option<SemanticRole>,
     pub hidden: bool,
     pub selected: Option<bool>,
+    pub set_size: Option<usize>,
+    pub position_in_set: Option<usize>,
 }
 /// Borrowed semantic snapshot for one retained element. It includes offscreen
 /// scroll children, but excludes display:none and accessibility-hidden subtrees.
 /// Coordinates are logical; native adapters apply the window's scale factor.
 #[derive(Debug)]
 pub struct SemanticNode<'a> {
+    /// Total number of items, including unmounted virtual rows, on a list container.
+    pub set_size: Option<usize>,
+    /// Zero-based logical index of a mounted list item within the total set.
+    pub position_in_set: Option<usize>,
     /// Viewport overlay boundary. Native adapters attach this node to their window
     /// root rather than the logical parent to escape clipping/transforms.
     pub viewport_overlay: bool,

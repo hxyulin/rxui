@@ -186,6 +186,10 @@ pub fn scroll_area(content: impl IntoElement) -> ScrollArea {
     }
 }
 impl ScrollArea {
+    pub(crate) fn with_content(mut self, content: Element) -> Self {
+        self.content = content;
+        self
+    }
     /// Uses an application-owned placement reference.
     pub fn handle(mut self, handle: ScrollHandle) -> Self {
         self.handle = handle;

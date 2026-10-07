@@ -102,20 +102,17 @@ impl View for Workspace {
             .min_height(0.)
             .background(ThemeColor::Surface)
             .child(label("Files").font_size(20.).padding(12.))
-            .child(
-                scroll_area(column().fill_width().gap(2.).children((0..160).map(|i| {
-                    button(format!("File {i:03}"))
-                        .key(i)
-                        .fill_width()
-                        .variant(if self.selected == i {
-                            ButtonVariant::Primary
-                        } else {
-                            ButtonVariant::Quiet
-                        })
-                        .on_click(cx.listener(move |s, _, _| s.selected = i))
-                })))
-                .handle(self.files.clone()),
-            )
+            .child(virtual_list(160, 40., &self.files, cx, |i| {
+                button(format!("File {i:03}"))
+                    .key(i)
+                    .fill_width()
+                    .variant(if self.selected == i {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Quiet
+                    })
+                    .on_click(cx.listener(move |s, _, _| s.selected = i))
+            }))
             .child(
                 row()
                     .padding(8.)
@@ -150,21 +147,13 @@ impl View for Workspace {
                             .expect("live output viewport");
                     }))),
             )
-            .child(
-                scroll_area(
-                    column()
-                        .fill_width()
-                        .padding(12.)
-                        .gap(4.)
-                        .children((0..120).map(|i| {
-                            label(format!(
-                                "{i:03}  Retained output line — scrolling keeps text resources."
-                            ))
-                            .key(i)
-                        })),
-                )
-                .handle(self.output.clone()),
-            );
+            .child(virtual_list(120, 28., &self.output, cx, |i| {
+                label(format!(
+                    "{i:03}  Virtual output line — only nearby rows are mounted."
+                ))
+                .key(i)
+                .padding(4.)
+            }));
         column()
             .fill_width()
             .fill_height()
