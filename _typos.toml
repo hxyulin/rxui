@@ -1,0 +1,6 @@
+[files]
+extend-exclude = [
+    "*.csv",
+    "*.log",
+    "crates/rxui/tests/fonts/*.otf",
+]

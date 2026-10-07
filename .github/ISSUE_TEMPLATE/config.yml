@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: RXUI guide
+    url: https://github.com/hxyulin/rxui/blob/main/docs/guide.md
+    about: Read how state, views, layout and the native host fit together.
+  - name: Astrelis issues
+    url: https://github.com/hxyulin/astrelis/issues
+    about: Report rendering problems that reproduce without RXUI to Astrelis.

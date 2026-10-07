@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  hooks:
+    name: Formatting, typos and file checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml selects stable with rustfmt and clippy.
+      - uses: j178/prek-action@v3.0.1
+
+  test:
+    name: Clippy, tests and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-features --locked
+      - run: cargo test --workspace --no-default-features --locked
+      - run: cargo doc --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    name: Minimum supported Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - run: rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --all-features --locked
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}

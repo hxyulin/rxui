@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a component, layout, input, styling or desktop integration improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: What are you trying to build?
+      description: Describe the concrete use case and what the current API makes hard or impossible.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      description: Sketch the view code you would like to write, or describe the result you expect.
+      render: rust
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: Optional. What you do today, and any tradeoffs you see.

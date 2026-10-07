@@ -1,0 +1,58 @@
+name: Bug report
+description: Report incorrect layout, rendering, input handling, a crash or a panic.
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does the problem occur?
+      options:
+        - State, entities or listeners
+        - Elements, reconciliation or components
+        - Layout, scrolling or virtual lists
+        - Input, focus or commands
+        - Text input, IME or clipboard
+        - Styling and themes
+        - Accessibility
+        - Images, opacity or custom graphics
+        - Windows, menus, dialogs or desktop services
+        - Build, installation or documentation
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >-
+        The smallest view that shows the problem, or the example and steps that
+        trigger it, such as `cargo run -p rxui --example gallery --features native`.
+      render: rust
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include the full error or panic message. Attach a screenshot for anything visible.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >-
+        RXUI version or commit, enabled features, OS and display scale factor,
+        Rust version, and GPU when rendering is involved. For accessibility
+        problems, name the screen reader.
+      placeholder: |
+        rxui: main @ abc1234, features = ["native"]
+        OS: macOS 27.0, 2x display
+        rustc: 1.99.0
+    validations:
+      required: true
