@@ -3,6 +3,12 @@ use crate::{
     ReadContext, Runtime, SemanticAction, SpawnError, TaskExecutor, TextInputEvent, TextMeasure,
     TextMovement, Theme, ThreadPoolExecutor, Ui, UiError, UiPainter, View,
 };
+#[cfg(all(
+    feature = "native-menus",
+    any(target_os = "macos", target_os = "windows")
+))]
+mod menu_backend;
+use crate::{CommandId, CommandInfo, CommandStatus};
 use astrelis::{Frame, GraphicsContext, wgpu};
 use astrelis_winit::{
     AppContext as NativeContext, Handler, PrepareAction, Runner, RunnerOptions, SurfaceSettings,
@@ -264,13 +270,30 @@ trait HostedUi {
         runtime: &mut Runtime,
         event: crate::KeyEvent,
     ) -> Result<crate::InputResult, UiError>;
+    fn command_info(&self, id: CommandId) -> Option<CommandInfo>;
+    fn dispatch_command(
+        &self,
+        runtime: &mut Runtime,
+        id: CommandId,
+    ) -> Result<CommandStatus, UiError>;
+    #[cfg(all(
+        feature = "native-menus",
+        any(target_os = "macos", target_os = "windows")
+    ))]
+    fn shortcut_command(&self, shortcut: &crate::Shortcut) -> Option<CommandId>;
+    fn command_text_input(
+        &mut self,
+        runtime: &mut Runtime,
+        event: TextInputEvent,
+        painter: &mut UiPainter,
+    ) -> Result<bool, UiError>;
     fn cursor_icon(&self) -> crate::Cursor;
     fn prepare_input(
         &mut self,
         runtime: &mut Runtime,
         metrics: WindowMetrics,
         painter: &mut UiPainter,
-    ) -> Result<(), UiError>;
+    ) -> Result<bool, UiError>;
     fn pointer(
         &mut self,
         runtime: &mut Runtime,
@@ -349,6 +372,31 @@ impl<T: View> HostedUi for Ui<T> {
     ) -> Result<crate::InputResult, UiError> {
         self.key(runtime, event)
     }
+    fn command_info(&self, id: CommandId) -> Option<CommandInfo> {
+        self.native_command_info(id)
+    }
+    fn dispatch_command(
+        &self,
+        runtime: &mut Runtime,
+        id: CommandId,
+    ) -> Result<CommandStatus, UiError> {
+        self.dispatch_command_id(runtime, id)
+    }
+    #[cfg(all(
+        feature = "native-menus",
+        any(target_os = "macos", target_os = "windows")
+    ))]
+    fn shortcut_command(&self, shortcut: &crate::Shortcut) -> Option<CommandId> {
+        self.shortcut_command(shortcut)
+    }
+    fn command_text_input(
+        &mut self,
+        runtime: &mut Runtime,
+        event: TextInputEvent,
+        painter: &mut UiPainter,
+    ) -> Result<bool, UiError> {
+        self.native_text_input(runtime, event, painter)
+    }
     fn cursor_icon(&self) -> crate::Cursor {
         self.cursor()
     }
@@ -357,12 +405,13 @@ impl<T: View> HostedUi for Ui<T> {
         runtime: &mut Runtime,
         metrics: WindowMetrics,
         painter: &mut UiPainter,
-    ) -> Result<(), UiError> {
+    ) -> Result<bool, UiError> {
         if self.needs_prepare(runtime)? || self.measurement_generation() != painter.generation() {
             let size = metrics.logical_size();
             self.prepare(runtime, [size.width as f32, size.height as f32], painter)?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
     fn pointer(
         &mut self,
@@ -449,6 +498,8 @@ enum Command {
         factory: Box<Factory>,
     },
     Close(WindowId),
+    RequestClose(WindowId),
+    RequestQuit,
     Redraw(WindowId),
     Theme(WindowId),
     Exit,
@@ -461,6 +512,14 @@ pub(crate) struct Commands {
     exited: Cell<bool>,
     mounts: RefCell<HashMap<crate::MountId, WindowId>>,
     theme: RefCell<Theme>,
+}
+fn record_mounts(commands: &Commands, window: WindowId, ui: &dyn HostedUi) {
+    let ids: HashSet<_> = ui.mounts().into_iter().collect();
+    let mut mounts = commands.mounts.borrow_mut();
+    mounts.retain(|mount, owner| *owner != window || ids.contains(mount));
+    for mount in ids {
+        mounts.insert(mount, window);
+    }
 }
 impl Drop for Commands {
     fn drop(&mut self) {
@@ -638,6 +697,31 @@ impl AppContext<'_> {
         }
         Ok(())
     }
+    /// Requests a window close through Application::close_requested. Unlike
+    /// close_window, a request does not mark the handle closing until accepted.
+    pub fn request_close(&mut self, window: &WindowHandle) -> Result<(), ApplicationError> {
+        let commands = self.native_commands()?;
+        if window.id().runtime != commands.runtime {
+            return Err(crate::AccessError::WrongRuntime.into());
+        }
+        if window.is_closed() {
+            return Err(ApplicationError::ClosedWindow);
+        }
+        commands
+            .queue
+            .borrow_mut()
+            .push_back(Command::RequestClose(window.id()));
+        Ok(())
+    }
+    /// Requests shutdown through Application::quit_requested. A veto leaves the
+    /// application live; invoke exit after asynchronous save/shutdown work completes.
+    pub fn request_quit(&mut self) -> Result<(), ApplicationError> {
+        self.native_commands()?
+            .queue
+            .borrow_mut()
+            .push_back(Command::RequestQuit);
+        Ok(())
+    }
     /// Explicit visual invalidation for native/custom integration changes.
     pub fn request_redraw(&mut self, window: &WindowHandle) -> Result<(), ApplicationError> {
         let commands = self.native_commands()?;
@@ -689,12 +773,15 @@ type GraphicsRenderHook = dyn FnMut(
     &mut Frame<'_, 'static>,
 ) -> Result<(), ApplicationError>;
 type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
+type QuitHook = dyn FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type ExitHook = dyn FnOnce(&mut AppContext<'_>);
 /// Desktop host over astrelis-winit. It owns native wiring and on-demand scheduling;
 /// Runtime/Ui/UiPainter remain usable in custom hosts. Initialization runs once,
 /// model/task progression continues independently of surface availability.
 pub struct Application {
+    #[cfg(feature = "native-menus")]
+    menu_bar: Option<crate::NativeMenuBar>,
     theme: Theme,
     fonts: Vec<Arc<[u8]>>,
     system_fonts: bool,
@@ -706,6 +793,7 @@ pub struct Application {
     render_graphics: Option<Box<GraphicsRenderHook>>,
     created: Option<Box<CreatedHook>>,
     close: Option<Box<CloseHook>>,
+    quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
 }
 impl Default for Application {
@@ -729,6 +817,9 @@ impl Application {
             render_graphics: None,
             created: None,
             close: None,
+            quit: None,
+            #[cfg(feature = "native-menus")]
+            menu_bar: None,
             exiting: None,
         }
     }
@@ -829,6 +920,27 @@ impl Application {
         self.close = Some(Box::new(hook));
         self
     }
+    /// Vetoes or defers requested Quit actions, for example while saving all
+    /// documents. Explicit cx.exit is an already-decided exit and bypasses this hook.
+    /// The default accepts Quit. Accepted Quit does not issue individual close hooks.
+    #[must_use]
+    pub fn quit_requested(
+        mut self,
+        hook: impl FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse + 'static,
+    ) -> Self {
+        self.quit = Some(Box::new(hook));
+        self
+    }
+    /// Installs a native menu bar backed by current typed command resolution.
+    /// macOS uses one application menu; Windows uses a menu per window. Linux/BSD
+    /// attachment is unsupported by the winit host and returns an error at run.
+    /// RXUI owns Muda's process-wide event handler while the application runs.
+    #[cfg(feature = "native-menus")]
+    #[must_use]
+    pub fn menu_bar(mut self, menu: crate::NativeMenuBar) -> Self {
+        self.menu_bar = Some(menu);
+        self
+    }
     /// Final synchronous application cleanup with a valid runtime context. Complete
     /// async shutdown work before accepting close; remaining jobs cancel at runtime drop.
     #[must_use]
@@ -843,9 +955,32 @@ impl Application {
         initialize: impl FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>,
     ) -> Result<(), ApplicationError> {
         self.theme.validate()?;
-        let mut runner = Runner::new()
-            .map_err(|e| ApplicationError::Native(Box::new(e)))?
-            .with_options(self.runner_options);
+        #[cfg(all(
+            feature = "native-menus",
+            not(any(target_os = "macos", target_os = "windows"))
+        ))]
+        if self.menu_bar.is_some() {
+            return Err(ApplicationError::Native(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "RXUI native menu bars require macOS or Windows; Muda's Linux/BSD backend needs a GTK window",
+            ))));
+        }
+        #[cfg(all(
+            feature = "native-menus",
+            any(target_os = "macos", target_os = "windows")
+        ))]
+        let menus = self.menu_bar.map(menu_backend::Menus::new);
+        let mut builder = astrelis_winit::winit::event_loop::EventLoop::<Wake>::with_user_event();
+        #[cfg(all(feature = "native-menus", target_os = "windows"))]
+        if let Some(menus) = &menus {
+            menus.hook(&mut builder);
+        }
+        let mut runner = Runner::from_event_loop(
+            builder
+                .build()
+                .map_err(|e| ApplicationError::Native(Box::new(e)))?,
+        )
+        .with_options(self.runner_options);
         if let Some(graphics) = self.graphics {
             runner = runner.with_graphics(graphics);
         }
@@ -876,6 +1011,13 @@ impl Application {
             render_graphics: self.render_graphics,
             created: self.created,
             close: self.close,
+            quit: self.quit,
+            focused_window: None,
+            #[cfg(all(
+                feature = "native-menus",
+                any(target_os = "macos", target_os = "windows")
+            ))]
+            menus,
             exiting: self.exiting,
             clipboard: None,
             accessibility_enabled: self.accessibility,
@@ -886,6 +1028,11 @@ impl Application {
     }
 }
 enum Wake {
+    #[cfg(all(
+        feature = "native-menus",
+        any(target_os = "macos", target_os = "windows")
+    ))]
+    Menu(muda::MenuEvent),
     Tasks,
     Accessibility(accesskit_winit::Event),
 }
@@ -913,6 +1060,12 @@ struct HostedWindow {
     accessibility_active: bool,
 }
 struct Host<F> {
+    focused_window: Option<NativeWindowId>,
+    #[cfg(all(
+        feature = "native-menus",
+        any(target_os = "macos", target_os = "windows")
+    ))]
+    menus: Option<menu_backend::Menus>,
     runtime: Runtime,
     commands: Rc<Commands>,
     initialize: Option<F>,
@@ -925,6 +1078,7 @@ struct Host<F> {
     render_graphics: Option<Box<GraphicsRenderHook>>,
     created: Option<Box<CreatedHook>>,
     close: Option<Box<CloseHook>>,
+    quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
     clipboard: Option<arboard::Clipboard>,
     accessibility_enabled: bool,
@@ -933,6 +1087,11 @@ impl<F> Drop for Host<F> {
     fn drop(&mut self) {
         // Platform adapters release hooks while their native windows still exist,
         // including run failures that bypass the normal exiting callback.
+        #[cfg(all(
+            feature = "native-menus",
+            any(target_os = "macos", target_os = "windows")
+        ))]
+        drop(self.menus.take());
         for (_, mut window) in self.windows.drain() {
             drop(window.accessibility.take());
             window.life.alive.set(false);
@@ -941,16 +1100,156 @@ impl<F> Drop for Host<F> {
     }
 }
 impl<F> Host<F> {
+    fn invoke_command(
+        &mut self,
+        cx: &mut NativeContext<'_, Wake>,
+        window: Option<NativeWindowId>,
+        command: CommandId,
+    ) -> Result<CommandStatus, ApplicationError> {
+        if let Some(id) = window {
+            let Some(native) = cx.window(id) else {
+                return Ok(CommandStatus::Unhandled);
+            };
+            let Some(window) = self.windows.get_mut(&id).filter(|w| !w.life.closing.get()) else {
+                return Ok(CommandStatus::Unhandled);
+            };
+            let (Some(ui), Some(painter)) = (&mut window.ui, &mut self.painter) else {
+                return Ok(CommandStatus::Unhandled);
+            };
+            if ui.prepare_input(&mut self.runtime, native.metrics(), painter)? {
+                record_mounts(&self.commands, window.life.id, ui.as_ref());
+            }
+            let status = ui.dispatch_command(&mut self.runtime, command)?;
+            if status != CommandStatus::Unhandled {
+                return Ok(status);
+            }
+            let Some(info) = ui.command_info(command) else {
+                return Ok(CommandStatus::Unhandled);
+            };
+            if !info.enabled {
+                return Ok(CommandStatus::Disabled);
+            }
+            use crate::standard_commands::*;
+            let mut changed = false;
+            if command == CommandId::of::<Copy>() || command == CommandId::of::<Cut>() {
+                if let Some(text) = ui.selected_text() {
+                    match clipboard(&mut self.clipboard).and_then(|c| c.set_text(text)) {
+                        Ok(()) if command == CommandId::of::<Cut>() => {
+                            changed = ui.command_text_input(
+                                &mut self.runtime,
+                                TextInputEvent::Insert(String::new()),
+                                painter,
+                            )?
+                        }
+                        Err(error) => eprintln!("RXUI clipboard: {error}"),
+                        _ => {}
+                    }
+                }
+            } else if command == CommandId::of::<Paste>() {
+                match clipboard(&mut self.clipboard).and_then(|c| c.get_text()) {
+                    Ok(text) => {
+                        changed = ui.command_text_input(
+                            &mut self.runtime,
+                            TextInputEvent::Insert(text),
+                            painter,
+                        )?
+                    }
+                    Err(error) => eprintln!("RXUI clipboard: {error}"),
+                }
+            } else if command == CommandId::of::<SelectAll>() {
+                changed =
+                    ui.command_text_input(&mut self.runtime, TextInputEvent::SelectAll, painter)?;
+            } else if command == CommandId::of::<CloseWindow>() {
+                self.commands
+                    .queue
+                    .borrow_mut()
+                    .push_back(Command::RequestClose(window.life.id));
+            } else if command == CommandId::of::<Quit>() {
+                self.commands
+                    .queue
+                    .borrow_mut()
+                    .push_back(Command::RequestQuit);
+            } else {
+                return Ok(CommandStatus::Unhandled);
+            }
+            if changed {
+                window.caret_visible = true;
+                window.blink_at = Instant::now() + Duration::from_millis(500);
+                ui.caret_visible(true);
+                cx.request_redraw(id)
+                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+            }
+            self.sync_text_platform(cx, id)?;
+            Ok(CommandStatus::Handled)
+        } else {
+            let status = self
+                .runtime
+                .update(|cx| cx.dispatch_application_command(command))?;
+            if status != CommandStatus::Unhandled {
+                return Ok(status);
+            }
+            if command == CommandId::of::<crate::standard_commands::Quit>() {
+                self.commands
+                    .queue
+                    .borrow_mut()
+                    .push_back(Command::RequestQuit);
+                return Ok(CommandStatus::Handled);
+            }
+            Ok(CommandStatus::Unhandled)
+        }
+    }
+    #[cfg(all(
+        feature = "native-menus",
+        any(target_os = "macos", target_os = "windows")
+    ))]
+    fn sync_menus(&mut self, cx: &mut NativeContext<'_, Wake>) -> Result<(), ApplicationError> {
+        let Some(menus) = &mut self.menus else {
+            return Ok(());
+        };
+        #[cfg(target_os = "macos")]
+        let ids = vec![self.focused_window];
+        #[cfg(target_os = "windows")]
+        let ids: Vec<_> = self.windows.keys().copied().map(Some).collect();
+        for id in ids {
+            let source = id.and_then(|id| self.windows.get(&id)).map(|w| w.life.id);
+            // Reconcile only when necessary. No GPU preparation or polling is added.
+            let ui = id
+                .and_then(|id| self.windows.get_mut(&id).filter(|w| !w.life.closing.get()))
+                .and_then(|w| w.ui.as_mut());
+            if let (Some(id), Some(ui), Some(painter)) = (id, ui, self.painter.as_mut())
+                && let Some(native) = cx.window(id)
+                && ui.prepare_input(&mut self.runtime, native.metrics(), painter)?
+                && let Some(source) = source
+            {
+                record_mounts(&self.commands, source, ui.as_ref());
+            }
+            let ui = id
+                .and_then(|id| self.windows.get(&id).filter(|w| !w.life.closing.get()))
+                .and_then(|w| w.ui.as_deref());
+            menus.update(
+                id,
+                |command| {
+                    if let Some(ui) = ui {
+                        ui.command_info(command)
+                    } else {
+                        self.runtime
+                            .update(|cx| cx.application_command(command).map(|a| a.info()))
+                            .or_else(|| {
+                                crate::commands::standard_info(
+                                    command, false, false, false, false, false,
+                                )
+                            })
+                    }
+                },
+                |s| ui.and_then(|ui| ui.shortcut_command(s)),
+            )?;
+        }
+        Ok(())
+    }
     fn sync_mounts(&self, id: NativeWindowId) {
         let window = &self.windows[&id];
-        let Some(ui) = &window.ui else {
-            return;
-        };
-        let ids: HashSet<_> = ui.mounts().into_iter().collect();
-        let mut mounts = self.commands.mounts.borrow_mut();
-        mounts.retain(|mount, owner| *owner != window.life.id || ids.contains(mount));
-        for mount in ids {
-            mounts.insert(mount, window.life.id);
+        if let Some(ui) = &window.ui {
+            record_mounts(&self.commands, window.life.id, ui.as_ref());
         }
     }
     fn sync_text_platform(
@@ -1027,7 +1326,9 @@ impl<F> Host<F> {
             return Ok(());
         };
         // CPU descriptions/layout/semantics progress even if a surface cannot render.
-        ui.prepare_input(&mut self.runtime, native.metrics(), painter)?;
+        if ui.prepare_input(&mut self.runtime, native.metrics(), painter)? {
+            record_mounts(&self.commands, window.life.id, ui.as_ref());
+        }
         if let Some(update) = ui.accessibility_update(
             &mut window.accesskit,
             &native.window().title(),
@@ -1050,98 +1351,156 @@ impl<F> Host<F> {
             self.runtime.poll_tasks();
             self.runtime.flush()?;
         }
-        let pending = std::mem::take(&mut *self.commands.queue.borrow_mut());
-        for command in pending {
-            match command {
-                Command::Open {
-                    life,
-                    options,
-                    factory,
-                } => {
-                    if life.closing.get() || self.commands.exited.get() {
-                        life.alive.set(false);
-                        self.commands.lives.borrow_mut().remove(&life.id);
-                        continue;
+        let mut pending = std::mem::take(&mut *self.commands.queue.borrow_mut());
+        let mut deferred = VecDeque::new();
+        let mut request_budget = 1024;
+        while !pending.is_empty() {
+            for command in pending {
+                if matches!(command, Command::RequestClose(_) | Command::RequestQuit) {
+                    if request_budget == 0 {
+                        return Err(ApplicationError::Native(Box::new(std::io::Error::other(
+                            "RXUI close/quit hooks repeatedly requested another close/quit",
+                        ))));
                     }
-                    if !self.active {
-                        self.commands.queue.borrow_mut().push_back(Command::Open {
-                            life,
-                            options,
-                            factory,
-                        });
-                        continue;
-                    }
-                    let native = cx
-                        .create_window(options.attributes, options.surface)
-                        .map_err(|e| ApplicationError::Native(Box::new(e)))?;
-                    self.windows.insert(
-                        native,
-                        HostedWindow {
-                            life,
-                            ui: None,
-                            factory: Some(factory),
-                            background: options.background,
-                            cursor: [0.; 2],
-                            cursor_icon: None,
-                            modifiers: ModifiersState::default(),
-                            blink_at: Instant::now() + Duration::from_millis(500),
-                            caret_visible: true,
-                            ime_focus: None,
-                            ime_reset_revision: 0,
-                            ime_allowed: false,
-                            ime_area: None,
-                            accessibility: None,
-                            accesskit: AccessKitTree::new(),
-                            accessibility_active: false,
-                        },
-                    );
+                    request_budget -= 1;
                 }
-                Command::Close(id) => {
-                    if let Some(native) = self
-                        .windows
-                        .iter()
-                        .find(|(_, window)| window.life.id == id)
-                        .map(|(id, _)| *id)
-                    {
-                        cx.close_window(native)
-                            .map_err(|e| ApplicationError::Native(Box::new(e)))?;
-                    }
-                }
-                Command::Redraw(id) => {
-                    if let Some(native) = self
-                        .windows
-                        .iter()
-                        .find(|(_, window)| window.life.id == id)
-                        .map(|(id, _)| *id)
-                        && cx.window(native).is_some()
-                    {
-                        cx.request_redraw(native)
-                            .map_err(|e| ApplicationError::Native(Box::new(e)))?;
-                    }
-                }
-                Command::Theme(id) => {
-                    if let Some((native, window)) =
-                        self.windows.iter_mut().find(|(_, w)| w.life.id == id)
-                    {
-                        if window.life.closing.get() {
+                match command {
+                    Command::Open {
+                        life,
+                        options,
+                        factory,
+                    } => {
+                        if life.closing.get() || self.commands.exited.get() {
+                            life.alive.set(false);
+                            self.commands.lives.borrow_mut().remove(&life.id);
                             continue;
                         }
-                        if let Some(ui) = &mut window.ui {
-                            ui.set_theme(window.life.theme.borrow().clone())?;
+                        if !self.active {
+                            deferred.push_back(Command::Open {
+                                life,
+                                options,
+                                factory,
+                            });
+                            continue;
                         }
-                        if cx.window(*native).is_some() {
-                            cx.request_redraw(*native)
+                        let native = cx
+                            .create_window(options.attributes, options.surface)
+                            .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                        self.windows.insert(
+                            native,
+                            HostedWindow {
+                                life,
+                                ui: None,
+                                factory: Some(factory),
+                                background: options.background,
+                                cursor: [0.; 2],
+                                cursor_icon: None,
+                                modifiers: ModifiersState::default(),
+                                blink_at: Instant::now() + Duration::from_millis(500),
+                                caret_visible: true,
+                                ime_focus: None,
+                                ime_reset_revision: 0,
+                                ime_allowed: false,
+                                ime_area: None,
+                                accessibility: None,
+                                accesskit: AccessKitTree::new(),
+                                accessibility_active: false,
+                            },
+                        );
+                    }
+                    Command::Close(id) => {
+                        if let Some(native) = self
+                            .windows
+                            .iter()
+                            .find(|(_, window)| window.life.id == id)
+                            .map(|(id, _)| *id)
+                        {
+                            cx.close_window(native)
                                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
                         }
                     }
-                }
-                Command::Exit => {
-                    cx.exit();
-                    self.commands.exited.set(true);
-                    break;
+                    Command::RequestClose(id) => {
+                        let life = self.commands.lives.borrow().get(&id).cloned();
+                        if let Some(life) =
+                            life.filter(|life| life.alive.get() && !life.closing.get())
+                        {
+                            let handle = WindowHandle { life };
+                            let response = self
+                                .close
+                                .as_mut()
+                                .map_or(astrelis_winit::CloseResponse::Close, |hook| {
+                                    self.runtime.update(|cx| hook(&handle, cx))
+                                });
+                            if response == astrelis_winit::CloseResponse::Close {
+                                handle.life.closing.set(true);
+                                if let Some(native) = self
+                                    .windows
+                                    .iter()
+                                    .find(|(_, w)| w.life.id == id)
+                                    .map(|(id, _)| *id)
+                                {
+                                    cx.close_window(native)
+                                        .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                                }
+                            }
+                        }
+                    }
+                    Command::RequestQuit => {
+                        let response = self
+                            .quit
+                            .as_mut()
+                            .map_or(astrelis_winit::CloseResponse::Close, |hook| {
+                                self.runtime.update(hook)
+                            });
+                        if response == astrelis_winit::CloseResponse::Close {
+                            self.commands.exited.set(true);
+                            cx.exit();
+                            break;
+                        }
+                    }
+                    Command::Redraw(id) => {
+                        if let Some(native) = self
+                            .windows
+                            .iter()
+                            .find(|(_, window)| window.life.id == id)
+                            .map(|(id, _)| *id)
+                            && cx.window(native).is_some()
+                        {
+                            cx.request_redraw(native)
+                                .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                        }
+                    }
+                    Command::Theme(id) => {
+                        if let Some((native, window)) =
+                            self.windows.iter_mut().find(|(_, w)| w.life.id == id)
+                        {
+                            if window.life.closing.get() {
+                                continue;
+                            }
+                            if let Some(ui) = &mut window.ui {
+                                ui.set_theme(window.life.theme.borrow().clone())?;
+                            }
+                            if cx.window(*native).is_some() {
+                                cx.request_redraw(*native)
+                                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                            }
+                        }
+                    }
+                    Command::Exit => {
+                        cx.exit();
+                        self.commands.exited.set(true);
+                        break;
+                    }
                 }
             }
+            if cx.event_loop().exiting() {
+                break;
+            }
+            // A veto hook may open a confirmation window, request a redraw or decide
+            // to close/exit immediately. Apply those operations before going idle.
+            pending = std::mem::take(&mut *self.commands.queue.borrow_mut());
         }
+        self.commands.queue.borrow_mut().extend(deferred);
         if cx.event_loop().exiting() {
             return Ok(());
         }
@@ -1170,6 +1529,11 @@ impl<F> Host<F> {
         for id in accessible {
             self.publish_accessibility(cx, id)?;
         }
+        #[cfg(all(
+            feature = "native-menus",
+            any(target_os = "macos", target_os = "windows")
+        ))]
+        self.sync_menus(cx)?;
         Ok(())
     }
 }
@@ -1179,6 +1543,13 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     type Error = ApplicationError;
     fn resumed(&mut self, cx: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
         self.active = true;
+        #[cfg(all(
+            feature = "native-menus",
+            any(target_os = "macos", target_os = "windows")
+        ))]
+        if let Some(menus) = &mut self.menus {
+            menus.start(cx.proxy())?;
+        }
         if let Some(initialize) = self.initialize.take() {
             self.runtime.update(initialize)?;
         }
@@ -1227,6 +1598,13 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             };
             self.runtime.update(|cx| hook(&handle, cx));
         }
+        #[cfg(all(
+            feature = "native-menus",
+            any(target_os = "macos", target_os = "windows")
+        ))]
+        if let Some(menus) = &mut self.menus {
+            menus.attach(id, cx.window(id).unwrap().window().clone())?;
+        }
         self.sync_mounts(id);
         self.progress(cx, None)
     }
@@ -1245,40 +1623,72 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         if matches!(event, WindowEvent::RedrawRequested) {
             return Ok(());
         }
+        let (mut changed, mut key_prevented) = {
+            let Some(window) = self.windows.get_mut(&id) else {
+                return Ok(());
+            };
+            let (Some(ui), Some(painter), Some(native)) =
+                (&mut window.ui, &mut self.painter, cx.window(id))
+            else {
+                return Ok(());
+            };
+            if ui.prepare_input(&mut self.runtime, native.metrics(), painter)? {
+                record_mounts(&self.commands, window.life.id, ui.as_ref());
+            }
+            if let WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } = &event
+            {
+                let result = ui.key(
+                    &mut self.runtime,
+                    crate::KeyEvent {
+                        key: keyboard_key(&event.logical_key),
+                        pressed: event.state == ElementState::Pressed,
+                        repeat: event.repeat,
+                        modifiers: input_modifiers(window.modifiers),
+                    },
+                )?;
+                (result.changed, result.default_prevented)
+            } else {
+                (false, false)
+            }
+        };
+        if !key_prevented
+            && let WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } = &event
+            && event.state == ElementState::Pressed
+        {
+            let modifiers = input_modifiers(self.windows[&id].modifiers);
+            let key = keyboard_key(&event.logical_key);
+            if let Some(command) = standard_shortcut(&key, modifiers) {
+                // Standard lifecycle requests do not repeat while a save/veto is
+                // outstanding. Editing still receives normal key repetition.
+                let status = if event.repeat
+                    && (command == CommandId::of::<crate::standard_commands::Quit>()
+                        || command == CommandId::of::<crate::standard_commands::CloseWindow>())
+                {
+                    CommandStatus::Disabled
+                } else {
+                    self.invoke_command(cx, Some(id), command)?
+                };
+                key_prevented = status != CommandStatus::Unhandled;
+                changed |= status == CommandStatus::Handled;
+            }
+        }
         let Some(window) = self.windows.get_mut(&id) else {
             return Ok(());
         };
-        let Some(ui) = &mut window.ui else {
-            return Ok(());
-        };
-        let mut changed = false;
-        let Some(native) = cx.window(id) else {
+        let (Some(ui), Some(painter), Some(native)) =
+            (&mut window.ui, &mut self.painter, cx.window(id))
+        else {
             return Ok(());
         };
         let scale = native.metrics().scale_factor();
-        let Some(painter) = &mut self.painter else {
-            return Ok(());
-        };
-        ui.prepare_input(&mut self.runtime, native.metrics(), painter)?;
-        let mut key_prevented = false;
-        if let WindowEvent::KeyboardInput {
-            event,
-            is_synthetic: false,
-            ..
-        } = &event
-        {
-            let result = ui.key(
-                &mut self.runtime,
-                crate::KeyEvent {
-                    key: keyboard_key(&event.logical_key),
-                    pressed: event.state == ElementState::Pressed,
-                    repeat: event.repeat,
-                    modifiers: input_modifiers(window.modifiers),
-                },
-            )?;
-            changed |= result.changed;
-            key_prevented = result.default_prevented;
-        }
         match event {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 ui.invalidate_geometry()
@@ -1343,6 +1753,9 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 )?;
             }
             WindowEvent::Focused(active) => {
+                if active {
+                    self.focused_window = Some(id);
+                }
                 if !active {
                     changed |=
                         ui.pointer(&mut self.runtime, PointerEvent::Cancelled, painter, false)?;
@@ -1389,42 +1802,6 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                     changed |= ui.focus_next(extend);
                 } else if ui.has_text_focus() {
                     let input = match &event.logical_key {
-                        Key::Character(key) if primary && key.eq_ignore_ascii_case("a") => {
-                            Some(TextInputEvent::SelectAll)
-                        }
-                        Key::Character(key)
-                            if primary
-                                && (key.eq_ignore_ascii_case("c")
-                                    || key.eq_ignore_ascii_case("x")) =>
-                        {
-                            if let Some(text) = ui.selected_text() {
-                                match clipboard(&mut self.clipboard).and_then(|c| c.set_text(text))
-                                {
-                                    Ok(())
-                                        if key.eq_ignore_ascii_case("x")
-                                            && ui.accepts_text_input() =>
-                                    {
-                                        changed |= ui.text_input(
-                                            &mut self.runtime,
-                                            TextInputEvent::Insert(String::new()),
-                                            painter,
-                                        )?;
-                                    }
-                                    Err(error) => eprintln!("RXUI clipboard: {error}"),
-                                    _ => {}
-                                }
-                            }
-                            None
-                        }
-                        Key::Character(key) if primary && key.eq_ignore_ascii_case("v") => {
-                            match clipboard(&mut self.clipboard).and_then(|c| c.get_text()) {
-                                Ok(text) => Some(TextInputEvent::Insert(text)),
-                                Err(error) => {
-                                    eprintln!("RXUI clipboard: {error}");
-                                    None
-                                }
-                            }
-                        }
                         Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => {
                             let right = event.logical_key == Key::Named(NamedKey::ArrowRight);
                             let movement = if cfg!(target_os = "macos") && primary {
@@ -1499,6 +1876,22 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         event: Wake,
     ) -> Result<(), Self::Error> {
         match event {
+            #[cfg(all(
+                feature = "native-menus",
+                any(target_os = "macos", target_os = "windows")
+            ))]
+            Wake::Menu(event) => {
+                // Complete outstanding updates before resolving the identity again.
+                self.progress(cx, None)?;
+                if let Some((window, command)) = self
+                    .menus
+                    .as_ref()
+                    .and_then(|m| m.resolve(&event, self.focused_window))
+                {
+                    self.invoke_command(cx, window, command)?;
+                }
+                self.progress(cx, None)
+            }
             Wake::Tasks => self.progress(cx, None),
             Wake::Accessibility(event) => {
                 let id = event.window_id;
@@ -1537,7 +1930,9 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                         let (Some(ui), Some(painter)) = (&mut window.ui, &mut self.painter) else {
                             return Ok(());
                         };
-                        ui.prepare_input(&mut self.runtime, native.metrics(), painter)?;
+                        if ui.prepare_input(&mut self.runtime, native.metrics(), painter)? {
+                            record_mounts(&self.commands, window.life.id, ui.as_ref());
+                        }
                         if matches!(action, SemanticAction::Focus(_)) {
                             native.window().focus_window();
                         }
@@ -1663,6 +2058,16 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         cx: &mut NativeContext<'_, Wake>,
         id: NativeWindowId,
     ) -> Result<(), Self::Error> {
+        #[cfg(all(
+            feature = "native-menus",
+            any(target_os = "macos", target_os = "windows")
+        ))]
+        if let Some(menus) = &mut self.menus {
+            menus.detach(id);
+        }
+        if self.focused_window == Some(id) {
+            self.focused_window = None;
+        }
         if let Some(mut window) = self.windows.remove(&id) {
             drop(window.accessibility.take());
             if let Some(ui) = &mut window.ui
@@ -1755,6 +2160,26 @@ fn native_cursor(cursor: crate::Cursor) -> astrelis_winit::winit::window::Cursor
         crate::Cursor::Crosshair => C::Crosshair,
         crate::Cursor::NotAllowed => C::NotAllowed,
     }
+}
+
+fn standard_shortcut(key: &crate::KeyboardKey, modifiers: crate::Modifiers) -> Option<CommandId> {
+    use crate::standard_commands::*;
+    let primary = crate::Shortcut::primary("").modifiers;
+    if modifiers != primary {
+        return None;
+    }
+    let crate::KeyboardKey::Character(key) = key else {
+        return None;
+    };
+    Some(match key.as_str() {
+        "c" | "C" => CommandId::of::<Copy>(),
+        "x" | "X" => CommandId::of::<Cut>(),
+        "v" | "V" => CommandId::of::<Paste>(),
+        "a" | "A" => CommandId::of::<SelectAll>(),
+        "w" | "W" => CommandId::of::<CloseWindow>(),
+        "q" | "Q" => CommandId::of::<Quit>(),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -1934,6 +2359,115 @@ mod tests {
             assert!(cx.window().is_none());
             shared.update(cx, |_, cx| assert!(cx.window().is_none()));
         });
+    }
+
+    #[test]
+    fn freshly_reconciled_child_commands_keep_their_source_window() {
+        struct RememberSource;
+        impl crate::Command for RememberSource {}
+        struct Child(Option<WindowId>);
+        impl View for Child {
+            fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                crate::button("Remember").key("remember").on_command(
+                    cx.command(RememberSource, |s, _, cx| s.0 = cx.window().map(|w| w.id())),
+                )
+            }
+        }
+        struct Parent(Entity<Child>);
+        impl View for Parent {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                crate::column().child(self.0.clone())
+            }
+        }
+        struct Measure;
+        impl TextMeasure for Measure {
+            fn measure(
+                &mut self,
+                _: ElementId,
+                _: crate::TextRequest<'_>,
+            ) -> Result<[f32; 2], UiError> {
+                Ok([80., 20.])
+            }
+        }
+        let mut r = Runtime::new();
+        let commands = attach(&mut r);
+        let (first, root, handle) = r.update(|cx| {
+            let child = cx.new(|_| Child(None));
+            let root = cx.new(|_| Parent(child.clone()));
+            let handle = cx.open_window(WindowOptions::new(), root.clone()).unwrap();
+            (child, root, handle)
+        });
+        let mut ui = Ui::new(&mut r, root.clone()).unwrap();
+        for expected in [first.clone(), r.update(|cx| cx.new(|_| Child(None)))] {
+            r.update(|cx| root.update(cx, |s, _| s.0 = expected.clone()));
+            ui.prepare(&mut r, [400., 200.], &mut Measure).unwrap();
+            record_mounts(&commands, handle.id(), &ui);
+            let target = ui
+                .elements()
+                .find(|e| e.key == Some(&crate::Key::from("remember")))
+                .unwrap()
+                .id;
+            assert!(ui.focus(target));
+            assert_eq!(
+                ui.dispatch_command::<RememberSource>(&mut r).unwrap(),
+                CommandStatus::Handled
+            );
+            assert_eq!(r.update(|cx| expected.read(cx).0), Some(handle.id()));
+        }
+        assert_eq!(r.update(|cx| first.read(cx).0), Some(handle.id()));
+    }
+
+    #[test]
+    fn lifecycle_requests_are_vetoable_intents_and_validate_before_queueing() {
+        let mut r = Runtime::new();
+        assert!(matches!(
+            r.update(|cx| cx.request_quit()),
+            Err(ApplicationError::NoHost)
+        ));
+        let commands = attach(&mut r);
+        let handle = r.update(|cx| {
+            let e = cx.new(|_| Counter(0));
+            cx.open_window(WindowOptions::new(), e).unwrap()
+        });
+        r.update(|cx| {
+            cx.request_close(&handle).unwrap();
+            cx.request_quit().unwrap();
+        });
+        assert!(!handle.is_closed());
+        assert!(!commands.exited.get());
+        assert!(matches!(
+            commands.queue.borrow().back(),
+            Some(Command::RequestQuit)
+        ));
+        let mut foreign = Runtime::new();
+        attach(&mut foreign);
+        assert!(matches!(
+            foreign.update(|cx| cx.request_close(&handle)),
+            Err(ApplicationError::Ui(UiError::Access(
+                crate::AccessError::WrongRuntime
+            )))
+        ));
+        r.update(|cx| cx.close_window(&handle)).unwrap();
+        assert!(matches!(
+            r.update(|cx| cx.request_close(&handle)),
+            Err(ApplicationError::ClosedWindow)
+        ));
+        r.update(|cx| cx.exit()).unwrap();
+        assert!(matches!(
+            r.update(|cx| cx.request_quit()),
+            Err(ApplicationError::Exited)
+        ));
+    }
+    #[test]
+    fn standard_shortcuts_require_exact_primary_modifiers() {
+        let shortcut = crate::Shortcut::primary("C");
+        assert_eq!(
+            standard_shortcut(&shortcut.key, shortcut.modifiers),
+            Some(CommandId::of::<crate::standard_commands::Copy>())
+        );
+        let shifted = shortcut.clone().shift();
+        assert!(standard_shortcut(&shifted.key, shifted.modifiers).is_none());
+        assert!(standard_shortcut(&shortcut.key, Default::default()).is_none());
     }
 
     #[test]

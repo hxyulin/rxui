@@ -198,3 +198,7 @@ computer-use checks exercise menus, keyboard activation, context-targeted closin
 window/application shortcuts and modal input/focus. Temporary probe windows use
 normal attributes with background creation and are closed afterward. These are
 functional checks, not frame-pacing measurements or full screen-reader certification.
+
+Native menu bars reuse these same typed actions and scope rules. See
+[native menus and desktop requests](native-menus.md) for the optional Muda adapter,
+command queries, standard editing and vetoable Close/Quit.

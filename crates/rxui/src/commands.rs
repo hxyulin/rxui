@@ -20,6 +20,49 @@ use std::{any::TypeId, cell::RefCell, fmt, marker::PhantomData, rc::Rc};
 /// distinct action type. Payloads need not implement Clone or Default.
 pub trait Command: 'static {}
 
+/// Erased command type identity. It stores no payload, callback or component.
+/// Resolve it afresh at invocation, so current focus and state choose the handler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CommandId(pub(crate) TypeId);
+impl CommandId {
+    /// Identifies an application or standard command type.
+    pub fn of<C: Command>() -> Self {
+        Self(TypeId::of::<C>())
+    }
+}
+/// Snapshot of the nearest live command's public presentation properties.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandInfo {
+    /// Human-readable caption from the currently resolved action.
+    pub label: String,
+    /// Whether invocation is currently permitted. Disabled handlers shadow parents.
+    pub enabled: bool,
+    /// Exact logical shortcuts in preference order.
+    pub shortcuts: Vec<Shortcut>,
+}
+/// Standard desktop requests. Native hosts supply editing/lifecycle fallbacks;
+/// scoped application handlers can override any of these command types.
+pub mod standard_commands {
+    use super::Command;
+    /// Copies the current text selection, including from read-only inputs.
+    pub struct Copy;
+    impl Command for Copy {}
+    /// Copies and removes the current editable text selection.
+    pub struct Cut;
+    impl Command for Cut {}
+    /// Inserts clipboard text into the focused editable input.
+    pub struct Paste;
+    impl Command for Paste {}
+    /// Selects the focused input's complete value.
+    pub struct SelectAll;
+    impl Command for SelectAll {}
+    /// Requests closing the source window, honoring Application::close_requested.
+    pub struct CloseWindow;
+    impl Command for CloseWindow {}
+    /// Requests application shutdown, honoring Application::quit_requested.
+    pub struct Quit;
+    impl Command for Quit {}
+}
 /// One exact logical key chord. Primary means Command on macOS and Control elsewhere.
 /// Character spelling matches ASCII case-insensitively; modifiers match exactly.
 #[derive(Clone, Debug)]
@@ -81,6 +124,7 @@ pub(crate) struct Action {
     pub repeat: bool,
     pub shortcuts: Vec<Shortcut>,
     pub callback: Rc<Callback>,
+    pub live: Rc<dyn Fn() -> bool>,
 }
 /// Shared description of one typed action. Clone it into a scope, button or menu
 /// item to share callback, label, enabled state and shortcut definitions. Properties
@@ -119,6 +163,7 @@ impl<C: Command> CommandAction<C> {
                 repeat: false,
                 shortcuts: Vec::new(),
                 callback: Rc::new(callback),
+                live: Rc::new(|| true),
             },
             marker: PhantomData,
         }
@@ -146,8 +191,9 @@ impl<C: Command> CommandAction<C> {
         self.action.shortcuts.push(shortcut);
         self
     }
-    /// Allows native key-repeat invocations (default false). Matching repeat events
-    /// are consumed even when repetition is disabled.
+    /// Allows repeated keyboard invocations in RXUI's routed input (default false).
+    /// Matching repeats are consumed even when repetition is disabled. Native menu
+    /// accelerators use the platform menu system's repetition policy.
     pub fn repeat(mut self, repeat: bool) -> Self {
         self.action.repeat = repeat;
         self
@@ -193,6 +239,9 @@ pub(crate) fn invoke(
     action: &Action,
     cx: &mut AppContext<'_>,
 ) -> Result<CommandStatus, AccessError> {
+    if !(action.live)() {
+        return Ok(CommandStatus::Unhandled);
+    }
     if !action.enabled {
         return Ok(CommandStatus::Disabled);
     }
@@ -210,7 +259,12 @@ impl<T> ViewContext<'_, T> {
         callback: impl Fn(&mut T, &C, &mut Context<'_, T>) + 'static,
     ) -> CommandAction<C> {
         let listener = self.listener(callback);
-        CommandAction::new(move |cx| listener.dispatch(&command, cx))
+        let runtime = Rc::downgrade(self.runtime);
+        let mount = self.placement_scope().expect("view placement");
+        let mut action = CommandAction::new(move |cx| listener.dispatch(&command, cx));
+        action.action.live =
+            Rc::new(move || runtime.upgrade().is_some_and(|r| r.mount_live(mount)));
+        action
     }
 }
 pub(crate) struct Registration {
@@ -286,4 +340,79 @@ impl Element {
             .push(action.action);
         self
     }
+}
+
+impl Action {
+    pub(crate) fn info(&self) -> CommandInfo {
+        CommandInfo {
+            label: self.label.clone(),
+            enabled: self.enabled,
+            shortcuts: self.shortcuts.clone(),
+        }
+    }
+}
+impl AppContext<'_> {
+    /// Queries the latest live application fallback without selecting a window.
+    pub fn query_command<C: Command>(&self) -> Option<CommandInfo> {
+        self.application_command(CommandId::of::<C>())
+            .map(|a| a.info())
+    }
+    /// Invokes an application registration without selecting a window. View scopes
+    /// are resolved by Ui::dispatch_command or the native host instead.
+    pub fn dispatch_command<C: Command>(&mut self) -> Result<CommandStatus, AccessError> {
+        self.dispatch_application_command(CommandId::of::<C>())
+    }
+    pub(crate) fn application_command(&self, id: CommandId) -> Option<Action> {
+        self.runtime
+            .commands
+            .borrow()
+            .iter()
+            .rev()
+            .filter_map(|r| r.upgrade())
+            .find_map(|r| {
+                let a = r.action.borrow();
+                (a.kind == id.0 && (a.live)()).then(|| a.clone())
+            })
+    }
+    pub(crate) fn dispatch_application_command(
+        &mut self,
+        id: CommandId,
+    ) -> Result<CommandStatus, AccessError> {
+        let Some(a) = self.application_command(id) else {
+            return Ok(CommandStatus::Unhandled);
+        };
+        invoke(&a, self)
+    }
+}
+
+#[cfg(feature = "native")]
+pub(crate) fn standard_info(
+    id: CommandId,
+    window: bool,
+    text: bool,
+    editable: bool,
+    selection: bool,
+    modal: bool,
+) -> Option<CommandInfo> {
+    use standard_commands::*;
+    let (label, enabled, key) = if id == CommandId::of::<Copy>() {
+        ("Copy", text && selection, "c")
+    } else if id == CommandId::of::<Cut>() {
+        ("Cut", editable && selection, "x")
+    } else if id == CommandId::of::<Paste>() {
+        ("Paste", editable, "v")
+    } else if id == CommandId::of::<SelectAll>() {
+        ("Select All", text, "a")
+    } else if id == CommandId::of::<CloseWindow>() {
+        ("Close Window", window && !modal, "w")
+    } else if id == CommandId::of::<Quit>() {
+        ("Quit", true, "q")
+    } else {
+        return None;
+    };
+    Some(CommandInfo {
+        label: label.into(),
+        enabled,
+        shortcuts: vec![Shortcut::primary(key)],
+    })
 }

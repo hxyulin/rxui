@@ -130,6 +130,8 @@ mod input;
 mod listener;
 #[cfg(feature = "native")]
 mod native;
+#[cfg(feature = "native-menus")]
+mod native_menus;
 #[cfg(feature = "layout")]
 mod overlay;
 #[cfg(feature = "rendering")]
@@ -156,7 +158,10 @@ pub use accesskit;
 #[cfg(feature = "native")]
 pub use astrelis_winit::CloseResponse;
 #[cfg(feature = "layout")]
-pub use commands::{Command, CommandAction, CommandRegistration, CommandStatus, Shortcut};
+pub use commands::{
+    Command, CommandAction, CommandId, CommandInfo, CommandRegistration, CommandStatus, Shortcut,
+    standard_commands,
+};
 pub use context::{AppContext, Context, ReadContext, ViewContext};
 #[cfg(feature = "layout")]
 pub use controls::{
@@ -195,6 +200,8 @@ pub use listener::{Dispatch, Listener};
 pub use native::{
     Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
 };
+#[cfg(feature = "native-menus")]
+pub use native_menus::{NativeMenu, NativeMenuBar, NativeMenuRole};
 #[cfg(feature = "layout")]
 pub use overlay::{
     AnchorHandle, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement, menu,
@@ -236,9 +243,9 @@ pub use ui::{
 #[cfg(feature = "layout")]
 pub mod prelude {
     pub use crate::{
-        AnchorHandle, Command, CommandAction, CommandRegistration, CommandStatus, DismissEvent,
-        DismissReason, Overlay, OverlayAnchor, PopoverPlacement, Shortcut, menu, menu_item, modal,
-        popover,
+        AnchorHandle, Command, CommandAction, CommandId, CommandInfo, CommandRegistration,
+        CommandStatus, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement,
+        Shortcut, menu, menu_item, modal, popover, standard_commands,
     };
     #[cfg(feature = "native")]
     pub use crate::{Application, ApplicationError, CloseResponse, WindowHandle, WindowOptions};
@@ -263,6 +270,8 @@ pub mod prelude {
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
         TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
     };
+    #[cfg(feature = "native-menus")]
+    pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
 }

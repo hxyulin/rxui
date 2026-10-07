@@ -799,3 +799,134 @@ fn pointer_transparent_overlays_preserve_background_input_and_idle_layout_is_cac
     prepare(&mut r, &mut ui);
     assert!(ui.elements().any(|n| n.key == Some(&Key::from("popup"))));
 }
+
+#[test]
+fn command_queries_follow_focus_state_registration_replacement_and_disposal() {
+    let (mut r, e, mut ui) = commands();
+    ui.focus(id(&ui, "edit"));
+    assert_eq!(ui.query_command::<Run>().unwrap().label, "Inner");
+    r.update(|cx| e.update(cx, |s, _| s.enabled = false));
+    prepare(&mut r, &mut ui);
+    assert!(!ui.query_command_id(CommandId::of::<Run>()).unwrap().enabled);
+    ui.focus(id(&ui, "outside"));
+    assert_eq!(ui.query_command::<Run>().unwrap().label, "Outer");
+    let registration = r.update(|cx| {
+        let action = cx.command(Other, |_, _| {}).label("Application");
+        cx.register_command(&action)
+    });
+    assert_eq!(
+        r.update(|cx| cx.query_command::<Other>().unwrap().label),
+        "Application"
+    );
+    r.update(|cx| {
+        let action = cx.command(Other, |_, _| {}).label("Updated").enabled(false);
+        registration.replace(&action, cx).unwrap();
+        assert_eq!(
+            cx.dispatch_command::<Other>().unwrap(),
+            CommandStatus::Disabled
+        );
+    });
+    assert_eq!(ui.query_command::<Other>().unwrap().label, "Updated");
+    let mount = r.update(|cx| cx.mount(&e).unwrap());
+    let bound = r
+        .evaluate(&mount, |_, cx| {
+            cx.command(Other, |_, _, _| {}).label("Temporary")
+        })
+        .unwrap();
+    let temporary = r.update(|cx| cx.register_command(&bound));
+    assert_eq!(ui.query_command::<Other>().unwrap().label, "Temporary");
+    drop(mount);
+    assert_eq!(ui.query_command::<Other>().unwrap().label, "Updated");
+    drop((temporary, registration));
+    assert!(ui.query_command::<Other>().is_none());
+}
+
+#[test]
+fn command_queries_respect_modal_scopes_and_explicit_global_permissions() {
+    let (mut r, e, mut ui) = overlays();
+    let registration = r.update(|cx| {
+        let action = cx.command(Other, |_, _| {}).label("Global");
+        cx.register_command(&action)
+    });
+    r.update(|cx| e.update(cx, |s, _| s.dialog = true));
+    prepare(&mut r, &mut ui);
+    assert!(ui.query_command::<Run>().is_none());
+    assert!(ui.query_command::<Other>().is_none());
+    r.update(|cx| {
+        let action = cx
+            .command(Other, |_, _| {})
+            .label("Help")
+            .allow_in_modal(true);
+        registration.replace(&action, cx).unwrap();
+    });
+    assert_eq!(ui.query_command::<Other>().unwrap().label, "Help");
+}
+
+#[cfg(feature = "native")]
+#[test]
+fn native_commands_use_retained_focus_during_menu_tracking_without_reactivating_ui() {
+    let (mut r, e, mut ui) = commands();
+    ui.focus(id(&ui, "edit"));
+    ui.set_active(false);
+    assert_eq!(
+        ui.dispatch_command::<Run>(&mut r).unwrap(),
+        CommandStatus::Unhandled
+    );
+    assert_eq!(
+        ui.dispatch_command_id(&mut r, CommandId::of::<Run>())
+            .unwrap(),
+        CommandStatus::Handled
+    );
+    assert_eq!(r.update(|cx| e.read(cx).trace.clone()), vec!["inner"]);
+    prepare(&mut r, &mut ui);
+    use standard_commands::*;
+    assert!(
+        ui.native_command_info(CommandId::of::<SelectAll>())
+            .unwrap()
+            .enabled
+    );
+    assert!(
+        !ui.native_command_info(CommandId::of::<Copy>())
+            .unwrap()
+            .enabled
+    );
+    // This example input has no on_change, so it is selectable but not editable.
+    assert!(
+        !ui.native_command_info(CommandId::of::<Paste>())
+            .unwrap()
+            .enabled
+    );
+    ui.native_text_input(&mut r, TextInputEvent::SelectAll, &mut Measure)
+        .unwrap();
+    assert_eq!(ui.selected_text(), Some("Edit"));
+    assert!(
+        ui.native_command_info(CommandId::of::<Copy>())
+            .unwrap()
+            .enabled
+    );
+    assert!(!ui.has_text_focus()); // No persistent native reactivation.
+    assert!(
+        !ui.native_command_info(CommandId::of::<Cut>())
+            .unwrap()
+            .enabled
+    );
+    ui.focus(id(&ui, "outside"));
+    assert!(
+        !ui.native_command_info(CommandId::of::<SelectAll>())
+            .unwrap()
+            .enabled
+    );
+    let (mut r, e, mut ui) = overlays();
+    r.update(|cx| e.update(cx, |s, _| s.dialog = true));
+    prepare(&mut r, &mut ui);
+    assert!(
+        !ui.native_command_info(CommandId::of::<CloseWindow>())
+            .unwrap()
+            .enabled
+    );
+    assert!(
+        ui.native_command_info(CommandId::of::<Quit>())
+            .unwrap()
+            .enabled
+    );
+}

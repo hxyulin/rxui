@@ -13,7 +13,9 @@ feature works headlessly with host-supplied text measurement. `rendering` adds
 `UiPainter` over Astrelis. `tasks` adds scoped background futures and blocking
 jobs; `native` adds the desktop Application host over astrelis-winit, including
 those features and lazy native AccessKit integration. `accessibility` adds AccessKit
-translation independently of the native host. `--no-default-features` retains the state-only runtime. Scrolling,
+translation independently of the native host. Optional `native-menus` adds Muda-backed
+macOS/Windows menu bars, scoped command presentation and vetoable Close/Quit
+requests; see [native menus](docs/native-menus.md). `--no-default-features` retains the state-only runtime. Scrolling,
 clipping, focus traversal and button activation are implemented. Controlled
 single-line editing, selection, clipboard and IME are implemented.
 Portable semantics, accessible names/roles, focus, activation, controlled values,
