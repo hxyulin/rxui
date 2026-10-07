@@ -2194,7 +2194,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                         Key::Named(NamedKey::Enter | NamedKey::Space)
                     )
                 {
-                    changed = ui.activate(&mut self.runtime)?;
+                    changed |= ui.activate(&mut self.runtime)?;
                 }
             }
             _ => {}
