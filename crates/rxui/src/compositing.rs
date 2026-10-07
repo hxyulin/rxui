@@ -159,6 +159,7 @@ impl UiPainter {
         scale: f32,
         draw: impl FnOnce(&mut Frame<'target, 'window>, &mut ComposedUi<'_, T>) -> Result<R, UiError>,
     ) -> Result<R, UiError> {
+        profiling::scope!("rxui::compose_layers");
         self.validate_resources(ui, scale)?;
         let plan = if ui.needs_composition() {
             let plan = self

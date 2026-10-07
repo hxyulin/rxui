@@ -209,6 +209,7 @@ impl Runtime {
     /// Selects the maximum number of callbacks executed by this flush.
     /// Zero permits cleanup and empty queues but cannot execute pending callbacks.
     pub fn flush_with_limit(&mut self, limit: usize) -> Result<(), EffectCycle> {
+        profiling::scope!("rxui::Runtime::flush");
         self.inner.synchronize();
         if self.inner.flushing.replace(true) {
             return Err(EffectCycle);

@@ -155,6 +155,7 @@ impl UiPainter {
         format: &RenderFormat,
         raster_scale: f32,
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::UiPainter::prepare");
         if !ui.is_prepared()
             || ui.measurement_generation() != self.generation
             || !raster_scale.is_finite()
@@ -322,6 +323,7 @@ impl UiPainter {
         pass: &mut RenderPass<'_>,
         scale: f32,
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::UiPainter::paint");
         if ui.needs_composition() {
             return Err(UiError::CompositionRequired);
         }

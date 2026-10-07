@@ -735,6 +735,7 @@ impl<T: View> Ui<T> {
         viewport: [f32; 2],
         measurer: &mut impl TextMeasure,
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::Ui::prepare");
         if !self.geometry_ready {
             self.clean_partial_tree();
         }
@@ -876,6 +877,7 @@ impl<T: View> Ui<T> {
         viewport: [f32; 2],
         measurer: &mut impl TextMeasure,
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::layout");
         let nodes = &self.nodes;
         let mut error = None;
         let measurements = &mut self.stats.measurements;
@@ -979,6 +981,7 @@ impl<T: View> Ui<T> {
         runtime: &mut Runtime,
         force_evaluation: bool,
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::evaluate_views");
         let before = self.stats.component_evaluations;
         self.active_views.clear();
         self.active_views.push(self.owner.entity().id());
@@ -1316,6 +1319,7 @@ impl<T: View> Ui<T> {
         Ok(())
     }
     fn resolve_styles(&mut self) -> Result<(), UiError> {
+        profiling::scope!("rxui::resolve_styles");
         if self.style_roots.is_empty() {
             return Ok(());
         }

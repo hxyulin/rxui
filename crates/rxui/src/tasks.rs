@@ -234,6 +234,7 @@ impl Runtime {
     /// Up to 1,024 queue records are consumed; the adapter is woken again if that
     /// budget is reached. A callback panic does not discard later queued results.
     pub fn poll_tasks(&mut self) -> usize {
+        profiling::scope!("rxui::poll_tasks");
         self.inner.synchronize();
         if let Some(tasks) = self.inner.tasks.borrow().as_ref() {
             tasks.hub.pending.store(false, Ordering::Release);

@@ -110,6 +110,7 @@ impl AccessKitTree {
         title: &str,
         scale: f32,
     ) -> Result<Option<TreeUpdate>, UiError> {
+        profiling::scope!("rxui::accessibility_update");
         if !ui.is_prepared() || !scale.is_finite() || scale <= 0. {
             return Err(UiError::InvalidGeometry);
         }

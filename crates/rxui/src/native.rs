@@ -1568,6 +1568,7 @@ impl<F> Host<F> {
         cx: &mut NativeContext<'_, Wake>,
         preparing: Option<NativeWindowId>,
     ) -> Result<(), ApplicationError> {
+        profiling::scope!("rxui::native::progress");
         if cx.event_loop().exiting() {
             return Ok(());
         }

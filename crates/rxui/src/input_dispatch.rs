@@ -301,6 +301,7 @@ impl<T: View> Ui<T> {
         kind: usize,
         button: Option<PointerButton>,
     ) -> Result<InputResult, UiError> {
+        profiling::scope!("rxui::dispatch_pointer");
         let mut path = std::mem::take(&mut self.input.route);
         self.input_path(target, &mut path);
         let result = (|| {
@@ -504,6 +505,7 @@ impl<T: View> Ui<T> {
     /// default_prevented before their own text/control defaults. Escape cancels
     /// explicit capture unless prevented. Key-up has no control default here.
     pub fn key(&mut self, runtime: &mut Runtime, event: KeyEvent) -> Result<InputResult, UiError> {
+        profiling::scope!("rxui::dispatch_key");
         runtime.is_dirty(&self.owner)?;
         if !self.is_prepared() || !self.active {
             return Ok(InputResult::default());
