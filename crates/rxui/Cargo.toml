@@ -68,6 +68,10 @@ name = "counter_window"
 required-features = ["native"]
 
 [[example]]
+name = "gallery"
+required-features = ["native"]
+
+[[example]]
 name = "counter_custom_host"
 required-features = ["native"]
 
