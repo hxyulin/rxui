@@ -1457,6 +1457,7 @@ impl<T: View> Ui<T> {
                     }
                     crate::ButtonVariant::Quiet => {
                         states[2].background = None;
+                        states[2].border_color = None;
                     }
                     crate::ButtonVariant::Default => {}
                 }
