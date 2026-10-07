@@ -779,6 +779,33 @@ impl UiPainter {
                     )?;
                 }
             }
+            // Drag feedback is a destination overlay, recorded once after all
+            // ordinary/isolated content. It does not participate in hit testing.
+            if group.is_none()
+                && let Some((preview, bounds, color)) = ui.dock_preview_paint()
+            {
+                let clip = physical_clip(
+                    bounds,
+                    scale,
+                    [viewport[0] + shift[0], viewport[1] + shift[1]],
+                    original_scissor,
+                );
+                if clip[2] > 0 && clip[3] > 0 {
+                    paint
+                        .pass()
+                        .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
+                    let b = preview.bounds;
+                    let rect = Rect::new(b.x, b.y, b.width, b.height);
+                    if preview.insertion {
+                        paint.fill_rect(rect, color)?;
+                    } else {
+                        let mut fill = color;
+                        fill[3] *= 0.16;
+                        paint.fill_rect(rect, fill)?;
+                        paint.stroke_rounded_rect(rect, 0., Stroke::new(2.).inside(), color)?;
+                    }
+                }
+            }
             Ok(())
         })();
         pass.set_scissor_rect(

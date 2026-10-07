@@ -138,6 +138,7 @@ struct Command {
 }
 #[derive(Default)]
 pub(super) struct State {
+    pub drop_focus: Option<Box<(ElementId, Key)>>,
     pub nodes: HashSet<ElementId>,
     life: Rc<()>,
     commands: Rc<RefCell<Vec<Command>>>,
@@ -148,7 +149,7 @@ pub(super) struct State {
 }
 impl State {
     pub(super) fn pending(&self) -> bool {
-        !self.commands.borrow().is_empty()
+        !self.commands.borrow().is_empty() || self.drop_focus.is_some()
     }
 }
 impl Drop for State {

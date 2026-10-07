@@ -205,5 +205,6 @@ recording, queue submission and native accessibility publication; geometry-only
 timings do not establish a native frame budget.
 [Focus groups and controlled tabs](focus-and-tabs.md) now supply remembered
 placement-local focus, keyboard cycling, selection/close proposals and retained
-or selected-only panels. Drag overlays/docking trees and cross-native-window
-detach remain following stages.
+or selected-only panels. The [controlled docking tree](docking.md) composes those
+controls and adds pointer header drops with previews. Cross-native-window detach
+remains separate work.

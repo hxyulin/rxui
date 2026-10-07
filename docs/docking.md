@@ -72,7 +72,7 @@ IDs are in-process identities, not a persistent serialization format.
 | `move_panel(&key, group, index)` | Reorders or moves, selecting the moved panel in the destination. |
 | `split(group, side, new_key, position)` | Adds a new group alongside target; returns the new group's ID. |
 | `dock_panel(&key, group, side, position)` | Moves an existing panel into a new adjacent group. |
-| `apply(&event)` | Accepts a checked select, close or resize proposal. |
+| `apply(&event)` | Accepts a checked select, close, resize or drop proposal. |
 
 Move indices describe the final position after source removal: for a same-group
 reorder of N panels, `0..N`; for a different destination with N panels, `0..=N`.
@@ -88,8 +88,9 @@ away from that same group; move it to a different group or add another panel fir
 
 ## Events, sizing and ownership
 
-`DockEvent::Select { group, panel }`, `Close { group, panel }` and
-`Resize { split, event }` are proposals. The application can ignore, normalize,
+`DockEvent::Select { group, panel }`, `Close { group, panel }`,
+`Resize { split, event }` and `Drop { source, panel, target }` are proposals.
+The application can ignore, normalize,
 defer or accept them. Close has no automatic document/entity disposal. Applying a
 deferred close checks the original group, so it cannot accidentally close a panel
 that has moved elsewhere. Absent nodes/changed membership return `DockError`.
@@ -122,6 +123,63 @@ uses existing retained UI preparation and rendering; no extra framebuffer or
 composition pass is introduced by the docking tree. Large panel collections and
 description allocation remain candidates for the later optimization pass.
 
+## Header dragging and drop feedback
+
+Header dragging is enabled by default when `on_event` is attached. A primary press
+captures the header in its source UI placement. Motion becomes a drag at six
+logical units; a smaller motion/release remains an ordinary tab click. Close
+buttons and nested ordinary tab groups never start dock drags. `.draggable(false)`
+disables the gesture while retaining normal tab selection/keyboard behavior.
+`.drag_threshold(value)` changes the finite, nonnegative threshold.
+
+Destinations are restricted to the same dock root and window:
+
+- Header strips show an insertion marker before/after the nearest header midpoint.
+  The proposal's index is adjusted for source removal, including same-group reorder.
+- The center of another panel body highlights its body and appends to that group.
+- The outer quarter of a body chooses the closest Left/Right/Top/Bottom edge and
+  previews a new adjacent pane. Stock split drops propose `Fraction(0.5)`.
+
+No-op same-group drops, splitting a group's sole panel away from itself, split
+zones too small for both configured minima, blocked overlays, different dock roots
+and positions outside eligible groups have no destination. Capture continues when
+the pointer leaves the viewport, but its preview clears. Release hit-tests again
+against current geometry; coalesced motion cannot commit an old highlighted target.
+Escape and host/target cancellation clear the gesture without changing topology.
+Routed listeners can prevent the stock gesture, and preventing Escape preserves
+the application's control of cancellation.
+
+Only a completed eligible drop emits
+`DockEvent::Drop { source, panel, target: DockDropTarget }`. Stock motion emits no
+DockEvent, mutates no tree data and does not dirty its owning view. Routed pointer
+listeners still run and can update application state. Accepting `apply`
+checks original source membership and delegates to the same checked move/split
+operations. Rejection or cancellation leaves the layout unchanged. The drag and
+capture clear before application callbacks, including callbacks that fail.
+After preparation, an accepted drop focuses the panel's selected header in its new
+group. An explicit queued focus request takes precedence over this restoration.
+
+`Ui::dock_drag()` exposes a borrowed `DockDragInfo`: source group, panel key,
+logical pointer position and optional `DockDropPreview`. Preview bounds represent
+the current destination, not a simulated post-collapse layout; final pane allocation
+can grow or change after source removal. Destination geometry refreshes during UI
+preparation, including scroll/layout changes.
+
+`UiPainter` draws a transient overlay after ordinary and isolated content, using
+the source dock's Focus theme color. Pane previews use a translucent fill and outline;
+header markers are solid. Feedback respects dock clipping, destination viewport,
+DPI, caller scissor and source ancestor opacity. It adds shape draws without an
+extra framebuffer or pass and does not participate in hit testing. Use
+`.drop_preview(false)` to paint custom feedback from `Ui::dock_drag()`; gesture
+recognition, cursor feedback and drop proposals remain enabled.
+
+This is a pointer gesture within one dock placement. It does not pick/drop panels
+through keyboard accessibility actions or native cross-window drag sessions.
+Ordinary tab keyboard behavior remains available, and application buttons/commands
+can expose checked reorder/move/split operations. Overflowing header strips retain
+their existing wheel scrolling; stationary edge autoscroll and drag ghosts are
+separate interaction polish.
+
 ## Retained placement boundaries
 
 `TabContentPolicy::KeepMounted` is the default. Selection changes and reordering
@@ -151,7 +209,8 @@ cargo run -p rxui --example docking_window --features native --locked
 
 It demonstrates nested splits, editable panel entities, controlled resizing,
 same-group reordering, moving/splitting preview, closing, adding tabs, mounting
-policy and a shared window. Restore layout reopens retained document models.
+policy, pointer header drops and a shared window. Restore layout reopens retained
+document models.
 It contains no support module or smoke-test mode.
 
 Tests cover all split sides, recursive collapse, IDs, insertion/reorder/move,
@@ -160,6 +219,14 @@ layout, read-only constrained dividers, controlled acceptance/rejection, retaine
 same-group editing and capture cancellation/remount boundaries. A real-font GPU
 test samples each visible panel's background after splitting, moving and collapsing,
 including closing the final panel, and checks GPU validation errors.
+
+Header gesture tests cover thresholds, all drop zones, controlled rejection,
+release-time hit testing, blockers, nested ordinary tabs, cancellation, stale
+sources, callback errors and placement-local focus restoration. Repeated stock
+motion leaves the owning entity revision and component evaluation count unchanged.
+A second real-font GPU test verifies the preview with 4x MSAA, 2x DPI, a custom
+theme, isolated content, caller viewport/scissor, disabled stock feedback and
+cancellation; it also checks GPU validation errors.
 
 macOS computer-use checks exercised note editing, numeric scrollbar/divider actions,
 tab switching and same-group reorder with a retained 200-unit scroll offset,
@@ -170,7 +237,13 @@ original. The temporary copies used normal window attributes with background
 creation, and both windows were closed afterward. These are functional checks,
 not frame-pacing measurements or full VoiceOver usability certification.
 
-This stage provides the tree and programmatic edits. Header dragging, drop-zone
-hit testing/previews, undo/persistence, placement transfer and native cross-window
-detach are separate work. The next interaction stage can turn drag gestures into
-these same checked move/split operations.
+Additional macOS computer-use checks dragged headers to reorder, merge into another
+group and split at an edge. A document edit survived a cross-group move, and focus
+followed the selected header after a drop. These checks used a temporary copy of
+the standalone example in a normal background-created window, which was closed
+afterward. Held-drag preview pixels and cancellation are covered by the automated
+tests above.
+
+This stage provides the tree, checked programmatic edits and pointer header drops
+with previews. Undo/persistence, placement transfer and native cross-window detach
+remain separate work.

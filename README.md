@@ -339,8 +339,10 @@ cargo run -p rxui --example tabs_window --features native --locked
 
 `DockTree` owns split topology, panel order and selection independently of document
 entities. `dock(&tree, resolver)` composes existing tabs and splits, routing controlled
-selection, close and resize proposals through `DockEvent`. Checked edits support
-reordering, moving, splitting and collapsing empty branches. See
+selection, close, resize and drop proposals through `DockEvent`. Checked edits support
+reordering, moving, splitting and collapsing empty branches. Drag headers to reorder
+or dock into center/edge drop zones with themed previews; completed drops remain
+application-controlled. See
 [the docking contract](docs/docking.md) for ownership and placement boundaries.
 
 ```sh

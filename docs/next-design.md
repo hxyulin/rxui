@@ -45,8 +45,8 @@ Scrolling/clipping, focus reveal and controlled single-line editing/selection/IM
 are implemented, along with portable semantics and lazy native AccessKit integration.
 Themes, inherited text styling, isolated group opacity, general input/capture,
 scroll areas/handles/bars, controlled splits, focus groups/weak focus handles and
-controlled tab lifecycle and the controlled docking tree are implemented. Dock drag
-previews/reordering gestures, native detach and virtualization remain planned.
+controlled tab lifecycle, the controlled docking tree and pointer header drops with
+previews are implemented. Native detach and virtualization remain planned.
 See [docking.md](docking.md), [focus-and-tabs.md](focus-and-tabs.md) and [interaction.md](interaction.md). See
 [the current README](../README.md), [application contract](application.md) and
 [task contract](async.md) for implemented APIs and current limitations.

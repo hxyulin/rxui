@@ -5,6 +5,185 @@ use astrelis::{FramebufferOptions, wgpu};
 
 #[test]
 #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn dock_drag_preview_respects_dpi_viewport_scissor_theme_and_isolated_content() {
+    struct DragPage {
+        tree: DockTree,
+        preview: bool,
+    }
+    impl View for DragPage {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            stack()
+                .size(256., 192.)
+                .padding(8.)
+                .theme(Theme::dark().colors(|c| c.focus = [0., 1., 0., 1.]))
+                .child(
+                    dock(&self.tree, |key| {
+                        dock_panel(
+                            format!("{key:?}"),
+                            stack().fill_width().fill_height().background(
+                                if key == &Key::from("c") {
+                                    [0., 0., 1., 1.]
+                                } else {
+                                    [1., 0., 0., 1.]
+                                },
+                            ),
+                        )
+                    })
+                    .size(240., 176.)
+                    .min_pane_size(30., 30.)
+                    .drop_preview(self.preview)
+                    .on_event(cx.listener(|s, e: &DockEvent, _| {
+                        let _ = s.tree.apply(e);
+                    }))
+                    .into_element()
+                    .opacity(0.5),
+                )
+        }
+    }
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut target = graphics
+            .create_framebuffer(
+                FramebufferOptions::new(512, 384)
+                    .format(wgpu::TextureFormat::Rgba8Unorm)
+                    .sample_count(4)
+                    .usage(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC),
+            )
+            .unwrap();
+        let mut tree = DockTree::from_panels(["a", "b"]).unwrap();
+        let main = tree.root().id();
+        tree.split(main, DockSide::Right, "c", SplitPosition::default())
+            .unwrap();
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| {
+            cx.new(|_| DragPage {
+                tree,
+                preview: true,
+            })
+        });
+        let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        painter
+            .fonts_mut()
+            .load_font_shared(Arc::<[u8]>::from(
+                include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice(),
+            ))
+            .unwrap();
+        ui.prepare(&mut runtime, [256., 192.], &mut painter)
+            .unwrap();
+        painter.prepare(&ui, &target.render_format(), 2.).unwrap();
+        let source = ui
+            .semantics()
+            .find(|n| n.role == SemanticRole::Tab && n.label == Some("String(\"a\")"))
+            .unwrap()
+            .id;
+        let destination = ui
+            .semantics()
+            .find(|n| n.role == SemanticRole::Tab && n.label == Some("String(\"c\")"))
+            .unwrap()
+            .controls
+            .unwrap();
+        let b = ui.element(destination).unwrap().bounds;
+        let point = [b.x + b.width * 0.5, b.y + b.height * 0.5];
+        let at = [
+            (12. + point[0] * 2.) as usize,
+            (8. + point[1] * 2.) as usize,
+        ];
+        let mut samples = Vec::new();
+        for stage in 0..4 {
+            if stage == 1 {
+                let b = ui.element(source).unwrap().bounds;
+                ui.pointer(
+                    &mut runtime,
+                    PointerEvent::Pressed([b.x + b.width * 0.5, b.y + b.height * 0.5]),
+                )
+                .unwrap();
+                ui.pointer(&mut runtime, PointerEvent::Moved(point))
+                    .unwrap();
+                assert!(ui.dock_drag().unwrap().preview.is_some());
+            } else if stage == 2 {
+                runtime.update(|cx| root.update(cx, |s, _| s.preview = false));
+                ui.prepare(&mut runtime, [256., 192.], &mut painter)
+                    .unwrap();
+                painter.prepare(&ui, &target.render_format(), 2.).unwrap();
+                assert!(ui.dock_drag().unwrap().preview.is_some());
+            } else if stage == 3 {
+                ui.key(
+                    &mut runtime,
+                    KeyEvent {
+                        key: KeyboardKey::Escape,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::default(),
+                    },
+                )
+                .unwrap();
+                assert!(ui.dock_drag().is_none());
+            }
+            let texture = target.color_texture().unwrap().clone();
+            let buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Dock preview readback"),
+                size: 2048 * 384,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut frame = target.begin_frame().unwrap();
+            painter
+                .compose(&ui, &mut frame, 2., |frame, composed| {
+                    let mut pass = frame
+                        .render_pass()
+                        .clear_color(wgpu::Color::BLACK)
+                        .begin()?;
+                    pass.set_viewport(12., 8., 500., 376., 0., 1.)?;
+                    pass.set_scissor_rect(32, 28, 464, 328)?;
+                    composed.paint(&mut pass)?;
+                    assert_eq!(pass.scissor_rect(), [32, 28, 464, 328]);
+                    assert_eq!(pass.viewport(), [12., 8., 500., 376., 0., 1.]);
+                    Ok(())
+                })
+                .unwrap();
+            frame.encoder().copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: Default::default(),
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(2048),
+                        rows_per_image: Some(384),
+                    },
+                },
+                texture.size(),
+            );
+            let bytes = pixels(&graphics, &buffer, frame.finish().unwrap());
+            assert_eq!(
+                &bytes[10 * 2048 + 10 * 4..10 * 2048 + 10 * 4 + 4],
+                &[0, 0, 0, 255]
+            );
+            samples.push(bytes[at[1] * 2048 + at[0] * 4..at[1] * 2048 + at[0] * 4 + 4].to_vec());
+        }
+        assert_eq!(samples[0], samples[2]);
+        assert_eq!(samples[0], samples[3]);
+        assert!(samples[0][2].abs_diff(128) <= 1);
+        assert!(
+            samples[1][1].abs_diff(20) <= 2,
+            "preview color {:?}",
+            samples[1]
+        );
+        assert!(samples[1][2] < samples[0][2]);
+        assert!(errors.pop().await.is_none());
+    });
+}
+
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
 fn dock_tree_reparenting_and_collapse_paint_real_font_panels_in_their_slots() {
     struct DockPage {
         tree: DockTree,

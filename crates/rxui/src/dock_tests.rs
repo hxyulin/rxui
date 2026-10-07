@@ -512,3 +512,6 @@ fn dock_invalid_configuration_fails_before_mounting_and_can_retry() {
     prepare(&mut r, &mut ui);
     assert!(ui.is_prepared());
 }
+
+#[path = "dock_drag_tests.rs"]
+mod drag_tests;

@@ -143,6 +143,7 @@ impl<T: View> Ui<T> {
         }
     }
     pub(super) fn cancel_capture(&mut self, reason: PointerCancelReason) {
+        self.dock_drag = None;
         let Some(capture) = self.input.capture else {
             return;
         };
@@ -257,6 +258,9 @@ impl<T: View> Ui<T> {
     }
     /// Cursor from the capture owner or current pointer target, then its ancestors.
     pub fn cursor(&self) -> Cursor {
+        if let Some(cursor) = self.dock_cursor() {
+            return cursor;
+        }
         let mut current = self.captured_pointer().or(self.hovered);
         while let Some(id) = current {
             let Some(n) = self.nodes.get(&id) else {
@@ -404,8 +408,12 @@ impl<T: View> Ui<T> {
             return Ok(false);
         }
         if kind == 4 {
+            let cleared = self.dock_drag.as_mut().is_some_and(|drag| {
+                drag.inside = false;
+                drag.preview.take().is_some()
+            });
             self.hovered = None;
-            return Ok(before.0.is_some());
+            return Ok(cleared || before.0.is_some());
         }
         self.input.position = position.unwrap();
         self.input.modifiers = modifiers;
@@ -429,6 +437,10 @@ impl<T: View> Ui<T> {
         } else {
             InputResult::default()
         };
+        self.input.prevented = result.default_prevented;
+        let dock = self.dock_pointer(runtime, target, kind, button, result.default_prevented)?;
+        result.changed |= dock.changed;
+        result.default_prevented |= dock.default_prevented;
         self.input.prevented = result.default_prevented;
         if !result.default_prevented
             && let Some(target) = target
@@ -544,6 +556,7 @@ impl<T: View> Ui<T> {
                 && self.captured_pointer().is_some()
             {
                 self.cancel_capture(PointerCancelReason::Escape);
+                result.changed = true;
                 result.changed |= self.flush_input_cancellations(runtime)?;
             }
             Ok(result)

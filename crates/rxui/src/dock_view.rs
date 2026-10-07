@@ -35,12 +35,31 @@ impl DockPanel {
 pub(crate) struct Properties {
     pub min_pane_size: [f32; 2],
     pub divider_size: f32,
+    pub drag_threshold: f32,
+    pub draggable: bool,
+    pub show_preview: bool,
+    pub listener: Option<Listener<DockEvent>>,
 }
 impl Properties {
     pub(crate) fn valid(&self) -> bool {
         self.min_pane_size.iter().all(|n| n.is_finite() && *n >= 0.)
             && self.divider_size.is_finite()
             && self.divider_size > 0.
+            && self.drag_threshold.is_finite()
+            && self.drag_threshold >= 0.
+    }
+}
+#[derive(Clone)]
+pub(crate) enum Metadata {
+    Root(Properties),
+    Group(DockNodeId),
+}
+impl Metadata {
+    pub(crate) fn valid(&self) -> bool {
+        match self {
+            Self::Root(p) => p.valid(),
+            Self::Group(_) => true,
+        }
     }
 }
 /// Owned dock description. Takes a tree snapshot at construction; it never mutates
@@ -71,7 +90,8 @@ pub struct Dock {
     props: Properties,
 }
 /// Composes an application-owned tree with content supplied by stable panel key.
-/// Default panes have 96-unit minima and 8-unit dividers. The dock fills its bounded
+/// Default panes have 96-unit minima and 8-unit dividers. Header dragging is enabled
+/// with an event listener and a 6-unit movement threshold. The dock fills its bounded
 /// parent; undersized viewports clip panes at their recursively combined minima.
 pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock {
     fn collect(
@@ -116,11 +136,15 @@ pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock
         props: Properties {
             min_pane_size: [96., 96.],
             divider_size: 8.,
+            drag_threshold: 6.,
+            draggable: true,
+            show_preview: true,
+            listener: None,
         },
     }
 }
 impl Dock {
-    /// Receives controlled selection, close and resize proposals with node identity.
+    /// Receives controlled selection, close, resize and drop proposals with node identity.
     /// Without a listener, dividers and close controls are read-only/unavailable.
     pub fn on_event(mut self, listener: Listener<DockEvent>) -> Self {
         self.listener = Some(listener);
@@ -146,6 +170,24 @@ impl Dock {
     /// Divider hit thickness. Must be finite and positive; validated during prepare.
     pub fn divider_size(mut self, size: f32) -> Self {
         self.props.divider_size = size;
+        self
+    }
+    /// Enables header dragging within this dock placement. Requires on_event.
+    /// Defaults to true; ordinary header clicking/keyboard navigation remains available.
+    pub fn draggable(mut self, value: bool) -> Self {
+        self.props.draggable = value;
+        self
+    }
+    /// Enables UiPainter's themed drop overlay (default true). Disable it when a
+    /// custom painter uses Ui::dock_drag for feedback; gestures/proposals still work.
+    pub fn drop_preview(mut self, value: bool) -> Self {
+        self.props.show_preview = value;
+        self
+    }
+    /// Movement in logical units before a pressed header becomes a drag (default 6).
+    /// Must be finite and nonnegative; validated during Ui preparation.
+    pub fn drag_threshold(mut self, distance: f32) -> Self {
+        self.props.drag_threshold = distance;
         self
     }
     /// Stable identity of the entire dock within its parent's sibling scope.
@@ -225,7 +267,12 @@ impl Dock {
                             }),
                         );
                 }
-                (group.into_element(), self.props.min_pane_size)
+                let mut element = group
+                    .into_element()
+                    .pointer_events(crate::PointerEvents::Block);
+                element.input.get_or_insert_with(Default::default).dock =
+                    Some(Box::new(Metadata::Group(id)));
+                (element, self.props.min_pane_size)
             }
             DockNode::Split(n) => {
                 let (first, a) = self.describe(n.first());
@@ -261,7 +308,9 @@ impl IntoElement for Dock {
     fn into_element(mut self) -> Element {
         let tree = self.tree.take().expect("owned dock snapshot");
         let (content, _) = self.describe(tree.root());
-        self.root.input.get_or_insert_with(Default::default).dock = Some(Box::new(self.props));
+        self.props.listener = self.listener;
+        self.root.input.get_or_insert_with(Default::default).dock =
+            Some(Box::new(Metadata::Root(self.props)));
         self.root.child(content)
     }
 }

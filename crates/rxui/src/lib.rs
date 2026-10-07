@@ -154,7 +154,8 @@ pub use controls::{
 };
 #[cfg(feature = "layout")]
 pub use dock::{
-    DockError, DockEvent, DockNode, DockNodeId, DockSide, DockSplit, DockTabs, DockTree,
+    DockDropTarget, DockError, DockEvent, DockNode, DockNodeId, DockSide, DockSplit, DockTabs,
+    DockTree,
 };
 #[cfg(feature = "layout")]
 pub use dock_view::{Dock, DockPanel, dock, dock_panel};
@@ -206,6 +207,8 @@ pub use theme::{
     rgba8,
 };
 #[cfg(feature = "layout")]
+pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
+#[cfg(feature = "layout")]
 pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
 #[cfg(feature = "layout")]
 pub use ui::{
@@ -231,8 +234,8 @@ pub mod prelude {
         Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };
     pub use crate::{
-        Dock, DockError, DockEvent, DockNode, DockNodeId, DockPanel, DockSide, DockSplit, DockTabs,
-        DockTree, dock, dock_panel,
+        Dock, DockDragInfo, DockDropPreview, DockDropTarget, DockError, DockEvent, DockNode,
+        DockNodeId, DockPanel, DockSide, DockSplit, DockTabs, DockTree, dock, dock_panel,
     };
     pub use crate::{
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,

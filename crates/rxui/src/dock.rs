@@ -220,6 +220,15 @@ impl Error for DockError {}
 /// ignore or defer it (for example, confirming unsaved data before Close).
 #[derive(Clone, Debug, PartialEq)]
 pub enum DockEvent {
+    /// Propose a completed header drag. No layout changes during pointer motion.
+    Drop {
+        /// Original group, checked before accepting a possibly deferred proposal.
+        source: DockNodeId,
+        /// Dragged panel key.
+        panel: Key,
+        /// Proposed insertion or adjacent split.
+        target: DockDropTarget,
+    },
     /// Propose selecting a panel in its current group.
     Select {
         /// Source group identity.
@@ -240,6 +249,26 @@ pub enum DockEvent {
         split: DockNodeId,
         /// Ordinary split resize proposal, including gesture phase.
         event: ResizeEvent,
+    },
+}
+/// Destination of a header drag, or an application-created docking proposal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DockDropTarget {
+    /// Insert into a tab sequence. Index is the final index after source removal.
+    Tab {
+        /// Destination group.
+        group: DockNodeId,
+        /// Final destination index.
+        index: usize,
+    },
+    /// Move into a new group beside the destination. Stock gestures propose halves.
+    Split {
+        /// Destination group.
+        group: DockNodeId,
+        /// Side of the destination for the new panel group.
+        side: DockSide,
+        /// Requested first/left/top extent, regardless of side.
+        position: SplitPosition,
     },
 }
 /// Owned binary docking tree. Global panel-key uniqueness, valid selection, valid
@@ -484,10 +513,28 @@ impl DockTree {
         self.root.collapse();
         Ok(self.wrap(target, side, panel, position))
     }
-    /// Accepts a current proposal. Close checks its source group before removing,
-    /// so a deferred stale request cannot close a panel moved to another group.
+    /// Accepts a current proposal. Close and Drop check original source membership
+    /// before editing, so deferred requests cannot act on a panel moved elsewhere.
     pub fn apply(&mut self, event: &DockEvent) -> Result<bool, DockError> {
         match event {
+            DockEvent::Drop {
+                source,
+                panel,
+                target,
+            } => {
+                self.contains(*source, panel)?;
+                match *target {
+                    DockDropTarget::Tab { group, index } => self.move_panel(panel, group, index),
+                    DockDropTarget::Split {
+                        group,
+                        side,
+                        position,
+                    } => {
+                        self.dock_panel(panel, group, side, position)?;
+                        Ok(true)
+                    }
+                }
+            }
             DockEvent::Select { group, panel } => self.select(*group, panel),
             DockEvent::Close { group, panel } => {
                 self.contains(*group, panel)?;

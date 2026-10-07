@@ -110,6 +110,10 @@ impl View for Workspace {
                     s.status =
                         "Panel closed. Restore layout reopens it; its document model is retained."
                             .into();
+                } else if matches!(e, DockEvent::Drop { .. }) {
+                    s.status =
+                        "Panel docked. Document data is retained; cross-group placement may remount."
+                            .into();
                 }
             }
             Err(error) => s.status = error.to_string(),
@@ -155,6 +159,13 @@ impl View for Workspace {
             .min_height(0.)
             .child(tools)
             .child(content)
+            .child(
+                label(
+                    "Drag tabs: header to reorder, center to join, edge to split. Escape cancels.",
+                )
+                .padding(6.)
+                .color(ThemeColor::TextMuted),
+            )
             .child(
                 label(self.status.clone())
                     .padding(10.)

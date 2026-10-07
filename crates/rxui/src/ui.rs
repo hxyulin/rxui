@@ -18,7 +18,7 @@ use taffy::{TaffyTree, prelude::*};
 /// Failure during description preparation, measurement, or input dispatch.
 #[derive(Debug)]
 pub enum UiError {
-    /// Dock pane minima or divider thickness are invalid.
+    /// Dock pane minima, divider thickness or drag threshold are invalid.
     InvalidDockConfiguration,
     /// A focus handle is bound to multiple elements in one placement.
     DuplicateFocusHandle,
@@ -88,7 +88,7 @@ impl fmt::Display for UiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidDockConfiguration => {
-                f.write_str("invalid dock pane minima or divider thickness")
+                f.write_str("invalid dock pane minima, divider thickness or drag threshold")
             }
             Self::DuplicateFocusHandle => f.write_str("duplicate focus handle in one UI placement"),
             Self::DuplicateTabKey => f.write_str("duplicate key in tab group"),
@@ -541,6 +541,7 @@ pub struct Ui<T: View> {
     pressed: Option<ElementId>,
     focused: Option<ElementId>,
     focus_state: Option<Box<focus::State>>,
+    dock_drag: Option<Box<dock_dispatch::Drag>>,
     stats: UiStats,
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
@@ -583,6 +584,7 @@ impl<T: View> Ui<T> {
             pressed: None,
             focused: None,
             focus_state: None,
+            dock_drag: None,
             stats: UiStats::default(),
             active_views: Vec::new(),
             component_nodes: Vec::new(),
@@ -738,11 +740,13 @@ impl<T: View> Ui<T> {
             self.needs_evaluation = true;
             let post = (|| {
                 self.publish_focus()?;
+                self.restore_dock_drop_focus();
                 self.apply_focus_commands();
                 self.publish_scroll(runtime)?;
                 self.apply_scroll_commands()?;
                 self.clear_invalid_interaction();
                 self.cancel_invalid_capture();
+                self.refresh_dock_drag();
                 self.flush_input_cancellations(runtime)?;
                 Ok::<_, UiError>(())
             })();
@@ -2789,6 +2793,8 @@ mod input_dispatch;
 #[path = "range_dispatch.rs"]
 mod range_dispatch;
 
+#[path = "dock_dispatch.rs"]
+pub(crate) mod dock_dispatch;
 #[path = "focus.rs"]
 pub(crate) mod focus;
 #[path = "tab_dispatch.rs"]
