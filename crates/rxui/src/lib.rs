@@ -7,7 +7,8 @@
 //!
 //! The default layout feature adds owned element builders, keyed reconciliation,
 //! Taffy flex layout, retained theme resolution, inherited text styling, scrolling,
-//! clipping and basic button routing. Dark/light presets and paint-only control states
+//! clipping, routed pointer/keyboard listeners, capture, scroll handles/scrollbars
+//! and controlled split panes. Dark/light presets and paint-only control states
 //! keep application styling separate from drawing. Controlled
 //! single-line inputs retain selection and IME preedit independently of
 //! application-owned values. The optional
@@ -101,6 +102,8 @@
 mod accessibility;
 mod context;
 #[cfg(feature = "layout")]
+mod controls;
+#[cfg(feature = "layout")]
 mod editing;
 #[cfg(feature = "layout")]
 mod element;
@@ -109,12 +112,16 @@ mod error;
 mod id;
 #[cfg(feature = "layout")]
 mod image;
+#[cfg(feature = "layout")]
+mod input;
 mod listener;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "rendering")]
 mod painting;
 mod runtime;
+#[cfg(feature = "layout")]
+mod scrolling;
 #[cfg(feature = "layout")]
 mod semantics;
 #[cfg(feature = "tasks")]
@@ -133,6 +140,11 @@ pub use accesskit;
 pub use astrelis_winit::CloseResponse;
 pub use context::{AppContext, Context, ReadContext, ViewContext};
 #[cfg(feature = "layout")]
+pub use controls::{
+    Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, Split, SplitPosition, scroll_area,
+    scrollbar, split_column, split_row,
+};
+#[cfg(feature = "layout")]
 pub use editing::{
     TextAffinity, TextChangeEvent, TextInputEvent, TextInputInfo, TextMovement, TextPosition,
     TextSelection, TextSubmitEvent,
@@ -147,6 +159,11 @@ pub use error::{AccessError, EffectCycle};
 pub use id::{EntityId, MountId};
 #[cfg(feature = "layout")]
 pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
+#[cfg(feature = "layout")]
+pub use input::{
+    Cursor, EventPhase, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers, PointerButton,
+    PointerButtons, PointerCancelReason, PointerInput,
+};
 pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
 pub use native::{
@@ -155,6 +172,8 @@ pub use native::{
 #[cfg(feature = "rendering")]
 pub use painting::{ComposedUi, ImageStats, LayerStats, UiPainter};
 pub use runtime::{Mount, Runtime, Subscription};
+#[cfg(feature = "layout")]
+pub use scrolling::{ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
 pub use semantics::{SemanticAction, SemanticNode, SemanticRole};
 #[cfg(feature = "tasks")]
@@ -180,10 +199,16 @@ pub mod prelude {
     #[cfg(feature = "native")]
     pub use crate::{Application, ApplicationError, CloseResponse, WindowHandle, WindowOptions};
     pub use crate::{
-        ButtonVariant, ClickEvent, Context, Entity, Image, ImageAlpha, ImageFilter, ImageFit,
-        IntoElement, Listener, PaintStyle, PointerEvents, Runtime, SemanticRole, TextChangeEvent,
-        TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, button, column, image, label,
-        rgb8, rgba8, row, stack, text_input,
+        Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollError,
+        ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, scroll_area, scrollbar,
+        split_column, split_row,
+    };
+    pub use crate::{
+        ButtonVariant, ClickEvent, Context, Cursor, Entity, Image, ImageAlpha, ImageFilter,
+        ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers,
+        PaintStyle, PointerButton, PointerButtons, PointerCancelReason, PointerEvents,
+        PointerInput, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor,
+        Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
@@ -220,3 +245,9 @@ mod image_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod layout_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod input_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod control_tests;

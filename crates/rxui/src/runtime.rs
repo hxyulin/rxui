@@ -31,6 +31,8 @@ pub(crate) struct MountRecord {
     life: Weak<MountLife>,
     pub(crate) dependencies: HashSet<EntityId>,
     pub(crate) scratch: HashSet<EntityId>,
+    #[cfg(feature = "layout")]
+    scroll_reads: Option<Box<crate::scrolling::ScrollReads>>,
     dirty: bool,
     evaluating: bool,
 }
@@ -450,6 +452,8 @@ impl RuntimeInner {
                 life: Rc::downgrade(&life),
                 dependencies: HashSet::new(),
                 scratch: HashSet::new(),
+                #[cfg(feature = "layout")]
+                scroll_reads: None,
                 dirty: true,
                 evaluating: false,
             },
@@ -458,6 +462,12 @@ impl RuntimeInner {
             owner: owner.clone(),
             life,
         })
+    }
+    #[cfg(feature = "layout")]
+    pub(crate) fn invalidate_mount(&self, id: MountId) {
+        if let Some(record) = self.state.borrow_mut().mounts.get_mut(&id) {
+            record.dirty = true;
+        }
     }
     pub(crate) fn mount_live(&self, id: MountId) -> bool {
         id.runtime == self.id
@@ -524,6 +534,27 @@ impl RuntimeInner {
             .or_default()
             .push((serial, Rc::downgrade(&observer)));
         Ok(Subscription { observer })
+    }
+    #[cfg(feature = "layout")]
+    pub(crate) fn commit_scroll_reads(&self, mount: MountId, handles: Vec<crate::ScrollHandle>) {
+        let old = self
+            .state
+            .borrow_mut()
+            .mounts
+            .get_mut(&mount)
+            .expect("evaluating mount")
+            .scroll_reads
+            .take();
+        drop(old);
+        if !handles.is_empty() {
+            let reads = crate::scrolling::ScrollReads::new(mount, handles);
+            self.state
+                .borrow_mut()
+                .mounts
+                .get_mut(&mount)
+                .expect("evaluating mount")
+                .scroll_reads = Some(Box::new(reads));
+        }
     }
     pub(crate) fn commit_dependencies(&self, mount: MountId, next: HashSet<EntityId>) {
         let mut state = self.state.borrow_mut();

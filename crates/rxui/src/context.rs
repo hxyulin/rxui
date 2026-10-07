@@ -22,6 +22,15 @@ pub trait ReadContext: sealed::Sealed {
     /// Internal dependency recording used by Entity reads.
     #[doc(hidden)]
     fn track(&self, entity: EntityId);
+    /// Internal placement resolution for layout references.
+    #[doc(hidden)]
+    fn placement_scope(&self) -> Option<MountId> {
+        None
+    }
+    /// Internal metric-read tracking, distinct from ordinary event reads.
+    #[doc(hidden)]
+    #[cfg(feature = "layout")]
+    fn track_scroll(&self, _handle: &crate::ScrollHandle) {}
 }
 
 /// Application mutation capability, valid during Runtime::update or effect flush.
@@ -32,6 +41,9 @@ pub struct AppContext<'a> {
 }
 impl sealed::Sealed for AppContext<'_> {}
 impl ReadContext for AppContext<'_> {
+    fn placement_scope(&self) -> Option<MountId> {
+        self.dispatch_mount
+    }
     fn validate(&self, entity: EntityId) -> Result<(), AccessError> {
         self.runtime.validate(entity)
     }
@@ -237,6 +249,9 @@ impl<T> DerefMut for Context<'_, T> {
 }
 impl<T> sealed::Sealed for Context<'_, T> {}
 impl<T> ReadContext for Context<'_, T> {
+    fn placement_scope(&self) -> Option<MountId> {
+        self.app.dispatch_mount
+    }
     fn validate(&self, entity: EntityId) -> Result<(), AccessError> {
         self.app.validate(entity)
     }
@@ -252,10 +267,22 @@ pub struct ViewContext<'a, T: 'static> {
     mount: Weak<MountLife>,
     id: MountId,
     pub(crate) dependencies: RefCell<HashSet<EntityId>>,
+    #[cfg(feature = "layout")]
+    scroll_dependencies: RefCell<Vec<crate::ScrollHandle>>,
     committed: bool,
 }
 impl<T> sealed::Sealed for ViewContext<'_, T> {}
 impl<T> ReadContext for ViewContext<'_, T> {
+    fn placement_scope(&self) -> Option<MountId> {
+        Some(self.id)
+    }
+    #[cfg(feature = "layout")]
+    fn track_scroll(&self, handle: &crate::ScrollHandle) {
+        let mut reads = self.scroll_dependencies.borrow_mut();
+        if !reads.iter().any(|h| h.id() == handle.id()) {
+            reads.push(handle.clone());
+        }
+    }
     fn validate(&self, entity: EntityId) -> Result<(), AccessError> {
         self.runtime.validate(entity)
     }
@@ -279,6 +306,8 @@ impl<'a, T> ViewContext<'a, T> {
             mount,
             id,
             dependencies: RefCell::new(dependencies),
+            #[cfg(feature = "layout")]
+            scroll_dependencies: RefCell::new(Vec::new()),
             committed: false,
         }
     }
@@ -298,6 +327,9 @@ impl<'a, T> ViewContext<'a, T> {
     pub(crate) fn commit(&mut self) {
         let next = std::mem::take(self.dependencies.get_mut());
         self.runtime.commit_dependencies(self.id, next);
+        #[cfg(feature = "layout")]
+        self.runtime
+            .commit_scroll_reads(self.id, std::mem::take(self.scroll_dependencies.get_mut()));
         self.committed = true;
     }
 }

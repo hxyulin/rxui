@@ -8,7 +8,7 @@ The [declarative core contract](docs/declarative-core.md) describes the implemen
 hosting sequence, identity, resource reuse, input and current limitations.
 
 This workspace implements typed state, declarative element builders, keyed
-reconciliation, Taffy flex layout, and basic button input. The default `layout`
+reconciliation, Taffy flex layout, routed pointer/keyboard input, scrollbars and controlled split panes. The default `layout`
 feature works headlessly with host-supplied text measurement. `rendering` adds
 `UiPainter` over Astrelis. `tasks` adds scoped background futures and blocking
 jobs; `native` adds the desktop Application host over astrelis-winit, including
@@ -307,4 +307,18 @@ layout/text measurements; values zero and one need no layer pass. See
 
 ```sh
 cargo run -p rxui --example opacity_window --features native --locked
+```
+
+## Scroll areas and resizable panes
+
+`scroll_area(content).handle(handle)` supplies a bounded viewport and visible bars.
+`ScrollHandle` resolves commands/metrics in the source UI, and `ScrollPlacement`
+provides an explicit weak reference for later app/async work. `split_row` and
+`split_column` expose controlled fraction/pixel sizes through `on_resize`. General
+pointer/key listeners support propagation, cancellation, focus and explicit capture.
+See [the interaction contract](docs/interaction.md) and
+[CPU measurements](docs/performance/interaction.md).
+
+```sh
+cargo run -p rxui --example workspace_window --features native --locked
 ```

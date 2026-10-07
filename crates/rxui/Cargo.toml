@@ -31,6 +31,8 @@ async-channel = { version = "=2.5.0", optional = true }
 futures-lite = { version = "=2.6.1", optional = true }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std", "async-await"], optional = true }
 arboard = { version = "=3.6.1", default-features = false, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 async-io = { version = "=2.6.0", optional = true }
 
 [dev-dependencies]
@@ -95,3 +97,12 @@ required-features = ["native"]
 name = "compositing"
 harness = false
 required-features = ["rendering"]
+
+[[example]]
+name = "workspace_window"
+required-features = ["native"]
+
+[[bench]]
+name = "interaction"
+harness = false
+required-features = ["layout"]

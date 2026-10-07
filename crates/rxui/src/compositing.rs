@@ -387,7 +387,8 @@ impl UiPainter {
     }
     fn visual_bounds(&self, e: &crate::ElementInfo<'_>) -> Option<Bounds> {
         let mut bounds = None;
-        if e.paint.background.is_some()
+        if e.focusable
+            || e.paint.background.is_some()
             || e.paint.border_color.is_some()
             || matches!(
                 e.kind,

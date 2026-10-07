@@ -468,6 +468,32 @@ impl UiPainter {
                         }
                     }
                 }
+                if let Some(range) = element.range {
+                    if let Some(thumb) = range.thumb_bounds {
+                        paint.fill_rounded_rect(
+                            Rect::new(thumb.x, thumb.y, thumb.width, thumb.height),
+                            4.,
+                            appearance.color,
+                        )?;
+                    } else {
+                        let line = if range.axis == crate::Axis::Horizontal {
+                            Rect::new(
+                                bounds.x + (bounds.width - 2.) / 2.,
+                                bounds.y,
+                                2.,
+                                bounds.height,
+                            )
+                        } else {
+                            Rect::new(
+                                bounds.x,
+                                bounds.y + (bounds.height - 2.) / 2.,
+                                bounds.width,
+                                2.,
+                            )
+                        };
+                        paint.fill_rect(line, appearance.color)?;
+                    }
+                }
                 if let Some(image) = &element.image
                     && image.source.pixel_size().is_some()
                     && image.destination.width > 0.
@@ -1291,3 +1317,7 @@ pub use composition::{ComposedUi, LayerStats};
 #[cfg(test)]
 #[path = "compositing_gpu_tests.rs"]
 mod compositing_gpu_tests;
+
+#[cfg(test)]
+#[path = "controls_gpu_tests.rs"]
+mod controls_gpu_tests;

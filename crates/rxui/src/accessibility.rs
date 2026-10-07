@@ -194,6 +194,29 @@ impl AccessKitTree {
             if semantic.activatable {
                 node.add_action(Action::Click);
             }
+            if let Some(range) = semantic.range {
+                node.set_numeric_value(f64::from(range.value));
+                node.set_min_numeric_value(f64::from(range.min));
+                node.set_max_numeric_value(f64::from(range.max));
+                node.set_numeric_value_step(f64::from(range.step));
+                let horizontal = if semantic.role == SemanticRole::Splitter {
+                    range.axis == crate::Axis::Vertical
+                } else {
+                    range.axis == crate::Axis::Horizontal
+                };
+                node.set_orientation(if horizontal {
+                    accesskit::Orientation::Horizontal
+                } else {
+                    accesskit::Orientation::Vertical
+                });
+                if range.read_only {
+                    node.set_read_only();
+                } else {
+                    node.add_action(Action::SetValue);
+                    node.add_action(Action::Increment);
+                    node.add_action(Action::Decrement);
+                }
+            }
             if semantic.editable {
                 node.add_action(Action::SetValue);
             }
@@ -354,7 +377,24 @@ impl AccessKitTree {
             Action::Focus => SemanticAction::Focus(target),
             Action::Click => SemanticAction::Activate(target),
             Action::ScrollIntoView => SemanticAction::ScrollIntoView(target),
+            Action::Increment | Action::Decrement => {
+                let value = node.numeric_value()?
+                    + node.numeric_value_step().unwrap_or(1.)
+                        * if request.action == Action::Increment {
+                            1.
+                        } else {
+                            -1.
+                        };
+                SemanticAction::SetNumericValue {
+                    target,
+                    value: value as f32,
+                }
+            }
             Action::SetValue => match request.data? {
+                ActionData::NumericValue(value) => SemanticAction::SetNumericValue {
+                    target,
+                    value: value as f32,
+                },
                 ActionData::Value(value) => SemanticAction::SetValue {
                     target,
                     value: value.into(),
@@ -459,5 +499,7 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::Image => Role::Image,
         SemanticRole::Button => Role::Button,
         SemanticRole::TextInput => Role::TextInput,
+        SemanticRole::Scrollbar => Role::ScrollBar,
+        SemanticRole::Splitter => Role::Splitter,
     }
 }

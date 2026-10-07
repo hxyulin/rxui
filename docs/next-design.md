@@ -43,7 +43,9 @@ windows sharing one entity while retaining independent interaction state. Scoped
 tasks support custom execution adapters, weak live-state completions and cancellation.
 Scrolling/clipping, focus reveal and controlled single-line editing/selection/IME
 are implemented, along with portable semantics and lazy native AccessKit integration.
-Themes and inherited text styling are implemented; virtualization remains planned. See
+Themes, inherited text styling, isolated group opacity, general input/capture,
+scroll areas/handles/bars and controlled splits are implemented. Focus scopes,
+tab/docking lifecycle and virtualization remain planned. See [interaction.md](interaction.md). See
 [the current README](../README.md), [application contract](application.md) and
 [task contract](async.md) for implemented APIs and current limitations.
 

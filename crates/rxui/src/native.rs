@@ -259,6 +259,12 @@ trait HostedUi {
         scale: f32,
         clear: wgpu::Color,
     ) -> Result<(), UiError>;
+    fn key(
+        &mut self,
+        runtime: &mut Runtime,
+        event: crate::KeyEvent,
+    ) -> Result<crate::InputResult, UiError>;
+    fn cursor_icon(&self) -> crate::Cursor;
     fn prepare_input(
         &mut self,
         runtime: &mut Runtime,
@@ -335,6 +341,16 @@ impl<T: View> HostedUi for Ui<T> {
             let mut pass = frame.render_pass().clear_color(clear).begin()?;
             ui.paint(&mut pass)
         })
+    }
+    fn key(
+        &mut self,
+        runtime: &mut Runtime,
+        event: crate::KeyEvent,
+    ) -> Result<crate::InputResult, UiError> {
+        self.key(runtime, event)
+    }
+    fn cursor_icon(&self) -> crate::Cursor {
+        self.cursor()
     }
     fn prepare_input(
         &mut self,
@@ -884,6 +900,7 @@ struct HostedWindow {
     factory: Option<Box<Factory>>,
     background: Option<Color>,
     cursor: [f64; 2],
+    cursor_icon: Option<crate::Cursor>,
     modifiers: ModifiersState,
     blink_at: Instant,
     caret_visible: bool,
@@ -950,6 +967,11 @@ impl<F> Host<F> {
         let Some(ui) = &mut window.ui else {
             return Ok(());
         };
+        let cursor = ui.cursor_icon();
+        if window.cursor_icon != Some(cursor) {
+            native.window().set_cursor(native_cursor(cursor));
+            window.cursor_icon = Some(cursor);
+        }
         let focus = ui
             .accepts_text_input()
             .then(|| ui.focused_element())
@@ -1060,6 +1082,7 @@ impl<F> Host<F> {
                             factory: Some(factory),
                             background: options.background,
                             cursor: [0.; 2],
+                            cursor_icon: None,
                             modifiers: ModifiersState::default(),
                             blink_at: Instant::now() + Duration::from_millis(500),
                             caret_visible: true,
@@ -1237,6 +1260,25 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             return Ok(());
         };
         ui.prepare_input(&mut self.runtime, native.metrics(), painter)?;
+        let mut key_prevented = false;
+        if let WindowEvent::KeyboardInput {
+            event,
+            is_synthetic: false,
+            ..
+        } = &event
+        {
+            let result = ui.key(
+                &mut self.runtime,
+                crate::KeyEvent {
+                    key: keyboard_key(&event.logical_key),
+                    pressed: event.state == ElementState::Pressed,
+                    repeat: event.repeat,
+                    modifiers: input_modifiers(window.modifiers),
+                },
+            )?;
+            changed |= result.changed;
+            key_prevented = result.default_prevented;
+        }
         match event {
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 ui.invalidate_geometry()
@@ -1245,7 +1287,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 window.cursor = [position.x, position.y];
                 changed = ui.pointer(
                     &mut self.runtime,
-                    PointerEvent::Moved([(position.x / scale) as f32, (position.y / scale) as f32]),
+                    PointerEvent::Motion {
+                        position: [(position.x / scale) as f32, (position.y / scale) as f32],
+                        modifiers: input_modifiers(window.modifiers),
+                    },
                     painter,
                     window.modifiers.shift_key(),
                 )?;
@@ -1253,11 +1298,12 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             WindowEvent::CursorLeft { .. } => {
                 changed = ui.pointer(&mut self.runtime, PointerEvent::Left, painter, false)?
             }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Left,
-                ..
-            } => {
+            WindowEvent::MouseInput { state, button, .. }
+                if matches!(
+                    button,
+                    MouseButton::Left | MouseButton::Right | MouseButton::Middle
+                ) =>
+            {
                 let point = [
                     (window.cursor[0] / scale) as f32,
                     (window.cursor[1] / scale) as f32,
@@ -1265,9 +1311,17 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 changed = ui.pointer(
                     &mut self.runtime,
                     if state == ElementState::Pressed {
-                        PointerEvent::Pressed(point)
+                        PointerEvent::Down {
+                            position: point,
+                            button: input_button(button),
+                            modifiers: input_modifiers(window.modifiers),
+                        }
                     } else {
-                        PointerEvent::Released(point)
+                        PointerEvent::Up {
+                            position: point,
+                            button: input_button(button),
+                            modifiers: input_modifiers(window.modifiers),
+                        }
                     },
                     painter,
                     window.modifiers.shift_key(),
@@ -1289,7 +1343,11 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 )?;
             }
             WindowEvent::Focused(active) => {
-                changed = ui.active(active);
+                if !active {
+                    changed |=
+                        ui.pointer(&mut self.runtime, PointerEvent::Cancelled, painter, false)?;
+                }
+                changed |= ui.active(active);
             }
             WindowEvent::Ime(Ime::Preedit(text, cursor)) => {
                 changed = ui.text_input(
@@ -1314,7 +1372,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 event,
                 is_synthetic: false,
                 ..
-            } if event.state == ElementState::Pressed => {
+            } if event.state == ElementState::Pressed && !key_prevented => {
                 let modifiers = window.modifiers;
                 let primary = if cfg!(target_os = "macos") {
                     modifiers.super_key()
@@ -1328,7 +1386,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 };
                 let extend = modifiers.shift_key();
                 if event.logical_key == Key::Named(NamedKey::Tab) && !event.repeat {
-                    changed = ui.focus_next(extend);
+                    changed |= ui.focus_next(extend);
                 } else if ui.has_text_focus() {
                     let input = match &event.logical_key {
                         Key::Character(key) if primary && key.eq_ignore_ascii_case("a") => {
@@ -1346,7 +1404,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                                         if key.eq_ignore_ascii_case("x")
                                             && ui.accepts_text_input() =>
                                     {
-                                        changed = ui.text_input(
+                                        changed |= ui.text_input(
                                             &mut self.runtime,
                                             TextInputEvent::Insert(String::new()),
                                             painter,
@@ -1607,6 +1665,11 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     ) -> Result<(), Self::Error> {
         if let Some(mut window) = self.windows.remove(&id) {
             drop(window.accessibility.take());
+            if let Some(ui) = &mut window.ui
+                && let Some(painter) = &mut self.painter
+            {
+                ui.pointer(&mut self.runtime, PointerEvent::Cancelled, painter, false)?;
+            }
             window.life.alive.set(false);
             window.life.native.borrow_mut().take();
             self.commands.lives.borrow_mut().remove(&window.life.id);
@@ -1640,6 +1703,57 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         }
         self.runtime.synchronize();
         Ok(())
+    }
+}
+
+fn input_modifiers(m: ModifiersState) -> crate::Modifiers {
+    crate::Modifiers {
+        shift: m.shift_key(),
+        control: m.control_key(),
+        alt: m.alt_key(),
+        meta: m.super_key(),
+    }
+}
+fn input_button(b: MouseButton) -> crate::PointerButton {
+    match b {
+        MouseButton::Right => crate::PointerButton::Secondary,
+        MouseButton::Middle => crate::PointerButton::Middle,
+        _ => crate::PointerButton::Primary,
+    }
+}
+fn keyboard_key(key: &Key) -> crate::KeyboardKey {
+    use crate::KeyboardKey as K;
+    match key {
+        Key::Character(s) => K::Character(s.to_string()),
+        Key::Named(NamedKey::Escape) => K::Escape,
+        Key::Named(NamedKey::Enter) => K::Enter,
+        Key::Named(NamedKey::Space) => K::Space,
+        Key::Named(NamedKey::Tab) => K::Tab,
+        Key::Named(NamedKey::ArrowLeft) => K::ArrowLeft,
+        Key::Named(NamedKey::ArrowRight) => K::ArrowRight,
+        Key::Named(NamedKey::ArrowUp) => K::ArrowUp,
+        Key::Named(NamedKey::ArrowDown) => K::ArrowDown,
+        Key::Named(NamedKey::Home) => K::Home,
+        Key::Named(NamedKey::End) => K::End,
+        Key::Named(NamedKey::PageUp) => K::PageUp,
+        Key::Named(NamedKey::PageDown) => K::PageDown,
+        Key::Named(NamedKey::Backspace) => K::Backspace,
+        Key::Named(NamedKey::Delete) => K::Delete,
+        other => K::Other(format!("{other:?}")),
+    }
+}
+fn native_cursor(cursor: crate::Cursor) -> astrelis_winit::winit::window::CursorIcon {
+    use astrelis_winit::winit::window::CursorIcon as C;
+    match cursor {
+        crate::Cursor::Default => C::Default,
+        crate::Cursor::Pointer => C::Pointer,
+        crate::Cursor::Text => C::Text,
+        crate::Cursor::Grab => C::Grab,
+        crate::Cursor::Grabbing => C::Grabbing,
+        crate::Cursor::ResizeHorizontal => C::ColResize,
+        crate::Cursor::ResizeVertical => C::RowResize,
+        crate::Cursor::Crosshair => C::Crosshair,
+        crate::Cursor::NotAllowed => C::NotAllowed,
     }
 }
 

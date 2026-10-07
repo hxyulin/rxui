@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-07",
+  "base_commit": "6a06f05",
+  "state": "uncommitted input/scroll/split foundations",
+  "platform": "macOS 27.0.1, Apple M3 Pro",
+  "rust": "1.98.1",
+  "profile": "optimized bench, default layout features",
+  "astrelis_git_revision": "1f773d4a13057db8e15adc768c1d59cf979e65ed",
+  "interaction": {
+    "command": "CARGO_INCREMENTAL=0 cargo bench --bench interaction --locked",
+    "warmups": 20,
+    "batches": 20,
+    "operations_per_batch": 50,
+    "runs": [
+      "run-1.csv",
+      "run-2.csv",
+      "run-3.csv"
+    ]
+  },
+  "comparison": {
+    "command": "CARGO_INCREMENTAL=0 cargo bench --bench elements --locked",
+    "baseline": "detached worktree at 6a06f05, shared Cargo target",
+    "warmups": 20,
+    "batches": 20,
+    "operations_per_batch": 100,
+    "base_runs": [
+      "elements-base-1.csv",
+      "elements-base-2.csv",
+      "elements-base-3.csv"
+    ],
+    "current_runs": [
+      "elements-current-1.csv",
+      "elements-current-2.csv",
+      "elements-current-3.csv"
+    ]
+  },
+  "notes": [
+    "Interactive machine; no affinity or isolated load.",
+    "Batch averages, not individual-event tail latency.",
+    "Mock text measurement; no real shaping, GPU preparation, rendering or presentation.",
+    "Code fingerprints describe the reviewed implementation. Documentation comments and the native timer target dependency fix followed the CPU runs; neither changes these default-layout workloads."
+  ],
+  "sha256": {
+    "Cargo.lock": "c65903ae424e4a78424140979d626e3a25de748962ab5311921c0b056b1c99bc",
+    "crates/rxui/benches/interaction.rs": "2ca6dcb7256a7831965e3c61f8d8fba7c4907a01c70b3e2c9f6d2666f7f03c2d",
+    "crates/rxui/benches/elements.rs": "26bbd86b31274608cc94590e5addea6a835ceced965e50bdfcf00f2fcbaebea5",
+    "crates/rxui/src/ui.rs": "203efc645371ef06cd439ac62adbc7f823c16041e9d647c60aa57f5cffb78310",
+    "crates/rxui/src/context.rs": "c5306239a4251aff894928a9f8124e87f505d0d033d0b7d2603ea0c093eb7556",
+    "crates/rxui/src/runtime.rs": "e4bcc40d4f3b66b53d8d7292374fa4194984789883269f1245473b2ddf1b5fae",
+    "crates/rxui/src/element.rs": "c06068186d938dac6fbea2db7166a6a5010b76a8047338f94ee60f412a65d742",
+    "crates/rxui/src/controls.rs": "bd49907ad51ed0ba37f96746d6c0c5df01585eb636153549de299d5f6a0017a5",
+    "crates/rxui/src/input.rs": "469f2706f4c86125182ed39a2d1ea6aa951a42ffccf74b046dfcdba63551fba4",
+    "crates/rxui/src/input_dispatch.rs": "cb8cb43e40a119de38b71448baac1a0c535a8301633718b22d758214f4ff16bb",
+    "crates/rxui/src/range_dispatch.rs": "a396d1c960feaa76a95f99fbf6e7f205a18b5f3ec34d3be4e58781c4ef11d940",
+    "crates/rxui/src/scrolling.rs": "98b69261d9a6399c5421105354d1eee197837ed15e84c4e84b6f955645f78e5c"
+  },
+  "verified_element_bytes": {
+    "baseline": 896,
+    "current": 912
+  }
+}

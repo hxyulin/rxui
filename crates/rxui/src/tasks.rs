@@ -16,8 +16,10 @@ use std::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc,
     },
-    time::Duration,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 /// Owned, Send future submitted to an application's executor.
 pub type BackgroundFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;

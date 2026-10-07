@@ -102,8 +102,9 @@ are per placement and released on deactivation. The [semantics contract](semanti
 describes custom integration and the initial text geometry limits.
 
 The [single-line text-input contract](text-input.md) describes implemented editing,
-selection and IME behavior. This slice does not implement multiline/undo editing,
-scrollbars or virtualization. Those are independent
+selection and IME behavior. Routed listeners, scrollbars and controlled splits are
+covered by [the interaction contract](interaction.md). Multiline/undo editing and
+virtualization remain independent
 UI features rather than obligations of the native surface runner.
 
 ## Application-owned GPU work

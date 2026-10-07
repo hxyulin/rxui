@@ -25,6 +25,10 @@ pub enum SemanticRole {
     Button,
     /// Single-line text control.
     TextInput,
+    /// Adjustable scroll viewport control.
+    Scrollbar,
+    /// Adjustable pane separator.
+    Splitter,
 }
 #[derive(Clone, Default)]
 pub(crate) struct Properties {
@@ -80,6 +84,8 @@ pub struct SemanticNode<'a> {
     pub scroll_range: [f32; 2],
     /// Input-local horizontal text offset.
     pub text_scroll_x: f32,
+    /// Current adjustable control value/range/orientation.
+    pub range: Option<crate::RangeInfo>,
 }
 /// Backend-independent assistive action. Unsupported, disabled, hidden, removed,
 /// foreign-placement and stale text targets are ignored with Ok(false).
@@ -114,6 +120,13 @@ pub enum SemanticAction {
     },
     /// Reveal a retained element without requiring it already be inside the viewport.
     ScrollIntoView(ElementId),
+    /// Propose a finite numeric value to a scrollbar/splitter.
+    SetNumericValue {
+        /// Control identity.
+        target: ElementId,
+        /// Desired logical pixel value.
+        value: f32,
+    },
 }
 impl SemanticAction {
     pub(crate) fn target(&self) -> ElementId {
@@ -121,7 +134,8 @@ impl SemanticAction {
             Self::Focus(id) | Self::Activate(id) | Self::ScrollIntoView(id) => id,
             Self::SetValue { target, .. }
             | Self::SetSelection { target, .. }
-            | Self::Scroll { target, .. } => target,
+            | Self::Scroll { target, .. }
+            | Self::SetNumericValue { target, .. } => target,
         }
     }
 }

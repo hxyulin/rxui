@@ -104,6 +104,8 @@ pub(crate) enum ElementKind {
     Row,
     Column,
     Stack,
+    Scrollbar(Box<crate::controls::ScrollbarProps>),
+    Splitter(Box<crate::controls::SplitterProps>),
     Label(String),
     Image(Box<crate::image::Properties>),
     Button {
@@ -121,8 +123,9 @@ pub(crate) enum ElementKind {
     Component(Rc<dyn crate::ui::Component>),
 }
 
-/// Owned UI description. Properties are stored directly, rather than individually boxed.
-/// Children and strings belong to the description; reconciliation retains node identity.
+/// Owned UI description with common properties inline and optional input/semantic
+/// bundles allocated only when used. Children and strings belong to the description;
+/// reconciliation retains compatible keyed node identity.
 #[must_use = "attach the element to a parent or return it from View::view"]
 #[derive(Clone)]
 pub struct Element {
@@ -142,7 +145,9 @@ pub struct Element {
     pub(crate) opacity: f32,
     pub(crate) clip: bool,
     pub(crate) scroll: Option<ScrollAxes>,
+    pub(crate) scroll_handle: Option<crate::ScrollHandle>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
+    pub(crate) input: Option<Box<crate::input::InputProperties>>,
 }
 impl IntoElement for Element {
     fn into_element(self) -> Element {
@@ -170,7 +175,7 @@ impl<T: View> IntoElement for Entity<T> {
     }
 }
 impl Element {
-    fn new(kind: ElementKind) -> Self {
+    pub(crate) fn new(kind: ElementKind) -> Self {
         Self {
             key: None,
             kind,
@@ -192,7 +197,9 @@ impl Element {
             opacity: 1.,
             clip: false,
             scroll: None,
+            scroll_handle: None,
             semantics: None,
+            input: None,
         }
     }
     fn control_defaults(&mut self, input: bool) {
@@ -230,6 +237,77 @@ impl Element {
     pub fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self {
         self.children
             .extend(children.into_iter().map(IntoElement::into_element));
+        self
+    }
+    /// Includes/excludes this element in focus navigation. Controls default true;
+    /// other elements default false. Focus does not create button/text defaults.
+    pub fn focusable(mut self, value: bool) -> Self {
+        self.input.get_or_insert_with(Default::default).focusable = Some(value);
+        self
+    }
+    /// Native cursor while this element is targeted or owns capture.
+    pub fn cursor(mut self, value: crate::Cursor) -> Self {
+        self.input.get_or_insert_with(Default::default).cursor = Some(value);
+        self
+    }
+    /// Registers a pointer down listener in the target/bubble route.
+    pub fn on_pointer_down(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[0] = Some(listener);
+        self
+    }
+    /// Registers a pointer down listener in the capture route.
+    pub fn on_pointer_down_capture(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[4] = Some(listener);
+        self
+    }
+    /// Registers a pointer move listener in the target/bubble route.
+    pub fn on_pointer_move(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[1] = Some(listener);
+        self
+    }
+    /// Registers a pointer move listener in the capture route.
+    pub fn on_pointer_move_capture(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[5] = Some(listener);
+        self
+    }
+    /// Registers a pointer up listener in the target/bubble route.
+    pub fn on_pointer_up(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[2] = Some(listener);
+        self
+    }
+    /// Registers a pointer up listener in the capture route.
+    pub fn on_pointer_up_capture(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[6] = Some(listener);
+        self
+    }
+    /// Registers a pointer cancel listener in the target/bubble route.
+    pub fn on_pointer_cancel(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[3] = Some(listener);
+        self
+    }
+    /// Registers a pointer cancel listener in the capture route.
+    pub fn on_pointer_cancel_capture(mut self, listener: Listener<crate::PointerInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).pointer[7] = Some(listener);
+        self
+    }
+    /// Registers a key down listener in the target/bubble route.
+    pub fn on_key_down(mut self, listener: Listener<crate::KeyInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).key[0] = Some(listener);
+        self
+    }
+    /// Registers a key down listener in the capture route.
+    pub fn on_key_down_capture(mut self, listener: Listener<crate::KeyInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).key[2] = Some(listener);
+        self
+    }
+    /// Registers a key up listener in the target/bubble route.
+    pub fn on_key_up(mut self, listener: Listener<crate::KeyInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).key[1] = Some(listener);
+        self
+    }
+    /// Registers a key up listener in the capture route.
+    pub fn on_key_up_capture(mut self, listener: Listener<crate::KeyInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).key[3] = Some(listener);
         self
     }
     /// Applies opacity once to this element's complete painted subtree, including its
@@ -532,6 +610,12 @@ impl Element {
         };
         self
     }
+    /// Publishes this scroll viewport through a placement-scoped reference.
+    /// Use one binding per handle per UI; distinct windows may share the handle.
+    pub fn scroll_handle(mut self, handle: crate::ScrollHandle) -> Self {
+        self.scroll_handle = Some(handle);
+        self
+    }
     /// Retained vertical scrolling. Give the container a bounded height.
     pub fn scroll_y(self) -> Self {
         self.scrolling(ScrollAxes::Vertical)
@@ -721,6 +805,14 @@ impl Element {
             s.max_size.width.into_raw(),
             s.max_size.height.into_raw(),
         ];
+        if matches!(&self.kind, ElementKind::Splitter(p) if !p.valid())
+            || matches!(&self.kind, ElementKind::Scrollbar(p) if !p.min_thumb.is_finite() || p.min_thumb <= 0.)
+        {
+            return Err(UiError::InvalidRangeControl);
+        }
+        if self.scroll_handle.is_some() && self.scroll.is_none() {
+            return Err(UiError::InvalidScrollHandle);
+        }
         if !self.opacity.is_finite() || !(0. ..=1.).contains(&self.opacity) {
             return Err(UiError::InvalidOpacity);
         }
@@ -791,6 +883,8 @@ impl Element {
             && matches!(
                 self.kind,
                 ElementKind::Label(_)
+                    | ElementKind::Scrollbar(_)
+                    | ElementKind::Splitter(_)
                     | ElementKind::Button { text: Some(_), .. }
                     | ElementKind::Image(_)
                     | ElementKind::TextInput { .. }
@@ -887,7 +981,9 @@ pub fn button(content: impl IntoElement) -> Element {
         && content.z_index == 0
         && content.pointer_events == PointerEvents::Auto
         && !content.inert
-        && content.opacity == 1.;
+        && content.opacity == 1.
+        && content.input.is_none()
+        && content.scroll_handle.is_none();
     let (text, children) = if plain {
         let ElementKind::Label(text) = content.kind else {
             unreachable!()
@@ -945,6 +1041,9 @@ pub fn image(source: crate::Image) -> Element {
 fn has_control(element: &Element) -> bool {
     matches!(
         element.kind,
-        ElementKind::Button { .. } | ElementKind::TextInput { .. }
+        ElementKind::Button { .. }
+            | ElementKind::TextInput { .. }
+            | ElementKind::Scrollbar(_)
+            | ElementKind::Splitter(_)
     ) || element.children.iter().any(has_control)
 }

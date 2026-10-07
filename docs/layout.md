@@ -89,7 +89,8 @@ preparation. No render target or additional pass is allocated for stacking/z ord
 ## Overlay pointer and focus policy
 
 Pointer targeting uses reverse paint order, clipped to the viewport and ancestor
-clips. Controls receive pointer input by default. Disabled controls still cover
+clips. Controls and elements with pointer listeners/cursors or explicit focusability
+receive pointer input by default. Disabled controls still cover
 lower controls rather than forwarding clicks through them. Passive content passes
 clicks through unless explicitly blocking:
 
@@ -148,3 +149,11 @@ disabled-control coverage, inertness, preedit cancellation and invalid values/re
 A GPU readback test verifies scoped paint ordering and ancestor/caller clipping.
 The [performance report](performance/layout.md) records workload boundaries and
 CPU measurements. Native validation captures are linked there.
+
+## Scroll areas and split panes
+
+`scroll_area` wraps a bounded viewport in stable scrollbar gutters. `split_row`/
+`split_column` use constrained flex allocation with a retained divider; positions
+are controlled by the application through resize proposals. Both pane minima stay
+nonnegative when the parent shrinks; below their total the root clips overflow.
+See [interaction.md](interaction.md) for sizing, input, handles and accessibility.

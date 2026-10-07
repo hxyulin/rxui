@@ -192,3 +192,12 @@ Pointer transparency/blocking is independent of assistive and keyboard focus.
 An inert subtree is excluded from semantics and cannot receive actions while its
 geometry and painting remain present. Inertness crosses component boundaries and
 is local to each placement. See [the layout contract](layout.md).
+
+## Numeric range controls
+
+Scrollbars and split dividers publish a `RangeInfo` snapshot with logical values,
+min/max/step, axis and read-only state. `SemanticAction::SetNumericValue` updates
+scroll geometry or dispatches a controlled resize proposal. AccessKit adds numeric
+SetValue/Increment/Decrement actions and physical control orientation. Read-only
+ranges omit those actions. [The interaction contract](interaction.md) records the
+CPU, GPU and native action checks and the remaining screen-reader usability scope.

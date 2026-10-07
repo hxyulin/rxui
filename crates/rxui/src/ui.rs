@@ -41,6 +41,14 @@ pub enum UiError {
     InvalidTextValue,
     /// Opacity is non-finite or outside 0..=1.
     InvalidOpacity,
+    /// A handle was attached to an element without scrolling enabled.
+    InvalidScrollHandle,
+    /// The same scroll handle was bound twice inside one UI placement.
+    DuplicateScrollHandle,
+    /// Metric-dependent view layout did not settle within the preparation budget.
+    UnstableControlLayout,
+    /// Invalid split extent/minima or scrollbar geometry.
+    InvalidRangeControl,
     /// Group opacity requires the scoped frame composition API.
     #[cfg(feature = "rendering")]
     CompositionRequired,
@@ -93,6 +101,14 @@ impl fmt::Display for UiError {
             Self::LeafChildren => f.write_str(
                 "leaf elements cannot contain children; compose button content with a container",
             ),
+            Self::InvalidRangeControl => f.write_str("invalid split or scrollbar configuration"),
+            Self::InvalidScrollHandle => f.write_str("scroll handle requires a scrolling viewport"),
+            Self::DuplicateScrollHandle => {
+                f.write_str("scroll handle is bound more than once in this UI")
+            }
+            Self::UnstableControlLayout => {
+                f.write_str("metric-dependent control layout did not settle")
+            }
             Self::InvalidOpacity => f.write_str("opacity must be finite and within 0..=1"),
             #[cfg(feature = "rendering")]
             Self::CompositionRequired => f.write_str("group opacity requires UiPainter::compose"),
@@ -122,7 +138,7 @@ impl Error for UiError {
 /// Stable retained node identity, unique within one Ui tree and never recycled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ElementId {
-    tree: u64,
+    pub(crate) tree: u64,
     serial: u64,
 }
 
@@ -245,6 +261,10 @@ pub enum ElementType {
     TextInput,
     /// Stateful component boundary.
     Component,
+    /// Scroll viewport control.
+    Scrollbar,
+    /// Controlled pane divider.
+    Splitter,
 }
 /// Read-only snapshot for painting/inspection; iteration follows tree paint order.
 pub struct ElementInfo<'a> {
@@ -298,8 +318,12 @@ pub struct ElementInfo<'a> {
     pub hovered: bool,
     /// Whether this button has pointer capture.
     pub pressed: bool,
-    /// Whether this button has keyboard focus.
+    /// Whether this element has keyboard focus.
     pub focused: bool,
+    /// Whether the underlying element participates in focus navigation.
+    pub focusable: bool,
+    /// Numeric control geometry, when this element is a scrollbar/divider.
+    pub range: Option<crate::RangeInfo>,
 }
 /// Cumulative preparation counters, excluding host text/GPU work inside callbacks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -319,11 +343,36 @@ pub struct UiStats {
     /// Taffy layout computations requested.
     pub layout_passes: u64,
 }
-/// Logical pointer input. Primary button only; richer routing is a later milestone.
+/// Logical mouse input. Legacy short variants represent an unmodified primary mouse.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerEvent {
     /// Pointer moved.
     Moved([f32; 2]),
+    /// Mouse motion with a source-window modifier snapshot.
+    Motion {
+        /// Logical position.
+        position: [f32; 2],
+        /// Modifiers.
+        modifiers: crate::Modifiers,
+    },
+    /// General mouse button press.
+    Down {
+        /// Logical position.
+        position: [f32; 2],
+        /// Changed button.
+        button: crate::PointerButton,
+        /// Modifiers.
+        modifiers: crate::Modifiers,
+    },
+    /// General mouse button release.
+    Up {
+        /// Logical position.
+        position: [f32; 2],
+        /// Changed button.
+        button: crate::PointerButton,
+        /// Modifiers.
+        modifiers: crate::Modifiers,
+    },
     /// Primary button pressed.
     Pressed([f32; 2]),
     /// Primary button released.
@@ -373,6 +422,8 @@ fn kind(element: &Element) -> ElementType {
         ElementKind::Row => ElementType::Row,
         ElementKind::Column => ElementType::Column,
         ElementKind::Stack => ElementType::Stack,
+        ElementKind::Scrollbar(_) => ElementType::Scrollbar,
+        ElementKind::Splitter(_) => ElementType::Splitter,
         ElementKind::Label(_) => ElementType::Label,
         ElementKind::Image(_) => ElementType::Image,
         ElementKind::TextInput { .. } => ElementType::TextInput,
@@ -400,21 +451,21 @@ fn compatible(old: &Element, new: &Element) -> bool {
         _ => kind(old) == kind(new),
     }
 }
-struct Node {
-    element: Element,
+pub(crate) struct Node {
+    pub(crate) element: Element,
     layout: NodeId,
     children: Vec<ElementId>,
     mounted: Option<Box<dyn MountedView>>,
-    bounds: Bounds,
-    content_bounds: Bounds,
-    visible: bool,
+    pub(crate) bounds: Bounds,
+    pub(crate) content_bounds: Bounds,
+    pub(crate) visible: bool,
     needs_evaluation: bool,
     ancestors: Vec<crate::EntityId>,
     text_revision: u64,
     parent: Option<ElementId>,
     clip_bounds: Bounds,
-    scroll_offset: [f32; 2],
-    scroll_range: [f32; 2],
+    pub(crate) scroll_offset: [f32; 2],
+    pub(crate) scroll_range: [f32; 2],
     editor: Option<Box<Editor>>,
     resolved_theme: Theme,
     color_binding: StyleColor,
@@ -456,10 +507,10 @@ impl Node {
 /// geometry-based input, and flush Runtime effects at the host's update boundary.
 pub struct Ui<T: View> {
     owner: Mount<T>,
-    tree: u64,
+    pub(crate) tree: u64,
     next_node: u64,
     root: Option<ElementId>,
-    nodes: HashMap<ElementId, Node>,
+    pub(crate) nodes: HashMap<ElementId, Node>,
     order: Vec<ElementId>,
     paint_order: Option<Vec<ElementId>>,
     opacity_count: usize,
@@ -469,6 +520,9 @@ pub struct Ui<T: View> {
     geometry_ready: bool,
     geometry_revision: u64,
     needs_evaluation: bool,
+    input: input_dispatch::State,
+    pub(crate) scrolling: Option<Box<crate::scrolling::Scrolling>>,
+    runtime: std::rc::Weak<crate::runtime::RuntimeInner>,
     hovered: Option<ElementId>,
     pressed: Option<ElementId>,
     focused: Option<ElementId>,
@@ -478,6 +532,7 @@ pub struct Ui<T: View> {
     editor_nodes: Vec<ElementId>,
     image_nodes: Vec<ElementId>,
     live_image_nodes: Vec<ElementId>,
+    pub(crate) scroll_handle_nodes: Vec<ElementId>,
     composed_buttons: Vec<ElementId>,
     order_dirty: bool,
     active: bool,
@@ -506,6 +561,9 @@ impl<T: View> Ui<T> {
             geometry_ready: false,
             geometry_revision: 0,
             needs_evaluation: true,
+            input: input_dispatch::State::default(),
+            scrolling: None,
+            runtime: std::rc::Rc::downgrade(&runtime.inner),
             hovered: None,
             pressed: None,
             focused: None,
@@ -515,6 +573,7 @@ impl<T: View> Ui<T> {
             editor_nodes: Vec::new(),
             image_nodes: Vec::new(),
             live_image_nodes: Vec::new(),
+            scroll_handle_nodes: Vec::new(),
             composed_buttons: Vec::new(),
             order_dirty: true,
             active: true,
@@ -586,6 +645,9 @@ impl<T: View> Ui<T> {
     /// Whether this placement has unevaluated component work or unavailable geometry.
     /// Hosts also account for viewport, font-generation and visual-input changes.
     pub fn needs_prepare(&self, runtime: &Runtime) -> Result<bool, AccessError> {
+        if self.scroll_commands_pending() || self.input.pending() {
+            return Ok(true);
+        }
         if !self.geometry_ready
             || self.needs_evaluation
             || !self.style_roots.is_empty()
@@ -638,12 +700,41 @@ impl<T: View> Ui<T> {
         let force_evaluation = self.needs_evaluation;
         // Retain retry intent even if a user view or measurer unwinds.
         self.needs_evaluation = true;
-        let result = self.prepare_inner(runtime, viewport, measurer, force_evaluation);
-        if result.is_err() {
+        for attempt in 0..4 {
+            let result = self.prepare_inner(
+                runtime,
+                viewport,
+                measurer,
+                force_evaluation && attempt == 0,
+            );
+            if result.is_err() {
+                self.needs_evaluation = true;
+                self.clean_partial_tree();
+                return result;
+            }
+            self.geometry_ready = false;
             self.needs_evaluation = true;
-            self.clean_partial_tree();
+            let post = (|| {
+                self.publish_scroll(runtime)?;
+                self.apply_scroll_commands()?;
+                self.clear_invalid_interaction();
+                self.cancel_invalid_capture();
+                self.flush_input_cancellations(runtime)?;
+                Ok::<_, UiError>(())
+            })();
+            if let Err(error) = post {
+                self.clean_partial_tree();
+                return Err(error);
+            }
+            self.geometry_ready = true;
+            self.needs_evaluation = false;
+            if !self.needs_prepare(runtime)? {
+                return Ok(());
+            }
+            self.geometry_ready = false;
         }
-        result
+        self.needs_evaluation = true;
+        Err(UiError::UnstableControlLayout)
     }
     fn clean_partial_tree(&mut self) {
         let ids: HashSet<_> = self.nodes.keys().copied().collect();
@@ -667,6 +758,11 @@ impl<T: View> Ui<T> {
         let evaluated = self.stats.component_evaluations;
         self.refresh_descriptions(runtime, force_evaluation)?;
         self.resolve_styles()?;
+        self.cancel_invalid_capture();
+        if self.flush_input_cancellations(runtime)? {
+            self.refresh_descriptions(runtime, false)?;
+            self.resolve_styles()?;
+        }
         self.refresh_images(evaluated != self.stats.component_evaluations)?;
         let root = self.root.expect("initially dirty root");
         let generation = measurer.generation();
@@ -868,7 +964,10 @@ impl<T: View> Ui<T> {
         }
         if matches!(
             element.kind,
-            ElementKind::Button { .. } | ElementKind::TextInput { .. }
+            ElementKind::Button { .. }
+                | ElementKind::TextInput { .. }
+                | ElementKind::Scrollbar(_)
+                | ElementKind::Splitter(_)
         ) {
             let mut ancestor = parent;
             while let Some(id) = ancestor {
@@ -948,6 +1047,9 @@ impl<T: View> Ui<T> {
             }
             self.opacity_count += usize::from(element.opacity < 1.);
             self.opacity_count -= usize::from(node.element.opacity < 1.);
+            if node.element.scroll_handle.is_none() && element.scroll_handle.is_some() {
+                self.scroll_handle_nodes.push(id);
+            }
             node.element = element;
             self.stats.reused_nodes += 1;
             id
@@ -988,6 +1090,9 @@ impl<T: View> Ui<T> {
             }
             if matches!(element.kind, ElementKind::Image(_)) {
                 self.image_nodes.push(id);
+            }
+            if element.scroll_handle.is_some() {
+                self.scroll_handle_nodes.push(id);
             }
             self.style_roots.insert(id);
             self.opacity_count += usize::from(element.opacity < 1.);
@@ -1352,6 +1457,14 @@ impl<T: View> Ui<T> {
         Ok(())
     }
     fn remove(&mut self, id: ElementId) -> Result<(), UiError> {
+        let mut capture = self.captured_pointer();
+        while let Some(current) = capture {
+            if current == id {
+                self.cancel_capture(crate::PointerCancelReason::TargetUnavailable);
+                break;
+            }
+            capture = self.nodes.get(&current).and_then(|n| n.parent);
+        }
         let node = self.nodes.remove(&id).unwrap();
         self.opacity_count -= usize::from(node.element.opacity < 1.);
         for child in node.children {
@@ -1494,8 +1607,12 @@ impl<T: View> Ui<T> {
                 && n.clip_bounds.contains(point)
                 && (matches!(
                     n.element.kind,
-                    ElementKind::Button { .. } | ElementKind::TextInput { .. }
-                ) || n.element.pointer_events == crate::PointerEvents::Block)
+                    ElementKind::Button { .. }
+                        | ElementKind::TextInput { .. }
+                        | ElementKind::Scrollbar(_)
+                        | ElementKind::Splitter(_)
+                ) || n.element.pointer_events == crate::PointerEvents::Block
+                    || n.element.input.as_ref().is_some_and(|p| p.pointer_target()))
                 && self.pointer_allowed(*id)
         })
     }
@@ -1503,18 +1620,29 @@ impl<T: View> Ui<T> {
         let Some(node) = self.nodes.get(&id) else {
             return false;
         };
+        if self.range_unavailable(id) {
+            return false;
+        }
+        let control = matches!(
+            node.element.kind,
+            ElementKind::Button { .. }
+                | ElementKind::TextInput { .. }
+                | ElementKind::Scrollbar(_)
+                | ElementKind::Splitter(_)
+        );
         if !node.visible
             || node.inert
-            || !matches!(
+            || matches!(
                 node.element.kind,
-                ElementKind::Button {
-                    disabled: false,
-                    ..
-                } | ElementKind::TextInput {
-                    disabled: false,
-                    ..
-                }
+                ElementKind::Button { disabled: true, .. }
+                    | ElementKind::TextInput { disabled: true, .. }
             )
+            || !node
+                .element
+                .input
+                .as_ref()
+                .and_then(|p| p.focusable)
+                .unwrap_or(control)
         {
             return false;
         }
@@ -1531,13 +1659,13 @@ impl<T: View> Ui<T> {
     fn clear_invalid_interaction(&mut self) {
         if self
             .hovered
-            .is_some_and(|id| !self.enabled(id) || !self.pointer_allowed(id))
+            .is_some_and(|id| !self.input_available(id) || !self.pointer_allowed(id))
         {
             self.hovered = None;
         }
         if self
             .pressed
-            .is_some_and(|id| !self.enabled(id) || !self.pointer_allowed(id))
+            .is_some_and(|id| !self.input_available(id) || !self.pointer_allowed(id))
         {
             self.pressed = None;
         }
@@ -1569,15 +1697,16 @@ impl<T: View> Ui<T> {
         if !node.visible {
             return None;
         }
-        let disabled = matches!(
-            node.element.kind,
-            ElementKind::Button { disabled: true, .. }
-                | ElementKind::TextInput { disabled: true, .. }
-        );
+        let disabled = self.range_unavailable(id)
+            || matches!(
+                node.element.kind,
+                ElementKind::Button { disabled: true, .. }
+                    | ElementKind::TextInput { disabled: true, .. }
+            );
         let mut paint = node.state_paints.as_ref().map_or(node.paint, |states| {
             if disabled {
                 states[2]
-            } else if self.pressed == Some(id) {
+            } else if self.pressed == Some(id) || self.captured_pointer() == Some(id) {
                 states[1]
             } else if self.hovered == Some(id) {
                 states[0]
@@ -1655,11 +1784,13 @@ impl<T: View> Ui<T> {
             border: node.border,
             disabled,
             hovered: self.hovered == Some(id),
-            pressed: self.pressed == Some(id),
+            pressed: self.pressed == Some(id) || self.captured_pointer() == Some(id),
             focused: self.focused == Some(id),
+            focusable: self.enabled(id),
+            range: self.range_info(id),
         })
     }
-    /// Topmost enabled button hit within the logical viewport and ancestor clips,
+    /// Topmost enabled focusable target within the logical viewport and ancestor clips,
     /// using the current retained scroll offsets.
     pub fn hit_test(&self, point: [f32; 2]) -> Option<ElementId> {
         if !self.is_prepared() {
@@ -1695,6 +1826,11 @@ impl<T: View> Ui<T> {
                 && n.clip_bounds.contains(point)
                 && self.pointer_allowed(*id)
         });
+        if let Some(id) = current
+            && let ElementKind::Scrollbar(p) = &self.nodes[&id].element.kind
+        {
+            current = p.handle.element_in(self.tree);
+        }
         let mut changed = false;
         while let Some(id) = current {
             let node = self.nodes.get_mut(&id).unwrap();
@@ -1711,11 +1847,20 @@ impl<T: View> Ui<T> {
         }
         if changed {
             self.refresh_geometry()?;
-            self.hovered = self.hit_test(point);
+            self.hovered = self
+                .pointer_target(point)
+                .filter(|id| self.input_available(*id));
         }
         Ok(changed)
     }
-    fn refresh_geometry(&mut self) -> Result<(), UiError> {
+    pub(crate) fn scroll_revision(&self) -> (u64, u64, u64) {
+        (
+            self.geometry_revision,
+            self.stats.layout_passes,
+            self.stats.component_evaluations,
+        )
+    }
+    pub(crate) fn refresh_geometry(&mut self) -> Result<(), UiError> {
         self.geometry_revision = self
             .geometry_revision
             .checked_add(1)
@@ -1731,7 +1876,11 @@ impl<T: View> Ui<T> {
                 width,
                 height,
             },
-        )
+        )?;
+        if let Some(inner) = self.runtime.upgrade() {
+            self.publish_scroll(&Runtime { inner })?;
+        }
+        Ok(())
     }
     fn reveal(&mut self, id: ElementId) -> bool {
         let mut parent = self.nodes[&id].parent;
@@ -1771,44 +1920,12 @@ impl<T: View> Ui<T> {
         }
         changed
     }
-    /// Routes primary pointer input; returns whether visual state or application
-    /// state changed. Press/release must target the same surviving button identity.
+    /// Routes mouse listeners and control defaults through this placement. Returns
+    /// whether visual/application state changed. Button activation requires press
+    /// and release on the same surviving identity; explicit capture routes gestures
+    /// independently of hit_target. Hosts prepare geometry before sending input.
     pub fn pointer(&mut self, runtime: &mut Runtime, event: PointerEvent) -> Result<bool, UiError> {
-        runtime.is_dirty(&self.owner)?;
-        let before = (self.hovered, self.pressed, self.focused);
-        let point = match event {
-            PointerEvent::Moved(p) | PointerEvent::Pressed(p) | PointerEvent::Released(p) => {
-                Some(p)
-            }
-            _ => None,
-        };
-        if point.is_some_and(|p| p.iter().any(|v| !v.is_finite())) {
-            return Err(UiError::InvalidGeometry);
-        }
-        let mut activated = false;
-        match event {
-            PointerEvent::Moved(point) => self.hovered = self.hit_test(point),
-            PointerEvent::Pressed(point) => {
-                self.hovered = self.hit_test(point);
-                self.pressed = self.hovered;
-                self.change_focus(self.hovered);
-            }
-            PointerEvent::Released(point) => {
-                self.hovered = self.hit_test(point);
-                let pressed = self.pressed.take();
-                if let Some(id) = pressed
-                    && self.hovered == Some(id)
-                {
-                    activated = self.activate(runtime, id)?;
-                }
-            }
-            PointerEvent::Left => self.hovered = None,
-            PointerEvent::Cancelled => {
-                self.hovered = None;
-                self.pressed = None;
-            }
-        }
-        Ok(activated || before != (self.hovered, self.pressed, self.focused))
+        self.pointer_general(runtime, event)
     }
     /// Moves focus in tree order, wrapping at the end. Hidden/disabled controls are skipped.
     pub fn focus_next(&mut self, reverse: bool) -> bool {
@@ -1945,11 +2062,15 @@ impl<T: View> Ui<T> {
     }
     /// Changes native activation. Losing activation cancels composition/capture while
     /// retaining the focused identity and committed selection for later reactivation.
+    /// Cancellation callbacks run during the next preparation; hosts can forward
+    /// PointerEvent::Cancelled first to dispatch them immediately.
     pub fn set_active(&mut self, active: bool) -> bool {
         let changed = self.active != active;
         self.active = active;
         self.caret_visible = true;
         if !active {
+            self.cancel_capture(crate::PointerCancelReason::Host);
+            self.input.buttons = crate::PointerButtons::default();
             self.hovered = None;
             self.pressed = None;
             if let Some(id) = self.focused {
@@ -2291,14 +2412,19 @@ impl<T: View> Ui<T> {
         extend: bool,
     ) -> Result<bool, UiError> {
         let mut changed = self.pointer(runtime, event)?;
-        let id = match event {
-            PointerEvent::Pressed(_) => self.focused,
-            PointerEvent::Moved(_) => self.pressed,
-            _ => None,
+        if self.input.prevented {
+            return Ok(changed);
+        }
+        let (kind, point, button, _) = event.parts();
+        let id = if kind == 0 && button == Some(crate::PointerButton::Primary) {
+            self.focused
+        } else if kind == 1 {
+            self.pressed
+        } else {
+            None
         };
-        let point = match event {
-            PointerEvent::Pressed(p) | PointerEvent::Moved(p) => p,
-            _ => return Ok(changed),
+        let Some(point) = point else {
+            return Ok(changed);
         };
         let Some(id) = id.filter(|id| self.nodes[id].editor.is_some()) else {
             return Ok(changed);
@@ -2329,7 +2455,7 @@ impl<T: View> Ui<T> {
         };
         let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
         let old = editor.selection;
-        if matches!(event, PointerEvent::Pressed(_)) && !extend {
+        if kind == 0 && !extend {
             editor.selection.anchor = position;
         }
         editor.selection.focus = position;
@@ -2377,6 +2503,8 @@ impl<T: View> Ui<T> {
             | ElementKind::Component(_) => crate::SemanticRole::Container,
             ElementKind::Label(_) => crate::SemanticRole::Label,
             ElementKind::Image(_) => crate::SemanticRole::Image,
+            ElementKind::Scrollbar(_) => crate::SemanticRole::Scrollbar,
+            ElementKind::Splitter(_) => crate::SemanticRole::Splitter,
             ElementKind::Button { .. } => crate::SemanticRole::Button,
             ElementKind::TextInput { .. } => crate::SemanticRole::TextInput,
         };
@@ -2396,11 +2524,12 @@ impl<T: View> Ui<T> {
                     }
                     _ => None,
                 });
-        let disabled = matches!(
-            node.element.kind,
-            ElementKind::Button { disabled: true, .. }
-                | ElementKind::TextInput { disabled: true, .. }
-        );
+        let disabled = self.range_unavailable(id)
+            || matches!(
+                node.element.kind,
+                ElementKind::Button { disabled: true, .. }
+                    | ElementKind::TextInput { disabled: true, .. }
+            );
         let read_only = matches!(
             node.element.kind,
             ElementKind::TextInput {
@@ -2408,11 +2537,7 @@ impl<T: View> Ui<T> {
                 ..
             } | ElementKind::TextInput { change: None, .. }
         );
-        let focusable = !disabled
-            && matches!(
-                node.element.kind,
-                ElementKind::Button { .. } | ElementKind::TextInput { .. }
-            );
+        let focusable = self.enabled(id);
         let activatable = !disabled
             && matches!(
                 node.element.kind,
@@ -2452,6 +2577,7 @@ impl<T: View> Ui<T> {
             scroll_offset: node.scroll_offset,
             scroll_range: node.scroll_range,
             text_scroll_x: node.editor.as_ref().map_or(0., |e| e.scroll_x),
+            range: self.range_info(id),
         })
     }
     /// Logical focus in the semantic tree, retained across native activation changes.
@@ -2593,6 +2719,12 @@ impl<T: View> Ui<T> {
                 self.refresh_geometry()?;
                 Ok(true)
             }
+            crate::SemanticAction::SetNumericValue { value, .. } => {
+                if !value.is_finite() {
+                    return Ok(false);
+                }
+                self.range_value(runtime, id, value, crate::ResizePhase::Accessibility)
+            }
             crate::SemanticAction::ScrollIntoView(_) => Ok(self.geometry_ready && self.reveal(id)),
         }
     }
@@ -2610,3 +2742,9 @@ impl<T: View> Ui<T> {
         Ok(runtime.update(|cx| listener.dispatch(&ClickEvent, cx))? == Dispatch::Handled)
     }
 }
+
+#[path = "input_dispatch.rs"]
+mod input_dispatch;
+
+#[path = "range_dispatch.rs"]
+mod range_dispatch;

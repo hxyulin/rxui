@@ -77,13 +77,14 @@ or partial-surface-redraw guarantee.
 
 ## Input and failure behavior
 
-The initial controls support primary pointer hit testing, same-identity capture
-and release, sequential focus and semantic activation. Ui returns whether visual
+Controls support routed mouse/keyboard listeners, explicit capture/cancellation,
+sequential focus and semantic activation. Ui returns whether visual
 or application state changed so the host can request redraw on demand. Disabled
 or hidden buttons are skipped. Pointer and Enter/Space activation converge on the
 same ClickEvent listener. Controlled text input now adds keyboard editing, shaped
 selection and native IME; see [the editing contract](text-input.md). General event
-propagation/default actions, focus scopes and AccessKit output remain later work.
+propagation/default cancellation and AccessKit output are implemented. Focus scopes
+remain following work; see [the interaction contract](interaction.md).
 
 Descriptions are validated before the evaluating component's dependencies commit.
 Duplicate keys, invalid sizes/colors and leaf children produce UiError. Later child
@@ -115,7 +116,8 @@ logical clips to physical scissor rectangles, intersects the caller's original
 scissor and restores that scissor after painting. A GPU readback test checks both
 ancestor clipping and caller clipping before and after scrolling.
 
-There are no visible scrollbars, kinetic scrolling or virtualized children yet.
+Visible scroll areas/bars and placement-scoped handles are implemented. Kinetic
+scrolling and virtualized children remain following work.
 Scrolling refreshes retained geometry across the tree; GPU preparation retains all
 laid-out text, including offscreen rows. This first slice avoids reshaping on scroll,
 but is not a constant-cost viewport or a large-list solution. Virtualization will
