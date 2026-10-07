@@ -29,6 +29,7 @@ impl NativeMenuBar {
 /// One top-level or nested native submenu.
 #[derive(Clone, Debug)]
 pub struct NativeMenu {
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) label: String,
     pub(crate) entries: Vec<Entry>,
 }
