@@ -13,8 +13,8 @@ impl View for Form {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         column().fill_width().padding(24.).gap(12.).accessibility_role(SemanticRole::Form).accessibility_label("Shared form")
             .child(label("Controlled text input").font_size(28.).accessibility_role(SemanticRole::Heading))
-            .child(label("Click/drag to select. Shift + arrows extends selection. Copy/paste and IME are supported."))
-            .child(label("Shared value, independent caret/selection in each window"))
+            .child(label("Double-click words; triple-click the line. Undo/redo, word deletion, copy/paste and IME are supported."))
+            .child(label("Shared value, independent caret/selection/history in each window; edits elsewhere reset local history"))
             .child(text_input(self.name.clone()).key("name").fill_width().accessibility_label("Name")
                 .read_only(self.read_only)
                 .on_change(cx.listener(|this, edit: &TextChangeEvent, _| this.name = edit.value.clone()))

@@ -1,3 +1,16 @@
+//! Controlled single-line editing and placement-local history.
+//!
+//! Adjacent single-grapheme non-whitespace typing and ordinary repeated deletion
+//! coalesce until navigation, pointer selection, focus/activation change, composition
+//! or a different edit kind. Paste and IME commits are separate transactions. History
+//! keeps at most 128 snapshots and 1 MiB of UTF-8 across undo/redo. Oversized snapshots
+//! are discarded without rejecting the edit. There is no clock-based grouping.
+//!
+//! Undo/redo propose values through on_change. Rejection keeps history and selection;
+//! normalization of a replay accepts the actual answer and resets the incompatible
+//! chain. External controlled changes reset history in that placement, including
+//! edits in another shared window. This is field history, not shared document history.
+//! Applications can override standard Undo/Redo commands for document-level editing.
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -87,12 +100,28 @@ pub enum TextMovement {
 /// Backend-independent input. Editing is synchronous; rendering may follow later.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TextInputEvent {
-    /// Replace selection with committed keyboard/paste text. Line breaks/tabs become spaces.
+    /// Replace selection with committed keyboard text. Line breaks/tabs become spaces.
+    /// Clipboard hosts should use Paste to preserve a separate undo transaction.
     Insert(String),
+    /// Inserts normalized clipboard text as one separate undo transaction.
+    Paste(String),
     /// Delete selection or the preceding extended grapheme.
     Backspace,
     /// Delete selection or the following extended grapheme.
     Delete,
+    /// Delete selection or back to the preceding Unicode word start.
+    BackspaceWord,
+    /// Delete selection or through the following Unicode word end.
+    DeleteWord,
+    /// Delete selection or back to the start of the single line.
+    BackspaceToStart,
+    /// Delete selection or through the end of the single line.
+    DeleteToEnd,
+    /// Propose the previous locally accepted value and restore its selection.
+    /// External controlled changes reset this placement's bounded history.
+    Undo,
+    /// Replay a locally undone edit through the same controlled change listener.
+    Redo,
     /// Move the caret, optionally keeping the anchor for selection extension.
     Move {
         /// Navigation direction/unit.
@@ -118,6 +147,10 @@ pub enum TextInputEvent {
 }
 /// Read-only retained editing state for painting and host integration.
 pub struct TextInputInfo {
+    /// Whether this placement has an undo proposal available and permits editing.
+    pub can_undo: bool,
+    /// Whether this placement has a redo proposal available and permits editing.
+    pub can_redo: bool,
     /// Selection in the application-controlled value, independent of preedit display.
     pub selection: TextSelection,
     /// Composition range in displayed text, when composing.
@@ -139,6 +172,109 @@ pub(crate) struct Composition {
 pub(crate) struct Pending {
     pub proposed: String,
     pub previous: TextSelection,
+    pub action: EditAction,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditKind {
+    Typing,
+    Backspace,
+    Delete,
+    Separate,
+}
+#[derive(Clone, Copy)]
+pub(crate) enum EditAction {
+    Edit(EditKind),
+    Undo,
+    Redo,
+}
+pub(crate) struct Proposal<'a> {
+    pub range: Range<usize>,
+    pub insert: &'a str,
+    pub action: EditAction,
+    pub selection: Option<TextSelection>,
+}
+impl<'a> Proposal<'a> {
+    pub fn new(range: Range<usize>, insert: &'a str, kind: EditKind) -> Self {
+        Self {
+            range,
+            insert,
+            action: EditAction::Edit(kind),
+            selection: None,
+        }
+    }
+}
+pub(crate) struct Snapshot {
+    pub value: String,
+    pub selection: TextSelection,
+}
+/// At most 128 stored snapshots and 1 MiB of UTF-8 across both stacks per placement.
+#[derive(Default)]
+struct History {
+    undo: std::collections::VecDeque<Snapshot>,
+    redo: std::collections::VecDeque<Snapshot>,
+    bytes: usize,
+    group: Option<(EditKind, TextSelection)>,
+}
+impl History {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+    fn trim(&mut self) {
+        while self.bytes > 1_048_576 || self.undo.len() + self.redo.len() > 128 {
+            let removed = self
+                .undo
+                .pop_front()
+                .or_else(|| self.redo.pop_front())
+                .unwrap();
+            self.bytes -= removed.value.len();
+        }
+    }
+    fn accept(
+        &mut self,
+        old: &str,
+        new: &str,
+        before: TextSelection,
+        after: TextSelection,
+        action: EditAction,
+        proposed: &str,
+    ) {
+        let snapshot = || Snapshot {
+            value: old.to_owned(),
+            selection: before,
+        };
+        match action {
+            EditAction::Edit(kind) => {
+                self.bytes -= self.redo.iter().map(|s| s.value.len()).sum::<usize>();
+                self.redo.clear();
+                let merge = kind != EditKind::Separate
+                    && self.group == Some((kind, before))
+                    && !self.undo.is_empty();
+                if !merge {
+                    self.bytes += old.len();
+                    self.undo.push_back(snapshot());
+                }
+                self.trim();
+                self.group =
+                    (kind != EditKind::Separate && !self.undo.is_empty()).then_some((kind, after));
+            }
+            EditAction::Undo | EditAction::Redo if new == proposed => {
+                let (source, destination) = match action {
+                    EditAction::Undo => (&mut self.undo, &mut self.redo),
+                    _ => (&mut self.redo, &mut self.undo),
+                };
+                if let Some(removed) = source.pop_back() {
+                    self.bytes -= removed.value.len();
+                    self.bytes += old.len();
+                    destination.push_back(snapshot());
+                }
+                self.trim();
+                self.group = None;
+            }
+            // Application normalization changes the replay chain. Keep its actual
+            // answer, but do not leave stale history describing a different value.
+            _ => self.clear(),
+        }
+    }
 }
 pub(crate) struct Editor {
     pub selection: TextSelection,
@@ -147,6 +283,9 @@ pub(crate) struct Editor {
     pub pending: Option<Pending>,
     pub scroll_x: f32,
     pub ime_reset_revision: u64,
+    history: History,
+    pub drag_selection: Option<TextSelection>,
+    pub drag_line: bool,
 }
 impl Editor {
     pub fn new(value: &str) -> Self {
@@ -157,24 +296,52 @@ impl Editor {
             pending: None,
             scroll_x: 0.,
             ime_reset_revision: 0,
+            history: History::default(),
+            drag_selection: None,
+            drag_line: false,
         }
     }
     pub fn reconcile(&mut self, old: &str, new: &str) {
         if self.pending.is_none() && old == new {
             return;
         }
-        if let Some(pending) = self.pending.take()
-            && new == old
-            && new != pending.proposed
-        {
-            self.selection = pending.previous;
+        let pending = self.pending.take();
+        if let Some(pending) = &pending {
+            if new == old && new != pending.proposed {
+                self.selection = pending.previous;
+                self.break_group();
+            }
+        } else if old != new {
+            self.history.clear();
         }
         if old != new {
             self.cancel_composition();
         }
         self.selection.anchor.byte_offset = boundary(new, self.selection.anchor.byte_offset);
         self.selection.focus.byte_offset = boundary(new, self.selection.focus.byte_offset);
+        if old != new
+            && let Some(pending) = pending
+        {
+            self.history.accept(
+                old,
+                new,
+                pending.previous,
+                self.selection,
+                pending.action,
+                &pending.proposed,
+            );
+        }
         self.rebuild(new);
+    }
+    pub fn break_group(&mut self) {
+        self.history.group = None;
+    }
+    pub fn replay(&self, redo: bool) -> Option<&Snapshot> {
+        if redo {
+            self.history.redo.back()
+        } else {
+            self.history.undo.back()
+        }
     }
     pub fn cancel_composition(&mut self) -> bool {
         if self.composition.take().is_none() {
@@ -223,6 +390,8 @@ impl Editor {
             .as_ref()
             .map(|c| c.replacement.range().start);
         TextInputInfo {
+            can_undo: !read_only && self.composition.is_none() && !self.history.undo.is_empty(),
+            can_redo: !read_only && self.composition.is_none() && !self.history.redo.is_empty(),
             selection: self.selection,
             preedit_range: self.composition.as_ref().map(|c| {
                 boundary(&self.display, start.unwrap())
@@ -238,6 +407,45 @@ impl Editor {
             read_only,
             caret_visible,
         }
+    }
+}
+pub(crate) fn word_left(value: &str, offset: usize) -> usize {
+    boundary(
+        value,
+        value
+            .unicode_word_indices()
+            .map(|(i, _)| i)
+            .take_while(|i| *i < offset)
+            .last()
+            .unwrap_or(0),
+    )
+}
+pub(crate) fn word_right(value: &str, offset: usize) -> usize {
+    after_boundary(
+        value,
+        value
+            .unicode_word_indices()
+            .map(|(i, w)| i + w.len())
+            .find(|i| *i > offset)
+            .unwrap_or(value.len()),
+    )
+}
+pub(crate) fn word_selection(value: &str, position: TextPosition) -> TextSelection {
+    let offset =
+        if position.affinity == TextAffinity::Upstream || position.byte_offset == value.len() {
+            previous(value, position.byte_offset)
+        } else {
+            position.byte_offset
+        };
+    let range = value
+        .split_word_bound_indices()
+        .find(|(i, w)| *i <= offset && offset < i + w.len())
+        .map_or(0..0, |(i, w)| {
+            boundary(value, i)..after_boundary(value, i + w.len())
+        });
+    TextSelection {
+        anchor: TextPosition::new(range.start),
+        focus: TextPosition::new(range.end),
     }
 }
 pub(crate) fn boundary(value: &str, offset: usize) -> usize {

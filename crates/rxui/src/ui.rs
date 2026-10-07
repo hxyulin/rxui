@@ -3,7 +3,8 @@ use crate::{
     TextInputEvent, TextInputInfo, TextMovement, TextPosition, TextSelection, TextSubmitEvent,
     Theme, ThemeColor, ViewContext,
     editing::{
-        Composition, Editor, Pending, after_boundary, boundary, next, previous, single_line,
+        Composition, EditAction, EditKind, Editor, Pending, Proposal, after_boundary, boundary,
+        next, previous, single_line, word_left, word_right, word_selection,
     },
     element::{ClickEvent, Color, Element, ElementKind, IntoElement, Key, View},
     id::next_runtime,
@@ -1893,18 +1894,7 @@ impl<T: View> Ui<T> {
             } else {
                 None
             },
-            editing: node.editor.as_ref().map(|e| {
-                e.info(
-                    matches!(
-                        node.element.kind,
-                        ElementKind::TextInput {
-                            read_only: true,
-                            ..
-                        } | ElementKind::TextInput { change: None, .. }
-                    ),
-                    self.focused == Some(id) && self.active && self.caret_visible,
-                )
-            }),
+            editing: self.text_input_info(id),
             font_size: node.font_size,
             text_revision: node.text_revision,
             color: paint.color,
@@ -2078,6 +2068,10 @@ impl<T: View> Ui<T> {
     fn change_focus(&mut self, next: Option<ElementId>) {
         if self.focused != next {
             if let Some(old) = self.focused {
+                if let Some(editor) = self.nodes.get_mut(&old).and_then(|n| n.editor.as_mut()) {
+                    editor.break_group();
+                    editor.drag_selection = None;
+                }
                 self.cancel_composition(old);
             }
             self.focused = next;
@@ -2138,6 +2132,28 @@ impl<T: View> Ui<T> {
         self.clear_invalid_interaction();
         Ok(())
     }
+    /// Current selection, composition and history availability for a retained input.
+    /// This needs no prepared geometry; controlled values reflect the most recent
+    /// reconciliation. Returns None for foreign/removed identities or other kinds.
+    pub fn text_input_info(&self, id: ElementId) -> Option<TextInputInfo> {
+        let node = self.nodes.get(&id)?;
+        let ElementKind::TextInput {
+            read_only,
+            disabled,
+            change,
+            ..
+        } = &node.element.kind
+        else {
+            return None;
+        };
+        let mut info = node.editor.as_ref()?.info(
+            *read_only || change.is_none(),
+            self.focused == Some(id) && self.active && self.caret_visible,
+        );
+        info.can_undo &= !*disabled;
+        info.can_redo &= !*disabled;
+        Some(info)
+    }
     /// Current retained focus identity, independent of native activation.
     pub fn focused_element(&self) -> Option<ElementId> {
         self.focused
@@ -2188,6 +2204,10 @@ impl<T: View> Ui<T> {
             self.hovered = None;
             self.pressed = None;
             if let Some(id) = self.focused {
+                if let Some(editor) = self.nodes.get_mut(&id).and_then(|n| n.editor.as_mut()) {
+                    editor.break_group();
+                    editor.drag_selection = None;
+                }
                 self.cancel_composition(id);
             }
         }
@@ -2300,7 +2320,49 @@ impl<T: View> Ui<T> {
         let readonly = *read_only || change.is_none();
         let selection = node.editor.as_ref().unwrap().selection;
         let composing = node.editor.as_ref().unwrap().composition.is_some();
+        let edit_kind = match &event {
+            TextInputEvent::Insert(text)
+                if selection.is_collapsed()
+                    && unicode_segmentation::UnicodeSegmentation::graphemes(
+                        text.as_str(),
+                        true,
+                    )
+                    .count()
+                        == 1
+                    && !text.chars().any(char::is_whitespace) =>
+            {
+                EditKind::Typing
+            }
+            TextInputEvent::Backspace if selection.is_collapsed() => EditKind::Backspace,
+            TextInputEvent::Delete if selection.is_collapsed() => EditKind::Delete,
+            _ => EditKind::Separate,
+        };
         match event {
+            TextInputEvent::Undo | TextInputEvent::Redo if !readonly && !composing => {
+                let redo = event == TextInputEvent::Redo;
+                let Some(snapshot) = node.editor.as_ref().unwrap().replay(redo) else {
+                    return Ok(false);
+                };
+                let proposed = snapshot.value.clone();
+                let restored = snapshot.selection;
+                let value = value.to_owned();
+                self.propose_edit(
+                    runtime,
+                    id,
+                    &value,
+                    Proposal {
+                        range: 0..value.len(),
+                        insert: &proposed,
+                        action: if redo {
+                            EditAction::Redo
+                        } else {
+                            EditAction::Undo
+                        },
+                        selection: Some(restored),
+                    },
+                    change.unwrap(),
+                )?;
+            }
             TextInputEvent::CancelComposition => {
                 return Ok(self.cancel_composition(id) || caret_was_hidden);
             }
@@ -2316,6 +2378,7 @@ impl<T: View> Ui<T> {
                     return Err(UiError::InvalidTextValue);
                 }
                 let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
+                editor.break_group();
                 let replacement = editor
                     .composition
                     .as_ref()
@@ -2357,25 +2420,15 @@ impl<T: View> Ui<T> {
                         })
                     }
                 } else {
-                    use unicode_segmentation::UnicodeSegmentation;
                     match movement {
                         TextMovement::Start => TextPosition::new(0),
                         TextMovement::End => TextPosition::new(value.len()),
-                        TextMovement::WordLeft => TextPosition::new(
-                            value
-                                .unicode_word_indices()
-                                .map(|(i, _)| i)
-                                .take_while(|i| *i < focus.byte_offset)
-                                .last()
-                                .unwrap_or(0),
-                        ),
-                        TextMovement::WordRight => TextPosition::new(
-                            value
-                                .unicode_word_indices()
-                                .map(|(i, w)| i + w.len())
-                                .find(|i| *i > focus.byte_offset)
-                                .unwrap_or(value.len()),
-                        ),
+                        TextMovement::WordLeft => {
+                            TextPosition::new(word_left(value, focus.byte_offset))
+                        }
+                        TextMovement::WordRight => {
+                            TextPosition::new(word_right(value, focus.byte_offset))
+                        }
                         TextMovement::Left | TextMovement::Right => measure
                             .text_neighbor(id, self.nodes[&id].text_request(), focus, right)?
                             .unwrap_or_else(|| {
@@ -2402,6 +2455,8 @@ impl<T: View> Ui<T> {
                     return Err(UiError::InvalidGeometry);
                 }
                 let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
+                editor.break_group();
+                editor.drag_selection = None;
                 editor.selection = TextSelection {
                     anchor: if extend { selection.anchor } else { position },
                     focus: position,
@@ -2413,6 +2468,8 @@ impl<T: View> Ui<T> {
             TextInputEvent::SelectAll if !composing => {
                 let length = value.len();
                 let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
+                editor.break_group();
+                editor.drag_selection = None;
                 editor.selection = TextSelection {
                     anchor: TextPosition::new(0),
                     focus: TextPosition::new(length),
@@ -2434,7 +2491,14 @@ impl<T: View> Ui<T> {
                     None => Ok(false),
                 };
             }
-            TextInputEvent::Insert(_) | TextInputEvent::Backspace | TextInputEvent::Delete
+            TextInputEvent::Insert(_)
+            | TextInputEvent::Paste(_)
+            | TextInputEvent::Backspace
+            | TextInputEvent::Delete
+            | TextInputEvent::BackspaceWord
+            | TextInputEvent::DeleteWord
+            | TextInputEvent::BackspaceToStart
+            | TextInputEvent::DeleteToEnd
                 if composing =>
             {
                 return Ok(false);
@@ -2443,11 +2507,18 @@ impl<T: View> Ui<T> {
             | TextInputEvent::Commit(_)
             | TextInputEvent::Backspace
             | TextInputEvent::Delete
+            | TextInputEvent::Paste(_)
+            | TextInputEvent::BackspaceWord
+            | TextInputEvent::DeleteWord
+            | TextInputEvent::BackspaceToStart
+            | TextInputEvent::DeleteToEnd
                 if readonly =>
             {
                 return Ok(false);
             }
-            TextInputEvent::Insert(insert) | TextInputEvent::Commit(insert) => {
+            TextInputEvent::Insert(insert)
+            | TextInputEvent::Commit(insert)
+            | TextInputEvent::Paste(insert) => {
                 let range = self.nodes[&id]
                     .editor
                     .as_ref()
@@ -2457,19 +2528,41 @@ impl<T: View> Ui<T> {
                     .map_or(selection.range(), |c| c.replacement.range());
                 let insert = single_line(&insert);
                 let value = value.to_owned();
-                self.propose_edit(runtime, id, &value, range, &insert, change.unwrap())?;
+                self.propose_edit(
+                    runtime,
+                    id,
+                    &value,
+                    Proposal::new(range, &insert, edit_kind),
+                    change.unwrap(),
+                )?;
             }
-            TextInputEvent::Backspace | TextInputEvent::Delete => {
+            TextInputEvent::Backspace
+            | TextInputEvent::Delete
+            | TextInputEvent::BackspaceWord
+            | TextInputEvent::DeleteWord
+            | TextInputEvent::BackspaceToStart
+            | TextInputEvent::DeleteToEnd => {
                 let mut range = selection.range();
                 if range.is_empty() {
-                    if event == TextInputEvent::Backspace {
-                        range.start = previous(value, range.start);
-                    } else {
-                        range.end = next(value, range.end);
+                    match event {
+                        TextInputEvent::Backspace => range.start = previous(value, range.start),
+                        TextInputEvent::BackspaceWord => {
+                            range.start = word_left(value, range.start)
+                        }
+                        TextInputEvent::BackspaceToStart => range.start = 0,
+                        TextInputEvent::DeleteWord => range.end = word_right(value, range.end),
+                        TextInputEvent::DeleteToEnd => range.end = value.len(),
+                        _ => range.end = next(value, range.end),
                     }
                 }
                 let value = value.to_owned();
-                self.propose_edit(runtime, id, &value, range, "", change.unwrap())?;
+                self.propose_edit(
+                    runtime,
+                    id,
+                    &value,
+                    Proposal::new(range, "", edit_kind),
+                    change.unwrap(),
+                )?;
             }
             _ => return Ok(false),
         }
@@ -2483,15 +2576,22 @@ impl<T: View> Ui<T> {
         runtime: &mut Runtime,
         id: ElementId,
         value: &str,
-        range: std::ops::Range<usize>,
-        insert: &str,
+        proposal: Proposal<'_>,
         change: crate::Listener<TextChangeEvent>,
     ) -> Result<(), UiError> {
+        let Proposal {
+            range,
+            insert,
+            action,
+            selection: restored,
+        } = proposal;
         let mut proposed = String::with_capacity(value.len() - range.len() + insert.len());
         proposed.push_str(&value[..range.start]);
         proposed.push_str(insert);
         proposed.push_str(&value[range.end..]);
-        let selection = TextSelection::caret(after_boundary(&proposed, range.start + insert.len()));
+        let selection = restored.unwrap_or_else(|| {
+            TextSelection::caret(after_boundary(&proposed, range.start + insert.len()))
+        });
         let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
         let previous = editor.selection;
         editor.composition = None;
@@ -2499,6 +2599,7 @@ impl<T: View> Ui<T> {
         editor.pending = Some(Pending {
             proposed: proposed.clone(),
             previous,
+            action,
         });
         // Rebuild composition display before reconciliation even if application rejects.
         self.rebuild_editor(id);
@@ -2515,6 +2616,7 @@ impl<T: View> Ui<T> {
         if let Some(node) = self.nodes.get_mut(&id)
             && let (Some(editor), ElementKind::TextInput { value: actual, .. }) =
                 (&mut node.editor, &node.element.kind)
+            && editor.pending.is_some()
         {
             editor.reconcile(value, actual);
         }
@@ -2529,11 +2631,33 @@ impl<T: View> Ui<T> {
         measure: &mut impl TextMeasure,
         extend: bool,
     ) -> Result<bool, UiError> {
+        self.pointer_with_text_clicks(runtime, event, measure, extend, 1)
+    }
+    /// Pointer editing with a host-supplied click count: two selects a Unicode
+    /// word-boundary segment (including punctuation/whitespace), three selects the
+    /// single line. Word drags extend by whole segments. Shift retains ordinary
+    /// caret extension. Hosts determine timing/distance/target continuity.
+    pub fn pointer_with_text_clicks(
+        &mut self,
+        runtime: &mut Runtime,
+        event: PointerEvent,
+        measure: &mut impl TextMeasure,
+        extend: bool,
+        click_count: u8,
+    ) -> Result<bool, UiError> {
+        let previous_pressed = self.pressed;
         let mut changed = self.pointer(runtime, event)?;
+        let (kind, point, button, _) = event.parts();
+        if (kind == 3 || (kind == 2 && button == Some(crate::PointerButton::Primary)))
+            && let Some(editor) = previous_pressed
+                .and_then(|id| self.nodes.get_mut(&id))
+                .and_then(|n| n.editor.as_mut())
+        {
+            editor.drag_selection = None;
+        }
         if self.input.prevented {
             return Ok(changed);
         }
-        let (kind, point, button, _) = event.parts();
         let id = if kind == 0 && button == Some(crate::PointerButton::Primary) {
             self.focused
         } else if kind == 1 {
@@ -2571,12 +2695,49 @@ impl<T: View> Ui<T> {
                 ..position
             }
         };
+        let segment = if (kind == 0 && click_count >= 3 && !extend)
+            || (kind == 1 && editor.drag_line && editor.drag_selection.is_some())
+        {
+            Some(TextSelection {
+                anchor: TextPosition::new(0),
+                focus: TextPosition::new(editor.display.len()),
+            })
+        } else if (kind == 0 && click_count == 2 && !extend)
+            || (kind == 1 && editor.drag_selection.is_some())
+        {
+            Some(word_selection(&editor.display, position))
+        } else {
+            None
+        };
         let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
         let old = editor.selection;
-        if kind == 0 && !extend {
-            editor.selection.anchor = position;
+        editor.break_group();
+        if kind == 0 {
+            editor.drag_selection = segment;
+            editor.drag_line = click_count >= 3 && !extend;
+            if let Some(segment) = segment {
+                editor.selection = segment;
+            } else {
+                if !extend {
+                    editor.selection.anchor = position;
+                }
+                editor.selection.focus = position;
+            }
+        } else if let (Some(origin), Some(segment)) = (editor.drag_selection, segment) {
+            editor.selection = if segment.range().start < origin.range().start {
+                TextSelection {
+                    anchor: origin.focus,
+                    focus: segment.anchor,
+                }
+            } else {
+                TextSelection {
+                    anchor: origin.anchor,
+                    focus: segment.focus,
+                }
+            };
+        } else {
+            editor.selection.focus = position;
         }
-        editor.selection.focus = position;
         changed |= old != editor.selection;
         self.caret_visible = true;
         self.update_text_scroll(id, measure)?;
@@ -2805,8 +2966,7 @@ impl<T: View> Ui<T> {
                     runtime,
                     id,
                     &old,
-                    0..old.len(),
-                    &single_line(&proposed),
+                    Proposal::new(0..old.len(), &single_line(&proposed), EditKind::Separate),
                     change,
                 )?;
                 if self.nodes.get(&id).is_some_and(|n| n.editor.is_some()) {
@@ -2843,6 +3003,13 @@ impl<T: View> Ui<T> {
                 let changed = node.editor.as_ref().unwrap().selection != selection
                     || self.focused != Some(id);
                 self.change_focus(Some(id));
+                self.nodes
+                    .get_mut(&id)
+                    .unwrap()
+                    .editor
+                    .as_mut()
+                    .unwrap()
+                    .break_group();
                 self.nodes
                     .get_mut(&id)
                     .unwrap()

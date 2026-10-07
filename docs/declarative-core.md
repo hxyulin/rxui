@@ -142,4 +142,6 @@ Portable semantic output and optional AccessKit translation are implemented; see
 [the semantics contract](semantics.md). Native Application hosting manages lazy
 publication and assistive actions. Themes and inherited text styling are implemented;
 [the styling contract](styling.md) describes retained resolution and live switching.
-Multiline/undo editing remain following milestones.
+Single-line inputs also implement bounded placement-local undo/redo and word/line
+selection; [the editing contract](text-input.md) describes controlled replay.
+Multiline editing remains a following milestone.

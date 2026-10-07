@@ -147,9 +147,19 @@ impl<T: View> Ui<T> {
         crate::commands::standard_info(
             id,
             true,
-            text,
-            editable,
-            self.selected_text().is_some(),
+            crate::commands::StandardEditing {
+                text,
+                editable,
+                selection: self.selected_text().is_some(),
+                undo: self
+                    .focused
+                    .and_then(|id| self.nodes[&id].editor.as_ref())
+                    .is_some_and(|e| e.info(!editable, false).can_undo),
+                redo: self
+                    .focused
+                    .and_then(|id| self.nodes[&id].editor.as_ref())
+                    .is_some_and(|e| e.info(!editable, false).can_redo),
+            },
             self.active_modal().is_some(),
         )
     }

@@ -44,6 +44,12 @@ pub struct CommandInfo {
 /// scoped application handlers can override any of these command types.
 pub mod standard_commands {
     use super::Command;
+    /// Requests undo in the focused input; applications may override for document history.
+    pub struct Undo;
+    impl Command for Undo {}
+    /// Requests redo in the focused input.
+    pub struct Redo;
+    impl Command for Redo {}
     /// Copies the current text selection, including from read-only inputs.
     pub struct Copy;
     impl Command for Copy {}
@@ -386,16 +392,35 @@ impl AppContext<'_> {
 }
 
 #[cfg(feature = "native")]
+#[derive(Default)]
+pub(crate) struct StandardEditing {
+    pub text: bool,
+    pub editable: bool,
+    pub selection: bool,
+    pub undo: bool,
+    pub redo: bool,
+}
+
+#[cfg(feature = "native")]
 pub(crate) fn standard_info(
     id: CommandId,
     window: bool,
-    text: bool,
-    editable: bool,
-    selection: bool,
+    editing: StandardEditing,
     modal: bool,
 ) -> Option<CommandInfo> {
     use standard_commands::*;
-    let (label, enabled, key) = if id == CommandId::of::<Copy>() {
+    let StandardEditing {
+        text,
+        editable,
+        selection,
+        undo,
+        redo,
+    } = editing;
+    let (label, enabled, key) = if id == CommandId::of::<Undo>() {
+        ("Undo", editable && undo, "z")
+    } else if id == CommandId::of::<Redo>() {
+        ("Redo", editable && redo, "z")
+    } else if id == CommandId::of::<Copy>() {
         ("Copy", text && selection, "c")
     } else if id == CommandId::of::<Cut>() {
         ("Cut", editable && selection, "x")
@@ -413,6 +438,14 @@ pub(crate) fn standard_info(
     Some(CommandInfo {
         label: label.into(),
         enabled,
-        shortcuts: vec![Shortcut::primary(key)],
+        shortcuts: if id == CommandId::of::<Redo>() {
+            if cfg!(target_os = "macos") {
+                vec![Shortcut::primary("z").shift()]
+            } else {
+                vec![Shortcut::primary("y"), Shortcut::primary("z").shift()]
+            }
+        } else {
+            vec![Shortcut::primary(key)]
+        },
     })
 }

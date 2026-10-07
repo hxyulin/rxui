@@ -17,7 +17,7 @@ translation independently of the native host. Optional `native-menus` adds Muda-
 macOS/Windows menu bars, scoped command presentation and vetoable Close/Quit
 requests; see [native menus](docs/native-menus.md). `--no-default-features` retains the state-only runtime. Scrolling,
 clipping, focus traversal and button activation are implemented. Controlled
-single-line editing, selection, clipboard and IME are implemented.
+single-line editing, bounded undo/redo, word/line selection, clipboard and IME are implemented.
 Optional `native-dialogs` provides parent-bound file/message dialogs;
 `desktop-services` adds asynchronous URL/file opening and file-manager reveal.
 See [native services](docs/native-services.md) and the standalone

@@ -381,6 +381,7 @@ trait HostedUi {
         event: TextInputEvent,
         painter: &mut UiPainter,
     ) -> Result<bool, UiError>;
+    fn hit_test(&self, point: [f32; 2]) -> Option<ElementId>;
     fn cursor_icon(&self) -> crate::Cursor;
     fn prepare_input(
         &mut self,
@@ -394,6 +395,7 @@ trait HostedUi {
         event: PointerEvent,
         painter: &mut UiPainter,
         extend: bool,
+        click_count: u8,
     ) -> Result<bool, UiError>;
     fn text_input(
         &mut self,
@@ -491,6 +493,9 @@ impl<T: View> HostedUi for Ui<T> {
     ) -> Result<bool, UiError> {
         self.native_text_input(runtime, event, painter)
     }
+    fn hit_test(&self, point: [f32; 2]) -> Option<ElementId> {
+        self.hit_test(point)
+    }
     fn cursor_icon(&self) -> crate::Cursor {
         self.cursor()
     }
@@ -513,8 +518,9 @@ impl<T: View> HostedUi for Ui<T> {
         event: PointerEvent,
         painter: &mut UiPainter,
         extend: bool,
+        click_count: u8,
     ) -> Result<bool, UiError> {
-        self.pointer_with_text(runtime, event, painter, extend)
+        self.pointer_with_text_clicks(runtime, event, painter, extend, click_count)
     }
     fn text_input(
         &mut self,
@@ -1202,6 +1208,33 @@ impl From<accesskit_winit::Event> for Wake {
         Self::Accessibility(event)
     }
 }
+#[derive(Default)]
+struct ClickTracker {
+    last: Option<(Instant, [f32; 2], Option<ElementId>, u8)>,
+}
+impl ClickTracker {
+    fn motion(&mut self, point: [f32; 2]) {
+        if self
+            .last
+            .is_some_and(|(_, p, _, _)| (p[0] - point[0]).hypot(p[1] - point[1]) > 4.)
+        {
+            self.last = None;
+        }
+    }
+    fn press(&mut self, now: Instant, point: [f32; 2], target: Option<ElementId>) -> u8 {
+        let count = self
+            .last
+            .filter(|(at, p, id, count)| {
+                now.saturating_duration_since(*at) <= Duration::from_millis(500)
+                    && (p[0] - point[0]).hypot(p[1] - point[1]) <= 4.
+                    && *id == target
+                    && *count < 3
+            })
+            .map_or(1, |(_, _, _, count)| count + 1);
+        self.last = Some((now, point, target, count));
+        count
+    }
+}
 struct HostedWindow {
     life: Rc<Life>,
     ui: Option<Box<dyn HostedUi>>,
@@ -1212,6 +1245,7 @@ struct HostedWindow {
     background: Option<Color>,
     cursor: [f64; 2],
     cursor_icon: Option<crate::Cursor>,
+    clicks: ClickTracker,
     modifiers: ModifiersState,
     blink_at: Instant,
     caret_visible: bool,
@@ -1315,12 +1349,22 @@ impl<F> Host<F> {
                     Ok(text) => {
                         changed = ui.command_text_input(
                             &mut self.runtime,
-                            TextInputEvent::Insert(text),
+                            TextInputEvent::Paste(text),
                             painter,
                         )?
                     }
                     Err(error) => eprintln!("RXUI clipboard: {error}"),
                 }
+            } else if command == CommandId::of::<Undo>() || command == CommandId::of::<Redo>() {
+                changed = ui.command_text_input(
+                    &mut self.runtime,
+                    if command == CommandId::of::<Undo>() {
+                        TextInputEvent::Undo
+                    } else {
+                        TextInputEvent::Redo
+                    },
+                    painter,
+                )?;
             } else if command == CommandId::of::<SelectAll>() {
                 changed =
                     ui.command_text_input(&mut self.runtime, TextInputEvent::SelectAll, painter)?;
@@ -1413,7 +1457,10 @@ impl<F> Host<F> {
                             .update(|cx| cx.application_command(command).map(|a| a.info()))
                             .or_else(|| {
                                 crate::commands::standard_info(
-                                    command, false, false, false, false, false,
+                                    command,
+                                    false,
+                                    crate::commands::StandardEditing::default(),
+                                    false,
                                 )
                             })
                     }
@@ -1599,6 +1646,7 @@ impl<F> Host<F> {
                                 background: options.background,
                                 cursor: [0.; 2],
                                 cursor_icon: None,
+                                clicks: ClickTracker::default(),
                                 modifiers: ModifiersState::default(),
                                 blink_at: Instant::now() + Duration::from_millis(500),
                                 caret_visible: true,
@@ -1965,6 +2013,9 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             }
             WindowEvent::CursorMoved { position, .. } => {
                 window.cursor = [position.x, position.y];
+                window
+                    .clicks
+                    .motion([(position.x / scale) as f32, (position.y / scale) as f32]);
                 changed = ui.pointer(
                     &mut self.runtime,
                     PointerEvent::Motion {
@@ -1973,10 +2024,11 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                     },
                     painter,
                     window.modifiers.shift_key(),
+                    1,
                 )?;
             }
             WindowEvent::CursorLeft { .. } => {
-                changed = ui.pointer(&mut self.runtime, PointerEvent::Left, painter, false)?
+                changed = ui.pointer(&mut self.runtime, PointerEvent::Left, painter, false, 1)?
             }
             WindowEvent::MouseInput { state, button, .. }
                 if matches!(
@@ -1988,6 +2040,13 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                     (window.cursor[0] / scale) as f32,
                     (window.cursor[1] / scale) as f32,
                 ];
+                let count = if state == ElementState::Pressed && button == MouseButton::Left {
+                    window
+                        .clicks
+                        .press(Instant::now(), point, ui.hit_test(point))
+                } else {
+                    1
+                };
                 changed = ui.pointer(
                     &mut self.runtime,
                     if state == ElementState::Pressed {
@@ -2005,6 +2064,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                     },
                     painter,
                     window.modifiers.shift_key(),
+                    count,
                 )?;
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -2023,12 +2083,20 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 )?;
             }
             WindowEvent::Focused(active) => {
+                if !active {
+                    window.clicks = ClickTracker::default();
+                }
                 if active {
                     self.focused_window = Some(id);
                 }
                 if !active {
-                    changed |=
-                        ui.pointer(&mut self.runtime, PointerEvent::Cancelled, painter, false)?;
+                    changed |= ui.pointer(
+                        &mut self.runtime,
+                        PointerEvent::Cancelled,
+                        painter,
+                        false,
+                        1,
+                    )?;
                 }
                 changed |= ui.active(active);
             }
@@ -2101,8 +2169,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                             movement: TextMovement::End,
                             extend,
                         }),
-                        Key::Named(NamedKey::Backspace) => Some(TextInputEvent::Backspace),
-                        Key::Named(NamedKey::Delete) => Some(TextInputEvent::Delete),
+                        Key::Named(NamedKey::Backspace) => {
+                            Some(deletion_input(true, primary, word))
+                        }
+                        Key::Named(NamedKey::Delete) => Some(deletion_input(false, primary, word)),
                         Key::Named(NamedKey::Escape) => Some(TextInputEvent::CancelComposition),
                         Key::Named(NamedKey::Enter) if !event.repeat => {
                             Some(TextInputEvent::Submit)
@@ -2371,7 +2441,13 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             if let Some(ui) = &mut window.ui
                 && let Some(painter) = &mut self.painter
             {
-                ui.pointer(&mut self.runtime, PointerEvent::Cancelled, painter, false)?;
+                ui.pointer(
+                    &mut self.runtime,
+                    PointerEvent::Cancelled,
+                    painter,
+                    false,
+                    1,
+                )?;
             }
             window.life.alive.set(false);
             window.life.native.borrow_mut().take();
@@ -2462,16 +2538,47 @@ fn native_cursor(cursor: crate::Cursor) -> astrelis_winit::winit::window::Cursor
     }
 }
 
+fn deletion_input(backward: bool, primary: bool, word: bool) -> TextInputEvent {
+    if cfg!(target_os = "macos") && primary {
+        if backward {
+            TextInputEvent::BackspaceToStart
+        } else {
+            TextInputEvent::DeleteToEnd
+        }
+    } else if word {
+        if backward {
+            TextInputEvent::BackspaceWord
+        } else {
+            TextInputEvent::DeleteWord
+        }
+    } else if backward {
+        TextInputEvent::Backspace
+    } else {
+        TextInputEvent::Delete
+    }
+}
+
 fn standard_shortcut(key: &crate::KeyboardKey, modifiers: crate::Modifiers) -> Option<CommandId> {
     use crate::standard_commands::*;
     let primary = crate::Shortcut::primary("").modifiers;
-    if modifiers != primary {
-        return None;
-    }
     let crate::KeyboardKey::Character(key) = key else {
         return None;
     };
+    if key.eq_ignore_ascii_case("z")
+        && modifiers
+            == (crate::Modifiers {
+                shift: true,
+                ..primary
+            })
+    {
+        return Some(CommandId::of::<Redo>());
+    }
+    if modifiers != primary {
+        return None;
+    }
     Some(match key.as_str() {
+        "z" | "Z" => CommandId::of::<Undo>(),
+        "y" | "Y" if !cfg!(target_os = "macos") => CommandId::of::<Redo>(),
         "c" | "C" => CommandId::of::<Copy>(),
         "x" | "X" => CommandId::of::<Cut>(),
         "v" | "V" => CommandId::of::<Paste>(),
@@ -2849,6 +2956,71 @@ mod tests {
             Err(ApplicationError::Exited)
         ));
     }
+    #[test]
+    fn editing_shortcuts_include_replay_and_native_delete_units() {
+        use crate::standard_commands::{Redo, Undo};
+        for (shortcut, command) in [
+            (crate::Shortcut::primary("z"), CommandId::of::<Undo>()),
+            (
+                crate::Shortcut::primary("z").shift(),
+                CommandId::of::<Redo>(),
+            ),
+        ] {
+            assert_eq!(
+                standard_shortcut(&shortcut.key, shortcut.modifiers),
+                Some(command)
+            );
+        }
+        let y = crate::Shortcut::primary("y");
+        assert_eq!(
+            standard_shortcut(&y.key, y.modifiers),
+            (!cfg!(target_os = "macos")).then_some(CommandId::of::<Redo>())
+        );
+        assert_eq!(
+            deletion_input(true, false, true),
+            TextInputEvent::BackspaceWord
+        );
+        assert_eq!(
+            deletion_input(false, false, true),
+            TextInputEvent::DeleteWord
+        );
+        assert_eq!(
+            deletion_input(true, true, false),
+            if cfg!(target_os = "macos") {
+                TextInputEvent::BackspaceToStart
+            } else {
+                TextInputEvent::Backspace
+            }
+        );
+    }
+    #[test]
+    fn click_sequences_reset_on_timeout_drag_distance_and_after_triple_click() {
+        let mut clicks = ClickTracker::default();
+        let now = Instant::now();
+        assert_eq!(clicks.press(now, [0.; 2], None), 1);
+        assert_eq!(
+            clicks.press(now + Duration::from_millis(100), [1., 0.], None),
+            2
+        );
+        assert_eq!(
+            clicks.press(now + Duration::from_millis(200), [1., 0.], None),
+            3
+        );
+        assert_eq!(
+            clicks.press(now + Duration::from_millis(300), [1., 0.], None),
+            1
+        );
+        assert_eq!(
+            clicks.press(now + Duration::from_millis(1000), [1., 0.], None),
+            1
+        );
+        clicks.motion([20., 0.]);
+        assert_eq!(
+            clicks.press(now + Duration::from_millis(1100), [1., 0.], None),
+            1
+        );
+    }
+
     #[test]
     fn standard_shortcuts_require_exact_primary_modifiers() {
         let shortcut = crate::Shortcut::primary("C");

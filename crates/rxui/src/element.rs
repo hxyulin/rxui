@@ -1074,7 +1074,8 @@ pub fn button(content: impl IntoElement) -> Element {
 }
 
 /// Controlled single-line input. Value changes only when the application accepts an
-/// on_change proposal. Selection and IME composition belong to each placement.
+/// on_change proposal. Selection, IME composition and bounded undo/redo history
+/// belong to each placement. External value changes reset that local history.
 /// Application values must contain no control characters. User line breaks/tabs
 /// normalize to spaces. Missing on_change behaves as a selectable read-only value.
 ///

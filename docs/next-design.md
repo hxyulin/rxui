@@ -49,8 +49,8 @@ controlled tab lifecycle, the controlled docking tree and pointer header drops w
 previews are implemented. Viewport popovers, controlled modal dialogs, popup menus,
 typed scoped commands and application fallback registrations are implemented;
 see [overlays-and-commands.md](overlays-and-commands.md).
-Native detach remains planned. Fixed-height virtual lists are implemented;
-see [virtual lists](virtual-lists.md).
+Native detach remains planned. Fixed-height virtual lists and bounded single-line
+undo/redo are implemented; see [virtual lists](virtual-lists.md) and [editing](text-input.md).
 See [docking.md](docking.md), [focus-and-tabs.md](focus-and-tabs.md) and [interaction.md](interaction.md). See
 [the current README](../README.md), [application contract](application.md) and
 [task contract](async.md) for implemented APIs and current limitations.
@@ -480,7 +480,7 @@ snapshots; preparation and presentation are not rollback transactions.
 3. **Essential controls (partial):** labels/buttons, focus traversal, scrolling and
    clipping and controlled single-line editing/selection/IME are implemented.
    Initial portable semantics and AccessKit publication/actions are implemented.
-   Undo/multiline editing remain next.
+   Bounded field undo/redo is implemented; multiline editing remains next.
 4. **Native host (initial slice implemented):** lifecycle over astrelis-winit,
    default fonts, close/exit hooks, button input and custom-loop embedding. Theme
    inheritance and live application/window theme switching are implemented. Lazy
@@ -489,7 +489,7 @@ snapshots; preparation and presentation are not rollback transactions.
    and caret blink deadlines are implemented for single-line inputs.
 5. **Validation application (partial):** shared data in two windows, keyed buttons
    and background completion are implemented. A separate shared-window editing
-   example exercises controlled values/selection/IME. A custom chart remains next.
+   example exercises controlled values/selection/IME/history. A custom chart remains next.
    Fixed-height virtual lists now have a standalone 100,000-row example and CPU
    scaling benchmark; rendering every row is not a scalability strategy.
 

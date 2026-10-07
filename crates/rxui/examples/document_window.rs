@@ -333,6 +333,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .menu(
             NativeMenu::new("Edit")
+                .command::<Undo>("Undo")
+                .command::<Redo>("Redo")
+                .separator()
                 .command::<Cut>("Cut")
                 .command::<Copy>("Copy")
                 .command::<Paste>("Paste")

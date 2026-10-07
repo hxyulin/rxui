@@ -17,7 +17,7 @@
 //! fallback registrations. Overlay semantics escape ancestor clipping.
 //! Dark/light presets and paint-only control states keep application styling
 //! separate from drawing. Controlled
-//! single-line inputs retain selection and IME preedit independently of
+//! single-line inputs retain selection, bounded undo/redo and IME preedit independently of
 //! application-owned values. The optional
 //! tasks feature delivers owned background results in fresh UI updates; native
 //! adds Application hosting over astrelis-winit with lazy AccessKit publication.
@@ -29,7 +29,7 @@
 //! Portable semantics are part of layout; the optional accessibility feature adds
 //! AccessKit translation for custom hosts. Fixed-height virtual lists describe only
 //! viewport rows plus overscan; shared windows retain independent scroll offsets.
-//! Multiline/undo editing and variable-height virtualization remain following milestones.
+//! Multiline editing and variable-height virtualization remain following milestones.
 //!
 //! Declarative components own their descriptions and bind live-state listeners:
 //!

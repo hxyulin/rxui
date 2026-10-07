@@ -116,8 +116,8 @@ describes custom integration and the initial text geometry limits.
 The [single-line text-input contract](text-input.md) describes implemented editing,
 selection and IME behavior. Routed listeners, scrollbars and controlled splits are
 covered by [the interaction contract](interaction.md). Fixed-height virtualization
-is implemented in the UI layer. Multiline/undo editing remain independent UI
-features rather than obligations of the native surface runner.
+and bounded field history are implemented in the UI layer. Multiline editing remains
+an independent UI feature rather than an obligation of the native surface runner.
 
 The native host also applies queued `FocusHandle`/`FocusPlacement` commands during
 preparation and honors tab-group keyboard defaults before ordinary Tab or button

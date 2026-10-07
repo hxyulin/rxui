@@ -123,6 +123,301 @@ fn insert(ui: &mut Ui<Form>, runtime: &mut Runtime, measure: &mut Measure, text:
     ui.text_input(runtime, TextInputEvent::Insert(text.into()), measure)
         .unwrap();
 }
+fn value(runtime: &mut Runtime, root: &Entity<Form>) -> String {
+    runtime.update(|cx| root.read(cx).value.clone())
+}
+fn edit(
+    ui: &mut Ui<Form>,
+    runtime: &mut Runtime,
+    measure: &mut Measure,
+    event: TextInputEvent,
+) -> bool {
+    ui.text_input(runtime, event, measure).unwrap()
+}
+fn info(ui: &Ui<Form>) -> TextInputInfo {
+    ui.text_input_info(ui.focused_element().unwrap()).unwrap()
+}
+#[test]
+fn undo_redo_coalesce_typing_and_deletions_but_split_paste_navigation_and_new_edits() {
+    let (mut r, root, mut ui, mut m) = setup("", Policy::Accept);
+    for s in ["a", "b", "c"] {
+        insert(&mut ui, &mut r, &mut m, s);
+    }
+    assert!(info(&ui).can_undo);
+    assert!(edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo));
+    assert_eq!(value(&mut r, &root), "");
+    assert_eq!(info(&ui).selection, TextSelection::caret(0));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Redo);
+    assert_eq!(value(&mut r, &root), "abc");
+    assert_eq!(info(&ui).selection, TextSelection::caret(3));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Backspace);
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Backspace);
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "abc");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Paste("x".into()));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "abc");
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Move {
+            movement: TextMovement::Start,
+            extend: false,
+        },
+    );
+    insert(&mut ui, &mut r, &mut m, "q");
+    assert!(!info(&ui).can_redo);
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "abc");
+    assert_eq!(info(&ui).selection, TextSelection::caret(0));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "");
+}
+#[test]
+fn normalized_typing_coalesces_using_the_accepted_selection_and_actual_values() {
+    let (mut r, root, mut ui, mut m) = setup("BASE", Policy::Uppercase);
+    for s in ["a", "b", "c"] {
+        insert(&mut ui, &mut r, &mut m, s);
+    }
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "BASE");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Redo);
+    assert_eq!(value(&mut r, &root), "BASEABC");
+}
+#[test]
+fn controlled_history_preserves_rejected_replays_and_records_actual_normalized_values() {
+    let (mut r, root, mut ui, mut m) = setup("A", Policy::Accept);
+    insert(&mut ui, &mut r, &mut m, "1");
+    r.update(|cx| root.update(cx, |s, _| s.policy = Policy::Digits));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "A1");
+    assert!(info(&ui).can_undo && !info(&ui).can_redo);
+    assert_eq!(info(&ui).selection, TextSelection::caret(2));
+    r.update(|cx| root.update(cx, |s, _| s.policy = Policy::Accept));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "A");
+    r.update(|cx| root.update(cx, |s, _| s.policy = Policy::Digits));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Redo);
+    assert_eq!(value(&mut r, &root), "A");
+    assert!(info(&ui).can_redo);
+    r.update(|cx| root.update(cx, |s, _| s.policy = Policy::Uppercase));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Redo);
+    insert(&mut ui, &mut r, &mut m, "b");
+    assert_eq!(value(&mut r, &root), "A1B");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "A1");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Redo);
+    assert_eq!(value(&mut r, &root), "A1B");
+    // A normalizer which changes a replay cannot retain a valid previous chain.
+    r.update(|cx| {
+        root.update(cx, |s, _| {
+            s.value = "lower".into();
+        })
+    });
+    insert(&mut ui, &mut r, &mut m, "x");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "LOWER");
+    assert!(!info(&ui).can_undo && !info(&ui).can_redo);
+}
+#[test]
+fn ime_commit_is_one_transaction_readonly_preserves_history_external_changes_reset_it() {
+    let (mut r, root, mut ui, mut m) = setup("abc", Policy::Accept);
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::SelectAll);
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Preedit {
+            text: "に".into(),
+            cursor: Some((3, 3)),
+        },
+    );
+    assert!(!info(&ui).can_undo);
+    assert!(!edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo));
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Preedit {
+            text: "日本".into(),
+            cursor: Some((6, 6)),
+        },
+    );
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Commit("日本".into()),
+    );
+    r.update(|cx| root.update(cx, |s, _| s.read_only = true));
+    assert!(!edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo));
+    assert_eq!(value(&mut r, &root), "日本");
+    r.update(|cx| root.update(cx, |s, _| s.read_only = false));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "abc");
+    assert_eq!(info(&ui).selection.range(), 0..3);
+    r.update(|cx| root.update(cx, |s, _| s.value = "external".into()));
+    assert!(!edit(&mut ui, &mut r, &mut m, TextInputEvent::Redo));
+    assert!(!info(&ui).can_undo && !info(&ui).can_redo);
+}
+#[test]
+fn shared_inputs_do_not_undo_another_placements_edits() {
+    let (mut r, root, mut ui, mut m) = setup("", Policy::Accept);
+    let mut second = Ui::new(&mut r, root.clone()).unwrap();
+    second.prepare(&mut r, [400.; 2], &mut m).unwrap();
+    second.focus_next(false);
+    insert(&mut ui, &mut r, &mut m, "a");
+    assert!(!edit(&mut second, &mut r, &mut m, TextInputEvent::Undo));
+    edit(
+        &mut second,
+        &mut r,
+        &mut m,
+        TextInputEvent::Move {
+            movement: TextMovement::End,
+            extend: false,
+        },
+    );
+    insert(&mut second, &mut r, &mut m, "b");
+    assert!(!edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo));
+    assert_eq!(value(&mut r, &root), "ab");
+    edit(&mut second, &mut r, &mut m, TextInputEvent::Undo);
+    assert_eq!(value(&mut r, &root), "a");
+}
+#[test]
+fn word_and_line_deletions_respect_unicode_and_restore_directional_selections() {
+    let (mut r, root, mut ui, mut m) = setup("one e\u{301} שלום 👩‍👩‍👧‍👦", Policy::Accept);
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::BackspaceWord);
+    assert_eq!(value(&mut r, &root), "one e\u{301} ");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Move {
+            movement: TextMovement::Start,
+            extend: false,
+        },
+    );
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::DeleteWord);
+    assert_eq!(value(&mut r, &root), " e\u{301} שלום 👩‍👩‍👧‍👦");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::DeleteToEnd);
+    assert_eq!(value(&mut r, &root), "");
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Move {
+            movement: TextMovement::End,
+            extend: false,
+        },
+    );
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::BackspaceToStart);
+    assert_eq!(value(&mut r, &root), "");
+}
+#[test]
+fn double_click_and_drag_select_words_triple_click_keeps_the_single_line_selected() {
+    let (mut r, root, mut ui, mut m) = setup("one two three", Policy::Accept);
+    let b = ui.element(input_id(&ui)).unwrap().content_bounds;
+    let p = |i: f32| [b.x + i * 10., b.y + 10.];
+    // Initial field scroll follows the end caret. Reset it before hit testing.
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Move {
+            movement: TextMovement::Start,
+            extend: false,
+        },
+    );
+    ui.pointer_with_text_clicks(&mut r, PointerEvent::Pressed(p(5.)), &mut m, false, 2)
+        .unwrap();
+    assert_eq!(info(&ui).selection.range(), 4..7);
+    ui.pointer_with_text_clicks(&mut r, PointerEvent::Moved(p(1.)), &mut m, false, 1)
+        .unwrap();
+    assert_eq!(info(&ui).selection.range(), 0..7);
+    assert_eq!(info(&ui).selection.focus.byte_offset, 0);
+    ui.pointer_with_text_clicks(&mut r, PointerEvent::Released(p(1.)), &mut m, false, 1)
+        .unwrap();
+    ui.pointer_with_text_clicks(&mut r, PointerEvent::Pressed(p(2.)), &mut m, false, 3)
+        .unwrap();
+    assert_eq!(info(&ui).selection.range(), 0..13);
+    ui.pointer_with_text_clicks(&mut r, PointerEvent::Moved(p(1.)), &mut m, false, 1)
+        .unwrap();
+    assert_eq!(info(&ui).selection.range(), 0..13);
+    assert!(r.update(|cx| root.read(cx).edits.is_empty()));
+}
+#[test]
+fn word_selection_handles_punctuation_spaces_combining_marks_and_emoji_boundaries() {
+    use crate::editing::word_selection;
+    let text = "e\u{301},  👩‍👩‍👧‍👦!";
+    for position in text
+        .grapheme_indices(true)
+        .map(|(i, _)| TextPosition::new(i))
+        .chain([TextPosition::new(text.len())])
+    {
+        let range = word_selection(text, position).range();
+        assert!(range.start <= range.end && range.end <= text.len());
+        assert_eq!(crate::editing::boundary(text, range.start), range.start);
+        assert_eq!(crate::editing::boundary(text, range.end), range.end);
+    }
+    assert_eq!(word_selection(text, TextPosition::new(0)).range(), 0..3);
+    assert_eq!(word_selection(text, TextPosition::new(4)).range(), 4..6);
+}
+#[test]
+fn history_snapshot_count_and_utf8_memory_are_bounded_without_changing_edit_acceptance() {
+    let (mut r, root, mut ui, mut m) = setup("", Policy::Accept);
+    for _ in 0..140 {
+        edit(&mut ui, &mut r, &mut m, TextInputEvent::Paste("x".into()));
+    }
+    for _ in 0..128 {
+        assert!(edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo));
+    }
+    assert!(!edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo));
+    assert_eq!(value(&mut r, &root).len(), 12);
+    let big = "x".repeat(1_048_577);
+    r.update(|cx| root.update(cx, |s, _| s.value = big.clone()));
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::SelectAll);
+    edit(
+        &mut ui,
+        &mut r,
+        &mut m,
+        TextInputEvent::Paste("small".into()),
+    );
+    assert_eq!(value(&mut r, &root), "small");
+    assert!(!info(&ui).can_undo);
+}
+#[cfg(feature = "native")]
+#[test]
+fn native_replay_commands_publish_current_availability_and_respect_readonly_and_external_reset() {
+    use crate::standard_commands::{Redo, Undo};
+    let (mut r, root, mut ui, mut m) = setup("", Policy::Accept);
+    let undo = CommandId::of::<Undo>();
+    let redo = CommandId::of::<Redo>();
+    assert!(!ui.native_command_info(undo).unwrap().enabled);
+    insert(&mut ui, &mut r, &mut m, "x");
+    ui.prepare(&mut r, [400.; 2], &mut m).unwrap();
+    assert!(ui.native_command_info(undo).unwrap().enabled);
+    assert!(!ui.native_command_info(redo).unwrap().enabled);
+    edit(&mut ui, &mut r, &mut m, TextInputEvent::Undo);
+    ui.prepare(&mut r, [400.; 2], &mut m).unwrap();
+    assert!(ui.native_command_info(redo).unwrap().enabled);
+    r.update(|cx| root.update(cx, |s, _| s.read_only = true));
+    ui.prepare(&mut r, [400.; 2], &mut m).unwrap();
+    assert!(!ui.native_command_info(redo).unwrap().enabled);
+    r.update(|cx| {
+        root.update(cx, |s, _| {
+            s.read_only = false;
+            s.value = "external".into();
+        })
+    });
+    ui.prepare(&mut r, [400.; 2], &mut m).unwrap();
+    assert!(
+        !ui.native_command_info(undo).unwrap().enabled
+            && !ui.native_command_info(redo).unwrap().enabled
+    );
+}
 #[test]
 fn successive_edits_follow_live_controlled_values_without_prepare_or_effect_flush() {
     for (policy, initial, edits, expected, proposed) in [

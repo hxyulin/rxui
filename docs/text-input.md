@@ -25,7 +25,7 @@ impl View for Form {
 }
 ```
 
-A value belongs to application state. An input owns selection, composition and
+A value belongs to application state. An input owns selection, composition, bounded history and
 horizontal offset in its retained placement. Compatible keyed identity retains
 that state across description rebuilds/reorders. Sharing an Entity<View> shares
 its fields, while each Ui placement retains its own editing state.
@@ -61,7 +61,10 @@ line breaks and tabs normalize to spaces; other control characters are discarded
 
 Native controls support pointer caret placement/drag selection, Shift-click,
 selection replacement, grapheme backspace/delete, visual Left/Right, Shift extension,
-word navigation, start/end, Select All, copy/cut/paste and Enter submission. Platform
+word navigation/deletion, start/end and line deletion, Select All, copy/cut/paste,
+undo/redo and Enter submission. Double-click selects a Unicode word-boundary segment
+(including punctuation or whitespace); dragging extends by segments. Triple-click
+selects the single line. Shift-click remains ordinary caret extension. Platform
 primary shortcuts use Command on macOS and Control on Windows/Linux. Alt/Option word
 navigation is used on macOS; Control is used on Windows/Linux. Key repeats work for
 text/editing navigation, while submission/button activation does not repeat.
@@ -84,6 +87,40 @@ The native host schedules a 500 ms caret blink through astrelis-winit redraw
 deadlines only while an active input is focused. Input resets the blink. It uses
 no background task or periodic application polling for this purpose. Known surface
 unavailability is still handled by the runner's deadline/availability policy.
+
+## Undo and redo
+
+`TextInputEvent::Undo` and `Redo` go through the same synchronous `on_change`
+proposal path. They restore value and directional selection when accepted;
+rejection preserves both stacks and the prior selection. Ordinary normalized edits
+record the application's actual answer. If an application normalizes a replay to a
+different value, that answer is accepted and the incompatible history is cleared.
+Preedit creates no history; an IME commit is one separate transaction. Replay is
+unavailable during composition, for disabled/read-only inputs, or without on_change.
+
+History belongs to the input placement and survives compatible keyed rebuilds.
+An external controlled replacement clears it, including edits made by another
+window sharing the same value. Applications with a shared document history can
+override `standard_commands::Undo` / `Redo` in the existing command scopes.
+This field history is not a document or cross-window history service.
+
+Adjacent single-grapheme, non-whitespace `Insert` events coalesce. Consecutive
+ordinary backspace/delete events also coalesce. Navigation, pointer selection,
+focus/activation changes, composition and a different operation break the group.
+`Paste` and `Commit` are separate transactions; custom hosts should distinguish
+clipboard insertion from keyboard Insert. Grouping is deterministic, with no
+clock-based timeout. History retains at most 128 snapshots and 1 MiB of UTF-8
+across both stacks. Old/oversized snapshots are discarded without rejecting edits;
+the current application value is not restricted by that history budget.
+
+Native shortcuts use Command-Z / Command-Shift-Z on macOS and Control-Z /
+Control-Y (also Control-Shift-Z) on Windows/Linux. Option-backspace/delete uses
+word deletion on macOS; Control-backspace/delete does so elsewhere. Command-
+backspace/delete deletes to the start/end on macOS. Undo/Redo native menu entries
+publish current availability and support scoped application overrides.
+
+`Ui::text_input_info(id)` exposes selection/composition and `can_undo`/`can_redo`
+without prepared geometry. It reflects the last reconciled controlled state.
 
 ## IME lifecycle
 
@@ -119,7 +156,9 @@ Custom hosts call Ui::text_input with TextInputEvent and a TextMeasure adapter;
 geometry queries are optional in a headless adapter. Without them, movement uses
 logical grapheme order and pointer caret placement falls back to the value end.
 UiPainter supplies the real shaped geometry. Use pointer_with_text for shaped
-caret placement, set_active for native focus changes, set_caret_visible for blink,
+caret placement, or pointer_with_text_clicks with a host-supplied click count for
+word/line selection. The native host uses a 500 ms / four-logical-pixel threshold
+and requires the same target; dragging or deactivation resets the click sequence. Use set_active for native focus changes, set_caret_visible for blink,
 selected_text for clipboard operations, and ime_cursor_area/ime_reset_revision for
 platform IME integration. After external changes, prepare before geometry-based
 input or clipboard inspection. Layout and GPU preparation remain separate.
@@ -138,9 +177,8 @@ external shared changes and disabled/read-only behavior. The GPU test exercises
 mixed bidi text and combining preedit, checks stable shaped-layout identity and
 interaction storage, unchanged glyph geometry/uploads, and real draw validation.
 
-This is an initial single-line control. Undo/redo history, multiline editing,
-double/triple-click word/line selection, word deletion shortcuts, password masking,
-placeholder text, and advanced editing commands remain future work. Accessible
+Multiline editing, password masking, placeholder text, and advanced document
+editing commands remain future work. Accessible
 labels and the initial AccessKit tree are implemented: assistive SetValue follows
 the same controlled proposal path, while selection requests validate the published
 text revision and grapheme boundaries. See [the semantics contract](semantics.md).
