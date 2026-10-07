@@ -26,6 +26,11 @@ creation. `is_closed()` reports closing/removed state; `native_window()` returns
 an Arc only after creation and before closing. RXUI clears its native Arc on removal.
 An explicitly cloned native Arc follows winit ownership rules.
 
+With `native-dialogs`, an open native dialog delays physical parent destruction
+after a decided close, and delays decided app exit until the dialog responds.
+Delivery is suppressed for a closing parent. See [native services](native-services.md)
+for cancellation, parent ownership, clipboard and desktop launch contracts.
+
 Each managed window owns a distinct Ui placement. Sharing an Entity<View> shares
 its fields and any Task stored there, while focus, capture, hover and scroll belong
 to the individual placement. Removing one window releases that placement and its

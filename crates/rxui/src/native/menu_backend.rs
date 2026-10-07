@@ -31,6 +31,12 @@ fn literal(text: &str) -> String {
     text.replace('&', "&&")
 }
 struct Item {
+    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    parent: Submenu,
+    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    position: usize,
+    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    native_edit: Option<PredefinedMenuItem>,
     native: MenuItem,
     command: CommandId,
     fallback: String,
@@ -58,8 +64,16 @@ impl Backend {
             match entry {
                 Entry::Command(command, fallback) => {
                     let native = MenuItem::new(literal(fallback), false, None);
+                    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                    let position = menu.items().len();
                     menu.append(&native).map_err(native_error)?;
                     self.items.push(Item {
+                        #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                        parent: menu.clone(),
+                        #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                        position,
+                        #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                        native_edit: None,
                         native,
                         command: *command,
                         fallback: fallback.clone(),
@@ -137,6 +151,38 @@ impl Backend {
                         .map_err(native_error)?;
                 }
                 item.current = Some(next);
+            }
+        }
+        Ok(())
+    }
+    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    fn native_editing(&mut self, active: bool) -> Result<(), ApplicationError> {
+        use crate::standard_commands::*;
+        for item in &mut self.items {
+            if active && item.native_edit.is_none() {
+                let native = if item.command == CommandId::of::<Copy>() {
+                    Some(PredefinedMenuItem::copy(None))
+                } else if item.command == CommandId::of::<Cut>() {
+                    Some(PredefinedMenuItem::cut(None))
+                } else if item.command == CommandId::of::<Paste>() {
+                    Some(PredefinedMenuItem::paste(None))
+                } else if item.command == CommandId::of::<SelectAll>() {
+                    Some(PredefinedMenuItem::select_all(None))
+                } else {
+                    None
+                };
+                if let Some(native) = native {
+                    item.parent.remove(&item.native).map_err(native_error)?;
+                    item.parent
+                        .insert(&native, item.position)
+                        .map_err(native_error)?;
+                    item.native_edit = Some(native);
+                }
+            } else if !active && let Some(native) = item.native_edit.take() {
+                item.parent.remove(&native).map_err(native_error)?;
+                item.parent
+                    .insert(&item.native, item.position)
+                    .map_err(native_error)?;
             }
         }
         Ok(())
@@ -267,6 +313,13 @@ impl Menus {
             && let Some((_, backend)) = self.windows.borrow_mut().get_mut(&id)
         {
             backend.update(query, winner)?;
+        }
+        Ok(())
+    }
+    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    pub(super) fn native_editing(&mut self, active: bool) -> Result<(), ApplicationError> {
+        if let Some(backend) = &mut self.backend {
+            backend.native_editing(active)?;
         }
         Ok(())
     }

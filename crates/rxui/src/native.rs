@@ -3,11 +3,20 @@ use crate::{
     ReadContext, Runtime, SemanticAction, SpawnError, TaskExecutor, TextInputEvent, TextMeasure,
     TextMovement, Theme, ThreadPoolExecutor, Ui, UiError, UiPainter, View,
 };
+#[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+mod dialogs;
 #[cfg(all(
     feature = "native-menus",
     any(target_os = "macos", target_os = "windows")
 ))]
 mod menu_backend;
+#[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+pub use dialogs::{
+    DialogError, DialogResult, DialogTask, FileDialog, MessageButtons, MessageDialog, MessageLevel,
+    MessageResponse,
+};
+#[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
+mod desktop;
 use crate::{CommandId, CommandInfo, CommandStatus};
 use astrelis::{Frame, GraphicsContext, wgpu};
 use astrelis_winit::{
@@ -20,6 +29,8 @@ use astrelis_winit::{
         window::{Window, WindowAttributes, WindowId as NativeWindowId},
     },
 };
+#[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
+pub use desktop::{DesktopError, DesktopResult};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
@@ -41,6 +52,15 @@ pub enum ApplicationError {
     InvalidWindowOptions,
     /// Requested window has already closed.
     ClosedWindow,
+    /// A dialog requires an explicit managed parent when no source window exists.
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    NoSourceWindow,
+    /// This parent already owns a pending/open native dialog.
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    DialogBusy,
+    /// Dialog text/filter options contain invalid native values.
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    InvalidDialogOptions,
     /// UI state/layout/painting failed.
     Ui(UiError),
     /// Deferred effects exceeded their callback budget.
@@ -56,6 +76,12 @@ impl fmt::Display for ApplicationError {
             Self::NoHost => f.write_str("RXUI runtime has no native application host"),
             Self::Exited => f.write_str("RXUI application has exited"),
             Self::InvalidWindowOptions => f.write_str("invalid RXUI window options"),
+            #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+            Self::NoSourceWindow => f.write_str("a native dialog requires a managed parent window"),
+            #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+            Self::DialogBusy => f.write_str("this window already owns a native dialog"),
+            #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+            Self::InvalidDialogOptions => f.write_str("invalid native dialog options"),
             Self::ClosedWindow => f.write_str("RXUI window has closed"),
             Self::Ui(e) => e.fmt(f),
             Self::Effects(e) => e.fmt(f),
@@ -492,6 +518,8 @@ impl<T: View> HostedUi for Ui<T> {
 }
 type Factory = dyn FnOnce(&mut Runtime) -> Result<Box<dyn HostedUi>, UiError>;
 enum Command {
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    Dialog(u64),
     Open {
         life: Rc<Life>,
         options: Box<WindowOptions>,
@@ -505,6 +533,9 @@ enum Command {
     Exit,
 }
 pub(crate) struct Commands {
+    clipboard: RefCell<Option<arboard::Clipboard>>,
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    dialogs: RefCell<dialogs::State>,
     runtime: u64,
     next: Cell<u64>,
     queue: RefCell<VecDeque<Command>>,
@@ -533,6 +564,9 @@ impl Commands {
     fn new(runtime: u64) -> Self {
         Self {
             runtime,
+            clipboard: RefCell::new(None),
+            #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+            dialogs: RefCell::new(dialogs::State::default()),
             next: Cell::new(1),
             queue: RefCell::new(VecDeque::new()),
             lives: RefCell::new(HashMap::new()),
@@ -540,6 +574,12 @@ impl Commands {
             mounts: RefCell::new(HashMap::new()),
             theme: RefCell::new(Theme::default()),
         }
+    }
+    fn read_clipboard(&self) -> Result<String, arboard::Error> {
+        clipboard(&mut self.clipboard.borrow_mut()).and_then(|c| c.get_text())
+    }
+    fn write_clipboard(&self, text: String) -> Result<(), arboard::Error> {
+        clipboard(&mut self.clipboard.borrow_mut()).and_then(|c| c.set_text(text))
     }
     fn check(&self) -> Result<(), ApplicationError> {
         if self.exited.get() {
@@ -678,6 +718,23 @@ impl AppContext<'_> {
                 .push_back(Command::Theme(window.id()));
         }
         Ok(())
+    }
+    /// Reads system clipboard text using the host's persistent clipboard owner.
+    /// Empty/non-text content and platform failures are returned as native errors.
+    pub fn read_clipboard_text(&self) -> Result<String, ApplicationError> {
+        let commands = self.native_commands()?;
+        let result = commands.read_clipboard();
+        result.map_err(|e| ApplicationError::Native(Box::new(e)))
+    }
+    /// Replaces system clipboard text. The host retains clipboard ownership until
+    /// shutdown, including on platforms that require the owner to remain alive.
+    pub fn write_clipboard_text(
+        &mut self,
+        text: impl Into<String>,
+    ) -> Result<(), ApplicationError> {
+        let commands = self.native_commands()?;
+        let result = commands.write_clipboard(text.into());
+        result.map_err(|e| ApplicationError::Native(Box::new(e)))
     }
     /// Requests close, idempotently while already closing. No acquisition follows a
     /// queued close; shared entities/jobs survive if other strong owners remain.
@@ -1019,7 +1076,6 @@ impl Application {
             ))]
             menus,
             exiting: self.exiting,
-            clipboard: None,
             accessibility_enabled: self.accessibility,
         };
         runner
@@ -1028,6 +1084,8 @@ impl Application {
     }
 }
 enum Wake {
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    Dialog(dialogs::Packet),
     #[cfg(all(
         feature = "native-menus",
         any(target_os = "macos", target_os = "windows")
@@ -1080,7 +1138,6 @@ struct Host<F> {
     close: Option<Box<CloseHook>>,
     quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
-    clipboard: Option<arboard::Clipboard>,
     accessibility_enabled: bool,
 }
 impl<F> Drop for Host<F> {
@@ -1133,7 +1190,7 @@ impl<F> Host<F> {
             let mut changed = false;
             if command == CommandId::of::<Copy>() || command == CommandId::of::<Cut>() {
                 if let Some(text) = ui.selected_text() {
-                    match clipboard(&mut self.clipboard).and_then(|c| c.set_text(text)) {
+                    match self.commands.write_clipboard(text) {
                         Ok(()) if command == CommandId::of::<Cut>() => {
                             changed = ui.command_text_input(
                                 &mut self.runtime,
@@ -1146,7 +1203,7 @@ impl<F> Host<F> {
                     }
                 }
             } else if command == CommandId::of::<Paste>() {
-                match clipboard(&mut self.clipboard).and_then(|c| c.get_text()) {
+                match self.commands.read_clipboard() {
                     Ok(text) => {
                         changed = ui.command_text_input(
                             &mut self.runtime,
@@ -1206,6 +1263,18 @@ impl<F> Host<F> {
         let Some(menus) = &mut self.menus else {
             return Ok(());
         };
+        #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+        // Cocoa sheets may leave their parent's winit focus flag set. Route
+        // editing to Cocoa while that parent's dialog is open; switching to a
+        // different managed window restores its RXUI command handlers.
+        menus.native_editing({
+            let dialogs = self.commands.dialogs.borrow();
+            dialogs.running()
+                && self
+                    .focused_window
+                    .and_then(|id| self.windows.get(&id))
+                    .is_none_or(|window| dialogs.busy(window.life.id))
+        })?;
         #[cfg(target_os = "macos")]
         let ids = vec![self.focused_window];
         #[cfg(target_os = "windows")]
@@ -1351,6 +1420,11 @@ impl<F> Host<F> {
             self.runtime.poll_tasks();
             self.runtime.flush()?;
         }
+        #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+        self.commands
+            .dialogs
+            .borrow_mut()
+            .prune(&self.runtime.inner, self.commands.exited.get());
         let mut pending = std::mem::take(&mut *self.commands.queue.borrow_mut());
         let mut deferred = VecDeque::new();
         let mut request_budget = 1024;
@@ -1365,6 +1439,12 @@ impl<F> Host<F> {
                     request_budget -= 1;
                 }
                 match command {
+                    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+                    Command::Dialog(id) => {
+                        if !self.active || !self.start_dialog(cx, id)? {
+                            deferred.push_back(Command::Dialog(id));
+                        }
+                    }
                     Command::Open {
                         life,
                         options,
@@ -1409,6 +1489,11 @@ impl<F> Host<F> {
                         );
                     }
                     Command::Close(id) => {
+                        #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+                        if self.commands.dialogs.borrow().busy(id) {
+                            deferred.push_back(Command::Close(id));
+                            continue;
+                        }
                         if let Some(native) = self
                             .windows
                             .iter()
@@ -1433,6 +1518,14 @@ impl<F> Host<F> {
                                 });
                             if response == astrelis_winit::CloseResponse::Close {
                                 handle.life.closing.set(true);
+                                #[cfg(all(
+                                    feature = "native-dialogs",
+                                    not(target_arch = "wasm32")
+                                ))]
+                                if self.commands.dialogs.borrow().busy(id) {
+                                    deferred.push_back(Command::Close(id));
+                                    continue;
+                                }
                                 if let Some(native) = self
                                     .windows
                                     .iter()
@@ -1454,6 +1547,11 @@ impl<F> Host<F> {
                             });
                         if response == astrelis_winit::CloseResponse::Close {
                             self.commands.exited.set(true);
+                            #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+                            if self.commands.dialogs.borrow().running() {
+                                deferred.push_back(Command::Exit);
+                                continue;
+                            }
                             cx.exit();
                             break;
                         }
@@ -1487,6 +1585,11 @@ impl<F> Host<F> {
                         }
                     }
                     Command::Exit => {
+                        #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+                        if self.commands.dialogs.borrow().running() {
+                            deferred.push_back(Command::Exit);
+                            continue;
+                        }
                         cx.exit();
                         self.commands.exited.set(true);
                         break;
@@ -1614,6 +1717,9 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         id: NativeWindowId,
         event: WindowEvent,
     ) -> Result<(), Self::Error> {
+        if self.commands.exited.get() {
+            return self.progress(cx, None);
+        }
         if let Some(window) = self.windows.get_mut(&id)
             && let Some(adapter) = &mut window.accessibility
             && let Some(native) = window.life.native.borrow().as_ref()
@@ -1876,11 +1982,19 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         event: Wake,
     ) -> Result<(), Self::Error> {
         match event {
+            #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+            Wake::Dialog(packet) => {
+                self.finish_dialog(packet);
+                self.progress(cx, None)
+            }
             #[cfg(all(
                 feature = "native-menus",
                 any(target_os = "macos", target_os = "windows")
             ))]
             Wake::Menu(event) => {
+                if self.commands.exited.get() {
+                    return self.progress(cx, None);
+                }
                 // Complete outstanding updates before resolving the identity again.
                 self.progress(cx, None)?;
                 if let Some((window, command)) = self
@@ -1966,6 +2080,18 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         } else {
             astrelis_winit::CloseResponse::Close
         };
+        #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+        if response == astrelis_winit::CloseResponse::Close
+            && self.commands.dialogs.borrow().busy(handle.id())
+        {
+            handle.life.closing.set(true);
+            self.commands
+                .queue
+                .borrow_mut()
+                .push_back(Command::Close(handle.id()));
+            self.progress(cx, None)?;
+            return Ok(astrelis_winit::CloseResponse::KeepOpen);
+        }
         self.progress(cx, None)?;
         Ok(response)
     }
@@ -2002,7 +2128,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             return Ok(PrepareAction::Skip);
         };
         let window = self.windows.get_mut(&id).unwrap();
-        if window.life.closing.get() {
+        if window.life.closing.get() || self.commands.exited.get() {
             return Ok(PrepareAction::Skip);
         }
         if window.ui.as_ref().unwrap().has_text_focus() && Instant::now() >= window.blink_at {
@@ -2093,6 +2219,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     }
     fn exiting(&mut self, _: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
         self.commands.exited.set(true);
+        #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+        self.commands.dialogs.borrow_mut().abandon();
         if let Some(hook) = self.exiting.take() {
             self.runtime.update(hook);
             self.runtime.flush()?;

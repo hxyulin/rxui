@@ -21,6 +21,9 @@
 //! application-owned values. The optional
 //! tasks feature delivers owned background results in fresh UI updates; native
 //! adds Application hosting over astrelis-winit with lazy AccessKit publication.
+//! Optional native-dialogs adds parent-bound file pickers and message dialogs;
+//! desktop-services adds asynchronous URL/file launches and file-manager reveal.
+//! Native clipboard text access shares the host's persistent clipboard owner.
 //! Portable semantics are part of layout; the optional accessibility feature adds
 //! AccessKit translation for custom hosts. Multiline/undo editing and virtualization
 //! remain following milestones.
@@ -239,6 +242,15 @@ pub use ui::{
     Ui, UiError, UiStats,
 };
 
+#[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+pub use native::{
+    DialogError, DialogResult, DialogTask, FileDialog, MessageButtons, MessageDialog, MessageLevel,
+    MessageResponse,
+};
+
+#[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
+pub use native::{DesktopError, DesktopResult};
+
 /// Common declarative application imports.
 #[cfg(feature = "layout")]
 pub mod prelude {
@@ -260,6 +272,13 @@ pub mod prelude {
         PaintStyle, PointerButton, PointerButtons, PointerCancelReason, PointerEvents,
         PointerInput, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor,
         Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+    };
+    #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
+    pub use crate::{DesktopError, DesktopResult};
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    pub use crate::{
+        DialogError, DialogResult, DialogTask, FileDialog, MessageButtons, MessageDialog,
+        MessageLevel, MessageResponse,
     };
     pub use crate::{
         Dock, DockContextEvent, DockDragInfo, DockDropPreview, DockDropTarget, DockError,
