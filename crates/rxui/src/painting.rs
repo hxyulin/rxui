@@ -101,6 +101,9 @@ pub struct UiPainter {
     image_bindings: HashMap<ImageKey, astrelis::TextureBinding>,
     image_placements: HashMap<ElementId, ImageKey>,
     image_stats: ImageStats,
+    layers: HashMap<ElementId, composition::LayerResource>,
+    compositions: HashMap<u64, Arc<composition::CompositionPlan>>,
+    layer_stats: LayerStats,
 }
 impl UiPainter {
     /// Creates empty fonts and renderer caches for this graphics device.
@@ -115,6 +118,9 @@ impl UiPainter {
             image_bindings: HashMap::new(),
             image_placements: HashMap::new(),
             image_stats: ImageStats::default(),
+            layers: HashMap::new(),
+            compositions: HashMap::new(),
+            layer_stats: LayerStats::default(),
         }
     }
     /// Cumulative image upload/binding counters.
@@ -141,6 +147,8 @@ impl UiPainter {
     /// Prepares pipelines and changed text resources for this layout/device/DPI.
     /// Placement, color, hover and focus changes retain existing prepared text.
     /// A changed layout or raster density prepares a replacement explicitly.
+    /// Also prepares cropped opacity layers for this destination format/scale.
+    /// Layer storage is reused; contents are recorded by [`Self::compose`].
     pub fn prepare<T: View>(
         &mut self,
         ui: &Ui<T>,
@@ -205,6 +213,7 @@ impl UiPainter {
             resource.prepared_revision = element.text_revision;
             resource.font_generation = self.generation;
         }
+        self.prepare_composition(ui, format, raster_scale)?;
         Ok(())
     }
     fn prepare_images<T: View>(
@@ -303,17 +312,24 @@ impl UiPainter {
     }
     /// Draws the prepared snapshot into an existing pass using one logical-to-physical
     /// transform. The host supplies clipping and controls submission/presentation.
+    /// Returns [`UiError::CompositionRequired`] for opacity below one; use
+    /// [`Self::compose`] to record isolated groups before opening the destination pass.
     pub fn paint<T: View>(
         &mut self,
         ui: &Ui<T>,
         pass: &mut RenderPass<'_>,
         scale: f32,
     ) -> Result<(), UiError> {
+        if ui.needs_composition() {
+            return Err(UiError::CompositionRequired);
+        }
+        self.validate_resources(ui, scale)?;
+        self.paint_scope(ui, pass, scale, composition::PaintScope::default())
+    }
+    fn validate_resources<T: View>(&self, ui: &Ui<T>, scale: f32) -> Result<(), UiError> {
         if !ui.is_prepared() || !scale.is_finite() || scale <= 0. {
             return Err(UiError::InvalidGeometry);
         }
-        // Validate the complete snapshot before recording any draws. A caller that
-        // changed layout/text must prepare its matching resources first.
         for element in ui.elements() {
             if let Some(image) = &element.image {
                 let key = image_key(image);
@@ -340,16 +356,62 @@ impl UiPainter {
                 }
             }
         }
+        Ok(())
+    }
+    fn paint_scope<T: View>(
+        &mut self,
+        ui: &Ui<T>,
+        pass: &mut RenderPass<'_>,
+        scale: f32,
+        scope: composition::PaintScope<'_>,
+    ) -> Result<(), UiError> {
+        let composition::PaintScope { shift, plan, group } = scope;
         let original_scissor = pass.scissor_rect();
         let viewport = pass.viewport();
         let result = (|| -> Result<(), UiError> {
             let mut paint = self.painter.begin(pass)?;
-            let mut paint = paint.transformed(Transform2D::scale(scale, scale))?;
-            for element in ui.elements() {
+            let mut paint = paint.transformed(
+                Transform2D::scale(scale, scale).then(Transform2D::translation(shift[0], shift[1])),
+            )?;
+            let mut elements = composition::PaintCursor::new(ui, plan, group);
+            while let Some((element, isolated)) = elements.next(ui) {
+                if let Some(layer) = isolated {
+                    if let Some(bounds) = layer.bounds {
+                        let destination = Bounds {
+                            x: bounds[0] as f32 / scale,
+                            y: bounds[1] as f32 / scale,
+                            width: bounds[2] as f32 / scale,
+                            height: bounds[3] as f32 / scale,
+                        };
+                        let clip = physical_clip(
+                            destination,
+                            scale,
+                            [viewport[0] + shift[0], viewport[1] + shift[1]],
+                            original_scissor,
+                        );
+                        if clip[2] > 0 && clip[3] > 0 {
+                            paint
+                                .pass()
+                                .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
+                            paint.draw_image(
+                                layer.binding.as_ref().ok_or(UiError::InvalidGeometry)?,
+                                astrelis::TextureDraw::new(Rect::new(
+                                    destination.x,
+                                    destination.y,
+                                    destination.width,
+                                    destination.height,
+                                ))
+                                .tint([1., 1., 1., layer.opacity]),
+                            )?;
+                            self.layer_stats.composites += 1;
+                        }
+                    }
+                    continue;
+                }
                 let clip = physical_clip(
                     element.clip_bounds,
                     scale,
-                    [viewport[0], viewport[1]],
+                    [viewport[0] + shift[0], viewport[1] + shift[1]],
                     original_scissor,
                 );
                 if clip[2] == 0 || clip[3] == 0 {
@@ -416,7 +478,7 @@ impl UiPainter {
                     let image_clip = physical_clip(
                         element.clip_bounds.intersection(element.content_bounds),
                         scale,
-                        [viewport[0], viewport[1]],
+                        [viewport[0] + shift[0], viewport[1] + shift[1]],
                         original_scissor,
                     );
                     if image_clip[2] > 0 && image_clip[3] > 0 {
@@ -446,7 +508,7 @@ impl UiPainter {
                     let content_clip = physical_clip(
                         element.clip_bounds.intersection(element.content_bounds),
                         scale,
-                        [viewport[0], viewport[1]],
+                        [viewport[0] + shift[0], viewport[1] + shift[1]],
                         original_scissor,
                     );
                     if content_clip[2] == 0 || content_clip[3] == 0 {
@@ -491,6 +553,10 @@ impl UiPainter {
                         .ok_or(UiError::InvalidGeometry)?;
                     let prepared = resource.prepared.as_ref().ok_or(UiError::InvalidGeometry)?;
                     let color = appearance.color;
+                    // Native Metal can drop later retained glyph draws when cached
+                    // pass bindings survive mixed-renderer/opacity transitions.
+                    // Reapply text state; retain shaping, atlas and geometry caches.
+                    let _ = paint.pass().as_wgpu();
                     paint.draw_text(
                         prepared,
                         TextDraw::new([
@@ -530,7 +596,7 @@ impl UiPainter {
                                     .intersection(element.clip_bounds)
                                     .intersection(element.content_bounds),
                                 scale,
-                                [viewport[0], viewport[1]],
+                                [viewport[0] + shift[0], viewport[1] + shift[1]],
                                 original_scissor,
                             );
                             if selected_clip[2] > 0 && selected_clip[3] > 0 {
@@ -549,7 +615,7 @@ impl UiPainter {
                         let content_clip = physical_clip(
                             element.clip_bounds.intersection(element.content_bounds),
                             scale,
-                            [viewport[0], viewport[1]],
+                            [viewport[0] + shift[0], viewport[1] + shift[1]],
                             original_scissor,
                         );
                         paint.pass().set_scissor_rect(
@@ -623,12 +689,14 @@ impl UiPainter {
         )?;
         result
     }
-    /// Releases this placement's cached text without disturbing other windows using
+    /// Releases this placement's cached text, images and layers without disturbing other windows using
     /// the same painter. Previously recorded resources retain GPU completion leases.
     pub fn forget<T: View>(&mut self, ui: &Ui<T>) {
         self.texts.retain(|id, _| !ui.owns_element(*id));
         self.image_placements.retain(|id, _| !ui.owns_element(*id));
         self.prune_images();
+        self.layers.retain(|id, _| !ui.owns_element(*id));
+        self.compositions.remove(&ui.tree_id());
     }
 }
 fn ast_position(p: crate::TextPosition) -> astrelis::TextPosition {
@@ -1215,3 +1283,11 @@ mod image_gpu_tests;
 #[cfg(test)]
 #[path = "layout_gpu_tests.rs"]
 mod layout_gpu_tests;
+
+#[path = "compositing.rs"]
+mod composition;
+pub use composition::{ComposedUi, LayerStats};
+
+#[cfg(test)]
+#[path = "compositing_gpu_tests.rs"]
+mod compositing_gpu_tests;

@@ -85,7 +85,9 @@ retry pacing and presentation remain Astrelis responsibilities.
 The host opens its own clear-color UI pass. Applications requiring custom 2D/3D
 passes or complete input/platform control can use the explicit
 [custom host example](../crates/rxui/examples/counter_custom_host.rs): route events,
-call Ui::prepare, prepare UiPainter resources, then paint into a caller-owned pass.
+call Ui::prepare, prepare UiPainter resources, then use UiPainter::compose to
+record any opacity layers and paint into a caller-owned pass. Native hosting does
+this automatically after application graphics hooks. See [group opacity](compositing.md).
 UiPainter preserves the caller's scissor and supports multiple placements; call
 `forget(&ui)` when removing a placement from a shared painter.
 

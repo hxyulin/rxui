@@ -39,6 +39,11 @@ pub enum UiError {
     InvalidGeometry,
     /// Application supplied a single-line input value containing control characters.
     InvalidTextValue,
+    /// Opacity is non-finite or outside 0..=1.
+    InvalidOpacity,
+    /// Group opacity requires the scoped frame composition API.
+    #[cfg(feature = "rendering")]
+    CompositionRequired,
     /// Host text measurement failed.
     Measurement(Box<dyn Error>),
     /// Internal Taffy operation failed.
@@ -88,6 +93,9 @@ impl fmt::Display for UiError {
             Self::LeafChildren => f.write_str(
                 "leaf elements cannot contain children; compose button content with a container",
             ),
+            Self::InvalidOpacity => f.write_str("opacity must be finite and within 0..=1"),
+            #[cfg(feature = "rendering")]
+            Self::CompositionRequired => f.write_str("group opacity requires UiPainter::compose"),
             Self::InvalidGeometry => f.write_str("invalid RXUI viewport or input geometry"),
         }
     }
@@ -242,6 +250,10 @@ pub enum ElementType {
 pub struct ElementInfo<'a> {
     /// Stable identity.
     pub id: ElementId,
+    /// Description-tree parent, independent of sibling paint order.
+    pub parent: Option<ElementId>,
+    /// Local group opacity, applied once to this complete painted subtree.
+    pub opacity: f32,
     /// Explicit sibling key, if provided.
     pub key: Option<&'a Key>,
     /// Element kind.
@@ -450,6 +462,7 @@ pub struct Ui<T: View> {
     nodes: HashMap<ElementId, Node>,
     order: Vec<ElementId>,
     paint_order: Option<Vec<ElementId>>,
+    opacity_count: usize,
     taffy: TaffyTree<ElementId>,
     viewport: Option<[f32; 2]>,
     measurement_generation: u64,
@@ -486,6 +499,7 @@ impl<T: View> Ui<T> {
             nodes: HashMap::new(),
             order: Vec::new(),
             paint_order: None,
+            opacity_count: 0,
             taffy,
             viewport: None,
             measurement_generation: 0,
@@ -525,6 +539,26 @@ impl<T: View> Ui<T> {
             self.style_roots.insert(root);
         }
         Ok(true)
+    }
+    /// Whether retained descriptions contain opacity below one (including hidden nodes).
+    /// Custom GPU hosts use compose when this is true; CPU/custom painters can inspect
+    /// ElementInfo.opacity and parent to implement their own subtree composition.
+    pub fn needs_composition(&self) -> bool {
+        self.opacity_count != 0
+    }
+    #[cfg(feature = "rendering")]
+    pub(crate) fn tree_id(&self) -> u64 {
+        self.tree
+    }
+    #[cfg(feature = "rendering")]
+    pub(crate) fn composition_key(&self) -> [u64; 5] {
+        [
+            self.stats.component_evaluations,
+            self.stats.layout_passes,
+            self.stats.style_resolutions,
+            self.geometry_revision,
+            self.measurement_generation,
+        ]
     }
     /// Root's persistent state, retained by this UI placement.
     pub fn entity(&self) -> &Entity<T> {
@@ -912,6 +946,8 @@ impl<T: View> Ui<T> {
             {
                 self.composed_buttons.push(id);
             }
+            self.opacity_count += usize::from(element.opacity < 1.);
+            self.opacity_count -= usize::from(node.element.opacity < 1.);
             node.element = element;
             self.stats.reused_nodes += 1;
             id
@@ -954,6 +990,7 @@ impl<T: View> Ui<T> {
                 self.image_nodes.push(id);
             }
             self.style_roots.insert(id);
+            self.opacity_count += usize::from(element.opacity < 1.);
             self.nodes.insert(
                 id,
                 Node {
@@ -1316,6 +1353,7 @@ impl<T: View> Ui<T> {
     }
     fn remove(&mut self, id: ElementId) -> Result<(), UiError> {
         let node = self.nodes.remove(&id).unwrap();
+        self.opacity_count -= usize::from(node.element.opacity < 1.);
         for child in node.children {
             self.remove(child)?;
         }
@@ -1437,6 +1475,10 @@ impl<T: View> Ui<T> {
         for child in children {
             self.collect_paint_order(child, order);
         }
+    }
+    #[cfg(feature = "rendering")]
+    pub(crate) fn painting_ids(&self) -> &[ElementId] {
+        self.painting_order()
     }
     fn painting_order(&self) -> &[ElementId] {
         self.paint_order.as_deref().unwrap_or(&self.order)
@@ -1566,6 +1608,8 @@ impl<T: View> Ui<T> {
         }
         Some(ElementInfo {
             id,
+            parent: node.parent,
+            opacity: node.element.opacity,
             key: node.element.key.as_ref(),
             kind: kind(&node.element),
             bounds: node.bounds,

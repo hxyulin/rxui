@@ -3,7 +3,7 @@ use crate::{
     ReadContext, Runtime, SemanticAction, SpawnError, TaskExecutor, TextInputEvent, TextMeasure,
     TextMovement, Theme, ThreadPoolExecutor, Ui, UiError, UiPainter, View,
 };
-use astrelis::{Frame, GraphicsContext, RenderPass, wgpu};
+use astrelis::{Frame, GraphicsContext, wgpu};
 use astrelis_winit::{
     AppContext as NativeContext, Handler, PrepareAction, Runner, RunnerOptions, SurfaceSettings,
     WindowInfo, WindowMetrics,
@@ -252,11 +252,12 @@ trait HostedUi {
         painter: &mut UiPainter,
         format: &astrelis::RenderFormat,
     ) -> Result<(), UiError>;
-    fn paint(
+    fn compose(
         &self,
         painter: &mut UiPainter,
-        pass: &mut RenderPass<'_>,
+        frame: &mut Frame<'_, 'static>,
         scale: f32,
+        clear: wgpu::Color,
     ) -> Result<(), UiError>;
     fn prepare_input(
         &mut self,
@@ -323,13 +324,17 @@ impl<T: View> HostedUi for Ui<T> {
         self.prepare(runtime, [size.width as f32, size.height as f32], painter)?;
         painter.prepare(self, format, metrics.scale_factor() as f32)
     }
-    fn paint(
+    fn compose(
         &self,
         painter: &mut UiPainter,
-        pass: &mut RenderPass<'_>,
+        frame: &mut Frame<'_, 'static>,
         scale: f32,
+        clear: wgpu::Color,
     ) -> Result<(), UiError> {
-        painter.paint(self, pass, scale)
+        painter.compose(self, frame, scale, |frame, ui| {
+            let mut pass = frame.render_pass().clear_color(clear).begin()?;
+            ui.paint(&mut pass)
+        })
     }
     fn prepare_input(
         &mut self,
@@ -1582,20 +1587,16 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         let c = hosted
             .background
             .unwrap_or_else(|| hosted.life.theme.borrow().palette().background);
-        let mut pass = frame
-            .render_pass()
-            .clear_color(wgpu::Color {
+        hosted.ui.as_ref().unwrap().compose(
+            self.painter.as_mut().unwrap(),
+            frame,
+            window.metrics().scale_factor() as f32,
+            wgpu::Color {
                 r: c[0] as f64,
                 g: c[1] as f64,
                 b: c[2] as f64,
                 a: c[3] as f64,
-            })
-            .begin()
-            .map_err(UiError::from)?;
-        hosted.ui.as_ref().unwrap().paint(
-            self.painter.as_mut().unwrap(),
-            &mut pass,
-            window.metrics().scale_factor() as f32,
+            },
         )?;
         Ok(())
     }

@@ -86,3 +86,12 @@ required-features = ["native"]
 name = "layout"
 harness = false
 required-features = ["layout"]
+
+[[example]]
+name = "opacity_window"
+required-features = ["native"]
+
+[[bench]]
+name = "compositing"
+harness = false
+required-features = ["rendering"]

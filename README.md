@@ -295,3 +295,16 @@ removing its layout or painting. See [the layout contract](docs/layout.md).
 ```sh
 cargo run -p rxui --example layout_window --features native --locked
 ```
+
+## Group opacity
+
+`.opacity(0.5)` fades a complete painted subtree once, preserving overlap between
+children. Native windows handle isolated layer passes automatically; custom hosts
+use `UiPainter::compose` and retain frame/pass ownership. Opacity changes keep
+layout/text measurements; values zero and one need no layer pass. See
+[the composition contract](docs/compositing.md) and
+[performance measurements](docs/performance/compositing.md).
+
+```sh
+cargo run -p rxui --example opacity_window --features native --locked
+```

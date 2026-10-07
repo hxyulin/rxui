@@ -460,3 +460,58 @@ fn natural_stack_in_a_column_centers_content_when_cross_axis_stretch_is_disabled
         background.y + background.height / 2.
     );
 }
+
+#[test]
+fn opacity_is_local_paint_state_and_retains_geometry_measurement_and_interaction() {
+    let description = |alpha| {
+        column().key("group").opacity(alpha).child(
+            button(label("Save").opacity(0.5))
+                .key("button")
+                .size(80., 30.),
+        )
+    };
+    let (mut runtime, root, mut ui) = setup(description(0.5));
+    let group = keyed(&ui, "group").id;
+    let control = keyed(&ui, "button").id;
+    assert!(ui.needs_composition());
+    assert_eq!(keyed(&ui, "button").opacity, 1.);
+    assert_eq!(keyed(&ui, "button").parent, Some(group));
+    assert!(
+        ui.elements()
+            .any(|e| e.kind == ElementType::Label && e.opacity == 0.5 && e.parent == Some(control)),
+        "button captions with opacity must retain their child group"
+    );
+    let stats = ui.stats();
+    let bounds = keyed(&ui, "button").bounds;
+    for alpha in [0., 0.75, 1.] {
+        runtime.update(|cx| root.update(cx, |s, _| s.0 = description(alpha)));
+        ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+            .unwrap();
+        assert_eq!(keyed(&ui, "group").id, group);
+        assert_eq!(keyed(&ui, "group").opacity, alpha);
+        assert_eq!(keyed(&ui, "button").bounds, bounds);
+        assert_eq!(ui.stats().layout_passes, stats.layout_passes);
+        assert_eq!(ui.stats().measurements, stats.measurements);
+        assert_eq!(ui.hit_test([5., 5.]), Some(control));
+        assert!(ui.semantics().any(|e| e.id == control));
+    }
+    runtime.update(|cx| root.update(cx, |s, _| s.0 = column()));
+    ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+        .unwrap();
+    assert!(!ui.needs_composition());
+}
+#[test]
+fn invalid_opacity_is_rejected_and_can_be_corrected() {
+    let (mut runtime, root, mut ui) = setup(column());
+    for opacity in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.01, 1.01] {
+        runtime.update(|cx| root.update(cx, |s, _| s.0 = column().opacity(opacity)));
+        assert!(matches!(
+            ui.prepare(&mut runtime, [800., 600.], &mut Measure),
+            Err(UiError::InvalidOpacity)
+        ));
+        runtime.update(|cx| root.update(cx, |s, _| s.0 = column().opacity(0.5)));
+        ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+            .unwrap();
+        assert!(ui.needs_composition());
+    }
+}

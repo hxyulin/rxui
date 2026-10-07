@@ -153,7 +153,7 @@ pub use native::{
     Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
 };
 #[cfg(feature = "rendering")]
-pub use painting::{ImageStats, UiPainter};
+pub use painting::{ComposedUi, ImageStats, LayerStats, UiPainter};
 pub use runtime::{Mount, Runtime, Subscription};
 #[cfg(feature = "layout")]
 pub use semantics::{SemanticAction, SemanticNode, SemanticRole};

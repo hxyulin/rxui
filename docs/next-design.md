@@ -574,4 +574,6 @@ stacks, absolute/relative placement, sibling-scoped z ordering and independent
 description/paint order. Pointer policies and inherited placement-local inertness
 support blocking overlays without disabling separately mounted shared components.
 Contracts/examples are in [layout.md](layout.md). True isolated group opacity is
-the next compositing step; rounded masking and general transforms remain separate.
+implemented through cropped reusable layers and caller-owned frame composition;
+see [compositing.md](compositing.md). Rounded masking, general transforms and
+content/damage caching remain separate work.

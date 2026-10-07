@@ -139,6 +139,7 @@ pub struct Element {
     pub(crate) z_index: i32,
     pub(crate) pointer_events: PointerEvents,
     pub(crate) inert: bool,
+    pub(crate) opacity: f32,
     pub(crate) clip: bool,
     pub(crate) scroll: Option<ScrollAxes>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
@@ -188,6 +189,7 @@ impl Element {
             z_index: 0,
             pointer_events: PointerEvents::Auto,
             inert: false,
+            opacity: 1.,
             clip: false,
             scroll: None,
             semantics: None,
@@ -228,6 +230,16 @@ impl Element {
     pub fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self {
         self.children
             .extend(children.into_iter().map(IntoElement::into_element));
+        self
+    }
+    /// Applies opacity once to this element's complete painted subtree, including its
+    /// background, border, text and descendants. Values must be finite in 0..=1.
+    /// Partial opacity uses an isolated offscreen layer; 1 is the ordinary direct path,
+    /// and 0 skips painting. Layout, hit testing and semantics remain unchanged.
+    /// Native Application handles composition automatically. Custom hosts call
+    /// UiPainter::compose before painting; use inert/PointerEvents to change input.
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
         self
     }
     /// Paint this complete subtree after lower-z siblings. Equal values preserve description order.
@@ -709,6 +721,9 @@ impl Element {
             s.max_size.width.into_raw(),
             s.max_size.height.into_raw(),
         ];
+        if !self.opacity.is_finite() || !(0. ..=1.).contains(&self.opacity) {
+            return Err(UiError::InvalidOpacity);
+        }
         if self.font_size.is_some_and(|v| !v.is_finite() || v <= 0.)
             || sizes.iter().any(|v| !nonnegative(*v))
             || !nonnegative(s.flex_basis.into_raw())
@@ -871,7 +886,8 @@ pub fn button(content: impl IntoElement) -> Element {
         && content.layout_overrides == 0
         && content.z_index == 0
         && content.pointer_events == PointerEvents::Auto
-        && !content.inert;
+        && !content.inert
+        && content.opacity == 1.;
     let (text, children) = if plain {
         let ElementKind::Label(text) = content.kind else {
             unreachable!()

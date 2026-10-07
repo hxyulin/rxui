@@ -324,19 +324,22 @@ impl Handler for App {
         window: WindowInfo<'_>,
         frame: &mut Frame<'_, 'static>,
     ) -> Result<(), Self::Error> {
-        let mut pass = frame
-            .render_pass()
-            .clear_color(wgpu::Color {
-                r: 0.025,
-                g: 0.035,
-                b: 0.055,
-                a: 1.,
-            })
-            .begin()?;
-        self.painter.as_mut().unwrap().paint(
+        self.painter.as_mut().unwrap().compose(
             self.ui.as_ref().unwrap(),
-            &mut pass,
+            frame,
             window.metrics().scale_factor() as f32,
+            |frame, ui| {
+                let mut pass = frame
+                    .render_pass()
+                    .clear_color(wgpu::Color {
+                        r: 0.025,
+                        g: 0.035,
+                        b: 0.055,
+                        a: 1.,
+                    })
+                    .begin()?;
+                ui.paint(&mut pass)
+            },
         )?;
         Ok(())
     }

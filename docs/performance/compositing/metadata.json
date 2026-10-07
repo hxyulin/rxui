@@ -1,0 +1,39 @@
+{
+  "recorded_date": "2026-10-07",
+  "base_commit": "895b023",
+  "state": "uncommitted group-opacity implementation",
+  "os": "macOS 27.0.1 (26A434)",
+  "rust": "1.98.1",
+  "adapter": "Apple M3 Pro, Metal, integrated GPU",
+  "command": "cargo bench -p rxui --bench compositing --features rendering --locked",
+  "profile": "optimized bench",
+  "warmups_per_case": 10,
+  "batches_per_run": 10,
+  "operations_per_batch": 20,
+  "runs": [
+    "run-1.csv",
+    "run-2.csv",
+    "run-3.csv"
+  ],
+  "benchmark_sha256": "4af1c72525cf881aeec7794a3d31f3390e50cd80a809043f2403abf2c4159c83",
+  "astrelis_git_revision": "1f773d4a13057db8e15adc768c1d59cf979e65ed",
+  "notes": [
+    "Warm retained resources; excludes cold allocation and shader compilation.",
+    "Submission/completion is wall time including CPU recording, queue/driver/wait; not GPU timestamps.",
+    "Interactive machine; timers report batch averages, not individual-frame tail latency.",
+    "Solid runs precede broadening the text-state rebind to ordinary painting; their text-free code path is unchanged. Text runs use the final rebind behavior."
+  ],
+  "text_command": "cargo bench -p rxui --bench compositing --features rendering --locked -- --text-only",
+  "text_runs": [
+    "text-run-1.csv",
+    "text-run-2.csv",
+    "text-run-3.csv"
+  ],
+  "source_sha256": {
+    "crates/rxui/src/compositing.rs": "47831c9fc7e2565b9cd47a8dafd21b70d0474592c3f93cbf26331852f2c14589",
+    "crates/rxui/src/painting.rs": "719183d3030f22242b97bf635ae29fd822e78f869de2323cc93280d677bc1c1a",
+    "crates/rxui/src/ui.rs": "840c5c2d6d163bdc11f4668f06219a4d397b9c33b606cacd66ae1d37c6ff863b",
+    "crates/rxui/src/element.rs": "fb9a3313758024b0cdd193d129d0929436bf248a37eea9050c8ffe9abed024b7",
+    "Cargo.lock": "c65903ae424e4a78424140979d626e3a25de748962ab5311921c0b056b1c99bc"
+  }
+}

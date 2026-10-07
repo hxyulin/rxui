@@ -120,20 +120,16 @@ modal controls, not an automatic dialog lifecycle, focus-return or portal system
 Wheel targeting follows paint order and pointer policy; motion may still bubble
 through scroll ancestors of the selected subtree.
 
-## Compositing boundary and next step
+## Compositing boundary
 
-Current compositing covers ordering and ordinary source-over drawing into the
-caller-selected pass. Stack, z order and inertness add no offscreen storage. Images
-and application framebuffers retain their existing explicit preparation/rendering
-contract. Rounded backgrounds do not create rounded descendant masks.
-
-The chosen next rendering step is true group opacity through isolated offscreen
-layers. Applying opacity independently to each draw gives incorrect overlap for
-fading a subtree, so it will require subtree bounds, reusable layer storage and a
-recording stage before painting the final UI pass. The implementation must preserve
-caller-owned Frame/pass control, repaint invalidation, alpha encoding and existing
-text/image resource reuse. Group opacity, rounded masks and general transforms
-are not part of the current layout API.
+Stack, z order and inertness add no offscreen storage. `.opacity(alpha)` now
+provides true subtree opacity through reusable isolated layers when alpha is
+between zero and one. Native hosting records the extra passes automatically;
+custom hosts use `UiPainter::compose` with their own frame and destination pass.
+See [the composition contract](compositing.md) for alpha, bounds, caching and cost.
+Images and application framebuffers retain their explicit preparation/rendering
+contract. Rounded backgrounds do not create rounded descendant masks. General
+subtree transforms and filters are separate future work.
 
 ## Examples and verification
 
