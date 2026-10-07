@@ -331,19 +331,17 @@ mod accesskit_tests {
         let button = named(&first, "Item 1");
         let field = named(&first, "Name");
         let field_bounds = ui.semantic_node(keyed(&ui, "field")).unwrap().bounds;
+        let mut consumer = accesskit_consumer::Tree::new(first, true);
         assert_eq!(
-            first
-                .nodes
-                .iter()
-                .find(|(id, _)| *id == field)
+            consumer
+                .state()
+                .node_by_tree_local_id(field, TreeId::ROOT)
                 .unwrap()
-                .1
-                .bounds()
+                .bounding_box()
                 .unwrap()
                 .x0,
-            field_bounds.x as f64 * 2.
+            field_bounds.x as f64 * 2.,
         );
-        let mut consumer = accesskit_consumer::Tree::new(first, true);
         assert_eq!(
             consumer
                 .state()
@@ -492,6 +490,96 @@ mod accesskit_tests {
                 .as_deref(),
             Some("")
         );
+    }
+    #[test]
+    fn fractional_scroll_publishes_container_motion_without_republishing_descendant_positions() {
+        struct Rows;
+        impl View for Rows {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                column().size(400., 300.).padding(12.).child(
+                    scroll_area(column().width(800.).children((0..1000).map(|i| {
+                        label(format!("Row {i}"))
+                            .key(i)
+                            .height(24.)
+                            .accessibility_label(format!("Row {i}"))
+                    })))
+                    .axes(ScrollAxes::Both)
+                    .size(300., 200.),
+                )
+            }
+        }
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| cx.new(|_| Rows));
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let mut measure = Measure;
+        ui.prepare(&mut runtime, [400., 300.], &mut measure)
+            .unwrap();
+        let mut cache = AccessKitTree::new();
+        let first = cache.update(&ui, "Rows", 2.).unwrap().unwrap();
+        let ids: Vec<_> = first
+            .nodes
+            .iter()
+            .filter_map(|(id, node)| {
+                node.label()
+                    .filter(|label| label.starts_with("Row "))
+                    .map(|label| (*id, label.to_owned()))
+            })
+            .collect();
+        assert_eq!(ids.len(), 1000);
+        let mut consumer = accesskit_consumer::Tree::new(first, true);
+        let stats = ui.stats();
+        for delta in [[0.125, 0.23], [3.13, 24.375], [1.75, 128.03125]] {
+            assert!(
+                ui.scroll([24., 24.], delta).unwrap(),
+                "scrollable: {:?}",
+                ui.elements()
+                    .filter(|n| n.scroll_range != [0.; 2])
+                    .map(|n| (n.bounds, n.scroll_range))
+                    .collect::<Vec<_>>()
+            );
+            let update = cache.update(&ui, "Rows", 2.).unwrap().unwrap();
+            assert!(
+                update.nodes.len() <= 8,
+                "scroll republishes {} nodes",
+                update.nodes.len()
+            );
+            consumer.update_and_process_changes(update, &mut Changes);
+            let expected_bounds: std::collections::HashMap<_, _> = ui
+                .semantics()
+                .filter_map(|n| n.label.map(|label| (label.to_owned(), n.bounds)))
+                .collect();
+            for (id, label) in &ids {
+                let expected = expected_bounds[label];
+                let actual = consumer
+                    .state()
+                    .node_by_tree_local_id(*id, TreeId::ROOT)
+                    .unwrap()
+                    .bounding_box()
+                    .unwrap();
+                assert!((actual.x0 - f64::from(expected.x) * 2.).abs() < 0.02);
+                assert!((actual.y0 - f64::from(expected.y) * 2.).abs() < 0.02);
+                assert_eq!(actual.width(), f64::from(expected.width) * 2.);
+                assert_eq!(actual.height(), f64::from(expected.height) * 2.);
+            }
+            assert_eq!(ui.stats(), stats);
+        }
+        assert!(cache.update(&ui, "Rows", 2.).unwrap().is_none());
+        // DPI changes still produce a coherent transformed tree.
+        let update = cache.update(&ui, "Rows", 1.25).unwrap().unwrap();
+        consumer.update_and_process_changes(update, &mut Changes);
+        let last = ids.last().unwrap();
+        let expected = ui
+            .semantics()
+            .find(|n| n.label == Some(last.1.as_str()))
+            .unwrap()
+            .bounds;
+        let actual = consumer
+            .state()
+            .node_by_tree_local_id(last.0, TreeId::ROOT)
+            .unwrap()
+            .bounding_box()
+            .unwrap();
+        assert!((actual.y0 - f64::from(expected.y) * 1.25).abs() < 0.02);
     }
     #[test]
     fn native_scroll_units_are_converted_from_physical_to_logical_coordinates() {

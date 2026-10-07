@@ -312,6 +312,8 @@ impl UiPainter {
     }
     /// Draws the prepared snapshot into an existing pass using one logical-to-physical
     /// transform. The host supplies clipping and controls submission/presentation.
+    /// Elements whose own ink cannot reach the destination clip record no draws;
+    /// their prepared resources and independently visible descendants are retained.
     /// Returns [`UiError::CompositionRequired`] for opacity below one; use
     /// [`Self::compose`] to record isolated groups before opening the destination pass.
     pub fn paint<T: View>(
@@ -357,6 +359,65 @@ impl UiPainter {
             }
         }
         Ok(())
+    }
+    fn has_visible_ink(
+        texts: &HashMap<ElementId, TextResource>,
+        element: &crate::ElementInfo<'_>,
+        scale: f32,
+        origin: [f32; 2],
+        scissor: [u32; 4],
+    ) -> bool {
+        let visible = |bounds: Bounds| {
+            let clip = physical_clip(
+                bounds.intersection(element.clip_bounds),
+                scale,
+                origin,
+                scissor,
+            );
+            clip[2] > 0 && clip[3] > 0
+        };
+        let b = element.bounds;
+        if (element.paint.background.is_some()
+            || element.paint.border_color.is_some()
+            || element.range.is_some()
+            || (element.focused && element.paint.focus_width > 0.))
+            && b.width > 0.
+            && b.height > 0.
+        {
+            // UI shapes use an axis-aligned scale. One destination pixel bounds
+            // the analytic coverage fringe at every supported raster density.
+            let fringe = 1. / scale;
+            if visible(Bounds {
+                x: b.x - fringe,
+                y: b.y - fringe,
+                width: b.width + 2. * fringe,
+                height: b.height + 2. * fringe,
+            }) {
+                return true;
+            }
+        }
+        if let Some(image) = &element.image
+            && image.source.pixel_size().is_some()
+            && visible(image.destination.intersection(element.content_bounds))
+        {
+            return true;
+        }
+        if element.editing.is_some() {
+            // Selection, preedit and caret are all clipped to the editor's content.
+            return visible(element.content_bounds);
+        }
+        texts
+            .get(&element.id)
+            .and_then(|t| t.prepared.as_ref())
+            .and_then(|t| t.ink_bounds())
+            .is_some_and(|ink| {
+                visible(Bounds {
+                    x: element.content_bounds.x + ink.x,
+                    y: element.content_bounds.y + ink.y,
+                    width: ink.width,
+                    height: ink.height,
+                })
+            })
     }
     fn paint_scope<T: View>(
         &mut self,
@@ -406,6 +467,19 @@ impl UiPainter {
                             self.layer_stats.composites += 1;
                         }
                     }
+                    continue;
+                }
+                // Cull this element's own ink, never its descendants: visible
+                // overflow and absolute children can escape a parent's layout box.
+                // Keep the original clip for actual draws and conservatively include
+                // the shape shader's antialiasing fringe and prepared glyph quads.
+                if !Self::has_visible_ink(
+                    &self.texts,
+                    &element,
+                    scale,
+                    [viewport[0] + shift[0], viewport[1] + shift[1]],
+                    original_scissor,
+                ) {
                     continue;
                 }
                 let clip = physical_clip(
@@ -1321,3 +1395,7 @@ mod compositing_gpu_tests;
 #[cfg(test)]
 #[path = "controls_gpu_tests.rs"]
 mod controls_gpu_tests;
+
+#[cfg(test)]
+#[path = "culling_gpu_tests.rs"]
+mod culling_gpu_tests;

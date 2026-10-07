@@ -2586,6 +2586,21 @@ impl<T: View> Ui<T> {
         self.focused.filter(|id| self.semantic_visible(*id))
     }
     #[cfg(feature = "accessibility")]
+    pub(crate) fn semantic_origin(&self, id: ElementId) -> Result<[f64; 2], UiError> {
+        let node = &self.nodes[&id];
+        let layout = self.taffy.layout(node.layout)?;
+        let scroll = node
+            .parent
+            .map_or([0.; 2], |parent| self.nodes[&parent].scroll_offset);
+        // Derive parent-relative coordinates from stable layout, not by subtracting
+        // accumulated window bounds. Fractional scrolling must not introduce tiny
+        // position changes in every descendant through floating-point cancellation.
+        Ok([
+            f64::from(layout.location.x) - f64::from(scroll[0]),
+            f64::from(layout.location.y) - f64::from(scroll[1]),
+        ])
+    }
+    #[cfg(feature = "accessibility")]
     pub(crate) fn semantic_key(&self) -> crate::semantics::Key {
         let focused = self.focused.and_then(|id| self.nodes.get(&id));
         let editor = focused.and_then(|n| n.editor.as_ref());

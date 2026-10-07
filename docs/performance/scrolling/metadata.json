@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-07",
+  "machine": "Apple M3 Pro / macOS 27.0.1",
+  "rust": "1.98.1",
+  "baseline": "a37a1f9",
+  "astrelis_revision": "1f773d4a13057db8e15adc768c1d59cf979e65ed",
+  "viewport_logical": [
+    1040,
+    720
+  ],
+  "framebuffer_physical": [
+    2080,
+    1440
+  ],
+  "raster_scale": 2,
+  "font": "SourceSans3-Regular.otf, bundled fixture",
+  "samples_per_run": 180,
+  "warmup_frames_discarded": 20,
+  "runs_per_configuration": 3,
+  "features": [
+    "native"
+  ],
+  "profile_environment": {
+    "CARGO_INCREMENTAL": "0"
+  },
+  "method": "One-off copy of workspace_window with headless framebuffer and serial submit/wait. Alternates file-list scroll +/-10 logical units. Timings measure per-frame stages; AX update builds TreeUpdate but does not publish a native adapter. Desktop interactive, no affinity or isolated load. No builds/tests run concurrently with retained final CSV runs.",
+  "reproduction": "python3 docs/performance/scrolling/reproduce.py [--release] --output /tmp/rxui-scroll-check",
+  "artifact_note": "offscreen.rs is the measured fixture with only formatting and the machine-specific font path replaced by a SOURCE_FONT_PATH placeholder; reproduce.py substitutes the bundled font. Native traces use temporary instrumentation, excluded from product sources. Baseline and debug candidates used local Astrelis checkout at the pinned revision; only runner tracing was changed, unused by the headless fixture. Final release candidate reproduction uses the canonical Git dependency.",
+  "sha256": {
+    "crates/rxui/src/painting.rs": "95c18fe63b3df2f8e9d4dd04f5002e3ef7a5c97b26681975dfec62d8bcb0a752",
+    "crates/rxui/src/accessibility.rs": "1af7eedaba74d3915da790bd773c1ec20b98ea3cf2fe76c9ab855ade9a78ccb9",
+    "crates/rxui/src/ui.rs": "f51a61cb03419bb93634560d6228200a82c99e2268496230db78948495c9a93b",
+    "crates/rxui/src/semantic_tests.rs": "316a2bed96b7262d5363af4fd27ddb70cd7cec023513aeb21a7bc5c6511ad0c8",
+    "crates/rxui/src/culling_gpu_tests.rs": "0ab4934b938a6261b7998d1e1f3821080400b09ffa573d80e047b21c9c8d053a",
+    "Cargo.lock": "c65903ae424e4a78424140979d626e3a25de748962ab5311921c0b056b1c99bc",
+    "docs/performance/scrolling/offscreen.rs": "c2caca8088d4df2533068868a6248b6477c8fe9c0774c2565851931644264ea7"
+  },
+  "native_probe": "Computer use on normal, non-topmost background window. Two scroll calls, one per pane, before and after parent-relative transforms. Before trace already includes paint culling. Timing samples are diagnostic, not representative native frame-latency percentiles."
+}

@@ -200,6 +200,9 @@ does not remove that work.
 All rows remain retained and scrolling refreshes tree geometry. There is no
 virtualization or constant-cost large-list guarantee. See the
 [CPU measurements](performance/interaction.md) for reproducible workloads and limits.
+The later [scrolling diagnosis](performance/scrolling.md) exercises real text,
+recording, queue submission and native accessibility publication; geometry-only
+timings do not establish a native frame budget.
 Focus scopes/tab selection/focus restoration, drag overlays/docking trees and
 cross-native-window detach remain following stages; these primitives supply their
 input, scroll and pane-sizing foundation.

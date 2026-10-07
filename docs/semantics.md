@@ -83,7 +83,11 @@ updates retain the event's source window, including nested updates.
 GPU. Construct a separate cache for each Ui. `update(&ui, title, scale)` requires
 prepared geometry and a finite positive DPI scale. It returns a complete initial
 TreeUpdate, a changed-node update, or None when semantics are unchanged. Its bounds
-and scroll properties are physical window coordinates. Input values use TextRun
+and parent-relative transforms compose into physical window coordinates; scroll
+properties use physical units. Local positions come from layout coordinates, so
+fractional scrolling changes a content container's transform without republishing
+all descendant positions. Offscreen nodes remain available to assistive navigation.
+Input values use TextRun
 children when representable; the consumer derives the value from those children.
 This avoids duplicating whole input values in selection-only parent updates.
 

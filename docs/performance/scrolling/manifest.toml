@@ -1,0 +1,10 @@
+[package]
+name = "rxui-scroll-probe"
+version = "0.0.0"
+edition = "2024"
+[[bin]]
+name = "rxui-scroll-offscreen"
+path = "offscreen.rs"
+[dependencies]
+rxui = { path = "RXUI_CRATE_PATH", features = ["native"] }
+pollster = "=0.4.0"

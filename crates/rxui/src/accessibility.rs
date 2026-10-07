@@ -33,7 +33,9 @@ struct TextRun {
 /// element IDs survive compatible keys; text-run IDs change with text revision so
 /// queued selections cannot address a replacement value. No window/GPU is owned.
 ///
-/// Bounds use physical window coordinates. Single-line text runs expose grapheme
+/// Bounds and parent-relative transforms compose into physical window coordinates.
+/// Scrolling moves content containers without republishing every descendant's position.
+/// Single-line text runs expose grapheme
 /// selection units; character geometry and rich text attributes are not yet exposed.
 pub struct AccessKitTree {
     placement: Option<u64>,
@@ -161,7 +163,19 @@ impl AccessKitTree {
             let id = self.ids[&semantic.id];
             reverse.insert(id, semantic.id);
             let mut node = Node::new(role(semantic.role));
-            node.set_bounds(rect(semantic.bounds, scale));
+            node.set_bounds(rect(
+                crate::Bounds {
+                    x: 0.,
+                    y: 0.,
+                    ..semantic.bounds
+                },
+                scale,
+            ));
+            let origin = ui.semantic_origin(semantic.id)?;
+            node.set_transform(accesskit::Affine::translate((
+                origin[0] * f64::from(scale),
+                origin[1] * f64::from(scale),
+            )));
             if let Some(label) = semantic.label {
                 node.set_label(label);
             }
