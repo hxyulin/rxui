@@ -47,6 +47,9 @@ impl<T: View> Ui<T> {
     fn dock_location(&self, mut id: ElementId) -> Option<(ElementId, ElementId, DockNodeId)> {
         let mut group = None;
         loop {
+            if self.is_overlay(id) {
+                return None;
+            }
             match self.dock_metadata(id) {
                 Some(Metadata::Group(key)) if group.is_none() => group = Some((id, *key)),
                 Some(Metadata::Root(_)) => {
@@ -64,7 +67,7 @@ impl<T: View> Ui<T> {
             _ => None,
         }
     }
-    fn dock_source(&self, header: ElementId) -> Option<(ElementId, DockNodeId, Key)> {
+    fn dock_header(&self, header: ElementId) -> Option<(ElementId, DockNodeId, Key)> {
         let Some(crate::tabs::Properties::Header { key, .. }) = self.tab_properties(header) else {
             return None;
         };
@@ -84,12 +87,78 @@ impl<T: View> Ui<T> {
             }
             current = self.nodes[&id].parent;
         }
+        Some((root, group, key.clone()))
+    }
+    fn dock_source(&self, header: ElementId) -> Option<(ElementId, DockNodeId, Key)> {
+        let (root, group, key) = self.dock_header(header)?;
         let config = self.dock_config(root)?;
         (config.draggable
             && config.listener.is_some()
             && self.input_available(header)
             && self.input_available(root))
-        .then(|| (root, group, key.clone()))
+        .then_some((root, group, key))
+    }
+    fn dock_context(
+        &mut self,
+        runtime: &mut Runtime,
+        header: ElementId,
+        position: [f32; 2],
+    ) -> Result<InputResult, UiError> {
+        let Some((root, group, panel)) = self.dock_header(header) else {
+            return Ok(Default::default());
+        };
+        if !self.input_available(header) {
+            return Ok(Default::default());
+        }
+        let Some(listener) = self.dock_config(root).and_then(|p| p.context_menu.clone()) else {
+            return Ok(Default::default());
+        };
+        self.change_focus(Some(header));
+        let event = crate::DockContextEvent {
+            group,
+            panel,
+            position,
+        };
+        let changed = runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
+        Ok(InputResult {
+            changed,
+            default_prevented: true,
+        })
+    }
+    pub(super) fn dock_context_pointer(
+        &mut self,
+        runtime: &mut Runtime,
+        target: Option<ElementId>,
+        kind: usize,
+        button: Option<PointerButton>,
+    ) -> Result<InputResult, UiError> {
+        if kind == 0
+            && button == Some(PointerButton::Secondary)
+            && let Some(header) = target
+        {
+            return self.dock_context(runtime, header, self.input.position);
+        }
+        Ok(Default::default())
+    }
+    pub(super) fn dock_context_key(
+        &mut self,
+        runtime: &mut Runtime,
+        target: ElementId,
+        event: &crate::KeyEvent,
+    ) -> Result<InputResult, UiError> {
+        let requested = matches!(&event.key, crate::KeyboardKey::Other(name) if name == "ContextMenu")
+            && event.modifiers == Default::default()
+            || matches!(&event.key, crate::KeyboardKey::Other(name) if name == "F10")
+                && event.modifiers
+                    == crate::Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    };
+        if requested {
+            let b = self.nodes[&target].bounds;
+            return self.dock_context(runtime, target, [b.x, b.y + b.height]);
+        }
+        Ok(Default::default())
     }
     /// Active header drag in this Ui only. It neither mutates nor retains the model.
     pub fn dock_drag(&self) -> Option<DockDragInfo<'_>> {

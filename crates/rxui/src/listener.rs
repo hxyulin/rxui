@@ -32,6 +32,14 @@ impl<E> fmt::Debug for Listener<E> {
     }
 }
 impl<E> Listener<E> {
+    #[cfg(feature = "layout")]
+    pub(crate) fn from_callback(
+        callback: impl Fn(&E, &mut AppContext<'_>) -> Result<Dispatch, AccessError> + 'static,
+    ) -> Self {
+        Self {
+            callback: Rc::new(callback),
+        }
+    }
     pub(crate) fn bound<T: 'static>(
         owner: WeakEntity<T>,
         mount: Weak<MountLife>,

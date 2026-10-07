@@ -331,7 +331,13 @@ impl UiPainter {
             .collect();
         let parents: Vec<_> = elements
             .iter()
-            .map(|e| e.parent.and_then(|p| indices.get(&p).copied()))
+            .map(|e| {
+                if ui.is_overlay(e.id) {
+                    None
+                } else {
+                    e.parent.and_then(|p| indices.get(&p).copied())
+                }
+            })
             .collect();
         let mut ends = vec![len; len];
         let mut stack = Vec::new();

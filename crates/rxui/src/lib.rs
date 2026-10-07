@@ -9,9 +9,14 @@
 //! Taffy flex layout, retained theme resolution, inherited text styling, scrolling,
 //! clipping, routed pointer/keyboard listeners, capture, scroll handles/scrollbars
 //! and controlled split panes. Focus groups, placement-local focus handles and
-//! controlled tabs preserve panel state with explicit mounting policies. An application-owned
-//! docking tree composes them with checked topology edits. Dark/light presets and paint-only control states
-//! keep application styling separate from drawing. Controlled
+//! controlled tabs preserve panel state with explicit mounting policies. An
+//! application-owned docking tree composes them with checked topology edits.
+//! Viewport popovers and controlled modal dialogs add placement, dismissal and
+//! focus restoration. Typed command actions share availability and callbacks
+//! across scoped shortcuts, buttons and popup menu items, with explicit application
+//! fallback registrations. Overlay semantics escape ancestor clipping.
+//! Dark/light presets and paint-only control states keep application styling
+//! separate from drawing. Controlled
 //! single-line inputs retain selection and IME preedit independently of
 //! application-owned values. The optional
 //! tasks feature delivers owned background results in fresh UI updates; native
@@ -102,6 +107,8 @@
 
 #[cfg(feature = "accessibility")]
 mod accessibility;
+#[cfg(feature = "layout")]
+mod commands;
 mod context;
 #[cfg(feature = "layout")]
 mod controls;
@@ -123,6 +130,8 @@ mod input;
 mod listener;
 #[cfg(feature = "native")]
 mod native;
+#[cfg(feature = "layout")]
+mod overlay;
 #[cfg(feature = "rendering")]
 mod painting;
 mod runtime;
@@ -146,6 +155,8 @@ pub use accesskit;
 /// OS close-request policy used by Application's lifecycle hook.
 #[cfg(feature = "native")]
 pub use astrelis_winit::CloseResponse;
+#[cfg(feature = "layout")]
+pub use commands::{Command, CommandAction, CommandRegistration, CommandStatus, Shortcut};
 pub use context::{AppContext, Context, ReadContext, ViewContext};
 #[cfg(feature = "layout")]
 pub use controls::{
@@ -158,7 +169,7 @@ pub use dock::{
     DockTree,
 };
 #[cfg(feature = "layout")]
-pub use dock_view::{Dock, DockPanel, dock, dock_panel};
+pub use dock_view::{Dock, DockContextEvent, DockPanel, dock, dock_panel};
 #[cfg(feature = "layout")]
 pub use editing::{
     TextAffinity, TextChangeEvent, TextInputEvent, TextInputInfo, TextMovement, TextPosition,
@@ -183,6 +194,11 @@ pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
 pub use native::{
     Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
+};
+#[cfg(feature = "layout")]
+pub use overlay::{
+    AnchorHandle, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement, menu,
+    menu_item, modal, popover,
 };
 #[cfg(feature = "rendering")]
 pub use painting::{ComposedUi, ImageStats, LayerStats, UiPainter};
@@ -219,6 +235,11 @@ pub use ui::{
 /// Common declarative application imports.
 #[cfg(feature = "layout")]
 pub mod prelude {
+    pub use crate::{
+        AnchorHandle, Command, CommandAction, CommandRegistration, CommandStatus, DismissEvent,
+        DismissReason, Overlay, OverlayAnchor, PopoverPlacement, Shortcut, menu, menu_item, modal,
+        popover,
+    };
     #[cfg(feature = "native")]
     pub use crate::{Application, ApplicationError, CloseResponse, WindowHandle, WindowOptions};
     pub use crate::{
@@ -234,8 +255,9 @@ pub mod prelude {
         Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };
     pub use crate::{
-        Dock, DockDragInfo, DockDropPreview, DockDropTarget, DockError, DockEvent, DockNode,
-        DockNodeId, DockPanel, DockSide, DockSplit, DockTabs, DockTree, dock, dock_panel,
+        Dock, DockContextEvent, DockDragInfo, DockDropPreview, DockDropTarget, DockError,
+        DockEvent, DockNode, DockNodeId, DockPanel, DockSide, DockSplit, DockTabs, DockTree, dock,
+        dock_panel,
     };
     pub use crate::{
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
@@ -279,6 +301,8 @@ mod layout_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod input_tests;
+#[cfg(all(test, feature = "layout"))]
+mod overlay_command_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod control_tests;

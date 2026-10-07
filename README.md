@@ -348,3 +348,16 @@ application-controlled. See
 ```sh
 cargo run -p rxui --example docking_window --features native --locked
 ```
+
+## Popovers, dialogs and commands
+
+`popover(anchor, content)` and `modal(content)` provide controlled viewport overlays
+with placement, dismissal, focus restoration and semantic output. `menu()` and
+`menu_item(&action)` add popup menu roles and keyboard navigation. Typed
+`cx.command(value, callback)` actions share captions, availability and callbacks
+across buttons, menu items and scoped shortcuts, with explicit application fallback
+registrations. See [the overlay and command contract](docs/overlays-and-commands.md).
+
+```sh
+cargo run -p rxui --example desktop_window --features native --locked
+```

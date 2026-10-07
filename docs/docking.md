@@ -180,6 +180,12 @@ can expose checked reorder/move/split operations. Overflowing header strips reta
 their existing wheel scrolling; stationary edge autoscroll and drag ghosts are
 separate interaction polish.
 
+`Dock::on_context_menu` receives header secondary-click and keyboard requests with
+group, panel and logical position, without changing selection or starting a drag.
+Applications supply controlled popup content and typed actions; see
+[overlays-and-commands.md](overlays-and-commands.md) and the standalone
+[desktop_window example](../crates/rxui/examples/desktop_window.rs).
+
 ## Retained placement boundaries
 
 `TabContentPolicy::KeepMounted` is the default. Selection changes and reordering

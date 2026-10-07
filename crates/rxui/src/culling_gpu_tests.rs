@@ -5,6 +5,118 @@ use astrelis::{FramebufferOptions, wgpu};
 
 #[test]
 #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn viewport_overlays_escape_clips_z_and_opacity_with_msaa_dpi_and_modal_backdrops() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut target = graphics
+            .create_framebuffer(
+                FramebufferOptions::new(64, 64)
+                    .format(wgpu::TextureFormat::Rgba8Unorm)
+                    .sample_count(4)
+                    .usage(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC),
+            )
+            .unwrap();
+        let anchor = AnchorHandle::new();
+        let description = |stage| {
+            let mut source = stack()
+                .absolute()
+                .left(2.)
+                .top(2.)
+                .size(8., 5.)
+                .clip()
+                .opacity(0.5)
+                .child(
+                    stack()
+                        .size(6., 3.)
+                        .anchor_handle(anchor.clone())
+                        .background([0., 1., 0., 1.]),
+                );
+            let content = || {
+                column()
+                    .fill_width()
+                    .fill_height()
+                    .background([1., 0., 0., 1.])
+            };
+            if stage == 0 {
+                source = source.child(
+                    popover(anchor.clone(), content())
+                        .key("popup")
+                        .width(14.)
+                        .height(10.)
+                        .padding(0.)
+                        .gap(2.)
+                        .viewport_margin(1.),
+                );
+            }
+            let mut root = stack().size(32., 32.).child(source).child(
+                stack()
+                    .absolute()
+                    .inset(0.)
+                    .z_index(1000)
+                    .background([0., 0., 1., 1.]),
+            );
+            if stage == 1 {
+                root = root.child(
+                    modal(content())
+                        .key("dialog")
+                        .width(14.)
+                        .height(10.)
+                        .padding(0.)
+                        .viewport_margin(1.)
+                        .accessibility_label("GPU dialog"),
+                );
+            }
+            root
+        };
+        let mut runtime = Runtime::new();
+        let entity = runtime.update(|cx| cx.new(|_| Page(description(0))));
+        let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        for stage in 0..3 {
+            runtime.update(|cx| entity.update(cx, |s, _| s.0 = description(stage)));
+            ui.prepare(&mut runtime, [32., 32.], &mut painter).unwrap();
+            painter.prepare(&ui, &target.render_format(), 2.).unwrap();
+            let texture = target.color_texture().unwrap().clone();
+            let mut frame = target.begin_frame().unwrap();
+            painter
+                .compose(&ui, &mut frame, 2., |frame, composed| {
+                    let mut pass = frame
+                        .render_pass()
+                        .clear_color(wgpu::Color::BLACK)
+                        .begin()?;
+                    pass.set_viewport(4., 2., 60., 62., 0., 1.)?;
+                    pass.set_scissor_rect(6, 4, 54, 56)?;
+                    composed.paint(&mut pass)?;
+                    assert_eq!(pass.viewport(), [4., 2., 60., 62., 0., 1.]);
+                    assert_eq!(pass.scissor_rect(), [6, 4, 54, 56]);
+                    Ok(())
+                })
+                .unwrap();
+            let buffer = read_pixel(&graphics, &mut frame, &texture);
+            let bytes = pixels(&graphics, &buffer, frame.finish().unwrap());
+            let at = |x: usize, y: usize| &bytes[y * 256 + x * 4..y * 256 + x * 4 + 4];
+            assert_eq!(at(2, 2), [0, 0, 0, 255]);
+            if stage == 0 {
+                assert_eq!(at(14, 20), [255, 0, 0, 255]);
+                assert_eq!(at(12, 10), [0, 0, 255, 255]);
+            }
+            if stage == 1 {
+                assert_eq!(at(26, 30), [255, 0, 0, 255]);
+                assert!(at(12, 10)[2].abs_diff(153) <= 1);
+            }
+            if stage == 2 {
+                assert_eq!(at(14, 20), [0, 0, 255, 255]);
+            }
+        }
+        assert!(errors.pop().await.is_none());
+    });
+}
+
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
 fn dock_drag_preview_respects_dpi_viewport_scissor_theme_and_isolated_content() {
     struct DragPage {
         tree: DockTree,

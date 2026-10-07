@@ -70,6 +70,12 @@ impl PointerEvent {
 }
 impl<T: View> Ui<T> {
     pub(super) fn input_available(&self, id: ElementId) -> bool {
+        if !self.modal_allows(id) {
+            return false;
+        }
+        self.input_available_unconfined(id)
+    }
+    pub(super) fn input_available_unconfined(&self, id: ElementId) -> bool {
         let Some(node) = self.nodes.get(&id) else {
             return false;
         };
@@ -438,6 +444,14 @@ impl<T: View> Ui<T> {
             InputResult::default()
         };
         self.input.prevented = result.default_prevented;
+        let overlay = self.overlay_pointer(runtime, kind, result.default_prevented)?;
+        result.changed |= overlay.changed;
+        result.default_prevented |= overlay.default_prevented;
+        if !result.default_prevented {
+            let context = self.dock_context_pointer(runtime, target, kind, button)?;
+            result.changed |= context.changed;
+            result.default_prevented |= context.default_prevented;
+        }
         let dock = self.dock_pointer(runtime, target, kind, button, result.default_prevented)?;
         result.changed |= dock.changed;
         result.default_prevented |= dock.default_prevented;
@@ -535,6 +549,21 @@ impl<T: View> Ui<T> {
                 if requests.stop {
                     break;
                 }
+            }
+            if event.pressed && !result.default_prevented {
+                let command = self.command_key(runtime, &event)?;
+                result.changed |= command.changed;
+                result.default_prevented |= command.default_prevented;
+            }
+            if event.pressed && !result.default_prevented {
+                let context = self.dock_context_key(runtime, target, &event)?;
+                result.changed |= context.changed;
+                result.default_prevented |= context.default_prevented;
+            }
+            if event.pressed && !result.default_prevented {
+                let overlay = self.overlay_key(runtime, &event)?;
+                result.changed |= overlay.changed;
+                result.default_prevented |= overlay.default_prevented;
             }
             if event.pressed
                 && !result.default_prevented

@@ -7,6 +7,17 @@ use crate::{
 use std::collections::HashMap;
 use taffy::prelude::{AlignItems, JustifyItems, TaffyAuto, fr, length, minmax};
 
+/// Request to open an application-provided menu for a dock header.
+#[derive(Clone, Debug)]
+pub struct DockContextEvent {
+    /// Header's current group.
+    pub group: DockNodeId,
+    /// Header's panel key; selection is not changed by this request.
+    pub panel: Key,
+    /// Logical window position suitable for a point-anchored popover.
+    pub position: [f32; 2],
+}
+
 /// One panel's application-provided title and content. Its stable key lives in
 /// DockTree; content can be any IntoElement, including a strong document Entity.
 #[must_use]
@@ -33,6 +44,7 @@ impl DockPanel {
 }
 #[derive(Clone)]
 pub(crate) struct Properties {
+    pub context_menu: Option<Listener<DockContextEvent>>,
     pub min_pane_size: [f32; 2],
     pub divider_size: f32,
     pub drag_threshold: f32,
@@ -134,6 +146,7 @@ pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock
         policy: TabContentPolicy::KeepMounted,
         activation: TabActivation::Automatic,
         props: Properties {
+            context_menu: None,
             min_pane_size: [96., 96.],
             divider_size: 8.,
             drag_threshold: 6.,
@@ -144,6 +157,12 @@ pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock
     }
 }
 impl Dock {
+    /// Receives secondary-button or keyboard context-menu requests from headers.
+    /// The application supplies controlled menu content and open state.
+    pub fn on_context_menu(mut self, listener: Listener<DockContextEvent>) -> Self {
+        self.props.context_menu = Some(listener);
+        self
+    }
     /// Receives controlled selection, close, resize and drop proposals with node identity.
     /// Without a listener, dividers and close controls are read-only/unavailable.
     pub fn on_event(mut self, listener: Listener<DockEvent>) -> Self {

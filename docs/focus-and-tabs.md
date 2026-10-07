@@ -50,8 +50,8 @@ focus/reveal changed and ignores foreign, hidden, removed or disabled elements.
 `.focus_scope(FocusScope::Cycle)` makes Tab/Shift-Tab wrap inside the innermost
 containing cycle scope. A scope is not automatically focused and does not make
 its container focusable. Cycle constrains keyboard traversal only: pointer,
-programmatic and assistive focus can still leave it. Modal dialogs will need
-explicit activation/restoration, inertness and dialog semantics in a later stage.
+programmatic and assistive focus can still leave it. The [controlled modal builder](overlays-and-commands.md) adds activation/restoration,
+background input confinement and dialog semantics.
 
 `.tab_stop(false)` excludes a focusable control from Tab navigation while retaining
 pointer, explicit and assistive focus/activation. `.focusable(false)` disables
@@ -184,5 +184,5 @@ certification. A later optimization pass can address scans/allocation and dorman
 component scheduling separately.
 
 The [controlled docking tree](docking.md) now composes these groups with splits and
-checked programmatic edits. Drag previews/reordering gestures and native
-cross-window detach follow that model and its lifecycle contracts.
+checked programmatic edits. Header drag previews and reorder/move/split gestures follow that model; native
+cross-window detach remains separate work.

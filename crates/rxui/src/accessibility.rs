@@ -152,7 +152,7 @@ impl AccessKitTree {
         root.set_children(
             semantics
                 .iter()
-                .filter(|n| n.parent.is_none())
+                .filter(|n| n.parent.is_none() || n.viewport_overlay)
                 .map(|n| self.ids[&n.id])
                 .collect::<Vec<_>>(),
         );
@@ -178,6 +178,9 @@ impl AccessKitTree {
             )));
             if let Some(label) = semantic.label {
                 node.set_label(label);
+            }
+            if semantic.modal {
+                node.set_modal();
             }
             if let Some(selected) = semantic.selected {
                 node.set_selected(selected);
@@ -214,6 +217,7 @@ impl AccessKitTree {
                     .children
                     .iter()
                     .filter(|id| visible.contains(id))
+                    .filter(|id| !ui.is_overlay(**id))
                     .map(|id| self.ids[id])
                     .collect::<Vec<_>>(),
             );
@@ -527,6 +531,9 @@ fn rect(bounds: crate::Bounds, scale: f32) -> accesskit::Rect {
 }
 fn role(role: SemanticRole) -> Role {
     match role {
+        SemanticRole::Dialog => Role::Dialog,
+        SemanticRole::Menu => Role::Menu,
+        SemanticRole::MenuItem => Role::MenuItem,
         SemanticRole::Tab => Role::Tab,
         SemanticRole::TabList => Role::TabList,
         SemanticRole::TabPanel => Role::TabPanel,

@@ -5,6 +5,12 @@ use std::sync::Arc;
 /// Overriding a role changes metadata; it does not create new interaction behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SemanticRole {
+    /// Modal dialog surface.
+    Dialog,
+    /// Popup menu.
+    Menu,
+    /// Activatable menu command.
+    MenuItem,
     /// Structural container, normally transparent to assistive navigation.
     Container,
     /// Named group of related elements.
@@ -49,6 +55,11 @@ pub(crate) struct Properties {
 /// Coordinates are logical; native adapters apply the window's scale factor.
 #[derive(Debug)]
 pub struct SemanticNode<'a> {
+    /// Viewport overlay boundary. Native adapters attach this node to their window
+    /// root rather than the logical parent to escape clipping/transforms.
+    pub viewport_overlay: bool,
+    /// True for a stock modal dialog surface.
+    pub modal: bool,
     /// Explicit semantic selection state, including tab headers.
     pub selected: Option<bool>,
     /// Live semantic label source, such as the active panel's tab header.

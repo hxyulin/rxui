@@ -114,3 +114,7 @@ required-features = ["native"]
 [[example]]
 name = "docking_window"
 required-features = ["native"]
+
+[[example]]
+name = "desktop_window"
+required-features = ["native"]

@@ -48,6 +48,8 @@ pub(crate) struct Bookkeeping {
     effects: VecDeque<Effect>,
 }
 pub(crate) struct RuntimeInner {
+    #[cfg(feature = "layout")]
+    pub(crate) commands: RefCell<Vec<std::rc::Weak<crate::commands::Registration>>>,
     pub(crate) id: u64,
     pub(crate) state: RefCell<Bookkeeping>,
     pub(crate) releases: RefCell<Vec<Release>>,
@@ -74,6 +76,8 @@ impl Runtime {
     pub fn new() -> Self {
         Self {
             inner: Rc::new(RuntimeInner {
+                #[cfg(feature = "layout")]
+                commands: RefCell::new(Vec::new()),
                 id: next_runtime(),
                 state: RefCell::new(Bookkeeping {
                     slots: Vec::new(),

@@ -18,6 +18,12 @@ use taffy::{TaffyTree, prelude::*};
 /// Failure during description preparation, measurement, or input dispatch.
 #[derive(Debug)]
 pub enum UiError {
+    /// Invalid overlay anchor coordinates, spacing or viewport margin.
+    InvalidOverlay,
+    /// A geometry anchor is bound more than once in one Ui.
+    DuplicateAnchorHandle,
+    /// A scope has duplicate command types or ambiguous shortcut chords.
+    AmbiguousCommand,
     /// Dock pane minima, divider thickness or drag threshold are invalid.
     InvalidDockConfiguration,
     /// A focus handle is bound to multiple elements in one placement.
@@ -87,6 +93,11 @@ impl From<taffy::TaffyError> for UiError {
 impl fmt::Display for UiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidOverlay => f.write_str("invalid overlay configuration"),
+            Self::DuplicateAnchorHandle => f.write_str("duplicate geometry anchor in one UI"),
+            Self::AmbiguousCommand => {
+                f.write_str("duplicate command type or shortcut in one scope")
+            }
             Self::InvalidDockConfiguration => {
                 f.write_str("invalid dock pane minima, divider thickness or drag threshold")
             }
@@ -282,6 +293,9 @@ pub enum ElementType {
 }
 /// Read-only snapshot for painting/inspection; iteration follows tree paint order.
 pub struct ElementInfo<'a> {
+    /// Viewport overlay boundary. Logical ownership is retained, while custom
+    /// painters reset ancestor clipping/opacity here.
+    pub viewport_overlay: bool,
     /// Stable identity.
     pub id: ElementId,
     /// Description-tree parent, independent of sibling paint order.
@@ -542,6 +556,7 @@ pub struct Ui<T: View> {
     focused: Option<ElementId>,
     focus_state: Option<Box<focus::State>>,
     dock_drag: Option<Box<dock_dispatch::Drag>>,
+    overlays: Option<Box<overlay_dispatch::State>>,
     stats: UiStats,
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
@@ -585,6 +600,7 @@ impl<T: View> Ui<T> {
             focused: None,
             focus_state: None,
             dock_drag: None,
+            overlays: None,
             stats: UiStats::default(),
             active_views: Vec::new(),
             component_nodes: Vec::new(),
@@ -664,6 +680,7 @@ impl<T: View> Ui<T> {
     /// Hosts also account for viewport, font-generation and visual-input changes.
     pub fn needs_prepare(&self, runtime: &Runtime) -> Result<bool, AccessError> {
         if self.scroll_commands_pending()
+            || self.overlay_pending()
             || self.input.pending()
             || self.focus_state.as_ref().is_some_and(|s| s.pending())
         {
@@ -740,6 +757,7 @@ impl<T: View> Ui<T> {
             self.needs_evaluation = true;
             let post = (|| {
                 self.publish_focus()?;
+                self.sync_overlay_focus();
                 self.restore_dock_drop_focus();
                 self.apply_focus_commands();
                 self.publish_scroll(runtime)?;
@@ -783,6 +801,8 @@ impl<T: View> Ui<T> {
         if viewport.iter().any(|v| !v.is_finite() || *v < 0.) {
             return Err(UiError::InvalidGeometry);
         }
+        let before_focus = self.focused;
+        self.snapshot_overlay_focus();
         let focus_anchor = self.tab_anchor();
         let evaluated = self.stats.component_evaluations;
         self.refresh_descriptions(runtime, force_evaluation)?;
@@ -794,6 +814,10 @@ impl<T: View> Ui<T> {
         }
         self.refresh_images(evaluated != self.stats.component_evaluations)?;
         let root = self.root.expect("initially dirty root");
+        if self.order_dirty {
+            self.rebuild_order(root);
+        }
+        self.collect_overlays(before_focus, viewport)?;
         let generation = measurer.generation();
         if generation != self.measurement_generation {
             for node in self.nodes.values() {
@@ -804,104 +828,7 @@ impl<T: View> Ui<T> {
         }
         let layout_root = self.nodes[&root].layout;
         if self.viewport != Some(viewport) || self.taffy.dirty(layout_root)? {
-            let nodes = &self.nodes;
-            let mut error = None;
-            let measurements = &mut self.stats.measurements;
-            self.taffy.compute_layout_with_measure(
-                layout_root,
-                Size {
-                    width: AvailableSpace::Definite(viewport[0]),
-                    height: AvailableSpace::Definite(viewport[1]),
-                },
-                |inputs, _, context, style| {
-                    taffy::compute_leaf_layout(
-                        inputs,
-                        style,
-                        |_, _| 0.,
-                        |known, available| {
-                            let Some(id) = context.as_deref() else {
-                                return Size::ZERO;
-                            };
-                            let node = &nodes[id];
-                            if let ElementKind::Image(props) = &node.element.kind {
-                                let [w, h] = [
-                                    node.image_size[0] * props.uv[2],
-                                    node.image_size[1] * props.uv[3],
-                                ];
-                                return match (known.width, known.height) {
-                                    (Some(width), Some(height)) => Size { width, height },
-                                    (Some(width), None) => Size {
-                                        width,
-                                        height: if w > 0. { width * h / w } else { 0. },
-                                    },
-                                    (None, Some(height)) => Size {
-                                        width: if h > 0. { height * w / h } else { 0. },
-                                        height,
-                                    },
-                                    _ => Size {
-                                        width: w,
-                                        height: h,
-                                    },
-                                };
-                            }
-                            let Some(text) = node.displayed_text() else {
-                                return Size::ZERO;
-                            };
-                            if let Size {
-                                width: Some(width),
-                                height: Some(height),
-                            } = known
-                            {
-                                return Size { width, height };
-                            }
-                            // Intrinsic grid probes can supply a known width below
-                            // zero after ancestor padding. Text's content constraint
-                            // is zero in that case, matching definite available space.
-                            let width = known
-                                .width
-                                .map(|width| TextWidth::Available(width.max(0.)))
-                                .unwrap_or(match available.width {
-                                    AvailableSpace::MinContent => TextWidth::MinContent,
-                                    AvailableSpace::MaxContent => TextWidth::MaxContent,
-                                    AvailableSpace::Definite(value) => {
-                                        TextWidth::Available(value.max(0.))
-                                    }
-                                });
-                            *measurements += 1;
-                            match measurer.measure(
-                                *id,
-                                TextRequest {
-                                    text,
-                                    font_size: node.font_size,
-                                    width,
-                                    single_line: node.editor.is_some(),
-                                    revision: node.text_revision,
-                                },
-                            ) {
-                                Ok(size) if size.iter().all(|v| v.is_finite() && *v >= 0.) => {
-                                    Size {
-                                        width: known.width.unwrap_or(size[0]),
-                                        height: known.height.unwrap_or(size[1]),
-                                    }
-                                }
-                                Ok(_) => {
-                                    error.get_or_insert(UiError::InvalidGeometry);
-                                    Size::ZERO
-                                }
-                                Err(e) => {
-                                    error.get_or_insert(e);
-                                    Size::ZERO
-                                }
-                            }
-                        },
-                    )
-                },
-            )?;
-            self.stats.layout_passes += 1;
-            if let Some(error) = error {
-                self.taffy.mark_dirty(layout_root)?;
-                return Err(error);
-            }
+            self.layout_subtree(layout_root, viewport, measurer)?;
             self.update_bounds(
                 root,
                 [0., 0.],
@@ -914,6 +841,19 @@ impl<T: View> Ui<T> {
                 },
             )?;
         }
+        let portals = self
+            .overlays
+            .as_ref()
+            .map(|s| s.roots.clone())
+            .unwrap_or_default();
+        for id in portals {
+            let layout = self.nodes[&id].layout;
+            if self.viewport != Some(viewport) || self.taffy.dirty(layout)? {
+                self.layout_subtree(layout, viewport, measurer)?;
+            }
+        }
+        self.refresh_overlay_bounds(viewport)?;
+        self.dismiss_unavailable_overlays(runtime)?;
         self.viewport = Some(viewport);
         self.measurement_generation = generation;
         if self.order_dirty {
@@ -927,6 +867,110 @@ impl<T: View> Ui<T> {
         }
         self.geometry_ready = true;
         self.needs_evaluation = false;
+        Ok(())
+    }
+    fn layout_subtree(
+        &mut self,
+        layout_root: NodeId,
+        viewport: [f32; 2],
+        measurer: &mut impl TextMeasure,
+    ) -> Result<(), UiError> {
+        let nodes = &self.nodes;
+        let mut error = None;
+        let measurements = &mut self.stats.measurements;
+        self.taffy.compute_layout_with_measure(
+            layout_root,
+            Size {
+                width: AvailableSpace::Definite(viewport[0]),
+                height: AvailableSpace::Definite(viewport[1]),
+            },
+            |inputs, _, context, style| {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    style,
+                    |_, _| 0.,
+                    |known, available| {
+                        let Some(id) = context.as_deref() else {
+                            return Size::ZERO;
+                        };
+                        let node = &nodes[id];
+                        if let ElementKind::Image(props) = &node.element.kind {
+                            let [w, h] = [
+                                node.image_size[0] * props.uv[2],
+                                node.image_size[1] * props.uv[3],
+                            ];
+                            return match (known.width, known.height) {
+                                (Some(width), Some(height)) => Size { width, height },
+                                (Some(width), None) => Size {
+                                    width,
+                                    height: if w > 0. { width * h / w } else { 0. },
+                                },
+                                (None, Some(height)) => Size {
+                                    width: if h > 0. { height * w / h } else { 0. },
+                                    height,
+                                },
+                                _ => Size {
+                                    width: w,
+                                    height: h,
+                                },
+                            };
+                        }
+                        let Some(text) = node.displayed_text() else {
+                            return Size::ZERO;
+                        };
+                        if let Size {
+                            width: Some(width),
+                            height: Some(height),
+                        } = known
+                        {
+                            return Size { width, height };
+                        }
+                        // Intrinsic grid probes can supply a known width below
+                        // zero after ancestor padding. Text's content constraint
+                        // is zero in that case, matching definite available space.
+                        let width = known
+                            .width
+                            .map(|width| TextWidth::Available(width.max(0.)))
+                            .unwrap_or(match available.width {
+                                AvailableSpace::MinContent => TextWidth::MinContent,
+                                AvailableSpace::MaxContent => TextWidth::MaxContent,
+                                AvailableSpace::Definite(value) => {
+                                    TextWidth::Available(value.max(0.))
+                                }
+                            });
+                        *measurements += 1;
+                        match measurer.measure(
+                            *id,
+                            TextRequest {
+                                text,
+                                font_size: node.font_size,
+                                width,
+                                single_line: node.editor.is_some(),
+                                revision: node.text_revision,
+                            },
+                        ) {
+                            Ok(size) if size.iter().all(|v| v.is_finite() && *v >= 0.) => Size {
+                                width: known.width.unwrap_or(size[0]),
+                                height: known.height.unwrap_or(size[1]),
+                            },
+                            Ok(_) => {
+                                error.get_or_insert(UiError::InvalidGeometry);
+                                Size::ZERO
+                            }
+                            Err(e) => {
+                                error.get_or_insert(e);
+                                Size::ZERO
+                            }
+                        }
+                    },
+                )
+            },
+        )?;
+        self.stats.layout_passes += 1;
+        if let Some(error) = error {
+            self.taffy.mark_dirty(layout_root)?;
+            return Err(error);
+        }
         Ok(())
     }
     fn refresh_descriptions(
@@ -1022,7 +1066,18 @@ impl<T: View> Ui<T> {
             && compatible(&self.nodes[&id].element, &element)
         {
             let node = self.nodes.get_mut(&id).unwrap();
-            self.order_dirty |= node.element.z_index != element.z_index;
+            self.order_dirty |= node.element.z_index != element.z_index
+                || node
+                    .element
+                    .input
+                    .as_ref()
+                    .and_then(|p| p.overlay.as_ref())
+                    .map(|p| p.modal)
+                    != element
+                        .input
+                        .as_ref()
+                        .and_then(|p| p.overlay.as_ref())
+                        .map(|p| p.modal);
             node.layout_dirty |= node.element.style != element.style
                 || node.element.layout_overrides != element.layout_overrides;
             if node.element.style != element.style
@@ -1176,6 +1231,7 @@ impl<T: View> Ui<T> {
             self.root = Some(id);
         }
         self.register_focus_node(id);
+        self.register_overlay_node(id);
         if self.nodes[&id].mounted.is_some() {
             self.refresh_component(runtime, id)?;
         } else {
@@ -1220,7 +1276,11 @@ impl<T: View> Ui<T> {
             }
         }
         let layout = self.nodes[&parent].layout;
-        let children: Vec<_> = next.iter().map(|id| self.nodes[id].layout).collect();
+        let children: Vec<_> = next
+            .iter()
+            .filter(|id| !self.is_overlay(**id))
+            .map(|id| self.nodes[id].layout)
+            .collect();
         if self.taffy.children(layout)? != children {
             self.taffy.set_children(layout, &children)?;
             self.order_dirty = true;
@@ -1598,6 +1658,9 @@ impl<T: View> Ui<T> {
             bounds.y - node.scroll_offset[1],
         ];
         for child in node.children.clone() {
+            if self.is_overlay(child) {
+                continue;
+            }
             self.update_bounds(child, child_origin, visible, child_clip)?;
         }
         Ok(())
@@ -1611,10 +1674,26 @@ impl<T: View> Ui<T> {
     fn rebuild_order(&mut self, root: ElementId) {
         self.order.clear();
         self.collect_order(root);
-        if self.nodes.values().any(|n| n.element.z_index != 0) {
+        if self.nodes.values().any(|n| {
+            n.element.z_index != 0
+                || n.element
+                    .input
+                    .as_ref()
+                    .is_some_and(|p| p.overlay.is_some())
+        }) {
             let mut order = self.paint_order.take().unwrap_or_default();
             order.clear();
             self.collect_paint_order(root, &mut order);
+            let mut portals: Vec<_> = self
+                .order
+                .iter()
+                .copied()
+                .filter(|id| self.is_overlay(*id))
+                .collect();
+            portals.sort_by_key(|id| self.in_modal_layer(*id));
+            for id in portals {
+                self.collect_paint_order(id, &mut order);
+            }
             self.paint_order = Some(order);
         } else {
             self.paint_order = None;
@@ -1626,6 +1705,9 @@ impl<T: View> Ui<T> {
         let mut children = self.nodes[&id].children.clone();
         children.sort_by_key(|child| self.nodes[child].element.z_index);
         for child in children {
+            if self.is_overlay(child) {
+                continue;
+            }
             self.collect_paint_order(child, order);
         }
     }
@@ -1637,7 +1719,7 @@ impl<T: View> Ui<T> {
         self.paint_order.as_deref().unwrap_or(&self.order)
     }
     fn pointer_allowed(&self, id: ElementId) -> bool {
-        self.nodes[&id].pointer_allowed
+        self.nodes[&id].pointer_allowed && self.modal_allows(id)
     }
     fn pointer_target(&self, point: [f32; 2]) -> Option<ElementId> {
         self.painting_order().iter().rev().copied().find(|id| {
@@ -1657,6 +1739,12 @@ impl<T: View> Ui<T> {
         })
     }
     fn enabled(&self, id: ElementId) -> bool {
+        if !self.modal_allows(id) {
+            return false;
+        }
+        self.enabled_unconfined(id)
+    }
+    fn enabled_unconfined(&self, id: ElementId) -> bool {
         let Some(node) = self.nodes.get(&id) else {
             return false;
         };
@@ -1776,6 +1864,7 @@ impl<T: View> Ui<T> {
             }
         }
         Some(ElementInfo {
+            viewport_overlay: self.is_overlay(id),
             id,
             parent: node.parent,
             opacity: node.element.opacity,
@@ -1884,6 +1973,9 @@ impl<T: View> Ui<T> {
                 }
             }
             current = node.parent;
+            if self.is_overlay(id) {
+                break;
+            }
         }
         if changed {
             self.refresh_geometry()?;
@@ -1917,6 +2009,7 @@ impl<T: View> Ui<T> {
                 height,
             },
         )?;
+        self.refresh_overlay_bounds([width, height])?;
         if let Some(inner) = self.runtime.upgrade() {
             self.publish_scroll(&Runtime { inner })?;
         }
@@ -1926,6 +2019,9 @@ impl<T: View> Ui<T> {
         let mut parent = self.nodes[&id].parent;
         let mut changed = false;
         while let Some(ancestor) = parent {
+            if self.is_overlay(ancestor) {
+                break;
+            }
             let target = self.nodes[&id].bounds;
             let node = self.nodes.get_mut(&ancestor).unwrap();
             if let Some(axes) = node.element.scroll {
@@ -2487,6 +2583,9 @@ impl<T: View> Ui<T> {
         Ok(changed)
     }
     fn semantic_visible(&self, id: ElementId) -> bool {
+        if !self.overlay_semantic_allows(id) {
+            return false;
+        }
         let Some(node) = self.nodes.get(&id) else {
             return false;
         };
@@ -2575,6 +2674,12 @@ impl<T: View> Ui<T> {
             .filter(|e| e.composition.is_none())
             .map(|e| e.selection);
         Some(crate::SemanticNode {
+            viewport_overlay: self.is_overlay(id),
+            modal: node
+                .parent
+                .and_then(|p| self.nodes[&p].element.input.as_ref())
+                .and_then(|p| p.overlay.as_ref())
+                .is_some_and(|p| p.modal),
             id,
             parent: node.parent,
             children: &node.children,
@@ -2616,6 +2721,10 @@ impl<T: View> Ui<T> {
     }
     #[cfg(feature = "accessibility")]
     pub(crate) fn semantic_origin(&self, id: ElementId) -> Result<[f64; 2], UiError> {
+        let node = &self.nodes[&id];
+        if self.is_overlay(id) || node.parent.is_some_and(|p| self.is_overlay(p)) {
+            return Ok([f64::from(node.bounds.x), f64::from(node.bounds.y)]);
+        }
         let node = &self.nodes[&id];
         let layout = self.taffy.layout(node.layout)?;
         let scroll = node
@@ -2787,8 +2896,12 @@ impl<T: View> Ui<T> {
     }
 }
 
+#[path = "command_dispatch.rs"]
+mod command_dispatch;
 #[path = "input_dispatch.rs"]
 mod input_dispatch;
+#[path = "overlay_dispatch.rs"]
+mod overlay_dispatch;
 
 #[path = "range_dispatch.rs"]
 mod range_dispatch;

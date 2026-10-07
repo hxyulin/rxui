@@ -830,6 +830,30 @@ impl Element {
         self
     }
     pub(crate) fn validate(&self) -> Result<(), UiError> {
+        if let Some(input) = &self.input {
+            if let Some(p) = &input.overlay
+                && (!p.gap.is_finite()
+                    || p.gap < 0.
+                    || !p.margin.is_finite()
+                    || p.margin < 0.
+                    || matches!(&p.anchor, Some(crate::OverlayAnchor::Point(point)) if point.iter().any(|n| !n.is_finite())))
+            {
+                return Err(UiError::InvalidOverlay);
+            }
+            for (i, action) in input.commands.iter().enumerate() {
+                if input.commands[..i].iter().any(|a| {
+                    a.kind == action.kind
+                        || a.shortcuts.iter().any(|s| action.shortcuts.contains(s))
+                }) || action
+                    .shortcuts
+                    .iter()
+                    .enumerate()
+                    .any(|(i, s)| action.shortcuts[..i].contains(s))
+                {
+                    return Err(UiError::AmbiguousCommand);
+                }
+            }
+        }
         if self
             .input
             .as_ref()

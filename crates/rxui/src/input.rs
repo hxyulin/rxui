@@ -270,6 +270,10 @@ pub enum Cursor {
 }
 #[derive(Clone, Default)]
 pub(crate) struct InputProperties {
+    pub anchor: Option<crate::AnchorHandle>,
+    pub overlay: Option<Box<crate::overlay::Properties>>,
+    pub menu: bool,
+    pub commands: Vec<crate::commands::Action>,
     pub dock: Option<Box<crate::dock_view::Metadata>>,
     pub focus: Option<Box<crate::ui::focus::Properties>>,
     pub tabs: Option<Box<crate::tabs::Properties>>,
