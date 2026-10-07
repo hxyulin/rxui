@@ -23,6 +23,10 @@ Optional `native-dialogs` provides parent-bound file/message dialogs;
 See [native services](docs/native-services.md) and the standalone
 [document example](crates/rxui/examples/document_window.rs) for Open/Save As and
 unsaved Close/Quit workflows. Native clipboard text access requires only `native`.
+The native host also exposes persistable normal window geometry, monitor-aware
+restoration and native file hover/drop notifications. See
+[window state and files](docs/window-state-and-files.md) and the standalone
+[window_state example](crates/rxui/examples/window_state.rs).
 Portable semantics, accessible names/roles, focus, activation, controlled values,
 selection and scrolling are implemented. Themes, inherited text styling, control
 state paints and grayscale dark/light presets are implemented. Shared RGBA/GPU

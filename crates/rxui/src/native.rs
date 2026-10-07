@@ -127,6 +127,52 @@ impl From<SpawnError> for ApplicationError {
     }
 }
 
+mod geometry;
+pub use geometry::WindowGeometry;
+
+/// A native file-drag notification for one managed window. Multiple files produce
+/// separate events. Paths are OS payloads, not file contents or verified files.
+/// Winit supplies no reliable drop position or explicit batch-end notification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileDropEvent {
+    /// One file is hovering over the window. Some platforms omit hover events.
+    Hovered(std::path::PathBuf),
+    /// The drag left/cancelled; clear the complete hover preview.
+    Cancelled,
+    /// One file was dropped. Deliveries may arrive without a preceding hover.
+    Dropped(std::path::PathBuf),
+}
+
+impl FileDropEvent {
+    fn from_window_event(event: &WindowEvent) -> Option<Self> {
+        match event {
+            WindowEvent::HoveredFile(path) => Some(Self::Hovered(path.clone())),
+            WindowEvent::HoveredFileCancelled => Some(Self::Cancelled),
+            WindowEvent::DroppedFile(path) => Some(Self::Dropped(path.clone())),
+            _ => None,
+        }
+    }
+}
+fn deliver_file_drop(
+    runtime: &mut Runtime,
+    window: &WindowHandle,
+    event: &FileDropEvent,
+    hook: &mut Option<Box<FileDropHook>>,
+) {
+    if window.is_closed()
+        || runtime
+            .inner
+            .native
+            .borrow()
+            .as_ref()
+            .is_none_or(|c| c.exited.get())
+    {
+        return;
+    }
+    if let Some(hook) = hook {
+        runtime.update(|cx| hook(window, event, cx));
+    }
+}
 /// Native window options, independent of a concrete component type.
 /// Creation is queued until the current update ends; platform/GPU creation errors
 /// are returned by Application::run, while invalid options are rejected immediately.
@@ -136,6 +182,7 @@ pub struct WindowOptions {
     background: Option<Color>,
     theme: Option<Theme>,
     surface: SurfaceSettings,
+    restore_geometry: bool,
 }
 impl Default for WindowOptions {
     fn default() -> Self {
@@ -152,6 +199,7 @@ impl WindowOptions {
             background: None,
             theme: None,
             surface: SurfaceSettings::new(),
+            restore_geometry: false,
         }
     }
     /// Native window title.
@@ -166,6 +214,16 @@ impl WindowOptions {
         self.attributes = self
             .attributes
             .with_inner_size(LogicalSize::new(width, height));
+        self
+    }
+    /// Restores saved normal bounds and maximized state. Current monitor bounds
+    /// clamp oversized/offscreen placement at native creation. Storage stays with
+    /// the application; position support follows winit (unavailable on Wayland).
+    /// Later size/native_attributes builders override the corresponding attributes.
+    #[must_use]
+    pub fn geometry(mut self, geometry: WindowGeometry) -> Self {
+        self.attributes = geometry.attributes(self.attributes);
+        self.restore_geometry = true;
         self
     }
     /// Linear RGBA clear color for the host's UI pass.
@@ -203,7 +261,9 @@ impl WindowOptions {
             Some(Size::Physical(size)) => size.width == 0 || size.height == 0,
             None => false,
         };
+        let invalid_position = matches!(self.attributes.position, Some(astrelis_winit::winit::dpi::Position::Logical(p)) if !p.x.is_finite() || !p.y.is_finite());
         if invalid_size
+            || invalid_position
             || self
                 .background
                 .iter()
@@ -236,6 +296,7 @@ struct Life {
     alive: Cell<bool>,
     theme: RefCell<Theme>,
     inherits_theme: Cell<bool>,
+    geometry: Cell<Option<WindowGeometry>>,
 }
 /// Handle to one requested window. Dropping the handle does not close the window.
 /// Its state becomes closed on lifecycle removal; the handle retains no native
@@ -256,6 +317,13 @@ impl WindowHandle {
     /// Most recently selected effective window theme, also before native creation.
     pub fn theme(&self) -> Theme {
         self.life.theme.borrow().clone()
+    }
+    /// Latest persistable normal bounds and maximized state. Before creation this
+    /// is the requested size/placement when known; afterward it follows native
+    /// observations and remains readable after close. It is a snapshot, not a
+    /// reactive subscription. Position may be None on unsupported platforms.
+    pub fn geometry(&self) -> Option<WindowGeometry> {
+        self.life.geometry.get()
     }
     /// Native window after creation and before closing, for platform integration.
     pub fn native_window(&self) -> Option<Arc<Window>> {
@@ -649,6 +717,7 @@ impl AppContext<'_> {
                     .unwrap_or_else(|| commands.theme.borrow().clone()),
             ),
             inherits_theme: Cell::new(options.theme.is_none()),
+            geometry: Cell::new(geometry::Request::new(&options.attributes).pending()),
         });
         commands.lives.borrow_mut().insert(life.id, life.clone());
         commands.queue.borrow_mut().push_back(Command::Open {
@@ -829,6 +898,8 @@ type GraphicsRenderHook = dyn FnMut(
     WindowInfo<'_>,
     &mut Frame<'_, 'static>,
 ) -> Result<(), ApplicationError>;
+type GeometryHook = dyn FnMut(&WindowHandle, WindowGeometry, &mut AppContext<'_>);
+type FileDropHook = dyn FnMut(&WindowHandle, &FileDropEvent, &mut AppContext<'_>);
 type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
 type QuitHook = dyn FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
@@ -849,6 +920,8 @@ pub struct Application {
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
     render_graphics: Option<Box<GraphicsRenderHook>>,
     created: Option<Box<CreatedHook>>,
+    geometry_changed: Option<Box<GeometryHook>>,
+    file_drop: Option<Box<FileDropHook>>,
     close: Option<Box<CloseHook>>,
     quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
@@ -873,6 +946,8 @@ impl Application {
             prepare_graphics: None,
             render_graphics: None,
             created: None,
+            geometry_changed: None,
+            file_drop: None,
             close: None,
             quit: None,
             #[cfg(feature = "native-menus")]
@@ -916,6 +991,31 @@ impl Application {
         + 'static,
     ) -> Self {
         self.render_graphics = Some(Box::new(hook));
+        self
+    }
+    /// Receives the initial native geometry and changes to persistable normal
+    /// bounds/maximized state. Fullscreen/minimized sizes are excluded. The hook
+    /// runs in a fresh application update with no implicit source window. Retain
+    /// the latest value in memory and debounce/persist off the event thread.
+    #[must_use]
+    pub fn window_geometry_changed(
+        mut self,
+        hook: impl FnMut(&WindowHandle, WindowGeometry, &mut AppContext<'_>) + 'static,
+    ) -> Self {
+        self.geometry_changed = Some(Box::new(hook));
+        self
+    }
+    /// Receives native window-level file hover/cancel/drop notifications outside
+    /// entity leases. No implicit event source or element hit target is invented;
+    /// use the supplied managed window and update its model explicitly. Closing
+    /// windows suppress delivery. File I/O belongs on background tasks. Support
+    /// follows winit's backend; Wayland currently provides no file-drop events.
+    #[must_use]
+    pub fn file_drop(
+        mut self,
+        hook: impl FnMut(&WindowHandle, &FileDropEvent, &mut AppContext<'_>) + 'static,
+    ) -> Self {
+        self.file_drop = Some(Box::new(hook));
         self
     }
     /// Adds application font data, selecting it instead of default system discovery.
@@ -1067,6 +1167,8 @@ impl Application {
             prepare_graphics: self.prepare_graphics,
             render_graphics: self.render_graphics,
             created: self.created,
+            geometry_changed: self.geometry_changed,
+            file_drop: self.file_drop,
             close: self.close,
             quit: self.quit,
             focused_window: None,
@@ -1084,6 +1186,7 @@ impl Application {
     }
 }
 enum Wake {
+    Geometry(NativeWindowId),
     #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
     Dialog(dialogs::Packet),
     #[cfg(all(
@@ -1103,6 +1206,9 @@ struct HostedWindow {
     life: Rc<Life>,
     ui: Option<Box<dyn HostedUi>>,
     factory: Option<Box<Factory>>,
+    geometry_request: geometry::Request,
+    geometry_pending: bool,
+    restore_geometry: bool,
     background: Option<Color>,
     cursor: [f64; 2],
     cursor_icon: Option<crate::Cursor>,
@@ -1135,6 +1241,8 @@ struct Host<F> {
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
     render_graphics: Option<Box<GraphicsRenderHook>>,
     created: Option<Box<CreatedHook>>,
+    geometry_changed: Option<Box<GeometryHook>>,
+    file_drop: Option<Box<FileDropHook>>,
     close: Option<Box<CloseHook>>,
     quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
@@ -1447,7 +1555,7 @@ impl<F> Host<F> {
                     }
                     Command::Open {
                         life,
-                        options,
+                        mut options,
                         factory,
                     } => {
                         if life.closing.get() || self.commands.exited.get() {
@@ -1463,6 +1571,19 @@ impl<F> Host<F> {
                             });
                             continue;
                         }
+                        if options.restore_geometry {
+                            options.attributes = geometry::restore_attributes(
+                                options.attributes,
+                                &geometry::monitors(cx.event_loop()),
+                            );
+                        }
+                        let geometry_request = geometry::Request::new(&options.attributes);
+                        life.geometry.set(geometry_request.pending());
+                        // Position setters unmaximize a window. Restore its normal
+                        // outer frame before applying the saved maximized state.
+                        if options.restore_geometry {
+                            options.attributes.maximized = false;
+                        }
                         let native = cx
                             .create_window(options.attributes, options.surface)
                             .map_err(|e| ApplicationError::Native(Box::new(e)))?;
@@ -1472,6 +1593,9 @@ impl<F> Host<F> {
                                 life,
                                 ui: None,
                                 factory: Some(factory),
+                                geometry_request,
+                                geometry_pending: false,
+                                restore_geometry: options.restore_geometry,
                                 background: options.background,
                                 cursor: [0.; 2],
                                 cursor_icon: None,
@@ -1500,6 +1624,7 @@ impl<F> Host<F> {
                             .find(|(_, window)| window.life.id == id)
                             .map(|(id, _)| *id)
                         {
+                            self.observe_geometry(native, false);
                             cx.close_window(native)
                                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
                         }
@@ -1681,7 +1806,26 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             self.painter = Some(painter);
         }
         let window = self.windows.get_mut(&id).unwrap();
-        *window.life.native.borrow_mut() = Some(cx.window(id).unwrap().window().clone());
+        let native = cx.window(id).unwrap().window();
+        *window.life.native.borrow_mut() = Some(native.clone());
+        let requested = window.geometry_request.resolve(native.scale_factor());
+        if window.restore_geometry && native.fullscreen().is_none() {
+            // macOS creation attributes position the content area. Correct the
+            // persisted outer frame while hidden, then maximize if requested.
+            if let Some(position) = requested.and_then(|g| g.outer_position) {
+                native.set_outer_position(astrelis_winit::winit::dpi::PhysicalPosition::new(
+                    position[0],
+                    position[1],
+                ));
+            }
+            if requested.is_some_and(|g| g.maximized) {
+                native.set_maximized(true);
+            }
+        }
+        window
+            .life
+            .geometry
+            .set(geometry::initial(native, requested));
         window.ui = Some(window.factory.take().unwrap()(&mut self.runtime)?);
         window
             .ui
@@ -1708,6 +1852,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         if let Some(menus) = &mut self.menus {
             menus.attach(id, cx.window(id).unwrap().window().clone())?;
         }
+        self.observe_geometry(id, true);
         self.sync_mounts(id);
         self.progress(cx, None)
     }
@@ -1718,6 +1863,25 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         event: WindowEvent,
     ) -> Result<(), Self::Error> {
         if self.commands.exited.get() {
+            return self.progress(cx, None);
+        }
+        if self.windows.get(&id).is_none_or(|w| w.life.closing.get()) {
+            return self.progress(cx, None);
+        }
+        if matches!(
+            event,
+            WindowEvent::Moved(_)
+                | WindowEvent::Resized(_)
+                | WindowEvent::ScaleFactorChanged { .. }
+                | WindowEvent::Focused(_)
+        ) {
+            self.queue_geometry(cx, id)?;
+        }
+        if let Some(event) = FileDropEvent::from_window_event(&event) {
+            let handle = WindowHandle {
+                life: self.windows[&id].life.clone(),
+            };
+            deliver_file_drop(&mut self.runtime, &handle, &event, &mut self.file_drop);
             return self.progress(cx, None);
         }
         if let Some(window) = self.windows.get_mut(&id)
@@ -1982,6 +2146,13 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         event: Wake,
     ) -> Result<(), Self::Error> {
         match event {
+            Wake::Geometry(id) => {
+                if let Some(window) = self.windows.get_mut(&id) {
+                    window.geometry_pending = false;
+                }
+                self.observe_geometry(id, false);
+                self.progress(cx, None)
+            }
             #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
             Wake::Dialog(packet) => {
                 self.finish_dialog(packet);
@@ -2072,6 +2243,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         cx: &mut NativeContext<'_, Wake>,
         id: NativeWindowId,
     ) -> Result<astrelis_winit::CloseResponse, Self::Error> {
+        self.observe_geometry(id, false);
         let handle = WindowHandle {
             life: self.windows[&id].life.clone(),
         };
@@ -2327,6 +2499,97 @@ mod tests {
         commands
     }
 
+    #[test]
+    fn file_drop_hooks_preserve_paths_order_and_window_identity_without_a_ui() {
+        let mut runtime = Runtime::new();
+        let commands = attach(&mut runtime);
+        let root = runtime.update(|cx| cx.new(|_| Counter(0)));
+        let parent = runtime
+            .update(|cx| cx.open_window(WindowOptions::new(), root.clone()))
+            .unwrap();
+        let other = runtime
+            .update(|cx| cx.open_window(WindowOptions::new(), root.clone()))
+            .unwrap();
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let output = received.clone();
+        let mut hook: Option<Box<FileDropHook>> = Some(Box::new(move |window, event, cx| {
+            assert!(cx.window().is_none());
+            output.borrow_mut().push((window.id(), event.clone()));
+            root.update(cx, |state, _| state.0 += 1);
+        }));
+        let path = std::path::PathBuf::from("nonexistent/文書 with spaces.txt");
+        let events = [
+            WindowEvent::HoveredFile(path.clone()),
+            WindowEvent::HoveredFileCancelled,
+            WindowEvent::DroppedFile(path.clone()),
+        ];
+        for event in &events {
+            let event = FileDropEvent::from_window_event(event).unwrap();
+            deliver_file_drop(&mut runtime, &parent, &event, &mut hook);
+        }
+        // Drops need no preceding hover and each native file is a distinct delivery.
+        deliver_file_drop(
+            &mut runtime,
+            &other,
+            &FileDropEvent::Dropped(path.clone()),
+            &mut hook,
+        );
+        assert_eq!(
+            *received.borrow(),
+            vec![
+                (parent.id(), FileDropEvent::Hovered(path.clone())),
+                (parent.id(), FileDropEvent::Cancelled),
+                (parent.id(), FileDropEvent::Dropped(path.clone())),
+                (other.id(), FileDropEvent::Dropped(path.clone()))
+            ]
+        );
+        assert!(FileDropEvent::from_window_event(&WindowEvent::Focused(true)).is_none());
+        runtime.update(|cx| cx.close_window(&parent).unwrap());
+        deliver_file_drop(
+            &mut runtime,
+            &parent,
+            &FileDropEvent::Dropped(path.clone()),
+            &mut hook,
+        );
+        commands.exited.set(true);
+        deliver_file_drop(
+            &mut runtime,
+            &other,
+            &FileDropEvent::Dropped(path),
+            &mut hook,
+        );
+        assert_eq!(received.borrow().len(), 4);
+    }
+    #[test]
+    fn geometry_requests_validate_and_snapshots_survive_logical_close() {
+        let mut runtime = Runtime::new();
+        attach(&mut runtime);
+        let root = runtime.update(|cx| cx.new(|_| Counter(0)));
+        for geometry in [
+            WindowGeometry::new(f64::NAN, 600.),
+            WindowGeometry::new(800., 0.),
+            WindowGeometry::new(f64::INFINITY, 600.),
+        ] {
+            assert!(matches!(
+                runtime.update(
+                    |cx| cx.open_window(WindowOptions::new().geometry(geometry), root.clone())
+                ),
+                Err(ApplicationError::InvalidWindowOptions)
+            ));
+        }
+        let geometry = WindowGeometry {
+            outer_position: Some([-900, 120]),
+            maximized: true,
+            ..WindowGeometry::new(800., 600.)
+        };
+        let window = runtime
+            .update(|cx| cx.open_window(WindowOptions::new().geometry(geometry), root.clone()))
+            .unwrap();
+        assert_eq!(window.geometry(), Some(geometry));
+        runtime.update(|cx| cx.close_window(&window).unwrap());
+        assert_eq!(window.geometry(), Some(geometry));
+        assert!(window.is_closed());
+    }
     #[test]
     fn window_commands_validate_before_queueing_and_close_is_idempotent() {
         let mut runtime = Runtime::new();

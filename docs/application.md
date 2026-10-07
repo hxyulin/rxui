@@ -19,6 +19,13 @@ WindowOptions configures title, logical size, clear color and SurfaceSettings.
 selects application fonts instead of default system discovery; `.system_fonts(true)`
 explicitly enables discovery alongside those fonts.
 
+`WindowOptions::geometry` restores application-persisted normal size/position and
+maximized state against current monitor bounds. `WindowHandle::geometry` exposes
+the latest snapshot; `Application::window_geometry_changed` reports changes without
+polling or disk I/O. `Application::file_drop` receives window-level native path
+notifications. See [window state and files](window-state-and-files.md) for units,
+storage ownership, teardown behavior and platform limits.
+
 Dropping a WindowHandle does not close its window. `cx.close_window(&handle)`
 queues an explicit close and marks the handle closing immediately; repeated close
 requests while closing are idempotent. A queued close before creation cancels the

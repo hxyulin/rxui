@@ -143,3 +143,7 @@ required-features = ["native-menus"]
 [[example]]
 name = "document_window"
 required-features = ["native-menus", "native-dialogs", "desktop-services"]
+
+[[example]]
+name = "window_state"
+required-features = ["native"]

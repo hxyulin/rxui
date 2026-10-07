@@ -24,6 +24,8 @@
 //! Optional native-dialogs adds parent-bound file pickers and message dialogs;
 //! desktop-services adds asynchronous URL/file launches and file-manager reveal.
 //! Native clipboard text access shares the host's persistent clipboard owner.
+//! Native window geometry snapshots support application-owned persistence and
+//! monitor-aware restoration; file-drop hooks deliver window-level native paths.
 //! Portable semantics are part of layout; the optional accessibility feature adds
 //! AccessKit translation for custom hosts. Multiline/undo editing and virtualization
 //! remain following milestones.
@@ -203,6 +205,8 @@ pub use listener::{Dispatch, Listener};
 pub use native::{
     Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
 };
+#[cfg(feature = "native")]
+pub use native::{FileDropEvent, WindowGeometry};
 #[cfg(feature = "native-menus")]
 pub use native_menus::{NativeMenu, NativeMenuBar, NativeMenuRole};
 #[cfg(feature = "layout")]
@@ -260,7 +264,10 @@ pub mod prelude {
         Shortcut, menu, menu_item, modal, popover, standard_commands,
     };
     #[cfg(feature = "native")]
-    pub use crate::{Application, ApplicationError, CloseResponse, WindowHandle, WindowOptions};
+    pub use crate::{
+        Application, ApplicationError, CloseResponse, FileDropEvent, WindowGeometry, WindowHandle,
+        WindowOptions,
+    };
     pub use crate::{
         Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollError,
         ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, scroll_area, scrollbar,
