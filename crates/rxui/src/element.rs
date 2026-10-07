@@ -57,7 +57,7 @@ pub enum ButtonVariant {
     /// Bordered control with neutral state fills.
     #[default]
     Default,
-    /// Inverted foreground/background for the primary action.
+    /// Accent fill for the primary action.
     Primary,
     /// Text/content without a resting fill/border; hover/pressed still show feedback.
     Quiet,
@@ -205,16 +205,16 @@ impl Element {
     fn control_defaults(&mut self, input: bool) {
         let theme = Theme::default();
         let metrics = theme.sizes();
-        let padding = if input {
-            metrics.input_padding
+        let [x, y] = if input {
+            [metrics.input_padding_x, metrics.input_padding_y]
         } else {
-            metrics.button_padding
+            [metrics.button_padding_x, metrics.button_padding_y]
         };
         self.style.padding = taffy::geometry::Rect {
-            left: length(padding),
-            right: length(padding),
-            top: length(padding),
-            bottom: length(padding),
+            left: length(x),
+            right: length(x),
+            top: length(y),
+            bottom: length(y),
         };
         let border = metrics.border_width;
         self.style.border = taffy::geometry::Rect {

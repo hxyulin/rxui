@@ -11,7 +11,7 @@ struct Gallery {
 fn preview(theme: Theme, title: &str, value: &str, cx: &mut ViewContext<'_, Gallery>) -> Element {
     column()
         .theme(theme)
-        .width(350.)
+        .width(360.)
         .padding(20.)
         .gap(12.)
         .background(ThemeColor::Surface)
@@ -26,9 +26,15 @@ fn preview(theme: Theme, title: &str, value: &str, cx: &mut ViewContext<'_, Gall
         )
         .child(label("Secondary text inherits the local palette").color(ThemeColor::TextMuted))
         .child(
-            button("Default button")
-                .fill_width()
-                .on_click(cx.listener(|this, _, _| this.clicks += 1)),
+            row()
+                .gap(8.)
+                .child(
+                    button("Primary")
+                        .variant(ButtonVariant::Primary)
+                        .on_click(cx.listener(|this, _, _| this.clicks += 1)),
+                )
+                .child(button("Default").on_click(cx.listener(|this, _, _| this.clicks += 1)))
+                .child(button("Quiet").variant(ButtonVariant::Quiet)),
         )
         .child(button("Disabled button").fill_width().disabled(true))
         .child(
@@ -46,6 +52,16 @@ fn preview(theme: Theme, title: &str, value: &str, cx: &mut ViewContext<'_, Gall
                 .accessibility_label(format!("{title} read-only value")),
         )
 }
+/// Cycles dark → light → high contrast.
+fn next_theme(current: &Theme) -> Theme {
+    if *current == Theme::dark() {
+        Theme::light()
+    } else if *current == Theme::light() {
+        Theme::high_contrast()
+    } else {
+        Theme::dark()
+    }
+}
 impl View for Gallery {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         column().fill_width().fill_height().padding(24.).gap(16.).scroll_y()
@@ -54,21 +70,25 @@ impl View for Gallery {
                 .color(ThemeColor::TextMuted))
             .child(row().gap(12.)
                 .child(button("Toggle application theme").on_click(cx.listener(|_, _, cx| {
-                    let next = if cx.theme().unwrap() == Theme::dark() { Theme::light() } else { Theme::dark() };
+                    let next = next_theme(&cx.theme().unwrap());
                     cx.set_theme(next).unwrap();
                 })))
                 .child(button("Toggle this window").on_click(cx.listener(|_, _, cx| {
                     let window = cx.window().unwrap();
-                    let next = if window.theme() == Theme::dark() { Theme::light() } else { Theme::dark() };
-                    cx.set_window_theme(&window, next).unwrap();
+                    cx.set_window_theme(&window, next_theme(&window.theme())).unwrap();
                 })))
                 .child(button("Follow application theme").on_click(cx.listener(|_, _, cx| {
                     let window = cx.window().unwrap();
                     cx.use_application_theme(&window).unwrap();
                 }))))
             .child(row().gap(16.)
-                .child(preview(Theme::dark(), "Dark preview", &self.name, cx))
-                .child(preview(Theme::light(), "Light preview", &self.name, cx)))
+                .child(preview(Theme::dark(), "Dark", &self.name, cx))
+                .child(preview(Theme::light(), "Light", &self.name, cx))
+                .child(preview(Theme::high_contrast(), "High contrast", &self.name, cx)))
+            .child(row().gap(16.)
+                .child(preview(Theme::dark().compact(), "Dark compact", &self.name, cx))
+                .child(preview(Theme::light().compact(), "Light compact", &self.name, cx))
+                .child(preview(Theme::high_contrast().compact(), "High contrast compact", &self.name, cx)))
             .child(label("Local overrides").font_size(22.))
             .child(row().gap(12.)
                 .child(button("Custom interaction paints")
@@ -90,7 +110,7 @@ impl View for Gallery {
                 .child(button("Open shared light window").on_click(cx.listener(|_, _, cx| {
                     let root = cx.entity().upgrade().unwrap();
                     cx.open_window(WindowOptions::new().title("RXUI — light gallery")
-                        .size(860., 860.).theme(Theme::light()), root).unwrap();
+                        .size(1200., 900.).theme(Theme::light()), root).unwrap();
                 }))))
             .child(label(format!("Clicks: {} · shared values, independent theme/focus/selection", self.clicks)))
     }
@@ -105,7 +125,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — theme gallery")
-                .size(860., 860.),
+                .size(1200., 900.),
             root,
         )?;
         Ok(())

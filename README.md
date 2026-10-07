@@ -29,10 +29,10 @@ restoration and native file hover/drop notifications. See
 [window_state example](crates/rxui/examples/window_state.rs).
 Portable semantics, accessible names/roles, focus, activation, controlled values,
 selection and scrolling are implemented. Themes, inherited text styling, control
-state paints and grayscale dark/light presets are implemented. Shared RGBA/GPU
-images, live framebuffer output, composed buttons and application graphics hooks
-are implemented. Optional `image-decoding` adds PNG/JPEG decoding. Fixed-height
-virtual lists build only nearby rows; see [virtual lists](docs/virtual-lists.md)
+state paints, dark/light/high-contrast presets and a compact density are
+implemented. Shared RGBA/GPU images, live framebuffer output, composed buttons and
+application graphics hooks are implemented. Optional `image-decoding` adds
+PNG/JPEG decoding. Fixed-height virtual lists build only nearby rows; see [virtual lists](docs/virtual-lists.md)
 and [scaling measurements](docs/performance/virtual-lists.md).
 
 ## Declarative views and a window
@@ -134,8 +134,9 @@ warm-cache costs and the initial-tree boundary.
 
 ## Themes and styling
 
-`Application::new().theme(Theme::dark())` chooses the default. `Theme::light()` uses
-matching metrics. Elements accept semantic tokens such as `.color(ThemeColor::TextMuted)`
+`Application::new().theme(Theme::dark())` chooses the default. `Theme::light()` and
+`Theme::high_contrast()` use matching metrics; `.compact()` switches any preset to the
+dense metrics. Elements accept semantic tokens such as `.color(ThemeColor::TextMuted)`
 and `.background(ThemeColor::Surface)`, or literal linear RGBA values. `rgb8`/`rgba8`
 convert sRGB byte colors for the renderer. Text color/size inherit across component
 boundaries; backgrounds, borders and dimensions stay local.

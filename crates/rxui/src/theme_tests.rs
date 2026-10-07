@@ -152,8 +152,10 @@ fn metric_switch_reflows_only_effective_fonts_and_preserves_explicit_zero_box_me
     let before = ui.stats();
     let theme = Theme::dark().metrics(|m| {
         m.font_size = 18.;
-        m.button_padding = 20.;
-        m.input_padding = 14.;
+        m.button_padding_x = 20.;
+        m.button_padding_y = 20.;
+        m.input_padding_x = 14.;
+        m.input_padding_y = 14.;
         m.input_width = 310.;
         m.input_height = 64.;
         m.border_width = 3.;
@@ -248,7 +250,7 @@ fn invalid_theme_and_paint_values_are_rejected_before_replacing_a_working_theme(
         button("Bad").radius(-1.),
         label("Bad").color([2.; 4]),
         button("Bad").hover_style(PaintStyle::new().focus_width(f32::NAN)),
-        column().theme(Theme::light().metrics(|m| m.input_padding = -1.)),
+        column().theme(Theme::light().metrics(|m| m.input_padding_x = -1.)),
     ] {
         assert!(matches!(element.validate(), Err(UiError::InvalidStyle)));
     }
@@ -320,7 +322,7 @@ fn preset_contrast_pairs_and_srgb_conversion_are_verified() {
     let middle = rgb8(128, 128, 128);
     assert!((middle[0] - 0.21586).abs() < 0.0001);
     assert!((rgba8(255, 255, 255, 128)[3] - 128. / 255.).abs() < 0.0001);
-    for theme in [Theme::dark(), Theme::light()] {
+    for theme in [Theme::dark(), Theme::light(), Theme::high_contrast()] {
         theme.validate().unwrap();
         let c = theme.palette();
         for background in [
@@ -334,12 +336,11 @@ fn preset_contrast_pairs_and_srgb_conversion_are_verified() {
             assert!(contrast(c.text_muted, background) >= 4.5);
             assert!(contrast(c.focus, background) >= 3.);
         }
-        for background in [c.control, c.control_hover, c.control_pressed] {
-            assert!(contrast(c.border, background) >= 3.);
-        }
+        assert!(contrast(c.input_border, c.input) >= 3.);
         assert!(contrast(c.selection_text, c.selection) >= 7.);
-        assert!(contrast(c.selection, c.control) >= 3.);
-        assert!(contrast(c.text_disabled, c.control_disabled) >= 4.5);
+        for accent in [c.accent, c.accent_hover, c.accent_pressed] {
+            assert!(contrast(c.accent_text, accent) >= 4.5);
+        }
         assert_eq!(c.selection[3], 1.);
     }
 }

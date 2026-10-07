@@ -1245,8 +1245,8 @@ mod tests {
             let mut ui = Ui::new(&mut runtime, root).unwrap();
             let mut painter = UiPainter::new(&graphics);
             for (theme, surface, border) in [
-                (crate::Theme::dark(), 27_u8, 133_u8),
-                (crate::Theme::light(), 255, 110),
+                (crate::Theme::dark(), [27_u8, 28, 33], [62_u8, 65, 74]),
+                (crate::Theme::light(), [255, 255, 255], [195, 199, 206]),
             ] {
                 ui.set_theme(theme).unwrap();
                 ui.prepare(&mut runtime, [64., 64.], &mut painter).unwrap();
@@ -1305,8 +1305,8 @@ mod tests {
                     let pixels = buffer.slice(..).get_mapped_range().unwrap();
                     let pixel = |x: usize, y: usize| &pixels[y * 256 + x * 4..y * 256 + x * 4 + 4];
                     assert_eq!(pixel(1, 1), [0, 0, 0, 255]); // Rounded corner, outside contour.
-                    assert_eq!(pixel(20, 20), [surface, surface, surface, 255]);
-                    assert_eq!(pixel(20, 2), [border, border, border, 255]);
+                    assert_eq!(pixel(20, 20), [surface[0], surface[1], surface[2], 255]);
+                    assert_eq!(pixel(20, 2), [border[0], border[1], border[2], 255]);
                     assert_eq!(pixel(50, 20), [0, 0, 0, 255]);
                 }
                 buffer.unmap();

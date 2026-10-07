@@ -1381,21 +1381,21 @@ impl<T: View> Ui<T> {
             let mut layout = element.style.clone();
             if control {
                 use taffy::geometry::Rect;
-                let all = |v| Rect {
-                    left: length(v),
-                    right: length(v),
-                    top: length(v),
-                    bottom: length(v),
+                let all = |x, y| Rect {
+                    left: length(x),
+                    right: length(x),
+                    top: length(y),
+                    bottom: length(y),
                 };
                 if element.layout_overrides & 1 == 0 {
-                    layout.padding = all(if input {
-                        metrics.input_padding
+                    layout.padding = if input {
+                        all(metrics.input_padding_x, metrics.input_padding_y)
                     } else {
-                        metrics.button_padding
-                    });
+                        all(metrics.button_padding_x, metrics.button_padding_y)
+                    };
                 }
                 if element.layout_overrides & 8 == 0 {
-                    layout.border = all(metrics.border_width);
+                    layout.border = all(metrics.border_width, metrics.border_width);
                 }
                 if input {
                     if element.layout_overrides & 2 == 0 {
@@ -1412,17 +1412,23 @@ impl<T: View> Ui<T> {
         };
         let mut paint = ResolvedPaint::new(&theme, color.resolve(&theme));
         if control {
-            paint.background = Some(theme.palette().control);
-            paint.border_color = Some(theme.palette().border);
+            let c = theme.palette();
+            let (fill, border) = if input {
+                (c.input, c.input_border)
+            } else {
+                (c.control, c.border)
+            };
+            paint.background = Some(fill);
+            paint.border_color = Some(border);
             paint.radius = metrics.radius;
         }
         if matches!(element.kind, ElementKind::Button { .. }) {
             match element.button_variant {
                 crate::ButtonVariant::Primary => {
-                    paint.background = Some(theme.palette().text);
-                    paint.color = theme.palette().background;
-                    paint.border_color = Some(theme.palette().text);
-                    paint.focus_color = theme.palette().background;
+                    paint.background = Some(theme.palette().accent);
+                    paint.color = theme.palette().accent_text;
+                    paint.border_color = Some(theme.palette().accent);
+                    paint.focus_color = theme.palette().accent_text;
                 }
                 crate::ButtonVariant::Quiet => {
                     paint.background = None;
@@ -1443,8 +1449,10 @@ impl<T: View> Ui<T> {
             if matches!(element.kind, ElementKind::Button { .. }) {
                 match element.button_variant {
                     crate::ButtonVariant::Primary => {
-                        states[0].background = Some(theme.palette().text_muted);
-                        states[1].background = Some(theme.palette().text_disabled);
+                        states[0].background = Some(theme.palette().accent_hover);
+                        states[0].border_color = Some(theme.palette().accent_hover);
+                        states[1].background = Some(theme.palette().accent_pressed);
+                        states[1].border_color = Some(theme.palette().accent_pressed);
                         states[2].focus_color = theme.palette().focus;
                     }
                     crate::ButtonVariant::Quiet => {

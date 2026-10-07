@@ -24,6 +24,8 @@ pub enum ThemeColor {
     Background,
     /// Panel fill.
     Surface,
+    /// Menu, popover and dialog fill.
+    Raised,
     /// Ordinary control fill.
     Control,
     /// Hovered control fill.
@@ -42,6 +44,20 @@ pub enum ThemeColor {
     Border,
     /// Disabled boundary.
     BorderDisabled,
+    /// Text input fill.
+    Input,
+    /// Text input boundary; stronger than Border.
+    InputBorder,
+    /// Subtle separator between regions.
+    Divider,
+    /// Primary action fill.
+    Accent,
+    /// Hovered primary action fill.
+    AccentHover,
+    /// Pressed primary action fill.
+    AccentPressed,
+    /// Text painted over Accent.
+    AccentText,
     /// Keyboard focus outline.
     Focus,
     /// Text selection background.
@@ -99,6 +115,8 @@ pub struct ThemeColors {
     pub background: Color,
     /// Panel fill.
     pub surface: Color,
+    /// Menu, popover and dialog fill.
+    pub raised: Color,
     /// Ordinary control fill.
     pub control: Color,
     /// Hovered control fill.
@@ -117,6 +135,20 @@ pub struct ThemeColors {
     pub border: Color,
     /// Disabled boundary.
     pub border_disabled: Color,
+    /// Text input fill.
+    pub input: Color,
+    /// Text input boundary.
+    pub input_border: Color,
+    /// Subtle separator between regions.
+    pub divider: Color,
+    /// Primary action fill.
+    pub accent: Color,
+    /// Hovered primary action fill.
+    pub accent_hover: Color,
+    /// Pressed primary action fill.
+    pub accent_pressed: Color,
+    /// Text over accent fills.
+    pub accent_text: Color,
     /// Focus outline.
     pub focus: Color,
     /// Selection background, paired with selection_text.
@@ -129,10 +161,11 @@ pub struct ThemeColors {
     pub preedit: Color,
 }
 impl ThemeColors {
-    fn values(&self) -> [Color; 16] {
+    fn values(&self) -> [Color; 24] {
         [
             self.background,
             self.surface,
+            self.raised,
             self.control,
             self.control_hover,
             self.control_pressed,
@@ -142,6 +175,13 @@ impl ThemeColors {
             self.text_disabled,
             self.border,
             self.border_disabled,
+            self.input,
+            self.input_border,
+            self.divider,
+            self.accent,
+            self.accent_hover,
+            self.accent_pressed,
+            self.accent_text,
             self.focus,
             self.selection,
             self.selection_text,
@@ -152,14 +192,22 @@ impl ThemeColors {
 }
 /// Default typography/control metrics in logical units. Explicit element builders
 /// take precedence. Changing font size or box metrics invalidates affected layout.
+///
+/// Text lines are `font_size * 1.4` tall, so a button is
+/// `font_size * 1.4 + 2 * (button_padding_y + border_width)` tall. The presets pick
+/// paddings that make buttons exactly `input_height`, so they line up in a row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeMetrics {
     /// Root/inherited text size; strictly positive.
     pub font_size: f32,
-    /// Default uniform button padding.
-    pub button_padding: f32,
-    /// Default input padding.
-    pub input_padding: f32,
+    /// Default horizontal button padding.
+    pub button_padding_x: f32,
+    /// Default vertical button padding.
+    pub button_padding_y: f32,
+    /// Default horizontal input padding.
+    pub input_padding_x: f32,
+    /// Default vertical input padding.
+    pub input_padding_y: f32,
     /// Default input width.
     pub input_width: f32,
     /// Default input height.
@@ -171,18 +219,41 @@ pub struct ThemeMetrics {
     /// Focus stroke width, inside the box; painting only.
     pub focus_width: f32,
 }
-impl Default for ThemeMetrics {
-    fn default() -> Self {
+impl ThemeMetrics {
+    /// Default desktop density: 14pt text and 36-unit controls.
+    pub fn balanced() -> Self {
         Self {
-            font_size: 16.,
-            button_padding: 12.,
-            input_padding: 10.,
+            font_size: 14.,
+            button_padding_x: 14.,
+            button_padding_y: 7.2,
+            input_padding_x: 12.,
+            input_padding_y: 7.2,
             input_width: 240.,
-            input_height: 44.,
+            input_height: 36.,
+            border_width: 1.,
+            radius: 6.,
+            focus_width: 2.,
+        }
+    }
+    /// Dense preset for tool-heavy windows: 13pt text and 28-unit controls.
+    pub fn compact() -> Self {
+        Self {
+            font_size: 13.,
+            button_padding_x: 10.,
+            button_padding_y: 3.9,
+            input_padding_x: 8.,
+            input_padding_y: 3.9,
+            input_width: 200.,
+            input_height: 28.,
             border_width: 1.,
             radius: 4.,
             focus_width: 2.,
         }
+    }
+}
+impl Default for ThemeMetrics {
+    fn default() -> Self {
+        Self::balanced()
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -192,12 +263,14 @@ struct Data {
 }
 /// Immutable, cheaply cloned theme shared by placements and subtree scopes.
 /// Customization creates a new value; existing clones are unaffected. Dark is the
-/// default. Both presets use grayscale chrome and opaque selection colors.
+/// default. Presets use balanced metrics; [`Theme::compact`] switches density.
 ///
 /// ```
 /// use rxui::{Theme, rgb8};
 /// let theme = Theme::dark().colors(|colors| colors.focus = rgb8(180, 215, 255));
 /// assert_ne!(theme, Theme::dark());
+/// let dense = Theme::light().compact();
+/// assert_eq!(dense.sizes().input_height, 28.);
 /// ```
 #[derive(Clone, Debug)]
 pub struct Theme(Arc<Data>);
@@ -211,62 +284,126 @@ impl Default for Theme {
         Self::dark()
     }
 }
+#[derive(Clone, Copy)]
+enum Preset {
+    Light,
+    Dark,
+    HighContrast,
+}
 impl Theme {
-    /// High-contrast neutral dark preset. Shares an immutable preset allocation.
+    /// Neutral dark preset with a blue accent. Shares an immutable preset allocation.
     pub fn dark() -> Self {
         static THEME: OnceLock<Theme> = OnceLock::new();
-        THEME.get_or_init(|| Self::preset(false)).clone()
+        THEME.get_or_init(|| Self::preset(Preset::Dark)).clone()
     }
     /// Neutral light preset using the same metrics and semantic color bindings.
     pub fn light() -> Self {
         static THEME: OnceLock<Theme> = OnceLock::new();
-        THEME.get_or_init(|| Self::preset(true)).clone()
+        THEME.get_or_init(|| Self::preset(Preset::Light)).clone()
     }
-    fn preset(light: bool) -> Self {
-        let gray = |v| rgb8(v, v, v);
-        let colors = if light {
-            ThemeColors {
-                background: gray(250),
-                surface: gray(255),
-                control: gray(242),
-                control_hover: gray(230),
-                control_pressed: gray(214),
-                control_disabled: gray(246),
-                text: gray(24),
-                text_muted: gray(76),
-                text_disabled: gray(105),
-                border: gray(110),
-                border_disabled: gray(165),
-                focus: gray(24),
-                selection: gray(76),
-                selection_text: gray(250),
-                caret: gray(24),
-                preedit: gray(24),
+    /// Black and white preset with a yellow accent/focus and a 3-unit focus stroke.
+    pub fn high_contrast() -> Self {
+        static THEME: OnceLock<Theme> = OnceLock::new();
+        THEME
+            .get_or_init(|| Self::preset(Preset::HighContrast))
+            .clone()
+    }
+    /// Switches to [`ThemeMetrics::compact`], keeping this theme's focus width.
+    pub fn compact(self) -> Self {
+        self.metrics(|m| {
+            *m = ThemeMetrics {
+                focus_width: m.focus_width,
+                ..ThemeMetrics::compact()
             }
-        } else {
-            ThemeColors {
-                background: gray(18),
-                surface: gray(27),
-                control: gray(38),
-                control_hover: gray(48),
-                control_pressed: gray(58),
-                control_disabled: gray(30),
-                text: gray(245),
-                text_muted: gray(179),
-                text_disabled: gray(145),
-                border: gray(133),
-                border_disabled: gray(90),
-                focus: gray(245),
-                selection: gray(179),
-                selection_text: gray(18),
-                caret: gray(245),
-                preedit: gray(245),
+        })
+    }
+    fn preset(preset: Preset) -> Self {
+        let hex = |v: u32| rgb8((v >> 16) as u8, (v >> 8) as u8, v as u8);
+        let mut metrics = ThemeMetrics::default();
+        let colors = match preset {
+            Preset::Light => ThemeColors {
+                background: hex(0xF3F4F6),
+                surface: hex(0xFFFFFF),
+                raised: hex(0xFFFFFF),
+                control: hex(0xFFFFFF),
+                control_hover: hex(0xF1F2F4),
+                control_pressed: hex(0xE4E6EA),
+                control_disabled: hex(0xF3F4F6),
+                text: hex(0x17181C),
+                text_muted: hex(0x5B606A),
+                text_disabled: hex(0xA0A4AB),
+                border: hex(0xC3C7CE),
+                border_disabled: hex(0xDDE0E4),
+                input: hex(0xFFFFFF),
+                input_border: hex(0x8F949D),
+                divider: hex(0xE3E5E9),
+                accent: hex(0x2563EB),
+                accent_hover: hex(0x1D4FD8),
+                accent_pressed: hex(0x1E44B8),
+                accent_text: hex(0xFFFFFF),
+                focus: hex(0x2563EB),
+                selection: hex(0xCFE0FF),
+                selection_text: hex(0x17181C),
+                caret: hex(0x17181C),
+                preedit: hex(0x17181C),
+            },
+            Preset::Dark => ThemeColors {
+                background: hex(0x131418),
+                surface: hex(0x1B1C21),
+                raised: hex(0x23252B),
+                control: hex(0x25272D),
+                control_hover: hex(0x2E3037),
+                control_pressed: hex(0x383A42),
+                control_disabled: hex(0x1E1F24),
+                text: hex(0xECEDF0),
+                text_muted: hex(0xA3A7B0),
+                text_disabled: hex(0x60646C),
+                border: hex(0x3E414A),
+                border_disabled: hex(0x2C2E34),
+                input: hex(0x16171B),
+                input_border: hex(0x6A6E78),
+                divider: hex(0x2A2C32),
+                accent: hex(0x2563EB),
+                accent_hover: hex(0x1F5AE0),
+                accent_pressed: hex(0x1A4CC2),
+                accent_text: hex(0xFFFFFF),
+                focus: hex(0x6EA2FF),
+                selection: hex(0x2B4E8F),
+                selection_text: hex(0xFFFFFF),
+                caret: hex(0xECEDF0),
+                preedit: hex(0xECEDF0),
+            },
+            Preset::HighContrast => {
+                metrics.focus_width = 3.;
+                ThemeColors {
+                    background: hex(0x000000),
+                    surface: hex(0x000000),
+                    raised: hex(0x000000),
+                    control: hex(0x000000),
+                    control_hover: hex(0x1F1F1F),
+                    control_pressed: hex(0x3A3A3A),
+                    control_disabled: hex(0x000000),
+                    text: hex(0xFFFFFF),
+                    text_muted: hex(0xE6E6E6),
+                    text_disabled: hex(0x9A9A9A),
+                    border: hex(0xFFFFFF),
+                    border_disabled: hex(0x9A9A9A),
+                    input: hex(0x000000),
+                    input_border: hex(0xFFFFFF),
+                    divider: hex(0xFFFFFF),
+                    accent: hex(0xFFD400),
+                    accent_hover: hex(0xFFE34D),
+                    accent_pressed: hex(0xE6BF00),
+                    accent_text: hex(0x000000),
+                    focus: hex(0xFFD400),
+                    selection: hex(0x00E5FF),
+                    selection_text: hex(0x000000),
+                    caret: hex(0xFFFFFF),
+                    preedit: hex(0xFFFFFF),
+                }
             }
         };
-        Self(Arc::new(Data {
-            colors,
-            metrics: ThemeMetrics::default(),
-        }))
+        Self(Arc::new(Data { colors, metrics }))
     }
     /// Customizes a cloned palette; no placement or existing clone is mutated.
     pub fn colors(mut self, f: impl FnOnce(&mut ThemeColors)) -> Self {
@@ -292,6 +429,7 @@ impl Theme {
         match color {
             ThemeColor::Background => c.background,
             ThemeColor::Surface => c.surface,
+            ThemeColor::Raised => c.raised,
             ThemeColor::Control => c.control,
             ThemeColor::ControlHover => c.control_hover,
             ThemeColor::ControlPressed => c.control_pressed,
@@ -301,6 +439,13 @@ impl Theme {
             ThemeColor::TextDisabled => c.text_disabled,
             ThemeColor::Border => c.border,
             ThemeColor::BorderDisabled => c.border_disabled,
+            ThemeColor::Input => c.input,
+            ThemeColor::InputBorder => c.input_border,
+            ThemeColor::Divider => c.divider,
+            ThemeColor::Accent => c.accent,
+            ThemeColor::AccentHover => c.accent_hover,
+            ThemeColor::AccentPressed => c.accent_pressed,
+            ThemeColor::AccentText => c.accent_text,
             ThemeColor::Focus => c.focus,
             ThemeColor::Selection => c.selection,
             ThemeColor::SelectionText => c.selection_text,
@@ -316,8 +461,10 @@ impl Theme {
             || !m.font_size.is_finite()
             || m.font_size <= 0.
             || [
-                m.button_padding,
-                m.input_padding,
+                m.button_padding_x,
+                m.button_padding_y,
+                m.input_padding_x,
+                m.input_padding_y,
                 m.input_width,
                 m.input_height,
                 m.border_width,

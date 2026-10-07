@@ -328,7 +328,7 @@ impl IntoElement for Tabs {
                 .key("tab")
                 .disabled(entry.disabled)
                 .variant(if selected {
-                    ButtonVariant::Primary
+                    ButtonVariant::Default
                 } else {
                     ButtonVariant::Quiet
                 })

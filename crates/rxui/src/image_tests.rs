@@ -227,7 +227,7 @@ fn composed_buttons_route_child_hits_and_inherit_state_without_layout() {
     );
     assert_eq!(
         keyed(&ui, "caption").color,
-        Theme::dark().palette().background
+        Theme::dark().palette().accent_text
     );
     let stats = ui.stats();
     ui.pointer(&mut runtime, PointerEvent::Moved(point))
@@ -323,12 +323,15 @@ fn button_variants_follow_palette_and_allow_explicit_overrides() {
                     .background([1., 0., 0., 1.]),
             ),
     );
-    for theme in [Theme::dark(), Theme::light()] {
+    for theme in [Theme::dark(), Theme::light(), Theme::high_contrast()] {
         ui.set_theme(theme.clone()).unwrap();
         ui.prepare(&mut runtime, [800., 600.], &mut Measure)
             .unwrap();
-        assert_eq!(keyed(&ui, "primary").background, Some(theme.palette().text));
-        assert_eq!(keyed(&ui, "primary").color, theme.palette().background);
+        assert_eq!(
+            keyed(&ui, "primary").background,
+            Some(theme.palette().accent)
+        );
+        assert_eq!(keyed(&ui, "primary").color, theme.palette().accent_text);
         assert_eq!(keyed(&ui, "quiet").background, None);
         assert_eq!(keyed(&ui, "custom").background, Some([1., 0., 0., 1.]));
     }

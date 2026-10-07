@@ -124,7 +124,7 @@ impl Overlay {
         Self {
             surface: column()
                 .padding(8.)
-                .background(ThemeColor::Surface)
+                .background(ThemeColor::Raised)
                 .border(1., ThemeColor::Border)
                 .radius(6.)
                 .clip()

@@ -130,32 +130,46 @@ offsets to new geometry, as with ordinary reflow.
 
 ## Default appearance and accessibility targets
 
-Presets use grayscale surfaces and explicit opaque control state colors. Both use
-16 logical-unit text, 12-unit button padding, 10-unit input padding, a 240×44 default
-input box, one-unit control borders, four-unit radii and two-unit inside focus
-outlines. Text line height and font loading remain the existing text adapter policy;
-this slice adds inherited size, not font-family/weight/style inheritance.
+`Theme::dark()` (default), `Theme::light()` and `Theme::high_contrast()` share the
+balanced metrics: 14 logical-unit text, 36-unit buttons and inputs (14×7.2 button
+padding, 12×7.2 input padding), a 240-unit default input width, one-unit borders,
+six-unit radii and two-unit inside focus outlines (three in high contrast).
+`Theme::compact()` switches any preset to 13-unit text and 28-unit controls while
+keeping its focus width; `ThemeMetrics::compact()` and `ThemeMetrics::balanced()`
+are the raw presets. Text lines are `font_size × 1.4` tall, so the preset paddings
+make buttons and inputs the same height. Text line height and font loading remain
+the existing text adapter policy.
 
-| Token (sRGB) | Dark | Light |
-| --- | --- | --- |
-| Background | #121212 | #FAFAFA |
-| Surface | #1B1B1B | #FFFFFF |
-| Control | #262626 | #F2F2F2 |
-| Hover | #303030 | #E6E6E6 |
-| Pressed | #3A3A3A | #D6D6D6 |
-| Main text | #F5F5F5 | #181818 |
-| Secondary text | #B3B3B3 | #4C4C4C |
-| Border | #858585 | #6E6E6E |
-| Focus/caret | #F5F5F5 | #181818 |
-| Selection | #B3B3B3 | #4C4C4C |
-| Selected text | #121212 | #FAFAFA |
+Primary buttons use the accent fill. Inputs use their own fill and a stronger
+border than buttons. Popovers use the raised fill.
 
-Tests verify main text at least 7:1 and secondary text at least 4.5:1 against preset
-background/surface/normal/hover/pressed fills; border contrast at least 3:1 against
-control fills; focus contrast at least 3:1; selected text at least 7:1; and selection
-fill at least 3:1 against the ordinary control fill. Disabled text is also readable
-at 4.5:1 against its preset fill. Arbitrary custom colors and inherited/local
-combinations are not automatically contrast-corrected.
+| Token (sRGB) | Dark | Light | High contrast |
+| --- | --- | --- | --- |
+| Background | #131418 | #F3F4F6 | #000000 |
+| Surface | #1B1C21 | #FFFFFF | #000000 |
+| Raised | #23252B | #FFFFFF | #000000 |
+| Control | #25272D | #FFFFFF | #000000 |
+| Hover | #2E3037 | #F1F2F4 | #1F1F1F |
+| Pressed | #383A42 | #E4E6EA | #3A3A3A |
+| Main text | #ECEDF0 | #17181C | #FFFFFF |
+| Secondary text | #A3A7B0 | #5B606A | #E6E6E6 |
+| Disabled text | #60646C | #A0A4AB | #9A9A9A |
+| Border | #3E414A | #C3C7CE | #FFFFFF |
+| Input / input border | #16171B / #6A6E78 | #FFFFFF / #8F949D | #000000 / #FFFFFF |
+| Divider | #2A2C32 | #E3E5E9 | #FFFFFF |
+| Accent / hover / pressed | #2563EB / #1F5AE0 / #1A4CC2 | #2563EB / #1D4FD8 / #1E44B8 | #FFD400 / #FFE34D / #E6BF00 |
+| Accent text | #FFFFFF | #FFFFFF | #000000 |
+| Focus | #6EA2FF | #2563EB | #FFD400 |
+| Selection / selected text | #2B4E8F / #FFFFFF | #CFE0FF / #17181C | #00E5FF / #000000 |
+
+Tests verify, for every preset, main text at least 7:1 and secondary text at least
+4.5:1 against background/surface/normal/hover/pressed fills; focus at least 3:1
+against those fills; input borders at least 3:1 against the input fill; selected
+text at least 7:1; and accent text at least 4.5:1 on every accent state. Button
+borders, the selection fill against controls, and disabled text are deliberately
+softer in light and dark; use `Theme::high_contrast()` when every boundary must
+stand out. Arbitrary custom colors and inherited/local combinations are not
+automatically contrast-corrected.
 
 These are design targets informed by [W3C text contrast guidance](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum),
 [enhanced contrast](https://www.w3.org/WAI/WCAG21/Understanding/contrast-enhanced)
