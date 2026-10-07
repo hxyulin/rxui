@@ -8,7 +8,9 @@
 //! The default layout feature adds owned element builders, keyed reconciliation,
 //! Taffy flex layout, retained theme resolution, inherited text styling, scrolling,
 //! clipping, routed pointer/keyboard listeners, capture, scroll handles/scrollbars
-//! and controlled split panes. Dark/light presets and paint-only control states
+//! and controlled split panes. Focus groups, placement-local focus handles and
+//! controlled tabs preserve panel state with explicit mounting policies. An application-owned
+//! docking tree composes them with checked topology edits. Dark/light presets and paint-only control states
 //! keep application styling separate from drawing. Controlled
 //! single-line inputs retain selection and IME preedit independently of
 //! application-owned values. The optional
@@ -104,6 +106,10 @@ mod context;
 #[cfg(feature = "layout")]
 mod controls;
 #[cfg(feature = "layout")]
+mod dock;
+#[cfg(feature = "layout")]
+mod dock_view;
+#[cfg(feature = "layout")]
 mod editing;
 #[cfg(feature = "layout")]
 mod element;
@@ -124,6 +130,8 @@ mod runtime;
 mod scrolling;
 #[cfg(feature = "layout")]
 mod semantics;
+#[cfg(feature = "layout")]
+mod tabs;
 #[cfg(feature = "tasks")]
 mod tasks;
 #[cfg(feature = "layout")]
@@ -144,6 +152,12 @@ pub use controls::{
     Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, Split, SplitPosition, scroll_area,
     scrollbar, split_column, split_row,
 };
+#[cfg(feature = "layout")]
+pub use dock::{
+    DockError, DockEvent, DockNode, DockNodeId, DockSide, DockSplit, DockTabs, DockTree,
+};
+#[cfg(feature = "layout")]
+pub use dock_view::{Dock, DockPanel, dock, dock_panel};
 #[cfg(feature = "layout")]
 pub use editing::{
     TextAffinity, TextChangeEvent, TextInputEvent, TextInputInfo, TextMovement, TextPosition,
@@ -176,6 +190,10 @@ pub use runtime::{Mount, Runtime, Subscription};
 pub use scrolling::{ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
 pub use semantics::{SemanticAction, SemanticNode, SemanticRole};
+#[cfg(feature = "layout")]
+pub use tabs::{
+    Tab, TabActivation, TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
+};
 #[cfg(feature = "tasks")]
 pub use tasks::{
     BackgroundFuture, BlockingJob, SpawnError, Task, TaskError, TaskExecutor, TaskResult,
@@ -187,6 +205,8 @@ pub use theme::{
     PaintStyle, ResolvedPaint, StyleColor, Theme, ThemeColor, ThemeColors, ThemeMetrics, rgb8,
     rgba8,
 };
+#[cfg(feature = "layout")]
+pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
 #[cfg(feature = "layout")]
 pub use ui::{
     Bounds, ElementId, ElementInfo, ElementType, PointerEvent, TextMeasure, TextRequest, TextWidth,
@@ -209,6 +229,14 @@ pub mod prelude {
         PaintStyle, PointerButton, PointerButtons, PointerCancelReason, PointerEvents,
         PointerInput, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor,
         Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+    };
+    pub use crate::{
+        Dock, DockError, DockEvent, DockNode, DockNodeId, DockPanel, DockSide, DockSplit, DockTabs,
+        DockTree, dock, dock_panel,
+    };
+    pub use crate::{
+        FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
+        TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
     };
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
@@ -251,3 +279,8 @@ mod input_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod control_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod dock_tests;
+#[cfg(all(test, feature = "layout"))]
+mod focus_tab_tests;

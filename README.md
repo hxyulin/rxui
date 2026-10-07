@@ -322,3 +322,27 @@ See [the interaction contract](docs/interaction.md) and
 ```sh
 cargo run -p rxui --example workspace_window --features native --locked
 ```
+
+### Focus groups and tabs
+
+Controlled tabs use stable keys, `cx.listener(...)` selection/close proposals and
+retained inactive panels by default. `FocusHandle` restores focus in its source
+window; focus scopes can remember targets or cycle keyboard navigation. Selected-only
+mounting explicitly releases widget placement state while application entities
+retain document data. See [the focus and tabs contract](docs/focus-and-tabs.md).
+
+```sh
+cargo run -p rxui --example tabs_window --features native --locked
+```
+
+## Controlled docking tree
+
+`DockTree` owns split topology, panel order and selection independently of document
+entities. `dock(&tree, resolver)` composes existing tabs and splits, routing controlled
+selection, close and resize proposals through `DockEvent`. Checked edits support
+reordering, moving, splitting and collapsing empty branches. See
+[the docking contract](docs/docking.md) for ownership and placement boundaries.
+
+```sh
+cargo run -p rxui --example docking_window --features native --locked
+```

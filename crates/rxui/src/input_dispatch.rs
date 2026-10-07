@@ -526,6 +526,13 @@ impl<T: View> Ui<T> {
             }
             if event.pressed
                 && !result.default_prevented
+                && let Some(changed) = self.tab_key(runtime, target, &event)?
+            {
+                result.changed |= changed;
+                result.default_prevented = true;
+            }
+            if event.pressed
+                && !result.default_prevented
                 && let Some(changed) = self.range_key(runtime, target, &event.key)?
             {
                 result.changed |= changed;

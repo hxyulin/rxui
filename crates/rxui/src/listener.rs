@@ -59,6 +59,13 @@ impl<E> Listener<E> {
             }),
         }
     }
+    #[cfg(feature = "layout")]
+    pub(crate) fn map_event<F: 'static>(&self, map: impl Fn(&F) -> E + 'static) -> Listener<F> {
+        let listener = self.clone();
+        Listener {
+            callback: Rc::new(move |event, cx| listener.dispatch(&map(event), cx)),
+        }
+    }
     /// Executes in an application mutation scope. Deferred effects are not flushed
     /// here. Wrong-runtime/reentrant accesses are errors, not silent no-ops.
     pub fn dispatch(&self, event: &E, cx: &mut AppContext<'_>) -> Result<Dispatch, AccessError> {

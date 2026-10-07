@@ -25,6 +25,12 @@ pub enum SemanticRole {
     Button,
     /// Single-line text control.
     TextInput,
+    /// Tab group header strip.
+    TabList,
+    /// Selectable tab header.
+    Tab,
+    /// Content associated with a tab.
+    TabPanel,
     /// Adjustable scroll viewport control.
     Scrollbar,
     /// Adjustable pane separator.
@@ -36,12 +42,21 @@ pub(crate) struct Properties {
     pub description: Option<Arc<str>>,
     pub role: Option<SemanticRole>,
     pub hidden: bool,
+    pub selected: Option<bool>,
 }
 /// Borrowed semantic snapshot for one retained element. It includes offscreen
 /// scroll children, but excludes display:none and accessibility-hidden subtrees.
 /// Coordinates are logical; native adapters apply the window's scale factor.
 #[derive(Debug)]
 pub struct SemanticNode<'a> {
+    /// Explicit semantic selection state, including tab headers.
+    pub selected: Option<bool>,
+    /// Live semantic label source, such as the active panel's tab header.
+    pub labelled_by: Option<ElementId>,
+    /// Live associated content, such as the selected tab's panel.
+    pub controls: Option<ElementId>,
+    /// Composite navigation orientation.
+    pub orientation: Option<crate::Axis>,
     /// Placement-scoped identity, stable across compatible keyed reconciliation.
     pub id: ElementId,
     /// Structural parent, absent for the UI root.

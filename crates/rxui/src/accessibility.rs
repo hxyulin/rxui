@@ -179,6 +179,30 @@ impl AccessKitTree {
             if let Some(label) = semantic.label {
                 node.set_label(label);
             }
+            if let Some(selected) = semantic.selected {
+                node.set_selected(selected);
+            }
+            if let Some(label) = semantic
+                .labelled_by
+                .and_then(|id| self.ids.get(&id))
+                .filter(|_| semantic.labelled_by.is_some_and(|id| visible.contains(&id)))
+            {
+                node.set_labelled_by(vec![*label]);
+            }
+            if let Some(target) = semantic
+                .controls
+                .and_then(|id| self.ids.get(&id))
+                .filter(|_| semantic.controls.is_some_and(|id| visible.contains(&id)))
+            {
+                node.set_controls(vec![*target]);
+            }
+            if let Some(axis) = semantic.orientation {
+                node.set_orientation(if axis == crate::Axis::Horizontal {
+                    accesskit::Orientation::Horizontal
+                } else {
+                    accesskit::Orientation::Vertical
+                });
+            }
             if let Some(description) = semantic.description {
                 node.set_description(description);
             }
@@ -503,6 +527,9 @@ fn rect(bounds: crate::Bounds, scale: f32) -> accesskit::Rect {
 }
 fn role(role: SemanticRole) -> Role {
     match role {
+        SemanticRole::Tab => Role::Tab,
+        SemanticRole::TabList => Role::TabList,
+        SemanticRole::TabPanel => Role::TabPanel,
         SemanticRole::Container => Role::GenericContainer,
         SemanticRole::Group => Role::Group,
         SemanticRole::Form => Role::Form,

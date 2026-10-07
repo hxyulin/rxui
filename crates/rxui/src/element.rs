@@ -245,6 +245,42 @@ impl Element {
         self.input.get_or_insert_with(Default::default).focusable = Some(value);
         self
     }
+    /// Includes/excludes this element in Tab traversal without disabling pointer,
+    /// programmatic or assistive focus. Focusable controls default to true.
+    pub fn tab_stop(mut self, value: bool) -> Self {
+        self.input
+            .get_or_insert_with(Default::default)
+            .focus
+            .get_or_insert_with(Default::default)
+            .tab_stop = Some(value);
+        self
+    }
+    /// Binds a placement-local focus reference. Containers restore a remembered
+    /// eligible descendant; leaf controls receive focus directly.
+    pub fn focus_handle(mut self, handle: crate::FocusHandle) -> Self {
+        self.input
+            .get_or_insert_with(Default::default)
+            .focus
+            .get_or_insert_with(Default::default)
+            .handle = Some(handle);
+        self
+    }
+    /// Remembers focus within a group and optionally cycles keyboard traversal.
+    /// Scope membership does not make the container itself focusable.
+    pub fn focus_scope(mut self, scope: crate::FocusScope) -> Self {
+        self.input
+            .get_or_insert_with(Default::default)
+            .focus
+            .get_or_insert_with(Default::default)
+            .scope = Some(scope);
+        self
+    }
+    /// Exposes selected state for semantic tabs/options, without changing control
+    /// behavior or appearance. The stock tabs builder sets this automatically.
+    pub fn accessibility_selected(mut self, selected: bool) -> Self {
+        self.semantics.get_or_insert_with(Default::default).selected = Some(selected);
+        self
+    }
     /// Native cursor while this element is targeted or owns capture.
     pub fn cursor(mut self, value: crate::Cursor) -> Self {
         self.input.get_or_insert_with(Default::default).cursor = Some(value);
@@ -794,6 +830,14 @@ impl Element {
         self
     }
     pub(crate) fn validate(&self) -> Result<(), UiError> {
+        if self
+            .input
+            .as_ref()
+            .and_then(|p| p.dock.as_ref())
+            .is_some_and(|p| !p.valid())
+        {
+            return Err(UiError::InvalidDockConfiguration);
+        }
         let finite = |v: CompactLength| v.is_auto() || v.value().is_finite();
         let nonnegative = |v: CompactLength| finite(v) && (v.is_auto() || v.value() >= 0.);
         let s = &self.style;
@@ -864,6 +908,9 @@ impl Element {
         }
         if let ElementKind::Image(props) = &self.kind {
             props.validate()?;
+        }
+        if let Some(tabs) = self.input.as_ref().and_then(|p| p.tabs.as_ref()) {
+            tabs.validate()?;
         }
         self.paint.validate()?;
         if let Some(states) = &self.states {

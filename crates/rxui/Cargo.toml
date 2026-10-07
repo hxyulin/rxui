@@ -106,3 +106,11 @@ required-features = ["native"]
 name = "interaction"
 harness = false
 required-features = ["layout"]
+
+[[example]]
+name = "tabs_window"
+required-features = ["native"]
+
+[[example]]
+name = "docking_window"
+required-features = ["native"]

@@ -18,6 +18,14 @@ use taffy::{TaffyTree, prelude::*};
 /// Failure during description preparation, measurement, or input dispatch.
 #[derive(Debug)]
 pub enum UiError {
+    /// Dock pane minima or divider thickness are invalid.
+    InvalidDockConfiguration,
+    /// A focus handle is bound to multiple elements in one placement.
+    DuplicateFocusHandle,
+    /// Tab keys are duplicated within a tab group.
+    DuplicateTabKey,
+    /// A selected tab is absent or disabled.
+    InvalidTabSelection,
     /// Entity/mount access failed.
     Access(AccessError),
     /// Siblings contain the same explicit key.
@@ -79,6 +87,12 @@ impl From<taffy::TaffyError> for UiError {
 impl fmt::Display for UiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDockConfiguration => {
+                f.write_str("invalid dock pane minima or divider thickness")
+            }
+            Self::DuplicateFocusHandle => f.write_str("duplicate focus handle in one UI placement"),
+            Self::DuplicateTabKey => f.write_str("duplicate key in tab group"),
+            Self::InvalidTabSelection => f.write_str("selected tab must exist and be enabled"),
             Self::Access(e) => e.fmt(f),
             Self::Layout(e) => e.fmt(f),
             Self::Measurement(e) => e.fmt(f),
@@ -526,6 +540,7 @@ pub struct Ui<T: View> {
     hovered: Option<ElementId>,
     pressed: Option<ElementId>,
     focused: Option<ElementId>,
+    focus_state: Option<Box<focus::State>>,
     stats: UiStats,
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
@@ -567,6 +582,7 @@ impl<T: View> Ui<T> {
             hovered: None,
             pressed: None,
             focused: None,
+            focus_state: None,
             stats: UiStats::default(),
             active_views: Vec::new(),
             component_nodes: Vec::new(),
@@ -645,13 +661,19 @@ impl<T: View> Ui<T> {
     /// Whether this placement has unevaluated component work or unavailable geometry.
     /// Hosts also account for viewport, font-generation and visual-input changes.
     pub fn needs_prepare(&self, runtime: &Runtime) -> Result<bool, AccessError> {
-        if self.scroll_commands_pending() || self.input.pending() {
+        if self.scroll_commands_pending()
+            || self.input.pending()
+            || self.focus_state.as_ref().is_some_and(|s| s.pending())
+        {
             return Ok(true);
         }
         if !self.geometry_ready
             || self.needs_evaluation
             || !self.style_roots.is_empty()
             || runtime.is_dirty(&self.owner)?
+            || self
+                .root
+                .is_some_and(|id| self.taffy.dirty(self.nodes[&id].layout).unwrap_or(true))
         {
             return Ok(true);
         }
@@ -715,6 +737,8 @@ impl<T: View> Ui<T> {
             self.geometry_ready = false;
             self.needs_evaluation = true;
             let post = (|| {
+                self.publish_focus()?;
+                self.apply_focus_commands();
                 self.publish_scroll(runtime)?;
                 self.apply_scroll_commands()?;
                 self.clear_invalid_interaction();
@@ -755,6 +779,7 @@ impl<T: View> Ui<T> {
         if viewport.iter().any(|v| !v.is_finite() || *v < 0.) {
             return Err(UiError::InvalidGeometry);
         }
+        let focus_anchor = self.tab_anchor();
         let evaluated = self.stats.component_evaluations;
         self.refresh_descriptions(runtime, force_evaluation)?;
         self.resolve_styles()?;
@@ -825,15 +850,19 @@ impl<T: View> Ui<T> {
                             {
                                 return Size { width, height };
                             }
-                            let width = known.width.map(TextWidth::Available).unwrap_or(
-                                match available.width {
+                            // Intrinsic grid probes can supply a known width below
+                            // zero after ancestor padding. Text's content constraint
+                            // is zero in that case, matching definite available space.
+                            let width = known
+                                .width
+                                .map(|width| TextWidth::Available(width.max(0.)))
+                                .unwrap_or(match available.width {
                                     AvailableSpace::MinContent => TextWidth::MinContent,
                                     AvailableSpace::MaxContent => TextWidth::MaxContent,
                                     AvailableSpace::Definite(value) => {
                                         TextWidth::Available(value.max(0.))
                                     }
-                                },
-                            );
+                                });
                             *measurements += 1;
                             match measurer.measure(
                                 *id,
@@ -886,6 +915,7 @@ impl<T: View> Ui<T> {
         if self.order_dirty {
             self.rebuild_order(root);
         }
+        self.restore_tab_focus(focus_anchor);
         self.clear_invalid_interaction();
         self.editor_nodes.retain(|id| self.nodes.contains_key(id));
         for index in 0..self.editor_nodes.len() {
@@ -1141,6 +1171,7 @@ impl<T: View> Ui<T> {
         if parent.is_none() {
             self.root = Some(id);
         }
+        self.register_focus_node(id);
         if self.nodes[&id].mounted.is_some() {
             self.refresh_component(runtime, id)?;
         } else {
@@ -1525,23 +1556,28 @@ impl<T: View> Ui<T> {
             .element
             .scroll
             .map_or([false; 2], |axes| axes.allowed());
-        node.scroll_range = [
-            if allowed[0] {
-                layout.scroll_width()
-            } else {
-                0.
-            },
-            if allowed[1] {
-                layout.scroll_height()
-            } else {
-                0.
-            },
-        ];
-        if node.scroll_range.iter().any(|v| !v.is_finite()) {
-            return Err(UiError::InvalidGeometry);
-        }
-        for axis in 0..2 {
-            node.scroll_offset[axis] = node.scroll_offset[axis].clamp(0., node.scroll_range[axis]);
+        // Display:none panels retain their last valid scroll state. Hidden Taffy
+        // layouts have zero extents; clamp against fresh content when shown again.
+        if visible {
+            node.scroll_range = [
+                if allowed[0] {
+                    layout.scroll_width()
+                } else {
+                    0.
+                },
+                if allowed[1] {
+                    layout.scroll_height()
+                } else {
+                    0.
+                },
+            ];
+            if node.scroll_range.iter().any(|v| !v.is_finite()) {
+                return Err(UiError::InvalidGeometry);
+            }
+            for axis in 0..2 {
+                node.scroll_offset[axis] =
+                    node.scroll_offset[axis].clamp(0., node.scroll_range[axis]);
+            }
         }
         node.clip_bounds = if node.element.clip {
             clip.intersection(bounds)
@@ -1929,30 +1965,7 @@ impl<T: View> Ui<T> {
     }
     /// Moves focus in tree order, wrapping at the end. Hidden/disabled controls are skipped.
     pub fn focus_next(&mut self, reverse: bool) -> bool {
-        if !self.is_prepared() {
-            return false;
-        }
-        let buttons: Vec<_> = self
-            .order
-            .iter()
-            .copied()
-            .filter(|id| self.enabled(*id))
-            .collect();
-        let next = if buttons.is_empty() {
-            None
-        } else {
-            let current = buttons.iter().position(|id| Some(*id) == self.focused);
-            let index = match current {
-                Some(i) if reverse => (i + buttons.len() - 1) % buttons.len(),
-                Some(i) => (i + 1) % buttons.len(),
-                None if reverse => buttons.len() - 1,
-                None => 0,
-            };
-            Some(buttons[index])
-        };
-        let changed = self.focused != next;
-        self.change_focus(next);
-        changed | next.is_some_and(|id| self.reveal(id))
+        self.scoped_focus_next(reverse)
     }
     /// Activates the focused button through the same handler as pointer input.
     pub fn activate_focused(&mut self, runtime: &mut Runtime) -> Result<bool, UiError> {
@@ -1968,6 +1981,7 @@ impl<T: View> Ui<T> {
                 self.cancel_composition(old);
             }
             self.focused = next;
+            self.remember_focus(next);
             self.caret_visible = true;
         }
     }
@@ -2101,6 +2115,10 @@ impl<T: View> Ui<T> {
         id: ElementId,
         measure: &mut impl TextMeasure,
     ) -> Result<(), UiError> {
+        if !self.nodes.get(&id).is_some_and(|node| node.visible) {
+            return Ok(());
+        }
+
         let node = &self.nodes[&id];
         let editor = node.editor.as_ref().unwrap();
         let position = editor.ime_position();
@@ -2577,6 +2595,13 @@ impl<T: View> Ui<T> {
             scroll_offset: node.scroll_offset,
             scroll_range: node.scroll_range,
             text_scroll_x: node.editor.as_ref().map_or(0., |e| e.scroll_x),
+            selected: properties.and_then(|p| p.selected),
+            labelled_by: self.tab_relations(id).0,
+            controls: self.tab_relations(id).1,
+            orientation: match self.tab_properties(id) {
+                Some(crate::tabs::Properties::List { axis, .. }) => Some(*axis),
+                _ => None,
+            },
             range: self.range_info(id),
         })
     }
@@ -2763,3 +2788,8 @@ mod input_dispatch;
 
 #[path = "range_dispatch.rs"]
 mod range_dispatch;
+
+#[path = "focus.rs"]
+pub(crate) mod focus;
+#[path = "tab_dispatch.rs"]
+mod tab_dispatch;

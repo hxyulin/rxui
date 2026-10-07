@@ -107,6 +107,11 @@ covered by [the interaction contract](interaction.md). Multiline/undo editing an
 virtualization remain independent
 UI features rather than obligations of the native surface runner.
 
+The native host also applies queued `FocusHandle`/`FocusPlacement` commands during
+preparation and honors tab-group keyboard defaults before ordinary Tab or button
+activation. [Focus groups and controlled tabs](focus-and-tabs.md) describe source
+window resolution, mounting policy and the equivalent custom-host responsibilities.
+
 ## Application-owned GPU work
 
 `.prepare_graphics(...)` creates/resizes/uploads application resources before

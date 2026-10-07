@@ -205,3 +205,13 @@ scroll geometry or dispatches a controlled resize proposal. AccessKit adds numer
 SetValue/Increment/Decrement actions and physical control orientation. Read-only
 ranges omit those actions. [The interaction contract](interaction.md) records the
 CPU, GPU and native action checks and the remaining screen-reader usability scope.
+
+## Controlled tab groups
+
+Tab groups publish TabList, Tab and TabPanel roles, selected state, strip orientation,
+and live header-to-panel `controls` and panel-to-header `labelled_by` references.
+Hidden panels have no semantic nodes or references. AccessKit maps these properties
+to its tab roles and relationships. Activation still uses source-window listeners,
+and `.tab_stop(false)` preserves assistive focus and activation. See
+[focus groups and controlled tabs](focus-and-tabs.md) for keyboard and lifetime
+contracts and the native/automated checks.

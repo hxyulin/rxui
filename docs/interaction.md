@@ -203,6 +203,7 @@ virtualization or constant-cost large-list guarantee. See the
 The later [scrolling diagnosis](performance/scrolling.md) exercises real text,
 recording, queue submission and native accessibility publication; geometry-only
 timings do not establish a native frame budget.
-Focus scopes/tab selection/focus restoration, drag overlays/docking trees and
-cross-native-window detach remain following stages; these primitives supply their
-input, scroll and pane-sizing foundation.
+[Focus groups and controlled tabs](focus-and-tabs.md) now supply remembered
+placement-local focus, keyboard cycling, selection/close proposals and retained
+or selected-only panels. Drag overlays/docking trees and cross-native-window
+detach remain following stages.
