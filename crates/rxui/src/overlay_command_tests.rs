@@ -162,7 +162,7 @@ fn key_prevention_repeat_exact_modifiers_and_duplicate_scope_validation() {
     prepare(&mut r, &mut ui);
 }
 #[test]
-fn application_fallback_registration_is_explicit_replacable_and_weak() {
+fn application_fallback_registration_is_explicit_replaceable_and_weak() {
     let (mut r, e, ui) = commands();
     let calls = Rc::new(Cell::new(0));
     let count = calls.clone();
