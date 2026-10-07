@@ -27,6 +27,10 @@ jobs:
   test:
     name: Clippy, tests and docs
     runs-on: ubuntu-latest
+    env:
+      # Full debug info for the all-features test binary passes 4 GiB, past
+      # what 32-bit DWARF offsets can address on x86-64 Linux.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
