@@ -88,8 +88,12 @@ before/after the closure, preserving those changed values as overrides. To freez
 a value equal to the constructor's existing default, use the dedicated padding,
 width, height or border builder; a raw assignment of an identical value is
 indistinguishable from leaving that field untouched. Unrelated Taffy changes keep
-the themed padding/dimension defaults. Nonuniform Taffy borders are laid out and
-painted as separate square edge strips; uniform borders support rounded contours.
+the themed padding/dimension defaults. `border_top`, `border_right`, `border_bottom`
+and `border_left` set one side's width and `border_color` sets the color of every
+side. Nonuniform borders are painted as edge strips clipped to the rounded outer
+contour, so their inner contour stays square; uniform borders follow the radii on
+both contours. `corner_radii(top_left, top_right, bottom_right, bottom_left)` sets
+each corner; `radius` sets all four.
 
 ## Live switching and custom hosts
 

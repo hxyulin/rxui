@@ -146,7 +146,9 @@ Use `.theme(...)` for a subtree and `WindowOptions::theme(...)` for a window ove
 placements live. `Ui::set_theme` supports custom hosts. Explicit element overrides
 remain stable, while palette-only switches preserve text measurement/layout caches.
 `PaintStyle` supplies local and hover/pressed/disabled patches, with focus painted
-independently. Uniform borders and corner radii are supported.
+independently. Borders can be uniform (`.border(width, color)`) or set per side
+(`.border_bottom(1.)` with `.border_color(...)`); `.radius(r)` and
+`.corner_radii(tl, tr, br, bl)` round the painted box.
 
 The [styling contract](styling.md) explains inheritance, state precedence,
 selection colors, native updates and limitations. Try the standalone gallery:

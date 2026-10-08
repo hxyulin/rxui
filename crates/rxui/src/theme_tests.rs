@@ -225,14 +225,37 @@ fn partial_paint_builders_merge_and_explicit_none_removes_default_control_fill()
     assert_eq!(button.background, None);
     assert_eq!(button.paint.border_color, None);
     assert_eq!(button.color, rgb8(255, 0, 0));
-    assert_eq!(button.paint.radius, 9.);
+    assert_eq!(button.paint.radii, [9.; 4]);
     let point = [button.bounds.x + 5., button.bounds.y + 5.];
     ui.pointer(&mut runtime, PointerEvent::Moved(point))
         .unwrap();
     let button = keyed(&ui, "button");
     assert_eq!(button.color, rgb8(0, 255, 0));
-    assert_eq!(button.paint.radius, 12.);
+    assert_eq!(button.paint.radii, [12.; 4]);
     assert_eq!(button.background, None);
+}
+#[test]
+fn corner_radii_and_single_side_borders_resolve_and_lay_out() {
+    let (_, _, ui) = mount(
+        column()
+            .key("box")
+            .corner_radii(1., 2., 3., 4.)
+            .border_bottom(3.)
+            .border_left(1.)
+            .border_color(ThemeColor::Divider)
+            .hover_style(PaintStyle::new().radius(5.)),
+    );
+    let element = keyed(&ui, "box");
+    assert_eq!(element.paint.radii, [1., 2., 3., 4.]);
+    assert_eq!(element.border, [1., 0., 0., 3.]);
+    assert_eq!(
+        element.paint.border_color,
+        Some(Theme::dark().palette().divider)
+    );
+    assert!(matches!(
+        column().corner_radii(0., f32::NAN, 0., 0.).validate(),
+        Err(UiError::InvalidStyle)
+    ));
 }
 #[test]
 fn invalid_theme_and_paint_values_are_rejected_before_replacing_a_working_theme() {

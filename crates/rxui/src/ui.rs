@@ -1429,7 +1429,7 @@ impl<T: View> Ui<T> {
             };
             paint.background = Some(fill);
             paint.border_color = Some(border);
-            paint.radius = metrics.radius;
+            paint.radii = [metrics.radius; 4];
         }
         if matches!(element.kind, ElementKind::Button { .. }) {
             match element.button_variant {

@@ -608,9 +608,52 @@ impl Element {
         self.paint = self.paint.border_color(color);
         self
     }
+    /// Top border width, included in layout. Other sides keep their widths.
+    /// Pair with [`Self::border_color`] or [`Self::border`] for a painted color.
+    pub fn border_top(mut self, width: f32) -> Self {
+        self.layout_overrides |= 8;
+        self.style.border.top = length(width);
+        self
+    }
+    /// Right border width, included in layout. Other sides keep their widths.
+    pub fn border_right(mut self, width: f32) -> Self {
+        self.layout_overrides |= 8;
+        self.style.border.right = length(width);
+        self
+    }
+    /// Bottom border width, included in layout. Other sides keep their widths.
+    pub fn border_bottom(mut self, width: f32) -> Self {
+        self.layout_overrides |= 8;
+        self.style.border.bottom = length(width);
+        self
+    }
+    /// Left border width, included in layout. Other sides keep their widths.
+    pub fn border_left(mut self, width: f32) -> Self {
+        self.layout_overrides |= 8;
+        self.style.border.left = length(width);
+        self
+    }
+    /// Border color for every side, literal or theme-bound; widths are unchanged.
+    pub fn border_color(mut self, color: impl Into<StyleColor>) -> Self {
+        self.paint = self.paint.border_color(color);
+        self
+    }
     /// Uniform painted corner radius, without rounded clipping or hit testing.
     pub fn radius(mut self, radius: f32) -> Self {
         self.paint = self.paint.radius(radius);
+        self
+    }
+    /// Per-corner painted radii, clockwise from the top-left.
+    pub fn corner_radii(
+        mut self,
+        top_left: f32,
+        top_right: f32,
+        bottom_right: f32,
+        bottom_left: f32,
+    ) -> Self {
+        self.paint = self
+            .paint
+            .corner_radii(top_left, top_right, bottom_right, bottom_left);
         self
     }
     /// Paint-only hovered-control patch, applied after ordinary explicit overrides.

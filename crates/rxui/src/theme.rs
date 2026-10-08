@@ -488,7 +488,7 @@ pub struct PaintStyle {
     pub(crate) color: Option<StyleColor>,
     pub(crate) background: Option<Option<StyleColor>>,
     pub(crate) border_color: Option<Option<StyleColor>>,
-    pub(crate) radius: Option<f32>,
+    pub(crate) radii: Option<[f32; 4]>,
     pub(crate) focus_color: Option<StyleColor>,
     pub(crate) focus_width: Option<f32>,
     pub(crate) selection: Option<StyleColor>,
@@ -527,8 +527,19 @@ impl PaintStyle {
         self
     }
     /// Uniform corner radius; does not clip descendants or change hit testing.
-    pub fn radius(mut self, radius: f32) -> Self {
-        self.radius = Some(radius);
+    pub fn radius(self, radius: f32) -> Self {
+        self.corner_radii(radius, radius, radius, radius)
+    }
+    /// Per-corner radii, clockwise from the top-left. Large radii shrink proportionally
+    /// to fit the box when painted.
+    pub fn corner_radii(
+        mut self,
+        top_left: f32,
+        top_right: f32,
+        bottom_right: f32,
+        bottom_left: f32,
+    ) -> Self {
+        self.radii = Some([top_left, top_right, bottom_right, bottom_left]);
         self
     }
     /// Focus indicator color; focus remains separate from hover/pressed state.
@@ -567,7 +578,7 @@ impl PaintStyle {
             color,
             background,
             border_color,
-            radius,
+            radii,
             focus_color,
             focus_width,
             selection,
@@ -590,9 +601,11 @@ impl PaintStyle {
         .into_iter()
         .flatten()
         .any(|c| !c.valid())
-            || [self.radius, self.focus_width]
+            || self
+                .radii
                 .into_iter()
                 .flatten()
+                .chain(self.focus_width)
                 .any(|v| !v.is_finite() || v < 0.)
         {
             return Err(UiError::InvalidStyle);
@@ -609,8 +622,8 @@ impl PaintStyle {
         if let Some(c) = self.border_color {
             paint.border_color = c.map(|c| c.resolve(theme));
         }
-        if let Some(v) = self.radius {
-            paint.radius = v;
+        if let Some(v) = self.radii {
+            paint.radii = v;
         }
         if let Some(c) = self.focus_color {
             paint.focus_color = c.resolve(theme);
@@ -648,8 +661,8 @@ pub struct ResolvedPaint {
     pub background: Option<Color>,
     /// Optional border color; resolved widths are exposed by ElementInfo::border.
     pub border_color: Option<Color>,
-    /// Uniform corner radius. Does not imply rounded descendant clipping.
-    pub radius: f32,
+    /// Corner radii, clockwise from the top-left. Does not imply rounded descendant clipping.
+    pub radii: [f32; 4],
     /// Focus outline color.
     pub focus_color: Color,
     /// Inside focus stroke width.
@@ -670,7 +683,7 @@ impl ResolvedPaint {
             color,
             background: None,
             border_color: None,
-            radius: 0.,
+            radii: [0.; 4],
             focus_color: c.focus,
             focus_width: theme.sizes().focus_width,
             selection_color: c.selection,

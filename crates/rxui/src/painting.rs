@@ -1,7 +1,8 @@
 use crate::{Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View};
 use astrelis::{
-    GraphicsContext, Painter, PreparedText, Rect, RenderFormat, RenderPass, Stroke, TextBuffer,
-    TextDraw, TextLayout, TextRasterOptions, TextStyle, TextSystem, TextWrap, Transform2D,
+    CornerRadii, GraphicsContext, Painter, PreparedText, Rect, RenderFormat, RenderPass, ShapeDraw,
+    Stroke, TextBuffer, TextDraw, TextLayout, TextRasterOptions, TextStyle, TextSystem, TextWrap,
+    Transform2D,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -505,23 +506,28 @@ impl UiPainter {
                 let bounds = element.bounds;
                 let rect = Rect::new(bounds.x, bounds.y, bounds.width, bounds.height);
                 let appearance = element.paint;
+                let radii = corner_radii(appearance.radii);
                 if bounds.width > 0. && bounds.height > 0. {
                     if let Some(color) = appearance.background {
-                        paint.fill_rounded_rect(rect, appearance.radius, color)?;
+                        paint.draw_shape(ShapeDraw::rounded_rect_corners(rect, radii, color))?;
                     }
                     if let Some(color) = appearance.border_color {
                         let [left, right, top, bottom] = element.border;
                         if left == right && left == top && left == bottom {
                             if left > 0. {
-                                paint.stroke_rounded_rect(
-                                    rect,
-                                    appearance.radius,
-                                    Stroke::new(left).inside(),
-                                    color,
+                                paint.draw_shape(
+                                    ShapeDraw::rounded_rect_corners(rect, radii, color)
+                                        .stroke(Stroke::new(left).inside()),
                                 )?;
                             }
                         } else {
-                            // Full Taffy customization can supply unequal border widths.
+                            // Unequal sides paint as edge strips. Rounded corners clip
+                            // the strips to the outer contour; the inner contour is square.
+                            let mut paint = if radii != CornerRadii::ZERO {
+                                paint.clipped_rounded(rect, radii)?
+                            } else {
+                                paint.transformed(Transform2D::IDENTITY)?
+                            };
                             for edge in [
                                 Rect::new(
                                     bounds.x,
@@ -779,11 +785,9 @@ impl UiPainter {
                     && bounds.width > 0.
                     && bounds.height > 0.
                 {
-                    paint.stroke_rounded_rect(
-                        rect,
-                        appearance.radius,
-                        Stroke::new(appearance.focus_width).inside(),
-                        appearance.focus_color,
+                    paint.draw_shape(
+                        ShapeDraw::rounded_rect_corners(rect, radii, appearance.focus_color)
+                            .stroke(Stroke::new(appearance.focus_width).inside()),
                     )?;
                 }
             }
@@ -848,6 +852,9 @@ fn ui_position(p: astrelis::TextPosition) -> crate::TextPosition {
             astrelis::TextAffinity::Downstream => crate::TextAffinity::Downstream,
         },
     }
+}
+fn corner_radii([top_left, top_right, bottom_right, bottom_left]: [f32; 4]) -> CornerRadii {
+    CornerRadii::new(top_left, top_right, bottom_right, bottom_left)
 }
 fn physical_clip(
     bounds: crate::Bounds,
@@ -1434,3 +1441,7 @@ mod controls_gpu_tests;
 #[cfg(test)]
 #[path = "culling_gpu_tests.rs"]
 mod culling_gpu_tests;
+
+#[cfg(test)]
+#[path = "style_gpu_tests.rs"]
+mod style_gpu_tests;
