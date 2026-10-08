@@ -230,6 +230,8 @@ pub struct TextRequest<'a> {
     pub width: TextWidth,
     /// Disable wrapping for single-line editing geometry.
     pub single_line: bool,
+    /// Resolved family, weight, slope, line height and alignment.
+    pub style: &'a crate::TextStyle,
     /// Retained text/font revision, scoped to the element identity.
     pub revision: u64,
 }
@@ -342,6 +344,8 @@ pub struct ElementInfo<'a> {
     pub editing: Option<TextInputInfo>,
     /// Leaf font size.
     pub font_size: f32,
+    /// Resolved inherited font family, weight, slope, line height and alignment.
+    pub text_style: &'a crate::TextStyle,
     /// Monotonic text/font revision for constant-time prepared-resource validation.
     pub text_revision: u64,
     /// Leaf text color.
@@ -512,6 +516,8 @@ pub(crate) struct Node {
     color_binding: StyleColor,
     font_binding: Option<f32>,
     font_size: f32,
+    text_binding: crate::typography::Overrides,
+    text_style: crate::TextStyle,
     paint: ResolvedPaint,
     state_paints: Option<Box<[ResolvedPaint; 3]>>,
     border: [f32; 4],
@@ -538,6 +544,7 @@ impl Node {
             font_size: self.font_size,
             width: TextWidth::Available(self.content_bounds.width),
             single_line: self.editor.is_some(),
+            style: &self.text_style,
             revision: self.text_revision,
         }
     }
@@ -961,6 +968,7 @@ impl<T: View> Ui<T> {
                                 font_size: node.font_size,
                                 width,
                                 single_line: node.editor.is_some(),
+                                style: &node.text_style,
                                 revision: node.text_revision,
                             },
                         ) {
@@ -1099,6 +1107,7 @@ impl<T: View> Ui<T> {
             if node.element.style != element.style
                 || node.element.paint != element.paint
                 || node.element.font_size != element.font_size
+                || node.element.text_style != element.text_style
                 || node.element.theme != element.theme
                 || node.element.inert != element.inert
                 || node.element.pointer_events != element.pointer_events
@@ -1224,6 +1233,8 @@ impl<T: View> Ui<T> {
                     color_binding: ThemeColor::Text.into(),
                     font_binding: None,
                     font_size: 16.,
+                    text_binding: Default::default(),
+                    text_style: Default::default(),
                     paint: ResolvedPaint::new(&Theme::default(), Theme::default().palette().text),
                     state_paints: None,
                     border: [0.; 4],
@@ -1360,14 +1371,28 @@ impl<T: View> Ui<T> {
             })
             .collect();
         for id in roots {
-            let (theme, color, font) = self.nodes[&id]
+            let (theme, color, font, text) = self.nodes[&id]
                 .parent
                 .and_then(|p| self.nodes.get(&p))
                 .map_or_else(
-                    || (self.theme.clone(), ThemeColor::Text.into(), None),
-                    |p| (p.resolved_theme.clone(), p.color_binding, p.font_binding),
+                    || {
+                        (
+                            self.theme.clone(),
+                            ThemeColor::Text.into(),
+                            None,
+                            Default::default(),
+                        )
+                    },
+                    |p| {
+                        (
+                            p.resolved_theme.clone(),
+                            p.color_binding,
+                            p.font_binding,
+                            p.text_binding.clone(),
+                        )
+                    },
                 );
-            self.resolve_subtree(id, &theme, color, font)?;
+            self.resolve_subtree(id, &theme, color, font, &text)?;
         }
         self.style_roots.clear();
         Ok(())
@@ -1378,6 +1403,7 @@ impl<T: View> Ui<T> {
         parent_theme: &Theme,
         parent_color: StyleColor,
         parent_font: Option<f32>,
+        parent_text: &crate::typography::Overrides,
     ) -> Result<(), UiError> {
         let inert = self.nodes[&id].element.inert
             || self.nodes[&id]
@@ -1393,6 +1419,11 @@ impl<T: View> Ui<T> {
         let color = element.paint.color.unwrap_or(parent_color);
         let font = element.font_size.or(parent_font);
         let font_size = font.unwrap_or(theme.sizes().font_size);
+        let text_binding = element
+            .text_style
+            .as_deref()
+            .map_or_else(|| parent_text.clone(), |own| own.over(parent_text));
+        let text_style = text_binding.resolve(&theme);
         let control = matches!(
             element.kind,
             ElementKind::Button { .. } | ElementKind::TextInput { .. }
@@ -1525,7 +1556,9 @@ impl<T: View> Ui<T> {
         node.pointer_allowed = pointer_allowed;
         node.button_owner = button_owner;
         node.control_color = control_color;
-        if node.font_size != font_size && node.displayed_text().is_some() {
+        if (node.font_size != font_size || node.text_style != text_style)
+            && node.displayed_text().is_some()
+        {
             self.taffy.mark_dirty(layout_id)?;
             node.text_revision = node
                 .text_revision
@@ -1537,6 +1570,7 @@ impl<T: View> Ui<T> {
         node.font_binding = font;
         node.layout_dirty = false;
         node.font_size = font_size;
+        node.text_style = text_style;
         node.image_tint = if let ElementKind::Image(props) = &node.element.kind {
             props.tint.resolve(&theme)
         } else {
@@ -1545,8 +1579,9 @@ impl<T: View> Ui<T> {
         node.paint = paint;
         node.state_paints = states;
         self.stats.style_resolutions += 1;
+        node.text_binding = text_binding.clone();
         for child in children {
-            self.resolve_subtree(child, &theme, color, font)?;
+            self.resolve_subtree(child, &theme, color, font, &text_binding)?;
         }
         Ok(())
     }
@@ -1963,6 +1998,7 @@ impl<T: View> Ui<T> {
             },
             editing: self.text_input_info(id),
             font_size: node.font_size,
+            text_style: &node.text_style,
             text_revision: node.text_revision,
             color: paint.color,
             background: paint.background,

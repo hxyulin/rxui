@@ -182,3 +182,59 @@ fn rounded_clipping_containers_round_descendant_painting() {
         assert!(errors.pop().await.is_none());
     });
 }
+
+struct Typography;
+impl View for Typography {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column()
+            .width(300.)
+            .child(label("Start").key("start").fill_width())
+            .child(
+                label("Center")
+                    .key("center")
+                    .fill_width()
+                    .text_align(crate::TextAlign::Center),
+            )
+            .child(label("Tall").key("tall").line_height(3.))
+    }
+}
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn text_alignment_and_line_height_reach_the_shaped_layout() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| cx.new(|_| Typography));
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        painter
+            .fonts_mut()
+            .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
+            .unwrap();
+        render(&graphics, &mut runtime, &mut ui, &mut painter, [300, 200]);
+        let ink = |key: &str| {
+            let id = ui
+                .elements()
+                .find(|e| e.key == Some(&Key::from(key)))
+                .unwrap()
+                .id;
+            painter.texts[&id]
+                .prepared
+                .as_ref()
+                .unwrap()
+                .ink_bounds()
+                .unwrap()
+        };
+        assert!(ink("start").x < 5.);
+        let center = ink("center");
+        assert!(
+            (center.x + center.width / 2. - 150.).abs() < 2.,
+            "{center:?}"
+        );
+        let tall = ui
+            .elements()
+            .find(|e| e.key == Some(&Key::from("tall")))
+            .unwrap();
+        assert_eq!(tall.bounds.height, tall.font_size * 3.);
+    });
+}

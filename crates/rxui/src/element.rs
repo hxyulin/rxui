@@ -137,6 +137,7 @@ pub struct Element {
     pub(crate) states: Option<Box<crate::theme::StateStyles>>,
     pub(crate) theme: Option<Theme>,
     pub(crate) font_size: Option<f32>,
+    pub(crate) text_style: Option<Box<crate::typography::Overrides>>,
     pub(crate) layout_overrides: u8,
     pub(crate) button_variant: ButtonVariant,
     pub(crate) z_index: i32,
@@ -189,6 +190,7 @@ impl Element {
             states: None,
             theme: None,
             font_size: None,
+            text_style: None,
             layout_overrides: 0,
             button_variant: ButtonVariant::Default,
             z_index: 0,
@@ -580,6 +582,35 @@ impl Element {
         self.font_size = Some(value);
         self
     }
+    /// Inherited preferred font family. Load named families through the painter's fonts.
+    pub fn font_family(mut self, family: impl Into<crate::FontFamily>) -> Self {
+        self.text_overrides().family = Some(family.into());
+        self
+    }
+    /// Inherited font weight in `1..=1000`.
+    pub fn font_weight(mut self, weight: crate::FontWeight) -> Self {
+        self.text_overrides().weight = Some(weight);
+        self
+    }
+    /// Inherited font slope.
+    pub fn font_style(mut self, style: crate::FontStyle) -> Self {
+        self.text_overrides().style = Some(style);
+        self
+    }
+    /// Inherited line height as a multiple of the font size. The theme default is 1.4.
+    pub fn line_height(mut self, multiple: f32) -> Self {
+        self.text_overrides().line_height = Some(multiple);
+        self
+    }
+    /// Inherited line alignment within a text leaf's content width. Text only moves
+    /// when the leaf is wider than its text, for example with `fill_width`.
+    pub fn text_align(mut self, align: crate::TextAlign) -> Self {
+        self.text_overrides().align = Some(align);
+        self
+    }
+    fn text_overrides(&mut self) -> &mut crate::typography::Overrides {
+        self.text_style.get_or_insert_with(Default::default)
+    }
     /// Overrides the theme for this complete placement subtree, including components.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = Some(theme);
@@ -936,6 +967,7 @@ impl Element {
             return Err(UiError::InvalidOpacity);
         }
         if self.font_size.is_some_and(|v| !v.is_finite() || v <= 0.)
+            || self.text_style.as_ref().is_some_and(|t| !t.valid())
             || sizes.iter().any(|v| !nonnegative(*v))
             || !nonnegative(s.flex_basis.into_raw())
             || [s.flex_grow, s.flex_shrink, s.scrollbar_width]
@@ -1092,6 +1124,7 @@ pub fn button(content: impl IntoElement) -> Element {
         && content.style == Element::new(ElementKind::Label(String::new())).style
         && content.paint == PaintStyle::default()
         && content.font_size.is_none()
+        && content.text_style.is_none()
         && content.key.is_none()
         && content.semantics.is_none()
         && content.theme.is_none()

@@ -138,8 +138,10 @@ warm-cache costs and the initial-tree boundary.
 `Theme::high_contrast()` use matching metrics; `.compact()` switches any preset to the
 dense metrics. Elements accept semantic tokens such as `.color(ThemeColor::TextMuted)`
 and `.background(ThemeColor::Surface)`, or literal linear RGBA values. `rgb8`/`rgba8`
-convert sRGB byte colors for the renderer. Text color/size inherit across component
-boundaries; backgrounds, borders and dimensions stay local.
+convert sRGB byte colors for the renderer. Text color, size, family, weight, slope,
+line height and alignment inherit across component boundaries (`.font_family(...)`,
+`.font_weight(FontWeight::BOLD)`, `.line_height(1.6)`, `.text_align(TextAlign::Center)`);
+backgrounds, borders and dimensions stay local.
 
 Use `.theme(...)` for a subtree and `WindowOptions::theme(...)` for a window override.
 `cx.set_theme`, `cx.set_window_theme` and `cx.use_application_theme` update native

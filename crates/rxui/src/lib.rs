@@ -154,6 +154,8 @@ mod tasks;
 #[cfg(feature = "layout")]
 mod theme;
 #[cfg(feature = "layout")]
+mod typography;
+#[cfg(feature = "layout")]
 mod ui;
 #[cfg(feature = "layout")]
 mod virtual_list;
@@ -240,6 +242,8 @@ pub use theme::{
     ThemeColors, ThemeMetrics, rgb8, rgba8,
 };
 #[cfg(feature = "layout")]
+pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
+#[cfg(feature = "layout")]
 pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
 #[cfg(feature = "layout")]
 pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
@@ -279,11 +283,12 @@ pub mod prelude {
         scrollbar, split_column, split_row, virtual_list,
     };
     pub use crate::{
-        BoxShadow, ButtonVariant, ClickEvent, Context, Cursor, Entity, Image, ImageAlpha,
-        ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
-        Modifiers, PaintStyle, PointerButton, PointerButtons, PointerCancelReason, PointerEvents,
-        PointerInput, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor,
-        Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+        BoxShadow, ButtonVariant, ClickEvent, Context, Cursor, Entity, FontFamily, FontStyle,
+        FontWeight, Image, ImageAlpha, ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent,
+        KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle, PointerButton, PointerButtons,
+        PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign,
+        TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, button, column,
+        image, label, rgb8, rgba8, row, stack, text_input,
     };
     #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
     pub use crate::{DesktopError, DesktopResult};

@@ -425,3 +425,82 @@ fn preset_contrast_pairs_and_srgb_conversion_are_verified() {
         assert_eq!(c.selection[3], 1.);
     }
 }
+#[test]
+fn typography_inherits_and_relayouts_when_line_height_changes() {
+    struct Lines;
+    impl TextMeasure for Lines {
+        fn measure(&mut self, _: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError> {
+            Ok([
+                request.text.chars().count() as f32 * request.font_size / 2.,
+                request.font_size * request.style.line_height,
+            ])
+        }
+    }
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| {
+            Static(
+                column()
+                    .font_family("Inter")
+                    .font_weight(FontWeight::BOLD)
+                    .line_height(2.)
+                    .child(label("Inherited").key("inherited"))
+                    .child(
+                        label("Own")
+                            .key("own")
+                            .font_style(FontStyle::Italic)
+                            .text_align(TextAlign::Center)
+                            .line_height(1.),
+                    ),
+            )
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [400., 300.], &mut Lines).unwrap();
+    let inherited = keyed(&ui, "inherited");
+    assert_eq!(
+        inherited.text_style,
+        &TextStyle {
+            family: "Inter".into(),
+            weight: FontWeight::BOLD,
+            style: FontStyle::Normal,
+            line_height: 2.,
+            align: TextAlign::Start,
+        }
+    );
+    assert_eq!(inherited.bounds.height, inherited.font_size * 2.);
+    let own = keyed(&ui, "own");
+    assert_eq!(own.text_style.family, FontFamily::from("Inter"));
+    assert_eq!(
+        (own.text_style.style, own.text_style.align),
+        (FontStyle::Italic, TextAlign::Center)
+    );
+    assert_eq!(own.bounds.height, own.font_size);
+    let revision = inherited.text_revision;
+    runtime.update(|cx| {
+        root.update(cx, |this, _| {
+            this.0 = column().child(label("Inherited").key("inherited"));
+        })
+    });
+    ui.prepare(&mut runtime, [400., 300.], &mut Lines).unwrap();
+    let inherited = keyed(&ui, "inherited");
+    assert_eq!(inherited.text_style, &TextStyle::default());
+    assert_eq!(inherited.bounds.height, inherited.font_size * 1.4);
+    assert!(inherited.text_revision > revision);
+    ui.set_theme(Theme::dark().metrics(|m| m.line_height = 1.))
+        .unwrap();
+    ui.prepare(&mut runtime, [400., 300.], &mut Lines).unwrap();
+    let inherited = keyed(&ui, "inherited");
+    assert_eq!(inherited.bounds.height, inherited.font_size);
+    for element in [
+        label("Bad").font_weight(FontWeight(0)),
+        label("Bad").line_height(0.),
+        label("Bad").font_family(""),
+    ] {
+        assert!(matches!(element.validate(), Err(UiError::InvalidStyle)));
+    }
+    assert!(matches!(
+        ui.set_theme(Theme::dark().metrics(|m| m.line_height = f32::NAN)),
+        Err(UiError::InvalidStyle)
+    ));
+}

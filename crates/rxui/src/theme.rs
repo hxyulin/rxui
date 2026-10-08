@@ -193,13 +193,15 @@ impl ThemeColors {
 /// Default typography/control metrics in logical units. Explicit element builders
 /// take precedence. Changing font size or box metrics invalidates affected layout.
 ///
-/// Text lines are `font_size * 1.4` tall, so a button is
-/// `font_size * 1.4 + 2 * (button_padding_y + border_width)` tall. The presets pick
-/// paddings that make buttons exactly `input_height`, so they line up in a row.
+/// Text lines are `font_size * line_height` tall (1.4 in the presets), so a button is
+/// `font_size * line_height + 2 * (button_padding_y + border_width)` tall. The presets
+/// pick paddings that make buttons exactly `input_height`, so they line up in a row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeMetrics {
     /// Root/inherited text size; strictly positive.
     pub font_size: f32,
+    /// Default line height as a multiple of the font size; strictly positive.
+    pub line_height: f32,
     /// Default horizontal button padding.
     pub button_padding_x: f32,
     /// Default vertical button padding.
@@ -224,6 +226,7 @@ impl ThemeMetrics {
     pub fn balanced() -> Self {
         Self {
             font_size: 14.,
+            line_height: 1.4,
             button_padding_x: 14.,
             button_padding_y: 7.2,
             input_padding_x: 12.,
@@ -239,6 +242,7 @@ impl ThemeMetrics {
     pub fn compact() -> Self {
         Self {
             font_size: 13.,
+            line_height: 1.4,
             button_padding_x: 10.,
             button_padding_y: 3.9,
             input_padding_x: 8.,
@@ -460,6 +464,8 @@ impl Theme {
         if !self.palette().values().into_iter().all(valid_color)
             || !m.font_size.is_finite()
             || m.font_size <= 0.
+            || !m.line_height.is_finite()
+            || m.line_height <= 0.
             || [
                 m.button_padding_x,
                 m.button_padding_y,

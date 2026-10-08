@@ -1,8 +1,8 @@
 use crate::{Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View};
 use astrelis::{
-    CornerRadii, GraphicsContext, Painter, PreparedText, Rect, RenderFormat, RenderPass, ShapeDraw,
-    Stroke, TextBuffer, TextDraw, TextLayout, TextRasterOptions, TextStyle, TextSystem, TextWrap,
-    Transform2D,
+    CornerRadii, FontFamily, FontSlant, GraphicsContext, Painter, PreparedText, Rect, RenderFormat,
+    RenderPass, ShapeDraw, Stroke, TextAlign, TextBuffer, TextDraw, TextLayout, TextRasterOptions,
+    TextStyle, TextSystem, TextWrap, Transform2D,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -44,12 +44,35 @@ struct TextResource {
 impl TextResource {
     /// Applies text, style and wrapping; the configured width is left unchanged.
     fn configure(&mut self, request: TextRequest<'_>) -> Result<(), UiError> {
+        let style = request.style;
         self.buffer.set_text(
             request.text,
             TextStyle::new()
+                .family(match &style.family {
+                    crate::FontFamily::Named(name) => FontFamily::Named(name.to_string()),
+                    crate::FontFamily::SansSerif => FontFamily::SansSerif,
+                    crate::FontFamily::Serif => FontFamily::Serif,
+                    crate::FontFamily::Monospace => FontFamily::Monospace,
+                })
                 .font_size(request.font_size)
-                .line_height(request.font_size * 1.4),
+                .line_height(request.font_size * style.line_height)
+                .weight(style.weight.0)
+                .slant(match style.style {
+                    crate::FontStyle::Normal => FontSlant::Normal,
+                    crate::FontStyle::Italic => FontSlant::Italic,
+                    crate::FontStyle::Oblique => FontSlant::Oblique,
+                }),
         )?;
+        // Editors scroll horizontally from the start edge, so they ignore alignment.
+        self.buffer.set_align(match style.align {
+            _ if request.single_line => TextAlign::Start,
+            crate::TextAlign::Start => TextAlign::Start,
+            crate::TextAlign::End => TextAlign::End,
+            crate::TextAlign::Left => TextAlign::Left,
+            crate::TextAlign::Right => TextAlign::Right,
+            crate::TextAlign::Center => TextAlign::Center,
+            crate::TextAlign::Justified => TextAlign::Justified,
+        });
         self.buffer.set_wrap(if request.single_line {
             TextWrap::None
         } else {
@@ -213,6 +236,7 @@ impl UiPainter {
                     font_size: element.font_size,
                     width: TextWidth::Available(element.content_bounds.width),
                     single_line: element.editing.is_some(),
+                    style: element.text_style,
                     revision: element.text_revision,
                 },
             )?;
@@ -1213,6 +1237,7 @@ mod tests {
                 font_size: element.font_size,
                 width,
                 single_line: false,
+                style: element.text_style,
                 revision: element.text_revision,
             };
             let [min, height] = painter.measure(id, request(TextWidth::MinContent)).unwrap();

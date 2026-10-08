@@ -106,6 +106,33 @@ layout or hit testing, and keep an element visible to culling while only its sha
 is on screen. `PaintStyle::shadow` and `PaintStyle::no_shadow` change it per state,
 for example a stronger shadow on hover.
 
+## Typography
+
+Font family, weight, slope, line height and alignment inherit like font size:
+
+```rust
+column()
+    .font_family("Inter")              // or FontFamily::Monospace, Serif, SansSerif
+    .line_height(1.6)                  // multiple of the font size
+    .child(label("Title").font_size(20.).font_weight(FontWeight::SEMIBOLD))
+    .child(label("Caption").font_style(FontStyle::Italic))
+    .child(label("Total").fill_width().text_align(TextAlign::End))
+```
+
+Unset fields inherit from the nearest ancestor that sets them, across component
+boundaries. Defaults are the sans-serif family, `FontWeight::NORMAL`, upright text,
+the theme's `ThemeMetrics::line_height` and start alignment. A named family must be
+loaded through `UiPainter::fonts_mut` (or `Application::font`); otherwise shaping
+falls back to another loaded face. Alignment positions lines inside the text leaf's
+content width, so it only moves text in a leaf wider than its text, such as one with
+`fill_width` or a fixed width. Single-line text inputs always start-align because
+they scroll horizontally from the start edge. Changing any of these attributes
+invalidates the leaf's measurement and prepared text; color changes still do not.
+
+`ElementInfo::text_style` and `TextRequest::style` carry the resolved attributes to
+custom painters and `TextMeasure` implementations. Rich text spans within one leaf
+are not supported yet.
+
 ## Live switching and custom hosts
 
 For headless or custom hosting, call `ui.set_theme(theme)?` and prepare before
@@ -151,9 +178,10 @@ padding, 12×7.2 input padding), a 240-unit default input width, one-unit border
 six-unit radii and two-unit inside focus outlines (three in high contrast).
 `Theme::compact()` switches any preset to 13-unit text and 28-unit controls while
 keeping its focus width; `ThemeMetrics::compact()` and `ThemeMetrics::balanced()`
-are the raw presets. Text lines are `font_size × 1.4` tall, so the preset paddings
-make buttons and inputs the same height. Text line height and font loading remain
-the existing text adapter policy.
+are the raw presets. Text lines are `font_size × line_height` tall, with
+`ThemeMetrics::line_height` 1.4 in every preset, so the preset paddings make buttons
+and inputs the same height. A theme with a different line height should adjust the
+button padding to keep that alignment. Font loading remains the painter's policy.
 
 Primary buttons use the accent fill. Inputs use their own fill and a stronger
 border than buttons. Popovers use the raised fill.
