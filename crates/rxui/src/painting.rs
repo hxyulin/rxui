@@ -9,8 +9,14 @@ use std::{
 };
 
 impl From<astrelis::Error> for UiError {
+    /// Text failures that astrelis wrapped into its graphics error keep their text variant,
+    /// so one failure maps to one `UiError` variant however it reached rxui.
     fn from(error: astrelis::Error) -> Self {
-        Self::Graphics(error)
+        match error {
+            astrelis::Error::Text(error) => Self::Text(error),
+            astrelis::Error::TextRender(error) => Self::TextRender(*error),
+            other => Self::Graphics(other),
+        }
     }
 }
 impl From<astrelis::TextError> for UiError {
