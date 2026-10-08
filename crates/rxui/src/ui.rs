@@ -613,6 +613,9 @@ pub struct Ui<T: View> {
     viewport: Option<[f32; 2]>,
     measurement_generation: u64,
     geometry_ready: bool,
+    /// Reconciliation started without completing, so child lists may name
+    /// removed nodes until `clean_partial_tree` runs.
+    partial_tree: bool,
     geometry_revision: u64,
     needs_evaluation: bool,
     input: input_dispatch::State,
@@ -659,6 +662,7 @@ impl<T: View> Ui<T> {
             viewport: None,
             measurement_generation: 0,
             geometry_ready: false,
+            partial_tree: false,
             geometry_revision: 0,
             needs_evaluation: true,
             input: input_dispatch::State::default(),
@@ -812,7 +816,7 @@ impl<T: View> Ui<T> {
         measurer: &mut impl TextMeasure,
     ) -> Result<(), UiError> {
         profiling::scope!("rxui::Ui::prepare");
-        if !self.geometry_ready {
+        if self.partial_tree {
             self.clean_partial_tree();
         }
         self.geometry_ready = false;
@@ -861,6 +865,7 @@ impl<T: View> Ui<T> {
         Err(UiError::UnstableControlLayout)
     }
     fn clean_partial_tree(&mut self) {
+        self.partial_tree = false;
         let ids: HashSet<_> = self.nodes.keys().copied().collect();
         for node in self.nodes.values_mut() {
             node.children.retain(|id| ids.contains(id));
@@ -1074,6 +1079,8 @@ impl<T: View> Ui<T> {
         force_evaluation: bool,
     ) -> Result<(), UiError> {
         profiling::scope!("rxui::evaluate_views");
+        // Cleared on success; an error or unwind leaves it for the next prepare.
+        self.partial_tree = true;
         let before = self.stats.component_evaluations;
         self.active_views.clear();
         self.active_views.push(self.owner.entity().id());
@@ -1111,6 +1118,7 @@ impl<T: View> Ui<T> {
                 self.nodes.get_mut(&id).unwrap().button_name = name;
             }
         }
+        self.partial_tree = false;
         Ok(())
     }
     fn button_labels(&self, id: ElementId, labels: &mut Vec<String>) {
