@@ -252,7 +252,7 @@ pub(crate) fn invoke(
         return Ok(CommandStatus::Disabled);
     }
     Ok(match (action.callback)(cx)? {
-        Dispatch::Handled => CommandStatus::Handled,
+        Dispatch::Handled | Dispatch::Unchanged => CommandStatus::Handled,
         Dispatch::TargetGone => CommandStatus::Unhandled,
     })
 }

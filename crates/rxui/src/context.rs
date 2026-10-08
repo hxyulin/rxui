@@ -133,6 +133,7 @@ impl AppContext<'_> {
 pub struct Context<'a, T: 'static> {
     app: AppContext<'a>,
     owner: WeakEntity<T>,
+    pub(crate) changed: bool,
 }
 impl<'a, T> Context<'a, T> {
     pub(crate) fn bind_dispatch_mount(&mut self, mount: Option<MountId>) {
@@ -214,7 +215,17 @@ impl<'a, T> Context<'a, T> {
                 dispatch_mount: None,
             },
             owner,
+            changed: true,
         }
+    }
+    /// Ends this update scope without invalidating its owner: views that read it
+    /// are not evaluated again, observers are not notified, its revision stays,
+    /// and a listener reports [`crate::Dispatch::Unchanged`] so hosts need not
+    /// redraw. Use it when an update leaves the state as it was, such as a
+    /// pointer-move listener outside a drag. Mutations made anyway are still
+    /// visible to later reads, but views show them only after the next change.
+    pub fn unchanged(&mut self) {
+        self.changed = false;
     }
     /// Weak current-owner identity; use the supplied state reference for access
     /// during this scope rather than reentering the owner through this handle.

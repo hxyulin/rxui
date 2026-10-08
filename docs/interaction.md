@@ -214,7 +214,9 @@ with `painter.forget(&ui)` and drop the UI when removing it.
 
 Pointer payloads and warmed routing buffers avoid per-motion payload/path allocation;
 optional listener configuration is boxed only on elements that use it. Listener
-callbacks still conservatively invalidate their owner. Use child entities to keep
+callbacks conservatively invalidate their owner unless they call
+`cx.unchanged()`, which also reports `Dispatch::Unchanged` so the host need not
+redraw; a pointer-move listener outside a drag should. Use child entities to keep
 large pane descriptions outside a frequently resized parent. Stock scrollbar
 motion has no application callback and changes geometry without view evaluation,
 text measurement or Taffy layout unless a view explicitly reads metrics. Split

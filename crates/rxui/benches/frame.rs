@@ -6,18 +6,27 @@
 //! `RXUI_BENCH_LOOP=<operation>` to repeat one 1,000-row operation forever, for
 //! attaching a sampling profiler.
 use rxui::{
-    AccessKitTree, ElementType, PointerEvent, TextInputEvent, UiPainter,
+    AccessKitTree, ElementType, PointerEvent, PointerInput, TextInputEvent, UiPainter,
     astrelis::{FramebufferOptions, GraphicsContext, wgpu},
     prelude::*,
 };
 use std::{hint::black_box, time::Duration, time::Instant};
 
-struct Rows(usize);
+struct Rows {
+    count: usize,
+    /// Adds a pointer-move listener that leaves the state unchanged.
+    track: bool,
+}
 impl View for Rows {
-    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
-        column()
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        let rows = column()
             .fill_width()
-            .children((0..self.0).map(|i| button(format!("Row {i}")).key(i).height(24.)))
+            .children((0..self.count).map(|i| button(format!("Row {i}")).key(i).height(24.)));
+        if self.track {
+            rows.on_pointer_move(cx.listener(|_, _: &PointerInput, cx| cx.unchanged()))
+        } else {
+            rows
+        }
     }
 }
 struct App {
@@ -83,7 +92,10 @@ fn main() {
     for count in [100, 1000] {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| {
-            let rows = cx.new(|_| Rows(count));
+            let rows = cx.new(|_| Rows {
+                count,
+                track: false,
+            });
             cx.new(|_| App {
                 rows,
                 value: "Hello".into(),
@@ -138,6 +150,17 @@ fn main() {
             next = 1 - next;
             frame(&mut runtime, &mut ui, &mut painter);
         });
+        let list = runtime.update(|cx| root.read(cx).rows.clone());
+        runtime.update(|cx| list.update(cx, |rows, _| rows.track = true));
+        frame(&mut runtime, &mut ui, &mut painter);
+        sample("pointer_listener_move", count, || {
+            let [x, y] = rows[0];
+            ui.pointer(&mut runtime, PointerEvent::Moved([x + next as f32, y]))
+                .unwrap();
+            next = 1 - next;
+            frame(&mut runtime, &mut ui, &mut painter);
+        });
+        runtime.update(|cx| list.update(cx, |rows, _| rows.track = false));
         ui.pointer(&mut runtime, PointerEvent::Left).unwrap();
         frame(&mut runtime, &mut ui, &mut painter);
         let mut direction = 1.;

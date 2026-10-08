@@ -211,7 +211,9 @@ evaluated again when that theme changes. An animating view calls
 `cx.request_animation_frame()` and derives its values from `cx.frame_time()`; the
 host evaluates it again on the next frame and goes idle once it stops asking.
 
-Updates mutate synchronously and conservatively invalidate dependent mounts.
+Updates mutate synchronously and conservatively invalidate dependent mounts. An
+update or listener that leaves its state as it was calls `cx.unchanged()` to skip
+that invalidation and its observers.
 Reads during `Runtime::evaluate` register dependencies; each normally returned
 evaluation replaces its previous read set. Reads in ordinary updates do not
 subscribe. `ViewContext` offers reads and listener creation, without state

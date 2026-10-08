@@ -35,6 +35,55 @@ fn immediate_mutation_returns_data_and_coalesces_dirty_mounts() {
 }
 
 #[test]
+fn unchanged_update_neither_invalidates_nor_notifies_unless_it_unwinds() {
+    let (mut runtime, count, mount) = setup(0_u32);
+    runtime.evaluate(&mount, |_, _| ()).unwrap();
+    let notified = Rc::new(Cell::new(0));
+    let seen = notified.clone();
+    let _subscription = runtime
+        .update(|cx| cx.observe(&count, move |_, _| seen.set(seen.get() + 1)))
+        .unwrap();
+    let listener = runtime
+        .evaluate(&mount, |_, cx| {
+            cx.listener(|count: &mut u32, step: &u32, cx| {
+                if *step == 0 {
+                    cx.unchanged();
+                } else {
+                    *count += step;
+                }
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        runtime.update(|cx| listener.dispatch(&0, cx)),
+        Ok(Dispatch::Unchanged)
+    );
+    runtime.flush().unwrap();
+    assert!(!runtime.is_dirty(&mount).unwrap());
+    assert_eq!(runtime.revision(&count), Ok(0));
+    assert_eq!(notified.get(), 0);
+    assert_eq!(
+        runtime.update(|cx| listener.dispatch(&2, cx)),
+        Ok(Dispatch::Handled)
+    );
+    runtime.flush().unwrap();
+    assert!(runtime.is_dirty(&mount).unwrap());
+    assert_eq!(runtime.revision(&count), Ok(1));
+    assert_eq!(notified.get(), 1);
+    runtime.evaluate(&mount, |_, _| ()).unwrap();
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        runtime.update(|cx| {
+            count.update(cx, |_, cx| {
+                cx.unchanged();
+                panic!("application panic")
+            })
+        })
+    }));
+    assert!(panic.is_err());
+    assert!(runtime.is_dirty(&mount).unwrap());
+}
+
+#[test]
 fn listener_reads_current_fields_even_when_description_is_old() {
     struct Counter {
         value: i32,

@@ -560,3 +560,59 @@ fn pointer_payloads_carry_the_host_click_count_on_primary_presses() {
         [1, 2, 3, 1]
     );
 }
+
+#[test]
+fn unchanged_pointer_listener_needs_no_evaluation_or_redraw() {
+    struct Tracker {
+        dragging: bool,
+        moves: u32,
+    }
+    impl View for Tracker {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .size(100., 100.)
+                .on_pointer_move(cx.listener(|this, _: &PointerInput, cx| {
+                    if this.dragging {
+                        this.moves += 1;
+                    } else {
+                        cx.unchanged();
+                    }
+                }))
+        }
+    }
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Tracker {
+            dragging: false,
+            moves: 0,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [100., 100.], &mut Measure)
+        .unwrap();
+    ui.pointer(&mut runtime, PointerEvent::Moved([10., 10.]))
+        .unwrap();
+    ui.prepare(&mut runtime, [100., 100.], &mut Measure)
+        .unwrap();
+    let stats = ui.stats();
+    assert!(
+        !ui.pointer(&mut runtime, PointerEvent::Moved([20., 10.]))
+            .unwrap()
+    );
+    assert!(!ui.needs_prepare(&runtime).unwrap());
+    runtime.update(|cx| root.update(cx, |this, _| this.dragging = true));
+    ui.prepare(&mut runtime, [100., 100.], &mut Measure)
+        .unwrap();
+    assert!(
+        ui.pointer(&mut runtime, PointerEvent::Moved([30., 10.]))
+            .unwrap()
+    );
+    assert!(ui.needs_prepare(&runtime).unwrap());
+    ui.prepare(&mut runtime, [100., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(
+        ui.stats().component_evaluations,
+        stats.component_evaluations + 2
+    );
+    assert_eq!(runtime.update(|cx| root.read(cx).moves), 1);
+}

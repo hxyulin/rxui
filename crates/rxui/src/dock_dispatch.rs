@@ -452,7 +452,7 @@ impl<T: View> Ui<T> {
                     panel: drag.panel,
                     target: preview.target,
                 };
-                if runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled {
+                if runtime.update(|cx| listener.dispatch(&event, cx))? != Dispatch::TargetGone {
                     self.focus_state
                         .get_or_insert_with(Default::default)
                         .drop_focus = Some(Box::new(completion));

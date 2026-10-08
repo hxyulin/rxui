@@ -9,6 +9,9 @@ use std::{
 pub enum Dispatch {
     /// The callback updated its current owner successfully.
     Handled,
+    /// The callback ran and called [`crate::Context::unchanged`]: its owner was
+    /// not invalidated, and the event needs no redraw on its account.
+    Unchanged,
     /// The mounted target or owner no longer exists; no callback ran.
     TargetGone,
 }
@@ -59,11 +62,16 @@ impl<E> Listener<E> {
                 let Some(entity) = owner.upgrade() else {
                     return Ok(Dispatch::TargetGone);
                 };
-                entity.try_update(cx, |state, cx| {
+                let changed = entity.try_update(cx, |state, cx| {
                     cx.bind_dispatch_mount(Some(mount.id));
-                    callback(state, event, cx)
+                    callback(state, event, cx);
+                    cx.changed
                 })?;
-                Ok(Dispatch::Handled)
+                Ok(if changed {
+                    Dispatch::Handled
+                } else {
+                    Dispatch::Unchanged
+                })
             }),
         }
     }

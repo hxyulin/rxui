@@ -107,7 +107,7 @@ impl<T: 'static> Entity<T> {
         })
     }
     /// Mutates synchronously, restoring the value and invalidating dependents even
-    /// during unwind. The closure's return value is returned unchanged; it is not
+    /// during unwind, unless the callback calls [`Context::unchanged`]. The closure's return value is returned unchanged; it is not
     /// a rollback transaction. Observers/effects run only at a later flush.
     /// Panics on programmer misuse; use try_update for fallible access.
     pub fn update<R>(
@@ -136,10 +136,14 @@ impl<T: 'static> Entity<T> {
             cell: &self.cell,
             value: Some(value),
             runtime: cx.runtime,
+            changed: true,
         };
         let mut context = Context::new(cx.runtime, self.downgrade());
         context.bind_dispatch_mount(cx.dispatch_mount);
-        Ok(f(lease.value.as_mut().expect("leased value"), &mut context))
+        let result = f(lease.value.as_mut().expect("leased value"), &mut context);
+        // An unwinding callback always invalidates.
+        lease.changed = context.changed;
+        Ok(result)
     }
 }
 impl<T: 'static> WeakEntity<T> {
@@ -175,10 +179,13 @@ struct UpdateLease<'a, T> {
     cell: &'a EntityCell<T>,
     value: Option<T>,
     runtime: &'a Rc<RuntimeInner>,
+    changed: bool,
 }
 impl<T> Drop for UpdateLease<'_, T> {
     fn drop(&mut self) {
         *self.cell.value.borrow_mut() = self.value.take();
-        self.runtime.changed(self.cell.id);
+        if self.changed {
+            self.runtime.changed(self.cell.id);
+        }
     }
 }

@@ -239,7 +239,8 @@ impl Runtime {
             .collect()
     }
     /// Monotonic entity update revision, useful for retained preparation caches.
-    /// It increments once per update scope, not once per changed field.
+    /// It increments once per update scope, not once per changed field, and not
+    /// for scopes that call `Context::unchanged`.
     pub fn revision<T>(&self, entity: &Entity<T>) -> Result<u64, AccessError> {
         self.inner.validate(entity.id())?;
         Ok(self.inner.state.borrow().slots[entity.id().slot].revision)
