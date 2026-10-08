@@ -1,0 +1,61 @@
+{
+  "recorded_date": "2026-10-08",
+  "base_commit": "9e1492d",
+  "base_benchmark_commit": "8e71d67",
+  "commit": "7ee8047",
+  "os": "macOS 27.0.1 (26A434)",
+  "rust": "1.99.0",
+  "adapter": "Apple M3 Pro, Metal, integrated GPU",
+  "profile": "optimized bench",
+  "astrelis_git_revision": "d8ac1d1b5fd0c57d5ae0811abb3a004f6e3f6923",
+  "baseline": "detached worktree at 8e71d67 sharing the Cargo target directory",
+  "frame": {
+    "command": "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench frame --features rendering,accessibility --locked",
+    "accessibility_command": "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench frame --features rendering,accessibility --locked -- --accessibility",
+    "warmups": 20,
+    "batches": 20,
+    "operations_per_batch": 20,
+    "base_runs": ["frame-base-1.csv", "frame-base-2.csv", "frame-base-3.csv"],
+    "runs": ["frame-1.csv", "frame-2.csv", "frame-3.csv"],
+    "accessibility_base_runs": [
+      "frame-accessibility-base-1.csv",
+      "frame-accessibility-base-2.csv",
+      "frame-accessibility-base-3.csv"
+    ],
+    "accessibility_runs": [
+      "frame-accessibility-1.csv",
+      "frame-accessibility-2.csv",
+      "frame-accessibility-3.csv"
+    ]
+  },
+  "existing_benchmarks": {
+    "commands": [
+      "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench elements --features accessibility --locked",
+      "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench interaction --locked",
+      "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench compositing --features rendering --locked",
+      "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench state --features tasks --locked"
+    ],
+    "base_runs": ["elements-base.csv", "interaction-base.csv", "compositing-base.csv"],
+    "runs": ["elements.csv", "interaction.csv", "compositing.csv", "state.csv"],
+    "task_disposal_base_runs": [
+      "state-tasks-base-1.csv",
+      "state-tasks-base-2.csv",
+      "state-tasks-base-3.csv"
+    ],
+    "task_disposal_runs": ["state-tasks-1.csv", "state-tasks-2.csv", "state-tasks-3.csv"],
+    "task_disposal_note": "Base runs are 8651582 with the dispose_task_owners case added; runs are 14066cb."
+  },
+  "notes": [
+    "Interactive machine; values are batch averages, not individual-frame latency.",
+    "CPU only: no surface acquisition, submission, presentation or native event loop."
+  ],
+  "source_sha256": {
+    "crates/rxui/benches/frame.rs": "6fb9a5050219fe859962c398fd9040fe1429fce2b930083585a0e69102cdf3b5",
+    "crates/rxui/src/painting.rs": "c0b2abaf937f1a1e8fe722e012157cdeed8509a9dff5f93f113829c9dce29ed8",
+    "crates/rxui/src/compositing.rs": "8ff0780be9eaf75f647db69974e787714a4c9c5177536f9748d81383a870268f",
+    "crates/rxui/src/ui.rs": "a2c1c605f03eac5573a2aead9ea690ff2e351a25200389092a415d160c400be6",
+    "crates/rxui/src/accessibility.rs": "df27dd50f2ffb396d1e4eef2d1812dd8730845acab902c230b28d7dd26001ad4",
+    "crates/rxui/src/id.rs": "d75123ba1c9aaefff5468b3045ad757158a899a86cb2e28ddf80a6c55affdded",
+    "Cargo.lock": "d8d42add3eb3e646eb0f302b900ba8f7d27f8a7702386cfa3295aa02c327db37"
+  }
+}

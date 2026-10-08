@@ -1,0 +1,11 @@
+operation,mounts,samples,iterations_per_sample,median_ns,p95_ns
+entity_update,0,40,10000,7.013,7.517
+update_invalidate,1,40,10000,31.829,32.308
+update_invalidate,16,40,10000,188.350,189.517
+update_invalidate,256,40,10000,2815.754,2841.175
+bound_listener,1,40,10000,62.567,62.888
+update_evaluate,1,40,10000,238.867,240.708
+update_observe_flush,0,40,10000,89.533,90.071
+dispose_task_owners,16,20,10,5454.200,5541.600
+dispose_task_owners,256,20,10,145379.200,152287.500
+dispose_task_owners,1024,20,10,1173808.400,1181333.300

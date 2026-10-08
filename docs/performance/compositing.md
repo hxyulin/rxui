@@ -1,5 +1,8 @@
 # Group-opacity measurements
 
+These figures predate the October 2026 frame work; cached preparation is now about
+0.2 µs at 1,000 rectangles. See [per-frame measurements](frames.md).
+
 Recorded on 2026-10-07, Apple M3 Pro, Metal, macOS 27.0.1, Rust 1.98.1,
 optimized bench profile. Three runs on an interactive development machine. Raw
 CSVs, source fingerprint and reproduction details are in
