@@ -1260,15 +1260,20 @@ impl<T: View> Ui<T> {
                     .map(|key| (key.clone(), *id))
             })
             .collect();
+        // Unkeyed children match by position among unkeyed siblings only, so inserting or
+        // removing a keyed sibling does not shift them onto the wrong node.
+        let mut unkeyed = old
+            .iter()
+            .copied()
+            .filter(|id| self.nodes[id].element.key.is_none())
+            .collect::<Vec<_>>()
+            .into_iter();
         let mut next = Vec::with_capacity(descriptions.len());
         let mut retained = HashSet::with_capacity(descriptions.len());
-        for (position, description) in descriptions.into_iter().enumerate() {
-            let candidate = if let Some(key) = &description.key {
-                keyed.get(key).copied()
-            } else {
-                old.get(position)
-                    .copied()
-                    .filter(|id| self.nodes[id].element.key.is_none())
+        for description in descriptions {
+            let candidate = match &description.key {
+                Some(key) => keyed.get(key).copied(),
+                None => unkeyed.next(),
             };
             let node = self.reconcile(runtime, candidate, description, Some(parent))?;
             next.push(node);

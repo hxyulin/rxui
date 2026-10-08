@@ -705,3 +705,55 @@ fn nested_scroll_chains_unconsumed_delta_and_reorder_retains_offset() {
         [0., 60.]
     );
 }
+#[test]
+fn unkeyed_children_keep_identity_when_keyed_siblings_come_and_go() {
+    struct Page {
+        before: bool,
+        between: bool,
+    }
+    impl View for Page {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let mut list = column();
+            if self.before {
+                list = list.child(button("Before").key("before"));
+            }
+            list = list.child(label("First"));
+            if self.between {
+                list = list.child(button("Between").key("between"));
+            }
+            list.child(row())
+        }
+    }
+    let mut runtime = Runtime::new();
+    let page = runtime.update(|cx| {
+        cx.new(|_| Page {
+            before: false,
+            between: false,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, page.clone()).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    let unkeyed = |ui: &Ui<Page>| {
+        let find = |kind| {
+            ui.elements()
+                .find(|e| e.kind == kind && e.key.is_none())
+                .unwrap()
+                .id
+        };
+        (find(ElementType::Label), find(ElementType::Row))
+    };
+    let ids = unkeyed(&ui);
+    for (before, between) in [(true, false), (true, true), (false, true), (false, false)] {
+        runtime.update(|cx| {
+            page.update(cx, |s, _| {
+                s.before = before;
+                s.between = between;
+            })
+        });
+        ui.prepare(&mut runtime, [400., 300.], &mut measure)
+            .unwrap();
+        assert_eq!(unkeyed(&ui), ids, "before={before} between={between}");
+    }
+}
