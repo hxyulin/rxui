@@ -236,23 +236,8 @@ impl UiPainter {
             return Ok(());
         }
         let mut plan = self.composition_plan(ui, format, scale)?;
-        let color = format
-            .colors
-            .first()
-            .copied()
-            .flatten()
-            .ok_or(astrelis::Error::ExpectedSingleColor)?;
-        let layer_color = match color {
-            c if c.is_srgb() => wgpu::TextureFormat::Rgba8UnormSrgb,
-            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm => {
-                wgpu::TextureFormat::Rgba8Unorm
-            }
-            wgpu::TextureFormat::Rgba32Float
-            | wgpu::TextureFormat::Rg32Float
-            | wgpu::TextureFormat::R32Float => wgpu::TextureFormat::Rgba32Float,
-            _ => wgpu::TextureFormat::Rgba16Float,
-        };
-        let layer_format = RenderFormat::color(layer_color, format.sample_count);
+        let layer_format = format.layer()?;
+        let layer_color = layer_format.colors[0].expect("single layer color");
         let mut active = HashSet::new();
         for group in &mut plan.groups {
             let Some(bounds) = group.bounds else {
