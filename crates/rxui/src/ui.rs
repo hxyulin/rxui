@@ -1949,6 +1949,18 @@ impl<T: View> Ui<T> {
                     .is_some_and(|states| states.iter().any(|p| p.shadow.is_some())),
         })
     }
+    /// A visible node's parent for composition (`None` for roots and overlays,
+    /// which composite on their own) and its opacity. `None` for hidden nodes.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn composition_node(&self, id: ElementId) -> Option<(Option<ElementId>, f32)> {
+        let node = self.nodes.get(&id).filter(|n| n.visible)?;
+        let parent = if self.is_overlay(id) {
+            None
+        } else {
+            node.parent
+        };
+        Some((parent, node.element.opacity))
+    }
     #[cfg(feature = "rendering")]
     pub(crate) fn painting_ids(&self) -> &[ElementId] {
         self.painting_order()

@@ -293,7 +293,11 @@ impl UiPainter {
         if !active.is_empty() {
             self.painter.prepare(&layer_format)?;
             let mut seen = HashSet::new();
-            for e in ui.elements() {
+            for e in ui.painting_ids().iter().filter_map(|&id| {
+                matches!(ui.visible_content(id), Some(VisibleContent::Image))
+                    .then(|| ui.element(id))
+                    .flatten()
+            }) {
                 if let Some(image) = e.image {
                     let key = image_key(&image);
                     if seen.insert(key)
@@ -313,22 +317,21 @@ impl UiPainter {
         format: &RenderFormat,
         scale: f32,
     ) -> Result<CompositionPlan, UiError> {
-        let elements: Vec<_> = ui.elements().collect();
-        let len = elements.len();
-        let indices: HashMap<_, _> = elements
+        // Visible nodes in paint order with their parent index and opacity.
+        let entries: Vec<_> = ui
+            .painting_ids()
+            .iter()
+            .filter_map(|&id| Some((id, ui.composition_node(id)?)))
+            .collect();
+        let len = entries.len();
+        let indices: IdMap<_, _> = entries
             .iter()
             .enumerate()
-            .map(|(i, e)| (e.id, i))
+            .map(|(i, (id, _))| (*id, i))
             .collect();
-        let parents: Vec<_> = elements
+        let parents: Vec<_> = entries
             .iter()
-            .map(|e| {
-                if ui.is_overlay(e.id) {
-                    None
-                } else {
-                    e.parent.and_then(|p| indices.get(&p).copied())
-                }
-            })
+            .map(|(_, (parent, _))| parent.and_then(|p| indices.get(&p).copied()))
             .collect();
         let mut ends = vec![len; len];
         let mut stack = Vec::new();
@@ -338,9 +341,24 @@ impl UiPainter {
             }
             stack.push(i);
         }
-        let mut visual: Vec<_> = elements.iter().map(|e| self.visual_bounds(e)).collect();
+        // Only subtrees of groups contribute to layer bounds; other nodes need no
+        // ElementInfo here.
+        let mut visual = vec![None; len];
+        let mut i = 0;
+        while i < len {
+            if entries[i].1.1 < 1. {
+                for j in i..ends[i] {
+                    visual[j] = ui
+                        .element(entries[j].0)
+                        .and_then(|e| self.visual_bounds(&e));
+                }
+                i = ends[i];
+            } else {
+                i += 1;
+            }
+        }
         for i in (0..len).rev() {
-            if elements[i].opacity == 0. {
+            if entries[i].1.1 == 0. {
                 visual[i] = None;
             }
             if let Some(parent) = parents[i] {
@@ -351,22 +369,22 @@ impl UiPainter {
         let mut starts = HashMap::new();
         let mut i = 0;
         while i < len {
-            let e = &elements[i];
-            if e.opacity < 1. {
+            let (id, (_, opacity)) = entries[i];
+            if opacity < 1. {
                 let bounds = visual[i]
                     .map(|b| pixel_bounds(b, scale))
                     .transpose()?
                     .flatten();
                 starts.insert(i, groups.len());
                 groups.push(LayerSpec {
-                    id: e.id,
+                    id,
                     start: i,
                     end: ends[i],
                     bounds,
-                    opacity: e.opacity,
+                    opacity,
                     binding: None,
                 });
-                if e.opacity == 0. || bounds.is_none() {
+                if opacity == 0. || bounds.is_none() {
                     i = ends[i];
                     continue;
                 }
@@ -377,7 +395,7 @@ impl UiPainter {
             key: ui.composition_key(),
             scale,
             format: format.clone(),
-            nodes: elements.iter().map(|e| e.id).collect(),
+            nodes: entries.iter().map(|(id, _)| *id).collect(),
             groups,
             starts,
         })
