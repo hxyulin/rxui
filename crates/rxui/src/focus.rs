@@ -139,11 +139,11 @@ struct Command {
 #[derive(Default)]
 pub(super) struct State {
     pub drop_focus: Option<Box<(ElementId, Key)>>,
-    pub nodes: HashSet<ElementId>,
+    pub nodes: IdSet<ElementId>,
     life: Rc<()>,
     commands: Rc<RefCell<Vec<Command>>>,
     handles: HashMap<usize, (FocusHandle, ElementId)>,
-    remembered: HashMap<ElementId, ElementId>,
+    remembered: IdMap<ElementId, ElementId>,
     tree: Option<u64>,
     revision: Option<u64>,
 }

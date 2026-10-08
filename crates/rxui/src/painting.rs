@@ -1,5 +1,6 @@
 use crate::{
-    Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View, ui::VisibleContent,
+    Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View, id::IdMap,
+    ui::VisibleContent,
 };
 use astrelis::{
     CornerRadii, FontFamily, FontSlant, GraphicsContext, Painter, PreparedText, Rect, RenderFormat,
@@ -145,16 +146,16 @@ pub struct UiPainter {
     fonts: TextSystem,
     generation: u64,
     painter: Painter,
-    texts: HashMap<ElementId, TextResource>,
+    texts: IdMap<ElementId, TextResource>,
     graphics: GraphicsContext,
     images: HashMap<crate::ImageId, ImageResource>,
     image_bindings: HashMap<ImageKey, astrelis::TextureBinding>,
-    image_placements: HashMap<ElementId, ImageKey>,
+    image_placements: IdMap<ElementId, ImageKey>,
     image_stats: ImageStats,
-    layers: HashMap<ElementId, composition::LayerResource>,
+    layers: IdMap<ElementId, composition::LayerResource>,
     compositions: HashMap<u64, Arc<composition::CompositionPlan>>,
     layer_stats: LayerStats,
-    customs: HashMap<ElementId, Box<dyn std::any::Any>>,
+    customs: IdMap<ElementId, Box<dyn std::any::Any>>,
 }
 impl UiPainter {
     /// Creates empty fonts and renderer caches for this graphics device.
@@ -163,16 +164,16 @@ impl UiPainter {
             fonts: TextSystem::new(),
             generation: 0,
             painter: Painter::new(graphics),
-            texts: HashMap::new(),
+            texts: IdMap::default(),
             graphics: graphics.clone(),
             images: HashMap::new(),
             image_bindings: HashMap::new(),
-            image_placements: HashMap::new(),
+            image_placements: IdMap::default(),
             image_stats: ImageStats::default(),
-            layers: HashMap::new(),
+            layers: IdMap::default(),
             compositions: HashMap::new(),
             layer_stats: LayerStats::default(),
-            customs: HashMap::new(),
+            customs: IdMap::default(),
         }
     }
     /// Cumulative image upload/binding counters.
@@ -463,7 +464,7 @@ impl UiPainter {
         Ok(())
     }
     fn has_visible_ink(
-        texts: &HashMap<ElementId, TextResource>,
+        texts: &IdMap<ElementId, TextResource>,
         element: &crate::ElementInfo<'_>,
         scale: f32,
         origin: [f32; 2],

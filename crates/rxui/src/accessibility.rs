@@ -1,5 +1,6 @@
 use crate::{
     ElementId, SemanticAction, SemanticRole, TextPosition, TextSelection, Ui, UiError, View,
+    id::IdMap,
 };
 use accesskit::{
     Action, ActionData, ActionRequest, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate,
@@ -40,10 +41,10 @@ struct TextRun {
 pub struct AccessKitTree {
     placement: Option<u64>,
     next_id: u64,
-    ids: HashMap<ElementId, NodeId>,
+    ids: IdMap<ElementId, NodeId>,
     reverse: HashMap<NodeId, ElementId>,
-    runs: HashMap<ElementId, TextRun>,
-    value_only_revisions: HashMap<ElementId, u64>,
+    runs: IdMap<ElementId, TextRun>,
+    value_only_revisions: IdMap<ElementId, u64>,
     nodes: HashMap<NodeId, Arc<Node>>,
     key: Option<crate::semantics::Key>,
     title: String,
@@ -62,10 +63,10 @@ impl AccessKitTree {
         Self {
             placement: None,
             next_id: 1,
-            ids: HashMap::new(),
+            ids: IdMap::default(),
             reverse: HashMap::new(),
-            runs: HashMap::new(),
-            value_only_revisions: HashMap::new(),
+            runs: IdMap::default(),
+            value_only_revisions: IdMap::default(),
             nodes: HashMap::new(),
             key: None,
             title: String::new(),

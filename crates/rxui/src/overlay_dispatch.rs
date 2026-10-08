@@ -2,10 +2,10 @@ use super::*;
 use crate::{DismissEvent, DismissReason, OverlayAnchor, PopoverPlacement, overlay::Properties};
 #[derive(Default)]
 pub(super) struct State {
-    nodes: HashSet<ElementId>,
+    nodes: IdSet<ElementId>,
     pub roots: Vec<ElementId>,
     opened: Vec<Opened>,
-    unavailable: HashSet<ElementId>,
+    unavailable: IdSet<ElementId>,
     pub before_focus: Option<ElementId>,
 }
 struct Opened {

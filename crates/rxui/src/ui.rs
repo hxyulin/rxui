@@ -7,7 +7,7 @@ use crate::{
         next, previous, single_line, word_left, word_right, word_selection,
     },
     element::{ClickEvent, Color, Element, ElementKind, IntoElement, Key, View},
-    id::next_runtime,
+    id::{IdMap, IdSet, next_runtime},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -594,7 +594,7 @@ pub struct Ui<T: View> {
     pub(crate) tree: u64,
     next_node: u64,
     root: Option<ElementId>,
-    pub(crate) nodes: HashMap<ElementId, Node>,
+    pub(crate) nodes: IdMap<ElementId, Node>,
     order: Vec<ElementId>,
     paint_order: Option<Vec<ElementId>>,
     opacity_count: usize,
@@ -627,7 +627,7 @@ pub struct Ui<T: View> {
     theme: Theme,
     /// Theme the root view read during its last evaluation.
     root_theme_read: Option<Theme>,
-    style_roots: HashSet<ElementId>,
+    style_roots: IdSet<ElementId>,
 }
 impl<T: View> Ui<T> {
     /// Mounts a root view. Preparing evaluates it for the first time.
@@ -640,7 +640,7 @@ impl<T: View> Ui<T> {
             tree: next_runtime(),
             next_node: 1,
             root: None,
-            nodes: HashMap::new(),
+            nodes: IdMap::default(),
             order: Vec::new(),
             paint_order: None,
             opacity_count: 0,
@@ -672,7 +672,7 @@ impl<T: View> Ui<T> {
             caret_visible: true,
             theme: Theme::default(),
             root_theme_read: None,
-            style_roots: HashSet::new(),
+            style_roots: IdSet::default(),
         })
     }
     /// Root theme for this placement; subtree overrides remain independent.
