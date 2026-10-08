@@ -1,14 +1,11 @@
 use crate::{
     ElementId, SemanticAction, SemanticRole, TextPosition, TextSelection, Ui, UiError, View,
-    id::IdMap,
+    id::{IdMap, IdSet},
 };
 use accesskit::{
     Action, ActionData, ActionRequest, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Cumulative publication counters; warm unchanged snapshots do no node/text work.
@@ -42,10 +39,10 @@ pub struct AccessKitTree {
     placement: Option<u64>,
     next_id: u64,
     ids: IdMap<ElementId, NodeId>,
-    reverse: HashMap<NodeId, ElementId>,
+    reverse: IdMap<NodeId, ElementId>,
     runs: IdMap<ElementId, TextRun>,
     value_only_revisions: IdMap<ElementId, u64>,
-    nodes: HashMap<NodeId, Arc<Node>>,
+    nodes: IdMap<NodeId, Arc<Node>>,
     key: Option<crate::semantics::Key>,
     title: String,
     scale: f32,
@@ -64,10 +61,10 @@ impl AccessKitTree {
             placement: None,
             next_id: 1,
             ids: IdMap::default(),
-            reverse: HashMap::new(),
+            reverse: IdMap::default(),
             runs: IdMap::default(),
             value_only_revisions: IdMap::default(),
-            nodes: HashMap::new(),
+            nodes: IdMap::default(),
             key: None,
             title: String::new(),
             scale: 0.,
@@ -129,15 +126,15 @@ impl AccessKitTree {
         self.value_only_revisions
             .retain(|id, _| ui.contains_element(*id));
         let semantics: Vec<_> = ui.semantics().collect();
-        let visible: HashSet<_> = semantics.iter().map(|node| node.id).collect();
+        let visible: IdSet<_> = semantics.iter().map(|node| node.id).collect();
         for semantic in &semantics {
             if !self.ids.contains_key(&semantic.id) {
                 let id = self.allocate();
                 self.ids.insert(semantic.id, id);
             }
         }
-        let mut next = HashMap::with_capacity(semantics.len() + 1);
-        let mut reverse = HashMap::with_capacity(semantics.len());
+        let mut next = IdMap::with_capacity_and_hasher(semantics.len() + 1, Default::default());
+        let mut reverse = IdMap::with_capacity_and_hasher(semantics.len(), Default::default());
         let root_id = NodeId(0);
         let mut root = Node::new(Role::Window);
         root.set_label(title);
@@ -399,10 +396,8 @@ impl AccessKitTree {
         let mut changed: Vec<_> = next
             .iter()
             .filter(|(id, node)| {
-                full || self
-                    .nodes
-                    .get(id)
-                    .is_none_or(|old| old.as_ref() != node.as_ref())
+                // `insert` keeps the previous Arc for an equal node.
+                full || self.nodes.get(id).is_none_or(|old| !Arc::ptr_eq(old, node))
             })
             .map(|(id, node)| (*id, node.as_ref().clone()))
             .collect();
@@ -541,8 +536,8 @@ impl AccessKitTree {
     }
 }
 fn insert(
-    old: &HashMap<NodeId, Arc<Node>>,
-    next: &mut HashMap<NodeId, Arc<Node>>,
+    old: &IdMap<NodeId, Arc<Node>>,
+    next: &mut IdMap<NodeId, Arc<Node>>,
     id: NodeId,
     node: Node,
 ) {
