@@ -521,6 +521,17 @@ fn compatible(old: &Element, new: &Element) -> bool {
         _ => kind(old) == kind(new),
     }
 }
+/// Painting extent of one visible node; see [`Ui::ink_extent`]. Apart from a box
+/// shadow and text glyphs (positioned relative to `content`), its own ink stays
+/// within `bounds`, and all of it is clipped to `clip`.
+#[cfg(feature = "rendering")]
+pub(crate) struct InkExtent {
+    pub(crate) clip: Bounds,
+    pub(crate) bounds: Bounds,
+    pub(crate) content: Bounds,
+    /// Whether any interaction state paints a box shadow.
+    pub(crate) shadow: bool,
+}
 /// Painter-relevant content of one visible node; see [`Ui::visible_content`].
 #[cfg(feature = "rendering")]
 pub(crate) enum VisibleContent<'a> {
@@ -1920,6 +1931,22 @@ impl<T: View> Ui<T> {
             ElementKind::Custom(_) => VisibleContent::Custom,
             _ if node.displayed_text().is_some() => VisibleContent::Text(node.text_request()),
             _ => VisibleContent::Other,
+        })
+    }
+    /// Where a visible node's own ink can appear, without building its
+    /// `ElementInfo`; `None` for hidden or removed nodes.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn ink_extent(&self, id: ElementId) -> Option<InkExtent> {
+        let node = self.nodes.get(&id).filter(|n| n.visible)?;
+        Some(InkExtent {
+            clip: node.clip_bounds,
+            bounds: node.bounds,
+            content: node.content_bounds,
+            shadow: node.paint.shadow.is_some()
+                || node
+                    .state_paints
+                    .as_ref()
+                    .is_some_and(|states| states.iter().any(|p| p.shadow.is_some())),
         })
     }
     #[cfg(feature = "rendering")]

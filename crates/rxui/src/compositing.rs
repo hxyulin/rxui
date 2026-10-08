@@ -100,23 +100,28 @@ impl<'a> PaintCursor<'a> {
             own_group: scope,
         }
     }
+    /// Next element to paint, and the isolated group it starts. Ordinary elements
+    /// for which `culled` holds are skipped before their `ElementInfo` is built.
     pub fn next<'u, T: View>(
         &mut self,
         ui: &'u Ui<T>,
+        culled: impl Fn(ElementId) -> bool,
     ) -> Option<(crate::ElementInfo<'u>, Option<&'a LayerSpec>)> {
         while self.index < self.end {
             let index = self.index;
             self.index += 1;
+            let group = self.plan.and_then(|plan| {
+                let group = *plan.starts.get(&index)?;
+                (Some(group) != self.own_group).then(|| &plan.groups[group])
+            });
+            if group.is_none() && culled(self.nodes[index]) {
+                continue;
+            }
             if let Some(element) = ui.element(self.nodes[index]) {
-                if let Some(plan) = self.plan
-                    && let Some(group) = plan.starts.get(&index)
-                    && Some(*group) != self.own_group
-                {
-                    let spec = &plan.groups[*group];
+                if let Some(spec) = group {
                     self.index = spec.end;
-                    return Some((element, Some(spec)));
                 }
-                return Some((element, None));
+                return Some((element, group));
             }
         }
         None

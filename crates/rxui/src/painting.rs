@@ -427,37 +427,44 @@ impl UiPainter {
         if !ui.is_prepared() || !scale.is_finite() || scale <= 0. {
             return Err(UiError::InvalidGeometry);
         }
-        for element in ui.elements() {
-            if let Some(image) = &element.image {
-                let key = image_key(image);
-                if self.image_placements.get(&element.id) != Some(&key)
-                    || !self.images.contains_key(&key.id)
-                {
-                    return Err(UiError::InvalidGeometry);
+        for &id in ui.painting_ids() {
+            match ui.visible_content(id) {
+                None | Some(VisibleContent::Other) => {}
+                Some(VisibleContent::Text(request)) => {
+                    let resource = self.texts.get(&id).ok_or(UiError::InvalidGeometry)?;
+                    if resource.prepared.is_none()
+                        || resource.prepared_revision != request.revision
+                        || resource.font_generation != self.generation
+                        || Some(resource.prepared_width) != text_width(request.width)
+                    {
+                        return Err(UiError::InvalidGeometry);
+                    }
                 }
-                if image.source.pixel_size().is_some() && !self.image_bindings.contains_key(&key) {
-                    return Err(UiError::InvalidGeometry);
+                Some(VisibleContent::Image) => {
+                    let Some(image) = ui.element(id).and_then(|e| e.image) else {
+                        continue;
+                    };
+                    let key = image_key(&image);
+                    if self.image_placements.get(&id) != Some(&key)
+                        || !self.images.contains_key(&key.id)
+                    {
+                        return Err(UiError::InvalidGeometry);
+                    }
+                    if image.source.pixel_size().is_some()
+                        && !self.image_bindings.contains_key(&key)
+                    {
+                        return Err(UiError::InvalidGeometry);
+                    }
                 }
-            }
-            if let Some(custom) = ui.custom_element(element.id)
-                && self
-                    .customs
-                    .get(&element.id)
-                    .is_none_or(|state| (**state).type_id() != custom.state_type())
-            {
-                return Err(UiError::InvalidGeometry);
-            }
-            if element.text.is_some() {
-                let resource = self
-                    .texts
-                    .get(&element.id)
-                    .ok_or(UiError::InvalidGeometry)?;
-                if resource.prepared.is_none()
-                    || resource.prepared_revision != element.text_revision
-                    || resource.font_generation != self.generation
-                    || resource.prepared_width != element.content_bounds.width
-                {
-                    return Err(UiError::InvalidGeometry);
+                Some(VisibleContent::Custom) => {
+                    if let Some(custom) = ui.custom_element(id)
+                        && self
+                            .customs
+                            .get(&id)
+                            .is_none_or(|state| (**state).type_id() != custom.state_type())
+                    {
+                        return Err(UiError::InvalidGeometry);
+                    }
                 }
             }
         }
@@ -546,7 +553,47 @@ impl UiPainter {
                 Transform2D::scale(scale, scale).then(Transform2D::translation(shift[0], shift[1])),
             )?;
             let mut elements = composition::PaintCursor::new(ui, plan, group);
-            while let Some((element, isolated)) = elements.next(ui) {
+            // A conservative form of `has_visible_ink` on retained node data skips
+            // elements such as rows scrolled out of view before building their
+            // ElementInfo: the border box with the shapes' fringe, any box shadow,
+            // and prepared text ink.
+            let texts = &self.texts;
+            let culled = |id| {
+                let Some(ink) = ui.ink_extent(id) else {
+                    return false;
+                };
+                let visible = |bounds: Bounds| {
+                    let clip = physical_clip(
+                        bounds.intersection(ink.clip),
+                        scale,
+                        [viewport[0] + shift[0], viewport[1] + shift[1]],
+                        original_scissor,
+                    );
+                    clip[2] > 0 && clip[3] > 0
+                };
+                let fringe = 1. / scale;
+                let b = ink.bounds;
+                !(ink.shadow
+                    || visible(Bounds {
+                        x: b.x - fringe,
+                        y: b.y - fringe,
+                        width: b.width + 2. * fringe,
+                        height: b.height + 2. * fringe,
+                    })
+                    || texts
+                        .get(&id)
+                        .and_then(|t| t.prepared.as_ref())
+                        .and_then(|t| t.ink_bounds())
+                        .is_some_and(|i| {
+                            visible(Bounds {
+                                x: ink.content.x + i.x,
+                                y: ink.content.y + i.y,
+                                width: i.width,
+                                height: i.height,
+                            })
+                        }))
+            };
+            while let Some((element, isolated)) = elements.next(ui, culled) {
                 if let Some(layer) = isolated {
                     if let Some(bounds) = layer.bounds {
                         let destination = Bounds {
