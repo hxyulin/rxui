@@ -65,8 +65,12 @@ PaintStyle is a sparse patch. `paint_style` merges specified fields with earlier
 builders, and repeated state builders merge their specified fields. An omitted
 field preserves its earlier value. `no_background` explicitly removes a control's
 default fill, and PaintStyle::no_border hides border painting while preserving its
-layout widths. Radius affects the painted contour, not rounded descendant clipping
-or hit testing; use clip/scroll for the existing rectangular clipping behavior.
+layout widths. Radius rounds the painted contour. On an element that also clips
+(`clip`, `scroll_x`, `scroll_y` or `scroll`), descendants are painted inside its
+content box rounded by the radii inset by its border and padding. Only the nearest
+rounded clipping ancestor is applied; outer ancestors still clip rectangularly.
+Hit testing always uses the rectangular clip. `ElementInfo::rounded_clip` exposes
+the applied clip to custom painters.
 
 ```rust
 button("Custom")

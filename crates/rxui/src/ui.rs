@@ -201,6 +201,14 @@ impl Bounds {
     }
 }
 
+/// Rounded descendant clip from the nearest clipping ancestor with corner radii.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundedClip {
+    /// Ancestor content box in absolute logical units.
+    pub bounds: Bounds,
+    /// Ancestor radii inset by its border and padding, clockwise from the top-left.
+    pub radii: [f32; 4],
+}
 /// Width request from Taffy's leaf measurement algorithm.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextWidth {
@@ -313,6 +321,9 @@ pub struct ElementInfo<'a> {
     pub content_bounds: Bounds,
     /// Effective ancestor/viewport clip for this node's own painting and hit testing.
     pub clip_bounds: Bounds,
+    /// Rounded painting clip from the nearest rounded clipping ancestor, within
+    /// clip_bounds. Hit testing stays rectangular.
+    pub rounded_clip: Option<RoundedClip>,
     /// Retained logical scroll offset; zero for ordinary elements.
     pub scroll_offset: [f32; 2],
     /// Maximum reachable scroll offset after layout.
@@ -493,6 +504,7 @@ pub(crate) struct Node {
     text_revision: u64,
     parent: Option<ElementId>,
     clip_bounds: Bounds,
+    rounded_clip: Option<RoundedClip>,
     pub(crate) scroll_offset: [f32; 2],
     pub(crate) scroll_range: [f32; 2],
     editor: Option<Box<Editor>>,
@@ -1204,6 +1216,7 @@ impl<T: View> Ui<T> {
                     text_revision: 1,
                     parent,
                     clip_bounds: Bounds::default(),
+                    rounded_clip: None,
                     scroll_offset: [0.; 2],
                     scroll_range: [0.; 2],
                     editor,
@@ -1599,7 +1612,15 @@ impl<T: View> Ui<T> {
         visible: bool,
         clip: Bounds,
     ) -> Result<(), UiError> {
+        let rounded_clip = if self.is_overlay(id) {
+            None
+        } else {
+            self.nodes[&id]
+                .parent
+                .and_then(|p| self.descendant_rounded_clip(p))
+        };
         let node = self.nodes.get_mut(&id).unwrap();
+        node.rounded_clip = rounded_clip;
         let layout = self.taffy.layout(node.layout)?;
         let visible = visible && node.element.style.display != Display::None;
         let bounds = Bounds {
@@ -1686,6 +1707,30 @@ impl<T: View> Ui<T> {
             self.update_bounds(child, child_origin, visible, child_clip)?;
         }
         Ok(())
+    }
+    /// The rounded clip a clipping node applies to its descendants: its own content
+    /// box and inset radii when it has corner radii, otherwise its inherited clip.
+    fn descendant_rounded_clip(&self, id: ElementId) -> Option<RoundedClip> {
+        let node = &self.nodes[&id];
+        if !node.element.clip || node.paint.radii.iter().all(|r| *r <= 0.) {
+            return node.rounded_clip;
+        }
+        let (b, c) = (node.bounds, node.content_bounds);
+        let [left, top] = [c.x - b.x, c.y - b.y];
+        let [right, bottom] = [
+            b.x + b.width - c.x - c.width,
+            b.y + b.height - c.y - c.height,
+        ];
+        let [tl, tr, br, bl] = node.paint.radii;
+        Some(RoundedClip {
+            bounds: c,
+            radii: [
+                (tl - left.max(top)).max(0.),
+                (tr - right.max(top)).max(0.),
+                (br - right.max(bottom)).max(0.),
+                (bl - left.max(bottom)).max(0.),
+            ],
+        })
     }
     fn collect_order(&mut self, id: ElementId) {
         self.order.push(id);
@@ -1895,6 +1940,7 @@ impl<T: View> Ui<T> {
             bounds: node.bounds,
             content_bounds: node.content_bounds,
             clip_bounds: node.clip_bounds,
+            rounded_clip: node.rounded_clip,
             scroll_offset: node.scroll_offset,
             scroll_range: node.scroll_range,
             z_index: node.element.z_index,

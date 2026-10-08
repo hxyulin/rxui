@@ -638,7 +638,8 @@ impl Element {
         self.paint = self.paint.border_color(color);
         self
     }
-    /// Uniform painted corner radius, without rounded clipping or hit testing.
+    /// Uniform painted corner radius. Rounds descendant painting on a clipping element;
+    /// hit testing stays rectangular.
     pub fn radius(mut self, radius: f32) -> Self {
         self.paint = self.paint.radius(radius);
         self
@@ -686,6 +687,8 @@ impl Element {
         self
     }
     /// Clips descendant painting and hit testing to this element's content box.
+    /// With corner radii, descendant painting is also rounded; hit testing stays
+    /// rectangular.
     pub fn clip(mut self) -> Self {
         self.clip = true;
         self.style.overflow = taffy::geometry::Point {

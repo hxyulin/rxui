@@ -245,8 +245,8 @@ pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
 pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
 #[cfg(feature = "layout")]
 pub use ui::{
-    Bounds, ElementId, ElementInfo, ElementType, PointerEvent, TextMeasure, TextRequest, TextWidth,
-    Ui, UiError, UiStats,
+    Bounds, ElementId, ElementInfo, ElementType, PointerEvent, RoundedClip, TextMeasure,
+    TextRequest, TextWidth, Ui, UiError, UiStats,
 };
 #[cfg(feature = "layout")]
 pub use virtual_list::{VirtualList, virtual_list};

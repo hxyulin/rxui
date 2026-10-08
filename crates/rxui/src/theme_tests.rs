@@ -267,6 +267,32 @@ fn box_shadows_resolve_tokens_merge_state_patches_and_validate() {
     }
 }
 #[test]
+fn clipping_containers_with_radii_give_descendants_an_inset_rounded_clip() {
+    let (_, _, ui) = mount(
+        column()
+            .key("outer")
+            .size(100., 60.)
+            .padding(4.)
+            .border(2., [1.; 4])
+            .corner_radii(10., 4., 0., 30.)
+            .clip()
+            .child(
+                column()
+                    .key("inner")
+                    .size(50., 50.)
+                    .child(label("Deep").key("deep")),
+            ),
+    );
+    let outer = keyed(&ui, "outer");
+    assert_eq!(outer.rounded_clip, None);
+    let clip = keyed(&ui, "inner").rounded_clip.unwrap();
+    assert_eq!(clip.bounds, outer.content_bounds);
+    assert_eq!(clip.radii, [4., 0., 0., 24.]);
+    assert_eq!(keyed(&ui, "deep").rounded_clip, Some(clip));
+    let (_, _, ui) = mount(column().radius(8.).child(label("Unclipped").key("child")));
+    assert_eq!(keyed(&ui, "child").rounded_clip, None);
+}
+#[test]
 fn corner_radii_and_single_side_borders_resolve_and_lay_out() {
     let (_, _, ui) = mount(
         column()

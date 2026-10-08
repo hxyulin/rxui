@@ -470,6 +470,7 @@ impl UiPainter {
                             paint
                                 .pass()
                                 .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
+                            let mut paint = element_session(&mut paint, &element)?;
                             paint.draw_image(
                                 layer.binding.as_ref().ok_or(UiError::InvalidGeometry)?,
                                 astrelis::TextureDraw::new(Rect::new(
@@ -510,6 +511,9 @@ impl UiPainter {
                 paint
                     .pass()
                     .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
+                // A rounded ancestor clip narrows this element's own painting; the
+                // child session restores the rectangular scissor state when dropped.
+                let mut paint = element_session(&mut paint, &element)?;
                 let bounds = element.bounds;
                 let rect = Rect::new(bounds.x, bounds.y, bounds.width, bounds.height);
                 let appearance = element.paint;
@@ -869,6 +873,20 @@ fn ui_position(p: astrelis::TextPosition) -> crate::TextPosition {
             astrelis::TextAffinity::Downstream => crate::TextAffinity::Downstream,
         },
     }
+}
+/// A child session for one element's own painting, clipped to its rounded ancestor
+/// clip when it has one. Dropping it restores the parent's scissor and rounded clip.
+fn element_session<'a, 'frame>(
+    paint: &'a mut astrelis::PaintSession<'_, 'frame>,
+    element: &crate::ElementInfo<'_>,
+) -> Result<astrelis::PaintSession<'a, 'frame>, UiError> {
+    Ok(match element.rounded_clip {
+        Some(c) => paint.clipped_rounded(
+            Rect::new(c.bounds.x, c.bounds.y, c.bounds.width, c.bounds.height),
+            corner_radii(c.radii),
+        )?,
+        None => paint.transformed(Transform2D::IDENTITY)?,
+    })
 }
 fn corner_radii([top_left, top_right, bottom_right, bottom_left]: [f32; 4]) -> CornerRadii {
     CornerRadii::new(top_left, top_right, bottom_right, bottom_left)

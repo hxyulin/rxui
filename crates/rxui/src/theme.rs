@@ -607,7 +607,7 @@ impl PaintStyle {
         self.border_color = Some(None);
         self
     }
-    /// Uniform corner radius; does not clip descendants or change hit testing.
+    /// Uniform corner radius. A clipping element also rounds its descendant painting.
     pub fn radius(self, radius: f32) -> Self {
         self.corner_radii(radius, radius, radius, radius)
     }
@@ -762,7 +762,8 @@ pub struct ResolvedPaint {
     pub background: Option<Color>,
     /// Optional border color; resolved widths are exposed by ElementInfo::border.
     pub border_color: Option<Color>,
-    /// Corner radii, clockwise from the top-left. Does not imply rounded descendant clipping.
+    /// Corner radii, clockwise from the top-left. A clipping element also rounds its
+    /// descendant painting by these radii, inset by its border and padding.
     pub radii: [f32; 4],
     /// Focus outline color.
     pub focus_color: Color,

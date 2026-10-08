@@ -129,7 +129,8 @@ between zero and one. Native hosting records the extra passes automatically;
 custom hosts use `UiPainter::compose` with their own frame and destination pass.
 See [the composition contract](compositing.md) for alpha, bounds, caching and cost.
 Images and application framebuffers retain their explicit preparation/rendering
-contract. Rounded backgrounds do not create rounded descendant masks. General
+contract. A clipping or scrolling container with corner radii clips its descendants'
+painting to its rounded content box; hit testing stays rectangular. General
 subtree transforms and filters are separate future work.
 
 ## Examples and verification

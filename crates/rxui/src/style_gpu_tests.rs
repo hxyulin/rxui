@@ -132,3 +132,53 @@ fn box_shadows_paint_behind_backgrounds_and_survive_own_box_culling() {
         assert!(errors.pop().await.is_none());
     });
 }
+
+struct RoundedClipView;
+impl View for RoundedClipView {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        row()
+            .child(
+                column()
+                    .size(40., 40.)
+                    .radius(20.)
+                    .clip()
+                    .child(column().size(40., 40.).background([1., 0., 0., 1.])),
+            )
+            // Scrolled content stays inside the rounded clip.
+            .child(
+                column()
+                    .size(40., 40.)
+                    .corner_radii(0., 16., 0., 0.)
+                    .scroll_y()
+                    .child(column().size(40., 80.).background([0., 1., 0., 1.])),
+            )
+    }
+}
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn rounded_clipping_containers_round_descendant_painting() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| cx.new(|_| RoundedClipView));
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        let mut pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [80, 40]);
+        for scrolled in [false, true] {
+            let at = |x, y| pixel(&pixels, 80, x, y);
+            assert_eq!(at(1, 1), [0, 0, 0, 255]); // Clipped corner.
+            assert_eq!(at(38, 38), [0, 0, 0, 255]);
+            assert_eq!(at(20, 20), [255, 0, 0, 255]);
+            assert_eq!(at(20, 1), [255, 0, 0, 255]); // Edge midpoint stays inside.
+            assert_eq!(at(78, 1), [0, 0, 0, 255], "scrolled {scrolled}");
+            assert_eq!(at(42, 1), [0, 255, 0, 255]);
+            assert_eq!(at(78, 38), [0, 255, 0, 255]);
+            ui.scroll([60., 20.], [0., 20.]).unwrap();
+            pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [80, 40]);
+        }
+        assert!(errors.pop().await.is_none());
+    });
+}
