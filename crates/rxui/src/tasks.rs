@@ -192,11 +192,15 @@ impl Tasks {
             next: 1,
         }
     }
-    pub(crate) fn cancel_owner(&mut self, owner: EntityId) -> Vec<Box<Completion>> {
+    /// Cancels the tasks of all disposed owners in one pass over the records.
+    pub(crate) fn cancel_owners(
+        &mut self,
+        owners: &std::collections::HashSet<EntityId>,
+    ) -> Vec<Box<Completion>> {
         let ids: Vec<_> = self
             .records
             .iter()
-            .filter(|(_, record)| record.owner == Some(owner))
+            .filter(|(_, record)| record.owner.is_some_and(|owner| owners.contains(&owner)))
             .map(|(id, _)| *id)
             .collect();
         ids.into_iter()

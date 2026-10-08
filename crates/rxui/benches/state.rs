@@ -100,4 +100,57 @@ fn main() {
     });
     assert_eq!(seen.get(), runtime.update(|cx| *model.read(cx)));
     drop(subscription);
+    #[cfg(feature = "tasks")]
+    dispose_task_owners();
+}
+
+/// Disposing entities cancels their owner-scoped tasks. Each operation creates
+/// `owners` entities with one pending task each, then drops and synchronizes them.
+#[cfg(feature = "tasks")]
+fn dispose_task_owners() {
+    use rxui::{BackgroundFuture, BlockingJob, SpawnError, TaskExecutor};
+    use std::sync::{Arc, Mutex};
+    #[derive(Default)]
+    struct Parked(Mutex<Vec<BackgroundFuture>>);
+    impl TaskExecutor for Parked {
+        fn spawn(&self, future: BackgroundFuture) -> Result<(), SpawnError> {
+            self.0.lock().unwrap().push(future);
+            Ok(())
+        }
+        fn spawn_blocking(&self, _: BlockingJob) -> Result<(), SpawnError> {
+            Err(SpawnError::BlockingUnavailable)
+        }
+    }
+    for owners in [16, 256, 1024] {
+        let mut runtime = Runtime::new();
+        let executor = Arc::new(Parked::default());
+        runtime.configure_tasks(executor.clone(), || {}).unwrap();
+        let mut samples = Vec::new();
+        for sample in 0..23 {
+            let start = Instant::now();
+            for _ in 0..10 {
+                let entities: Vec<_> = runtime.update(|cx| {
+                    (0..owners)
+                        .map(|_| {
+                            cx.new(|cx: &mut rxui::Context<'_, Option<rxui::Task>>| {
+                                Some(cx.spawn(std::future::pending::<()>(), |_, _, _| {}))
+                            })
+                        })
+                        .collect()
+                });
+                drop(entities);
+                runtime.synchronize();
+                executor.0.lock().unwrap().clear();
+            }
+            // The first three samples warm up.
+            if sample >= 3 {
+                samples.push(start.elapsed().as_secs_f64() * 1e9 / 10.);
+            }
+        }
+        samples.sort_by(f64::total_cmp);
+        println!(
+            "dispose_task_owners,{owners},20,10,{:.3},{:.3}",
+            samples[10], samples[18]
+        );
+    }
 }

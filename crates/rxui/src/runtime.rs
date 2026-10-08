@@ -646,7 +646,7 @@ impl RuntimeInner {
         // Local state values run user Drop code; release them after the borrow ends.
         let mut local = Vec::new();
         #[cfg(feature = "tasks")]
-        let mut disposed_owners = Vec::new();
+        let mut disposed_owners = HashSet::new();
         for release in releases {
             match release {
                 Release::Entity(id) => {
@@ -674,7 +674,7 @@ impl RuntimeInner {
                     }
                     state.observers.remove(&id);
                     #[cfg(feature = "tasks")]
-                    disposed_owners.push(id);
+                    disposed_owners.insert(id);
                 }
                 Release::Mount(id) => {
                     if let Some(record) = state.mounts.remove(&id) {
@@ -705,11 +705,10 @@ impl RuntimeInner {
         {
             let callbacks = {
                 let mut slot = self.tasks.borrow_mut();
-                if let Some(tasks) = slot.as_mut() {
-                    disposed_owners
-                        .into_iter()
-                        .flat_map(|id| tasks.cancel_owner(id))
-                        .collect::<Vec<_>>()
+                if let Some(tasks) = slot.as_mut()
+                    && !disposed_owners.is_empty()
+                {
+                    tasks.cancel_owners(&disposed_owners)
                 } else {
                     Vec::new()
                 }
