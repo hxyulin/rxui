@@ -1,7 +1,7 @@
 use super::*;
 use crate::input::{
-    Cursor, EventPhase, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers, PointerButton,
-    PointerButtons, PointerCancelReason, PointerInput, Requests,
+    Cursor, EventPhase, HoverEvent, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers,
+    PointerButton, PointerButtons, PointerCancelReason, PointerInput, Requests, WheelInput,
 };
 use std::cell::Cell;
 
@@ -23,6 +23,10 @@ pub(super) struct State {
     pub buttons: PointerButtons,
     pub modifiers: Modifiers,
     pub prevented: bool,
+    pub click_count: u8,
+    /// Elements with hover listeners whose subtree holds the hit target, outermost first.
+    hover: Vec<(ElementId, crate::Listener<HoverEvent>)>,
+    pending_hover: Vec<(crate::Listener<HoverEvent>, HoverEvent)>,
     route: Vec<ElementId>,
     pending: Vec<(crate::Listener<PointerInput>, PointerInput)>,
     pending_scroll: Option<(ElementId, [f32; 2])>,
@@ -30,7 +34,10 @@ pub(super) struct State {
 }
 impl State {
     pub(super) fn pending(&self) -> bool {
-        !self.pending.is_empty() || self.pending_scroll.is_some() || self.pending_resize.is_some()
+        !self.pending.is_empty()
+            || !self.pending_hover.is_empty()
+            || self.pending_scroll.is_some()
+            || self.pending_resize.is_some()
     }
 }
 impl PointerEvent {
@@ -137,6 +144,7 @@ impl<T: View> Ui<T> {
             press_bounds: capture.map(|c| c.bounds),
             press_parent_bounds: capture.and_then(|c| c.parent),
             cancel_reason: cancel,
+            click_count: self.input.click_count.max(1),
             requests: Cell::new(Requests::default()),
         }
     }
@@ -221,12 +229,147 @@ impl<T: View> Ui<T> {
         self.input.route = path;
         self.pressed = None;
     }
+    /// Moves the hovered chain to the ancestors of `hit` that have hover listeners,
+    /// delivering leaves innermost first, then enters outermost first.
+    pub(super) fn update_hover(
+        &mut self,
+        runtime: &mut Runtime,
+        hit: Option<ElementId>,
+    ) -> Result<bool, UiError> {
+        let mut next = Vec::new();
+        let mut current = hit;
+        while let Some(id) = current {
+            let node = &self.nodes[&id];
+            if let Some(listener) = node.element.input.as_ref().and_then(|p| p.hover.clone())
+                && self.input_available(id)
+            {
+                next.push((id, listener));
+            }
+            current = node.parent;
+        }
+        next.reverse();
+        let old = std::mem::take(&mut self.input.hover);
+        let mut changed = false;
+        for (id, listener) in old.iter().rev() {
+            if !next.iter().any(|(n, _)| n == id) {
+                let event = HoverEvent {
+                    target: *id,
+                    hovered: false,
+                };
+                changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
+            }
+        }
+        for (id, listener) in &next {
+            if !old.iter().any(|(n, _)| n == id) {
+                let event = HoverEvent {
+                    target: *id,
+                    hovered: true,
+                };
+                changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
+            }
+        }
+        self.input.hover = next;
+        Ok(changed)
+    }
+    /// Queues leaves for hovered elements that were removed or stopped taking input,
+    /// or for every hovered element when `all` is set.
+    pub(super) fn prune_hover(&mut self, all: bool) {
+        let hover = std::mem::take(&mut self.input.hover);
+        for (id, listener) in hover {
+            if !all && self.input_available(id) {
+                self.input.hover.push((id, listener));
+            } else {
+                self.input.pending_hover.push((
+                    listener,
+                    HoverEvent {
+                        target: id,
+                        hovered: false,
+                    },
+                ));
+            }
+        }
+    }
+    /// Routes a wheel event from the element under the pointer to the root, then
+    /// scrolls containers unless a listener prevented the default.
+    pub fn wheel(
+        &mut self,
+        runtime: &mut Runtime,
+        position: [f32; 2],
+        delta: [f32; 2],
+        modifiers: Modifiers,
+    ) -> Result<InputResult, UiError> {
+        if position.iter().chain(delta.iter()).any(|v| !v.is_finite()) {
+            return Err(UiError::InvalidGeometry);
+        }
+        runtime.is_dirty(&self.owner)?;
+        let mut result = InputResult::default();
+        if !self.geometry_ready {
+            return Ok(result);
+        }
+        let target =
+            self.painting_order().iter().rev().copied().find(|id| {
+                Self::node_contains(&self.nodes[id], position) && self.pointer_allowed(*id)
+            });
+        if let Some(target) = target {
+            let mut path = std::mem::take(&mut self.input.route);
+            self.input_path(target, &mut path);
+            let routed = (|| {
+                for &id in &path {
+                    if !self.input_available(id) {
+                        continue;
+                    }
+                    let Some(listener) = self.nodes[&id]
+                        .element
+                        .input
+                        .as_ref()
+                        .and_then(|p| p.wheel.clone())
+                    else {
+                        continue;
+                    };
+                    let event = WheelInput {
+                        target,
+                        current_target: id,
+                        phase: if id == target {
+                            EventPhase::Target
+                        } else {
+                            EventPhase::Bubble
+                        },
+                        position,
+                        delta,
+                        modifiers,
+                        requests: Cell::new(Requests::default()),
+                    };
+                    result.changed |=
+                        runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
+                    let requests = event.requests.get();
+                    result.default_prevented |= requests.prevent;
+                    if requests.stop {
+                        break;
+                    }
+                }
+                Ok::<_, UiError>(())
+            })();
+            self.input.route = path;
+            routed?;
+        }
+        if !result.default_prevented && self.scroll(position, delta)? {
+            result.changed = true;
+            if self.active {
+                let hit = self.pointer_target(position);
+                result.changed |= self.update_hover(runtime, hit)?;
+            }
+        }
+        Ok(result)
+    }
     pub(super) fn flush_input_cancellations(
         &mut self,
         runtime: &mut Runtime,
     ) -> Result<bool, UiError> {
-        let pending = std::mem::take(&mut self.input.pending);
         let mut changed = false;
+        for (listener, event) in std::mem::take(&mut self.input.pending_hover) {
+            changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
+        }
+        let pending = std::mem::take(&mut self.input.pending);
         let mut prevented = false;
         for (listener, event) in pending {
             changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
@@ -389,10 +532,16 @@ impl<T: View> Ui<T> {
         &mut self,
         runtime: &mut Runtime,
         event: PointerEvent,
+        click_count: u8,
     ) -> Result<bool, UiError> {
         runtime.is_dirty(&self.owner)?;
         self.input.prevented = false;
         let (kind, position, button, modifiers) = event.parts();
+        self.input.click_count = if kind == 0 && button == Some(PointerButton::Primary) {
+            click_count.max(1)
+        } else {
+            1
+        };
         if position.is_some_and(|p| p.iter().any(|v| !v.is_finite())) {
             return Err(UiError::InvalidGeometry);
         }
@@ -408,7 +557,8 @@ impl<T: View> Ui<T> {
             self.input.buttons = PointerButtons::default();
             self.hovered = None;
             self.pressed = None;
-            let changed = self.flush_input_cancellations(runtime)?;
+            let changed =
+                self.update_hover(runtime, None)? | self.flush_input_cancellations(runtime)?;
             return Ok(changed || before.0.is_some() || before.1.is_some() || before.3.is_some());
         }
         if !self.geometry_ready || !self.active {
@@ -420,7 +570,8 @@ impl<T: View> Ui<T> {
                 drag.preview.take().is_some()
             });
             self.hovered = None;
-            return Ok(cleared || before.0.is_some());
+            let left = self.update_hover(runtime, None)?;
+            return Ok(cleared || left || before.0.is_some());
         }
         self.input.position = position.unwrap();
         self.input.modifiers = modifiers;
@@ -429,6 +580,7 @@ impl<T: View> Ui<T> {
         }
         let hit = self.pointer_target(self.input.position);
         self.hovered = hit.filter(|id| self.input_available(*id));
+        let hover_changed = self.update_hover(runtime, hit)?;
         let target = self
             .captured_pointer()
             .or({
@@ -444,6 +596,7 @@ impl<T: View> Ui<T> {
         } else {
             InputResult::default()
         };
+        result.changed |= hover_changed;
         self.input.prevented = result.default_prevented;
         let overlay = self.overlay_pointer(runtime, kind, result.default_prevented)?;
         result.changed |= overlay.changed;

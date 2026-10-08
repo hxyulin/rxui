@@ -71,9 +71,33 @@ route so surviving owner/ancestor listeners can still clean up before the next
 prepared tree is exposed. A removed component's expired listener remains inert.
 `cancel_reason` distinguishes Escape, Host and TargetUnavailable.
 
+`click_count` reports consecutive primary presses at one spot (2 for the press
+of a double-click, 3 for a triple-click) on the down event, and 1 on every other
+event. The native host counts clicks within 500 ms and 4 logical units on the same
+target; custom hosts pass their count to `Ui::pointer_with_text_clicks`, while
+`Ui::pointer` always reports 1.
+
+`on_hover` delivers a `HoverEvent` with `hovered: true` when the pointer's hit
+target moves into the element's subtree and `hovered: false` when it moves out.
+Leaves run innermost first, enters outermost first, so a card and its button
+both see the pointer arrive. Leaving the window, native deactivation, removal,
+hiding and disabling deliver leaves too. Like pointer listeners, a hover listener
+makes the element a pointer target. For paint-only feedback on controls,
+`hover_style` needs no listener.
+
+`on_wheel` receives `WheelInput` for wheel and trackpad scrolling, from the element
+under the pointer up to the root (target and bubble phases, no capture phase), with
+logical content motion and modifiers. Default container scrolling follows unless a
+listener calls `prevent_default()`, for example to zoom a canvas on Ctrl+wheel.
+Custom hosts call `Ui::wheel`; `Ui::scroll` remains the default scrolling alone.
+
 Capture is per UI and covers one mouse gesture with primary, secondary or middle
 buttons. It routes events delivered by the host; it is not an OS-wide drag session,
-touch/pen API, drag-and-drop data transfer, or cross-window capture service.
+touch/pen API, drag-and-drop data transfer, or cross-window capture service. Dragging
+within a window is the capture pattern above: capture on press, follow
+`drag_delta()` on motion, and finish on release or cancellation. Native file drops
+arrive through `Application::file_drop`; dragging data between elements or out of
+the window is not provided.
 
 ## Scroll references and visible controls
 

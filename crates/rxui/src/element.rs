@@ -329,6 +329,20 @@ impl Element {
         self.input.get_or_insert_with(Default::default).pointer[7] = Some(listener);
         self
     }
+    /// Registers an enter/leave listener. It runs when the pointer's hit target moves
+    /// into or out of this element's subtree, and with a leave when the pointer leaves
+    /// the window or the element stops taking input. The listener also makes this
+    /// element a pointer target, like the pointer listeners.
+    pub fn on_hover(mut self, listener: Listener<crate::HoverEvent>) -> Self {
+        self.input.get_or_insert_with(Default::default).hover = Some(listener);
+        self
+    }
+    /// Registers a wheel listener in the target/bubble route. It runs before default
+    /// container scrolling, which `WheelInput::prevent_default` suppresses.
+    pub fn on_wheel(mut self, listener: Listener<crate::WheelInput>) -> Self {
+        self.input.get_or_insert_with(Default::default).wheel = Some(listener);
+        self
+    }
     /// Registers a key down listener in the target/bubble route.
     pub fn on_key_down(mut self, listener: Listener<crate::KeyInput>) -> Self {
         self.input.get_or_insert_with(Default::default).key[0] = Some(listener);

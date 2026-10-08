@@ -412,7 +412,13 @@ trait HostedUi {
     fn active(&mut self, active: bool) -> bool;
     fn caret_visible(&mut self, visible: bool);
 
-    fn scroll(&mut self, point: [f32; 2], delta: [f32; 2]) -> Result<bool, UiError>;
+    fn wheel(
+        &mut self,
+        runtime: &mut Runtime,
+        point: [f32; 2],
+        delta: [f32; 2],
+        modifiers: crate::Modifiers,
+    ) -> Result<bool, UiError>;
     fn focus_next(&mut self, reverse: bool) -> bool;
     fn activate(&mut self, runtime: &mut Runtime) -> Result<bool, UiError>;
     fn invalidate_geometry(&mut self);
@@ -555,8 +561,14 @@ impl<T: View> HostedUi for Ui<T> {
         self.set_caret_visible(visible);
     }
 
-    fn scroll(&mut self, point: [f32; 2], delta: [f32; 2]) -> Result<bool, UiError> {
-        self.scroll(point, delta)
+    fn wheel(
+        &mut self,
+        runtime: &mut Runtime,
+        point: [f32; 2],
+        delta: [f32; 2],
+        modifiers: crate::Modifiers,
+    ) -> Result<bool, UiError> {
+        Ok(self.wheel(runtime, point, delta, modifiers)?.changed)
     }
     fn focus_next(&mut self, reverse: bool) -> bool {
         self.focus_next(reverse)
@@ -2075,12 +2087,14 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                         [-(p.x / scale) as f32, -(p.y / scale) as f32]
                     }
                 };
-                changed = ui.scroll(
+                changed = ui.wheel(
+                    &mut self.runtime,
                     [
                         (window.cursor[0] / scale) as f32,
                         (window.cursor[1] / scale) as f32,
                     ],
                     motion,
+                    input_modifiers(window.modifiers),
                 )?;
             }
             WindowEvent::Focused(active) => {

@@ -208,8 +208,8 @@ pub use id::{EntityId, MountId};
 pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
 #[cfg(feature = "layout")]
 pub use input::{
-    Cursor, EventPhase, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers, PointerButton,
-    PointerButtons, PointerCancelReason, PointerInput,
+    Cursor, EventPhase, HoverEvent, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers,
+    PointerButton, PointerButtons, PointerCancelReason, PointerInput, WheelInput,
 };
 pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
@@ -290,11 +290,11 @@ pub mod prelude {
     };
     pub use crate::{
         BoxShadow, ButtonVariant, ClickEvent, Context, Cursor, Entity, FontFamily, FontStyle,
-        FontWeight, Image, ImageAlpha, ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent,
-        KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle, PointerButton, PointerButtons,
-        PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign,
-        TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, button, column,
-        image, label, rgb8, rgba8, row, stack, text_input,
+        FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter, ImageFit, InputResult, IntoElement,
+        KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle, PointerButton,
+        PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole,
+        TextAlign, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext,
+        WheelInput, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };
     #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
     pub use crate::{DesktopError, DesktopResult};

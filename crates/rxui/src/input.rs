@@ -115,6 +115,10 @@ pub struct PointerInput {
     pub press_parent_bounds: Option<Bounds>,
     /// Present for a cancelled gesture.
     pub cancel_reason: Option<PointerCancelReason>,
+    /// Consecutive primary presses at one spot, as counted by the host: 2 for a
+    /// double-click press, 3 for a triple-click. 1 for every other event, and for
+    /// hosts that route through `Ui::pointer` without click tracking.
+    pub click_count: u8,
     pub(crate) requests: Cell<Requests>,
 }
 impl PointerInput {
@@ -158,6 +162,48 @@ impl PointerInput {
     pub fn drag_delta(&self) -> Option<[f32; 2]> {
         self.press_position
             .map(|p| [self.position[0] - p[0], self.position[1] - p[1]])
+    }
+}
+/// Hover listener payload. Enter and leave are delivered to each element with a
+/// hover listener when the pointer's hit target moves into or out of its subtree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HoverEvent {
+    /// Element whose hover listener runs.
+    pub target: ElementId,
+    /// True when the pointer entered the subtree, false when it left.
+    pub hovered: bool,
+}
+/// Mouse wheel or trackpad scroll payload, routed from the element under the pointer
+/// to the root before default container scrolling.
+pub struct WheelInput {
+    /// Topmost element under the pointer.
+    pub target: ElementId,
+    /// Element whose listener is executing.
+    pub current_target: ElementId,
+    /// Target or bubble stage; wheel input has no capture stage.
+    pub phase: EventPhase,
+    /// Window-local logical position.
+    pub position: [f32; 2],
+    /// Logical content motion; positive values move toward later content.
+    pub delta: [f32; 2],
+    /// Source-window modifier state.
+    pub modifiers: Modifiers,
+    pub(crate) requests: Cell<Requests>,
+}
+impl WheelInput {
+    /// Ends the remaining route without suppressing default scrolling.
+    pub fn stop_propagation(&self) {
+        self.requests.update(|mut r| {
+            r.stop = true;
+            r
+        });
+    }
+    /// Suppresses default container scrolling for this event.
+    pub fn prevent_default(&self) {
+        self.requests.update(|mut r| {
+            r.prevent = true;
+            r
+        });
     }
 }
 /// Logical keyboard identity. Characters preserve the native logical key spelling.
@@ -279,12 +325,15 @@ pub(crate) struct InputProperties {
     pub tabs: Option<Box<crate::tabs::Properties>>,
     pub pointer: [Option<Listener<PointerInput>>; 8],
     pub key: [Option<Listener<KeyInput>>; 4],
+    pub hover: Option<Listener<HoverEvent>>,
+    pub wheel: Option<Listener<WheelInput>>,
     pub focusable: Option<bool>,
     pub cursor: Option<Cursor>,
 }
 impl InputProperties {
     pub fn pointer_target(&self) -> bool {
         self.pointer.iter().any(Option::is_some)
+            || self.hover.is_some()
             || self.cursor.is_some()
             || self.focusable == Some(true)
     }

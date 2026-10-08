@@ -385,3 +385,178 @@ fn capture_requested_during_secondary_motion_releases_on_secondary_up() {
     .unwrap();
     assert_eq!(ui.captured_pointer(), None);
 }
+#[derive(Default)]
+struct Hovering {
+    log: Vec<(&'static str, bool)>,
+    wheel: Vec<(&'static str, [f32; 2])>,
+    clicks: Vec<u8>,
+    prevent_wheel: bool,
+    show_inner: bool,
+}
+impl View for Hovering {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        let mut outer = column()
+            .key("outer")
+            .size(100., 100.)
+            .scroll_y()
+            .on_hover(cx.listener(|s, e: &HoverEvent, _| s.log.push(("outer", e.hovered))))
+            .on_wheel(cx.listener(|s, e: &WheelInput, _| {
+                s.wheel.push(("outer", e.delta));
+            }))
+            .on_pointer_down(cx.listener(|s, e: &PointerInput, _| s.clicks.push(e.click_count)))
+            .child(column().height(300.));
+        if self.show_inner {
+            outer = outer.child(
+                column()
+                    .key("inner")
+                    .absolute()
+                    .size(40., 40.)
+                    .on_hover(cx.listener(|s, e: &HoverEvent, _| s.log.push(("inner", e.hovered))))
+                    .on_wheel(cx.listener(|s, e: &WheelInput, _| {
+                        s.wheel.push(("inner", e.delta));
+                        if s.prevent_wheel {
+                            e.prevent_default();
+                            e.stop_propagation();
+                        }
+                    })),
+            );
+        }
+        row().size(200., 200.).child(outer)
+    }
+}
+#[test]
+fn hover_enter_and_leave_follow_the_hit_subtree_and_removal() {
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Hovering {
+            show_inner: true,
+            ..Default::default()
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    let take = |runtime: &mut Runtime| {
+        runtime.update(|cx| root.update(cx, |s, _| std::mem::take(&mut s.log)))
+    };
+    ui.pointer(&mut runtime, PointerEvent::Moved([10., 10.]))
+        .unwrap();
+    assert_eq!(take(&mut runtime), [("outer", true), ("inner", true)]);
+    ui.pointer(&mut runtime, PointerEvent::Moved([12., 12.]))
+        .unwrap();
+    assert_eq!(take(&mut runtime), []);
+    ui.pointer(&mut runtime, PointerEvent::Moved([60., 60.]))
+        .unwrap();
+    assert_eq!(take(&mut runtime), [("inner", false)]);
+    ui.pointer(&mut runtime, PointerEvent::Moved([150., 150.]))
+        .unwrap();
+    assert_eq!(take(&mut runtime), [("outer", false)]);
+    ui.pointer(&mut runtime, PointerEvent::Moved([10., 10.]))
+        .unwrap();
+    ui.pointer(&mut runtime, PointerEvent::Left).unwrap();
+    assert_eq!(
+        take(&mut runtime),
+        [
+            ("outer", true),
+            ("inner", true),
+            ("inner", false),
+            ("outer", false)
+        ]
+    );
+    // Removing a hovered element delivers its leave during preparation.
+    ui.pointer(&mut runtime, PointerEvent::Moved([10., 10.]))
+        .unwrap();
+    take(&mut runtime);
+    runtime.update(|cx| root.update(cx, |s, _| s.show_inner = false));
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    assert_eq!(take(&mut runtime), [("inner", false)]);
+    // Losing native activation leaves everything.
+    ui.set_active(false);
+    assert!(ui.needs_prepare(&runtime).unwrap());
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    assert_eq!(take(&mut runtime), [("outer", false)]);
+}
+#[test]
+fn wheel_listeners_bubble_and_can_prevent_default_scrolling() {
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Hovering {
+            show_inner: true,
+            ..Default::default()
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    let offset = |ui: &Ui<Hovering>| {
+        ui.elements()
+            .find(|e| e.key == Some(&"outer".into()))
+            .unwrap()
+            .scroll_offset[1]
+    };
+    let result = ui
+        .wheel(&mut runtime, [10., 10.], [0., 30.], Modifiers::default())
+        .unwrap();
+    assert!(result.changed && !result.default_prevented);
+    assert_eq!(offset(&ui), 30.);
+    assert_eq!(
+        runtime.update(|cx| root.read(cx).wheel.clone()),
+        [("inner", [0., 30.]), ("outer", [0., 30.])]
+    );
+    runtime.update(|cx| {
+        root.update(cx, |s, _| {
+            s.prevent_wheel = true;
+            s.wheel.clear();
+        })
+    });
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    // The inner box scrolled up by 30 along with the content.
+    let result = ui
+        .wheel(&mut runtime, [10., 5.], [0., 30.], Modifiers::default())
+        .unwrap();
+    assert!(result.default_prevented);
+    assert_eq!(offset(&ui), 30.);
+    assert_eq!(
+        runtime.update(|cx| root.read(cx).wheel.clone()),
+        [("inner", [0., 30.])]
+    );
+    assert!(matches!(
+        ui.wheel(&mut runtime, [f32::NAN, 0.], [0., 1.], Modifiers::default()),
+        Err(UiError::InvalidGeometry)
+    ));
+}
+#[test]
+fn pointer_payloads_carry_the_host_click_count_on_primary_presses() {
+    struct Measure2;
+    impl TextMeasure for Measure2 {
+        fn measure(&mut self, _: ElementId, _: TextRequest<'_>) -> Result<[f32; 2], UiError> {
+            Ok([0.; 2])
+        }
+    }
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| cx.new(|_| Hovering::default()));
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure2)
+        .unwrap();
+    for count in [1, 2, 3] {
+        ui.pointer_with_text_clicks(
+            &mut runtime,
+            PointerEvent::Pressed([60., 60.]),
+            &mut Measure2,
+            false,
+            count,
+        )
+        .unwrap();
+        ui.pointer(&mut runtime, PointerEvent::Released([60., 60.]))
+            .unwrap();
+    }
+    ui.pointer(&mut runtime, PointerEvent::Pressed([60., 60.]))
+        .unwrap();
+    assert_eq!(
+        runtime.update(|cx| root.read(cx).clicks.clone()),
+        [1, 2, 3, 1]
+    );
+}

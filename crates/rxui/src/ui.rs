@@ -1949,6 +1949,7 @@ impl<T: View> Ui<T> {
         if self.focused.is_some_and(|id| !self.enabled(id)) {
             self.change_focus(None);
         }
+        self.prune_hover(false);
     }
     /// Iterates visible retained elements in paint order after successful preparation.
     pub fn elements(&self) -> impl Iterator<Item = ElementInfo<'_>> {
@@ -2198,7 +2199,7 @@ impl<T: View> Ui<T> {
     /// and release on the same surviving identity; explicit capture routes gestures
     /// independently of hit_target. Hosts prepare geometry before sending input.
     pub fn pointer(&mut self, runtime: &mut Runtime, event: PointerEvent) -> Result<bool, UiError> {
-        self.pointer_general(runtime, event)
+        self.pointer_general(runtime, event, 1)
     }
     /// Moves focus in tree order, wrapping at the end. Hidden/disabled controls are skipped.
     pub fn focus_next(&mut self, reverse: bool) -> bool {
@@ -2349,6 +2350,7 @@ impl<T: View> Ui<T> {
             self.cancel_capture(crate::PointerCancelReason::Host);
             self.input.buttons = crate::PointerButtons::default();
             self.hovered = None;
+            self.prune_hover(true);
             self.pressed = None;
             if let Some(id) = self.focused {
                 if let Some(editor) = self.nodes.get_mut(&id).and_then(|n| n.editor.as_mut()) {
@@ -2793,7 +2795,7 @@ impl<T: View> Ui<T> {
         click_count: u8,
     ) -> Result<bool, UiError> {
         let previous_pressed = self.pressed;
-        let mut changed = self.pointer(runtime, event)?;
+        let mut changed = self.pointer_general(runtime, event, click_count)?;
         let (kind, point, button, _) = event.parts();
         if (kind == 3 || (kind == 2 && button == Some(crate::PointerButton::Primary)))
             && let Some(editor) = previous_pressed
