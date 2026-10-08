@@ -42,11 +42,8 @@ struct TextResource {
     font_generation: u64,
 }
 impl TextResource {
-    fn layout(
-        &mut self,
-        fonts: &mut TextSystem,
-        request: TextRequest<'_>,
-    ) -> Result<Arc<TextLayout>, UiError> {
+    /// Applies text, style and wrapping; the configured width is left unchanged.
+    fn configure(&mut self, request: TextRequest<'_>) -> Result<(), UiError> {
         self.buffer.set_text(
             request.text,
             TextStyle::new()
@@ -58,12 +55,33 @@ impl TextResource {
         } else {
             TextWrap::Word
         });
-        self.buffer.set_width(match request.width {
-            TextWidth::MinContent => Some(0.),
-            TextWidth::MaxContent => None,
-            TextWidth::Available(width) => Some(width),
-        })?;
+        Ok(())
+    }
+    fn layout(
+        &mut self,
+        fonts: &mut TextSystem,
+        request: TextRequest<'_>,
+    ) -> Result<Arc<TextLayout>, UiError> {
+        self.configure(request)?;
+        self.buffer.set_width(text_width(request.width))?;
         Ok(self.buffer.layout(fonts)?)
+    }
+    /// Size at the requested width. Probe widths reuse the configured snapshot's
+    /// shaped runs without building glyph snapshots or changing its width.
+    fn measure(
+        &mut self,
+        fonts: &mut TextSystem,
+        request: TextRequest<'_>,
+    ) -> Result<[f32; 2], UiError> {
+        self.configure(request)?;
+        Ok(self.buffer.measure(fonts, text_width(request.width))?)
+    }
+}
+fn text_width(width: TextWidth) -> Option<f32> {
+    match width {
+        TextWidth::MinContent => Some(0.),
+        TextWidth::MaxContent => None,
+        TextWidth::Available(width) => Some(width),
     }
 }
 
@@ -979,12 +997,10 @@ impl TextMeasure for UiPainter {
             .map(ui_position))
     }
     fn measure(&mut self, id: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError> {
-        Ok(self
-            .texts
+        self.texts
             .entry(id)
             .or_default()
-            .layout(&mut self.fonts, request)?
-            .size())
+            .measure(&mut self.fonts, request)
     }
     fn generation(&self) -> u64 {
         self.generation
@@ -1163,6 +1179,61 @@ mod tests {
             painter.prepare(&ui, &target.render_format(), 1.).unwrap();
             assert!(ui.ime_cursor_area(&mut painter).unwrap().is_some());
             assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn intrinsic_probes_measure_without_replacing_the_prepared_layout() {
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let target = graphics
+                .create_framebuffer(FramebufferOptions::new(320, 120))
+                .unwrap();
+            let mut runtime = Runtime::new();
+            let entity = runtime.update(|cx| {
+                cx.new(|_| TextView {
+                    text: "Probe widths without reshaping".into(),
+                    color: [1.; 4],
+                })
+            });
+            let mut ui = Ui::new(&mut runtime, entity).unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .fonts_mut()
+                .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
+                .unwrap();
+            ui.prepare(&mut runtime, [320., 120.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+            let element = ui.elements().find(|e| e.text.is_some()).unwrap();
+            let id = element.id;
+            let layout = painter.texts[&id].prepared_layout.clone().unwrap();
+            let request = |width| TextRequest {
+                text: "Probe widths without reshaping",
+                font_size: element.font_size,
+                width,
+                single_line: false,
+                revision: element.text_revision,
+            };
+            let [min, height] = painter.measure(id, request(TextWidth::MinContent)).unwrap();
+            let [max, line] = painter.measure(id, request(TextWidth::MaxContent)).unwrap();
+            assert!(min < max && height > line);
+            assert_eq!(
+                painter
+                    .measure(id, request(TextWidth::Available(max)))
+                    .unwrap(),
+                [max, line]
+            );
+            let stats = painter.painter().text().stats();
+            painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+            assert!(Arc::ptr_eq(
+                &layout,
+                painter.texts[&id].prepared_layout.as_ref().unwrap()
+            ));
+            let after = painter.painter().text().stats();
+            assert_eq!(after.geometry_bytes, stats.geometry_bytes);
+            assert_eq!(after.uploaded_bytes, stats.uploaded_bytes);
+            assert_eq!(after.cache_misses, stats.cache_misses);
         });
     }
     #[test]
