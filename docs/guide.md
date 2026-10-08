@@ -147,6 +147,9 @@ line height and alignment inherit across component boundaries (`.font_family(...
 `.font_weight(FontWeight::BOLD)`, `.line_height(1.6)`, `.text_align(TextAlign::Center)`);
 backgrounds, borders and dimensions stay local.
 
+`Theme::define_color(name, color)` and `define_metric(name, value)` add application
+tokens, used as `ThemeColor::Custom(name)` or read with `cx.theme()`.
+
 Use `.theme(...)` for a subtree and `WindowOptions::theme(...)` for a window override.
 `cx.set_theme`, `cx.set_window_theme` and `cx.use_application_theme` update native
 placements live. `Ui::set_theme` supports custom hosts. Explicit element overrides

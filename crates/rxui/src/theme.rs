@@ -68,6 +68,9 @@ pub enum ThemeColor {
     Caret,
     /// IME composition underline.
     Preedit,
+    /// Application-defined color from [`Theme::define_color`]. A name the theme
+    /// does not define resolves to transparent.
+    Custom(&'static str),
 }
 /// A literal linear RGBA value or a retained semantic token. Tokens resolve again
 /// on a theme switch; literals remain unchanged.
@@ -264,6 +267,8 @@ impl Default for ThemeMetrics {
 struct Data {
     colors: ThemeColors,
     metrics: ThemeMetrics,
+    custom_colors: Vec<(&'static str, Color)>,
+    custom_metrics: Vec<(&'static str, f32)>,
 }
 /// Immutable, cheaply cloned theme shared by placements and subtree scopes.
 /// Customization creates a new value; existing clones are unaffected. Dark is the
@@ -407,7 +412,12 @@ impl Theme {
                 }
             }
         };
-        Self(Arc::new(Data { colors, metrics }))
+        Self(Arc::new(Data {
+            colors,
+            metrics,
+            custom_colors: Vec::new(),
+            custom_metrics: Vec::new(),
+        }))
     }
     /// Customizes a cloned palette; no placement or existing clone is mutated.
     pub fn colors(mut self, f: impl FnOnce(&mut ThemeColors)) -> Self {
@@ -418,6 +428,52 @@ impl Theme {
     pub fn metrics(mut self, f: impl FnOnce(&mut ThemeMetrics)) -> Self {
         f(&mut Arc::make_mut(&mut self.0).metrics);
         self
+    }
+    /// Defines or replaces an application color token, used through
+    /// `ThemeColor::Custom(name)` wherever a color is accepted. Define the same names
+    /// in every theme the application switches between.
+    ///
+    /// ```
+    /// use rxui::{Theme, ThemeColor, rgb8};
+    /// let theme = Theme::dark()
+    ///     .define_color("sidebar", rgb8(24, 26, 31))
+    ///     .define_metric("gutter", 12.);
+    /// assert_eq!(theme.color(ThemeColor::Custom("sidebar")), rgb8(24, 26, 31));
+    /// assert_eq!(theme.custom_metric("gutter"), Some(12.));
+    /// ```
+    pub fn define_color(mut self, name: &'static str, color: Color) -> Self {
+        let colors = &mut Arc::make_mut(&mut self.0).custom_colors;
+        match colors.iter_mut().find(|(n, _)| *n == name) {
+            Some(entry) => entry.1 = color,
+            None => colors.push((name, color)),
+        }
+        self
+    }
+    /// Defines or replaces an application metric, such as a spacing or size that
+    /// views read through `ViewContext::theme`.
+    pub fn define_metric(mut self, name: &'static str, value: f32) -> Self {
+        let metrics = &mut Arc::make_mut(&mut self.0).custom_metrics;
+        match metrics.iter_mut().find(|(n, _)| *n == name) {
+            Some(entry) => entry.1 = value,
+            None => metrics.push((name, value)),
+        }
+        self
+    }
+    /// An application color defined with [`Self::define_color`].
+    pub fn custom_color(&self, name: &str) -> Option<Color> {
+        self.0
+            .custom_colors
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, c)| *c)
+    }
+    /// An application metric defined with [`Self::define_metric`].
+    pub fn custom_metric(&self, name: &str) -> Option<f32> {
+        self.0
+            .custom_metrics
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| *v)
     }
     /// Current palette in linear RGBA.
     pub fn palette(&self) -> &ThemeColors {
@@ -455,6 +511,7 @@ impl Theme {
             ThemeColor::SelectionText => c.selection_text,
             ThemeColor::Caret => c.caret,
             ThemeColor::Preedit => c.preedit,
+            ThemeColor::Custom(name) => self.custom_color(name).unwrap_or([0.; 4]),
         }
     }
     /// Checks finite/ranged colors and nonnegative metrics. Installation is fallible
@@ -462,6 +519,8 @@ impl Theme {
     pub fn validate(&self) -> Result<(), UiError> {
         let m = self.sizes();
         if !self.palette().values().into_iter().all(valid_color)
+            || !self.0.custom_colors.iter().all(|(_, c)| valid_color(*c))
+            || self.0.custom_metrics.iter().any(|(_, v)| !v.is_finite())
             || !m.font_size.is_finite()
             || m.font_size <= 0.
             || !m.line_height.is_finite()

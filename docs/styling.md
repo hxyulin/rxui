@@ -36,6 +36,23 @@ retains its meaning and resolves again after a theme switch. `rgb8` and `rgba8`
 convert sRGB byte channels to linear RGBA; alpha remains linear. Dividing familiar
 hex RGB channels by 255 without conversion would produce the wrong renderer color.
 
+Applications extend a theme with their own tokens. `define_color(name, color)`
+adds a color used as `ThemeColor::Custom(name)` anywhere a color is accepted, and
+`define_metric(name, value)` adds a number that views read with
+`cx.theme().custom_metric(name)`:
+
+```rust
+let dark = Theme::dark().define_color("sidebar", rgb8(24, 26, 31)).define_metric("gutter", 12.);
+let light = Theme::light().define_color("sidebar", rgb8(236, 238, 241)).define_metric("gutter", 12.);
+
+column().background(ThemeColor::Custom("sidebar"))
+```
+
+Custom tokens resolve and switch like built-in ones. Define the same names in every
+theme an application switches between: an undefined color resolves to transparent,
+and `Theme::custom_color`/`custom_metric` return None for undefined names. Names
+are static strings so tokens stay cheap to copy and compare.
+
 `Element::theme(theme)` overrides the complete subtree, including stateful child
 components. Sharing an Entity<View> does not share its placements' theme, focus,
 selection or scroll offsets. The same component can appear inside dark and light

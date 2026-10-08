@@ -504,3 +504,45 @@ fn typography_inherits_and_relayouts_when_line_height_changes() {
         Err(UiError::InvalidStyle)
     ));
 }
+#[test]
+fn custom_theme_tokens_resolve_per_scope_and_validate() {
+    let dark = Theme::dark()
+        .define_color("sidebar", rgb8(20, 20, 20))
+        .define_metric("gutter", 12.);
+    let light = Theme::light()
+        .define_color("sidebar", rgb8(240, 240, 240))
+        .define_color("sidebar", rgb8(230, 230, 230));
+    let (mut runtime, _, mut ui) = mount(
+        column()
+            .child(
+                column()
+                    .key("dark")
+                    .background(ThemeColor::Custom("sidebar")),
+            )
+            .child(
+                column().theme(light.clone()).child(
+                    column()
+                        .key("light")
+                        .background(ThemeColor::Custom("sidebar"))
+                        .border(1., ThemeColor::Custom("missing")),
+                ),
+            ),
+    );
+    ui.set_theme(dark.clone()).unwrap();
+    ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+        .unwrap();
+    assert_eq!(keyed(&ui, "dark").background, Some(rgb8(20, 20, 20)));
+    let scoped = keyed(&ui, "light");
+    assert_eq!(scoped.background, Some(rgb8(230, 230, 230)));
+    assert_eq!(scoped.paint.border_color, Some([0.; 4]));
+    assert_eq!(dark.custom_metric("gutter"), Some(12.));
+    assert_eq!(light.custom_metric("gutter"), None);
+    assert_eq!(light.custom_color("missing"), None);
+    assert_ne!(dark, Theme::dark());
+    for theme in [
+        Theme::dark().define_color("bad", [2.; 4]),
+        Theme::dark().define_metric("bad", f32::NAN),
+    ] {
+        assert!(matches!(theme.validate(), Err(UiError::InvalidStyle)));
+    }
+}
