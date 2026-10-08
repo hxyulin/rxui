@@ -23,33 +23,33 @@ tasks = ["dep:async-executor", "dep:async-channel", "dep:futures-lite", "dep:fut
 
 [dependencies]
 profiling.workspace = true
-image_codec = { package = "image", version = "=0.25.10", default-features = false, features = ["png", "jpeg"], optional = true }
+image_codec = { package = "image", version = "0.25.10", default-features = false, features = ["png", "jpeg"], optional = true }
 astrelis = { workspace = true, optional = true }
 astrelis-winit = { workspace = true, optional = true }
-accesskit = { version = "=0.25.1", optional = true }
-accesskit_winit = { version = "=0.34.1", optional = true }
+accesskit = { version = "0.25.1", optional = true }
+accesskit_winit = { version = "0.34.1", optional = true }
 taffy = { workspace = true, optional = true }
-unicode-segmentation = { version = "=1.13.3", optional = true }
-async-executor = { version = "=1.14.0", optional = true }
-async-channel = { version = "=2.5.0", optional = true }
-futures-lite = { version = "=2.6.1", optional = true }
-futures-util = { version = "=0.3.34", default-features = false, features = ["std", "async-await"], optional = true }
-arboard = { version = "=3.6.1", default-features = false, optional = true }
+unicode-segmentation = { version = "1.13.3", optional = true }
+async-executor = { version = "1.14.0", optional = true }
+async-channel = { version = "2.5.0", optional = true }
+futures-lite = { version = "2.6.1", optional = true }
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "async-await"], optional = true }
+arboard = { version = "3.6.1", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-async-io = { version = "=2.6.0", optional = true }
-rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal", "wayland"], optional = true }
-opener = { version = "=0.8.5", features = ["reveal"], optional = true }
+async-io = { version = "2.6.0", optional = true }
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"], optional = true }
+opener = { version = "0.8.5", features = ["reveal"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-muda = { version = "=0.20.0", default-features = false, optional = true }
+muda = { version = "0.20.0", default-features = false, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_UI_WindowsAndMessaging"], optional = true }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"], optional = true }
 
 [dev-dependencies]
-pollster = "=0.4.0"
-accesskit_consumer = "=0.39.1"
+pollster = "0.4.0"
+accesskit_consumer = "0.39.1"
 
 # Muda's Win32 attachment/message APIs require three narrowly scoped unsafe
 # operations in native/menu_backend/windows.rs. All other RXUI code denies unsafe.
