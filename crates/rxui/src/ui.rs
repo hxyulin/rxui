@@ -1575,6 +1575,9 @@ impl<T: View> Ui<T> {
             capture = self.nodes.get(&current).and_then(|n| n.parent);
         }
         let node = self.nodes.remove(&id).unwrap();
+        if let Some(overlays) = &mut self.overlays {
+            overlays.forget(id);
+        }
         self.opacity_count -= usize::from(node.element.opacity < 1.);
         for child in node.children {
             self.remove(child)?;

@@ -13,6 +13,16 @@ struct Opened {
     previous: Option<ElementId>,
     had_focus: bool,
 }
+impl State {
+    /// Drops a removed node, so a preparation that fails before overlays are collected
+    /// again leaves no root pointing at a missing node.
+    pub(super) fn forget(&mut self, id: ElementId) {
+        if self.nodes.remove(&id) {
+            self.roots.retain(|root| *root != id);
+            self.unavailable.remove(&id);
+        }
+    }
+}
 impl<T: View> Ui<T> {
     pub(super) fn snapshot_overlay_focus(&mut self) {
         let Some(state) = &mut self.overlays else {
@@ -47,7 +57,7 @@ impl<T: View> Ui<T> {
     pub(super) fn overlay_pending(&self) -> bool {
         self.overlays.as_ref().is_some_and(|s| {
             s.roots.iter().any(|id| {
-                !self.nodes[id].visible
+                self.nodes.get(id).is_some_and(|n| !n.visible)
                     && !s.unavailable.contains(id)
                     && matches!(
                         self.overlay_properties(*id).and_then(|p| p.anchor.as_ref()),

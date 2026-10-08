@@ -930,3 +930,61 @@ fn native_commands_use_retained_focus_during_menu_tracking_without_reactivating_
             .enabled
     );
 }
+
+#[test]
+fn failed_prepare_after_removing_an_overlay_does_not_leave_stale_overlay_roots() {
+    struct Child {
+        duplicate: bool,
+    }
+    impl View for Child {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .child(label("A").key(if self.duplicate { 1 } else { 2 }))
+                .child(label("B").key(1))
+        }
+    }
+    struct Page {
+        open: bool,
+        child: Entity<Child>,
+    }
+    impl View for Page {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            // The popover subtree reconciles, and removes its nodes, before the child runs.
+            let mut first = column().key("first");
+            if self.open {
+                first = first.child(popover([10., 10.], button("Item").key("item")).key("popup"));
+            }
+            stack()
+                .size(400., 300.)
+                .child(first)
+                .child(self.child.clone())
+        }
+    }
+    let mut r = Runtime::new();
+    let child = r.update(|cx| cx.new(|_| Child { duplicate: false }));
+    let e = r.update(|cx| {
+        cx.new(|_| Page {
+            open: true,
+            child: child.clone(),
+        })
+    });
+    let mut ui = Ui::new(&mut r, e.clone()).unwrap();
+    prepare(&mut r, &mut ui);
+    assert!(ui.elements().any(|n| n.key == Some(&Key::from("popup"))));
+    // The root removes the overlay, then the child component's description fails.
+    r.update(|cx| {
+        e.update(cx, |s, _| s.open = false);
+        child.update(cx, |s, _| s.duplicate = true);
+    });
+    assert!(matches!(
+        ui.prepare(&mut r, [400., 300.], &mut Measure),
+        Err(UiError::DuplicateKey(_))
+    ));
+    assert!(ui.needs_prepare(&r).unwrap());
+    let point = [20., 20.];
+    ui.pointer(&mut r, PointerEvent::Moved(point)).unwrap();
+    ui.key(&mut r, key(KeyboardKey::Escape)).unwrap();
+    r.update(|cx| child.update(cx, |s, _| s.duplicate = false));
+    prepare(&mut r, &mut ui);
+    assert!(ui.elements().all(|n| n.key != Some(&Key::from("popup"))));
+}
