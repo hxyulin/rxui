@@ -389,6 +389,15 @@ impl UiPainter {
         {
             bounds = nonempty(e.bounds.intersection(e.clip_bounds));
         }
+        if let Some(shadow) = e.paint.shadow
+            && e.bounds.width > 0.
+            && e.bounds.height > 0.
+        {
+            bounds = union(
+                bounds,
+                nonempty(shadow.extent(e.bounds).intersection(e.clip_bounds)),
+            );
+        }
         if let Some(image) = &e.image
             && image.source.pixel_size().is_some()
         {

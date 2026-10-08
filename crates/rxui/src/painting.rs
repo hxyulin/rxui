@@ -386,6 +386,13 @@ impl UiPainter {
             clip[2] > 0 && clip[3] > 0
         };
         let b = element.bounds;
+        if let Some(shadow) = element.paint.shadow
+            && b.width > 0.
+            && b.height > 0.
+            && visible(shadow.extent(b))
+        {
+            return true;
+        }
         if (element.paint.background.is_some()
             || element.paint.border_color.is_some()
             || element.range.is_some()
@@ -508,6 +515,16 @@ impl UiPainter {
                 let appearance = element.paint;
                 let radii = corner_radii(appearance.radii);
                 if bounds.width > 0. && bounds.height > 0. {
+                    if let Some(shadow) = appearance.shadow {
+                        paint.draw_box_shadow(
+                            rect,
+                            radii,
+                            astrelis::BoxShadow::new(shadow.color)
+                                .offset(shadow.offset[0], shadow.offset[1])
+                                .blur(shadow.blur)
+                                .spread(shadow.spread),
+                        )?;
+                    }
                     if let Some(color) = appearance.background {
                         paint.draw_shape(ShapeDraw::rounded_rect_corners(rect, radii, color))?;
                     }

@@ -656,6 +656,11 @@ impl Element {
             .corner_radii(top_left, top_right, bottom_right, bottom_left);
         self
     }
+    /// Blurred box shadow behind the background, following the corner radii.
+    pub fn shadow(mut self, shadow: crate::BoxShadow) -> Self {
+        self.paint = self.paint.shadow(shadow);
+        self
+    }
     /// Paint-only hovered-control patch, applied after ordinary explicit overrides.
     pub fn hover_style(mut self, style: PaintStyle) -> Self {
         self.states

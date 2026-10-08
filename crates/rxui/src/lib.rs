@@ -236,8 +236,8 @@ pub use tasks::{
 pub use tasks::{ThreadPoolExecutor, sleep};
 #[cfg(feature = "layout")]
 pub use theme::{
-    PaintStyle, ResolvedPaint, StyleColor, Theme, ThemeColor, ThemeColors, ThemeMetrics, rgb8,
-    rgba8,
+    BoxShadow, PaintStyle, ResolvedPaint, ResolvedShadow, StyleColor, Theme, ThemeColor,
+    ThemeColors, ThemeMetrics, rgb8, rgba8,
 };
 #[cfg(feature = "layout")]
 pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
@@ -279,9 +279,9 @@ pub mod prelude {
         scrollbar, split_column, split_row, virtual_list,
     };
     pub use crate::{
-        ButtonVariant, ClickEvent, Context, Cursor, Entity, Image, ImageAlpha, ImageFilter,
-        ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers,
-        PaintStyle, PointerButton, PointerButtons, PointerCancelReason, PointerEvents,
+        BoxShadow, ButtonVariant, ClickEvent, Context, Cursor, Entity, Image, ImageAlpha,
+        ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
+        Modifiers, PaintStyle, PointerButton, PointerButtons, PointerCancelReason, PointerEvents,
         PointerInput, Runtime, SemanticRole, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor,
         Ui, View, ViewContext, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };

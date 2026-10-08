@@ -95,6 +95,13 @@ contour, so their inner contour stays square; uniform borders follow the radii o
 both contours. `corner_radii(top_left, top_right, bottom_right, bottom_left)` sets
 each corner; `radius` sets all four.
 
+`.shadow(BoxShadow::new(color).offset(x, y).blur(b).spread(s))` paints a blurred
+shadow of the element's rounded box behind its background. The color can be a
+theme token. Shadows are paint-only: they follow the ancestor clip, do not change
+layout or hit testing, and keep an element visible to culling while only its shadow
+is on screen. `PaintStyle::shadow` and `PaintStyle::no_shadow` change it per state,
+for example a stronger shadow on hover.
+
 ## Live switching and custom hosts
 
 For headless or custom hosting, call `ui.set_theme(theme)?` and prepare before

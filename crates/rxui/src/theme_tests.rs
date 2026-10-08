@@ -235,6 +235,38 @@ fn partial_paint_builders_merge_and_explicit_none_removes_default_control_fill()
     assert_eq!(button.background, None);
 }
 #[test]
+fn box_shadows_resolve_tokens_merge_state_patches_and_validate() {
+    let (mut runtime, _, mut ui) = mount(
+        button("Raised")
+            .key("button")
+            .shadow(BoxShadow::new(ThemeColor::Focus).offset(0., 2.).blur(6.))
+            .hover_style(PaintStyle::new().no_shadow()),
+    );
+    let button = keyed(&ui, "button");
+    let shadow = button.paint.shadow.unwrap();
+    assert_eq!(shadow.color, Theme::dark().palette().focus);
+    assert_eq!((shadow.offset, shadow.blur), ([0., 2.], 6.));
+    assert_eq!(
+        shadow.extent(button.bounds).y,
+        button.bounds.y + 2. - 9.,
+        "extent covers three blur deviations"
+    );
+    let point = [button.bounds.x + 5., button.bounds.y + 5.];
+    ui.pointer(&mut runtime, PointerEvent::Moved(point))
+        .unwrap();
+    assert_eq!(keyed(&ui, "button").paint.shadow, None);
+    for shadow in [
+        BoxShadow::new([0.; 4]).blur(-1.),
+        BoxShadow::new([0.; 4]).offset(f32::INFINITY, 0.),
+        BoxShadow::new([2.; 4]),
+    ] {
+        assert!(matches!(
+            column().shadow(shadow).validate(),
+            Err(UiError::InvalidStyle)
+        ));
+    }
+}
+#[test]
 fn corner_radii_and_single_side_borders_resolve_and_lay_out() {
     let (_, _, ui) = mount(
         column()

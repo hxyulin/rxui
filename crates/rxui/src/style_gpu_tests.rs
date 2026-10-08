@@ -82,3 +82,53 @@ fn per_corner_radii_and_single_side_borders_match_pixels() {
         assert!(errors.pop().await.is_none());
     });
 }
+
+struct Shadows;
+impl View for Shadows {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        stack()
+            .size(80., 80.)
+            .child(
+                column()
+                    .absolute()
+                    .left(10.)
+                    .top(10.)
+                    .size(20., 20.)
+                    .background([1., 0., 0., 1.])
+                    .shadow(BoxShadow::new([1.; 4]).offset(10., 10.)),
+            )
+            // Own box is outside the target; only its shadow is visible.
+            .child(
+                column()
+                    .absolute()
+                    .left(-40.)
+                    .top(50.)
+                    .size(20., 20.)
+                    .background([1., 0., 0., 1.])
+                    .shadow(BoxShadow::new([0., 1., 0., 1.]).offset(50., 0.).blur(4.)),
+            )
+    }
+}
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn box_shadows_paint_behind_backgrounds_and_survive_own_box_culling() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| cx.new(|_| Shadows));
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [80, 80]);
+        let at = |x, y| pixel(&pixels, 80, x, y);
+        assert_eq!(at(15, 15), [255, 0, 0, 255]); // Background over its shadow.
+        assert_eq!(at(35, 35), [255, 255, 255, 255]); // Offset shadow.
+        assert_eq!(at(5, 5), [0, 0, 0, 255]);
+        assert_eq!(at(20, 60), [0, 255, 0, 255]); // Shadow center of a culled box.
+        let edge = at(20, 50);
+        assert!(edge[1] > 0 && edge[1] < 255, "blurred edge {edge:?}");
+        assert!(errors.pop().await.is_none());
+    });
+}

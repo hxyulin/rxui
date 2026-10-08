@@ -495,6 +495,87 @@ pub struct PaintStyle {
     pub(crate) selection_text: Option<StyleColor>,
     pub(crate) caret: Option<StyleColor>,
     pub(crate) preedit: Option<StyleColor>,
+    pub(crate) shadow: Option<Option<BoxShadow>>,
+}
+/// Blurred shadow cast by an element's rounded box, painted behind its background.
+/// It follows the element's corner radii and is clipped like the element itself;
+/// it does not affect layout or hit testing.
+///
+/// ```
+/// use rxui::prelude::*;
+/// let card = column().padding(16.).radius(8.).background(ThemeColor::Raised)
+///     .shadow(BoxShadow::new(rgba8(0, 0, 0, 96)).offset(0., 4.).blur(12.));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxShadow {
+    /// Displacement from the element in logical units.
+    pub offset: [f32; 2],
+    /// Nonnegative blur radius in logical units; the Gaussian deviation is half of it.
+    pub blur: f32,
+    /// Outset of the shadow shape before blurring; negative values shrink it.
+    pub spread: f32,
+    /// Shadow color, literal or theme-bound.
+    pub color: StyleColor,
+}
+impl BoxShadow {
+    /// A sharp shadow directly beneath the element.
+    pub fn new(color: impl Into<StyleColor>) -> Self {
+        Self {
+            offset: [0.; 2],
+            blur: 0.,
+            spread: 0.,
+            color: color.into(),
+        }
+    }
+    /// Selects the displacement.
+    pub fn offset(mut self, x: f32, y: f32) -> Self {
+        self.offset = [x, y];
+        self
+    }
+    /// Selects the blur radius.
+    pub fn blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+    /// Selects the spread distance.
+    pub fn spread(mut self, spread: f32) -> Self {
+        self.spread = spread;
+        self
+    }
+    fn valid(&self) -> bool {
+        self.offset
+            .iter()
+            .chain([&self.spread])
+            .all(|v| v.is_finite())
+            && self.blur.is_finite()
+            && self.blur >= 0.
+            && self.color.valid()
+    }
+}
+/// A [`BoxShadow`] with its color resolved in the element's theme.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResolvedShadow {
+    /// Displacement from the element in logical units.
+    pub offset: [f32; 2],
+    /// Blur radius in logical units.
+    pub blur: f32,
+    /// Outset before blurring.
+    pub spread: f32,
+    /// Linear RGBA color.
+    pub color: Color,
+}
+impl ResolvedShadow {
+    /// Logical area the blurred shadow of `bounds` can cover, including its tail.
+    pub fn extent(&self, bounds: crate::Bounds) -> crate::Bounds {
+        // The renderer stops at three standard deviations (1.5 blur radii).
+        let grow = self.spread + 1.5 * self.blur;
+        crate::Bounds {
+            x: bounds.x + self.offset[0] - grow,
+            y: bounds.y + self.offset[1] - grow,
+            width: (bounds.width + 2. * grow).max(0.),
+            height: (bounds.height + 2. * grow).max(0.),
+        }
+    }
 }
 impl PaintStyle {
     /// Empty patch, inheriting every default.
@@ -572,6 +653,16 @@ impl PaintStyle {
         self.preedit = Some(color.into());
         self
     }
+    /// Box shadow behind the element's background.
+    pub fn shadow(mut self, shadow: BoxShadow) -> Self {
+        self.shadow = Some(Some(shadow));
+        self
+    }
+    /// Explicitly remove an earlier shadow, for example in a state patch.
+    pub fn no_shadow(mut self) -> Self {
+        self.shadow = Some(None);
+        self
+    }
     pub(crate) fn merge(&mut self, patch: Self) {
         macro_rules! merge { ($($field:ident),*) => { $(if patch.$field.is_some() { self.$field=patch.$field; })* }; }
         merge!(
@@ -584,7 +675,8 @@ impl PaintStyle {
             selection,
             selection_text,
             caret,
-            preedit
+            preedit,
+            shadow
         );
     }
     pub(crate) fn validate(&self) -> Result<(), UiError> {
@@ -601,6 +693,7 @@ impl PaintStyle {
         .into_iter()
         .flatten()
         .any(|c| !c.valid())
+            || self.shadow.flatten().is_some_and(|s| !s.valid())
             || self
                 .radii
                 .into_iter()
@@ -643,6 +736,14 @@ impl PaintStyle {
         if let Some(c) = self.preedit {
             paint.preedit_color = c.resolve(theme);
         }
+        if let Some(shadow) = self.shadow {
+            paint.shadow = shadow.map(|s| ResolvedShadow {
+                offset: s.offset,
+                blur: s.blur,
+                spread: s.spread,
+                color: s.color.resolve(theme),
+            });
+        }
     }
 }
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -675,6 +776,8 @@ pub struct ResolvedPaint {
     pub caret_color: Color,
     /// IME underline color.
     pub preedit_color: Color,
+    /// Optional box shadow behind the background.
+    pub shadow: Option<ResolvedShadow>,
 }
 impl ResolvedPaint {
     pub(crate) fn new(theme: &Theme, color: Color) -> Self {
@@ -690,6 +793,7 @@ impl ResolvedPaint {
             selection_text_color: c.selection_text,
             caret_color: c.caret,
             preedit_color: c.preedit,
+            shadow: None,
         }
     }
 }

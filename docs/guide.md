@@ -148,7 +148,8 @@ remain stable, while palette-only switches preserve text measurement/layout cach
 `PaintStyle` supplies local and hover/pressed/disabled patches, with focus painted
 independently. Borders can be uniform (`.border(width, color)`) or set per side
 (`.border_bottom(1.)` with `.border_color(...)`); `.radius(r)` and
-`.corner_radii(tl, tr, br, bl)` round the painted box.
+`.corner_radii(tl, tr, br, bl)` round the painted box. `.shadow(BoxShadow::new(...))` adds a
+blurred box shadow.
 
 The [styling contract](styling.md) explains inheritance, state precedence,
 selection colors, native updates and limitations. Try the standalone gallery:
