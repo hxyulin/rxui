@@ -1,4 +1,6 @@
-use crate::{Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View};
+use crate::{
+    Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View, ui::VisibleContent,
+};
 use astrelis::{
     CornerRadii, FontFamily, FontSlant, GraphicsContext, Painter, PreparedText, Rect, RenderFormat,
     RenderPass, ShapeDraw, Stroke, TextAlign, TextBuffer, TextDraw, TextLayout, TextRasterOptions,
@@ -216,33 +218,36 @@ impl UiPainter {
         self.texts
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
         self.painter.prepare(format)?;
-        self.prepare_images(ui, format)?;
-        for element in ui.elements() {
-            let Some(text) = element.text else {
-                self.texts.remove(&element.id);
-                continue;
+        // One pass over visible nodes, without building ElementInfo for each:
+        // images and custom elements are rare and prepared from their full info.
+        let mut images = Vec::new();
+        let mut customs = Vec::new();
+        for &id in ui.painting_ids() {
+            let request = match ui.visible_content(id) {
+                None => continue,
+                Some(VisibleContent::Text(request)) => request,
+                Some(content) => {
+                    match content {
+                        VisibleContent::Image => images.push(id),
+                        VisibleContent::Custom => customs.push(id),
+                        _ => {}
+                    }
+                    self.texts.remove(&id);
+                    continue;
+                }
             };
-            let resource = self.texts.entry(element.id).or_default();
+            let width = text_width(request.width).unwrap_or_default();
+            let resource = self.texts.entry(id).or_default();
             if resource.prepared.is_some()
-                && resource.prepared_revision == element.text_revision
-                && resource.prepared_width == element.content_bounds.width
+                && resource.prepared_revision == request.revision
+                && resource.prepared_width == width
                 && resource.font_generation == self.generation
                 && resource.raster_scale == raster_scale
             {
                 continue;
             }
-            let layout = resource.layout(
-                &mut self.fonts,
-                TextRequest {
-                    text,
-                    font_size: element.font_size,
-                    width: TextWidth::Available(element.content_bounds.width),
-                    single_line: element.editing.is_some(),
-                    style: element.text_style,
-                    revision: element.text_revision,
-                },
-            )?;
-            if element.editing.is_some() {
+            let layout = resource.layout(&mut self.fonts, request)?;
+            if request.single_line {
                 layout.prepare_interaction()?;
             }
             if resource
@@ -260,12 +265,13 @@ impl UiPainter {
                 resource.prepared = Some(prepared);
                 resource.prepared_layout = Some(layout);
                 resource.raster_scale = raster_scale;
-                resource.prepared_width = element.content_bounds.width;
+                resource.prepared_width = width;
             }
-            resource.prepared_revision = element.text_revision;
+            resource.prepared_revision = request.revision;
             resource.font_generation = self.generation;
         }
-        self.prepare_customs(ui, format, raster_scale)?;
+        self.prepare_images(ui, format, &images)?;
+        self.prepare_customs(ui, format, raster_scale, &customs)?;
         self.prepare_composition(ui, format, raster_scale)?;
         Ok(())
     }
@@ -274,10 +280,11 @@ impl UiPainter {
         ui: &Ui<T>,
         format: &RenderFormat,
         raster_scale: f32,
+        ids: &[ElementId],
     ) -> Result<(), UiError> {
         self.customs
             .retain(|id, _| !ui.owns_element(*id) || ui.custom_element(*id).is_some());
-        for element in ui.elements() {
+        for element in ids.iter().filter_map(|id| ui.element(*id)) {
             let Some(custom) = ui.custom_element(element.id) else {
                 continue;
             };
@@ -306,13 +313,13 @@ impl UiPainter {
         &mut self,
         ui: &Ui<T>,
         format: &RenderFormat,
+        ids: &[ElementId],
     ) -> Result<(), UiError> {
         self.image_placements
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
         let mut seen = HashSet::new();
-        for element in ui.elements() {
+        for element in ids.iter().filter_map(|id| ui.element(*id)) {
             let Some(image) = element.image else {
-                self.image_placements.remove(&element.id);
                 continue;
             };
             let key = image_key(&image);

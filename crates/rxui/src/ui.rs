@@ -521,6 +521,14 @@ fn compatible(old: &Element, new: &Element) -> bool {
         _ => kind(old) == kind(new),
     }
 }
+/// Painter-relevant content of one visible node; see [`Ui::visible_content`].
+#[cfg(feature = "rendering")]
+pub(crate) enum VisibleContent<'a> {
+    Text(TextRequest<'a>),
+    Image,
+    Custom,
+    Other,
+}
 pub(crate) struct Node {
     pub(crate) element: Element,
     layout: NodeId,
@@ -1901,6 +1909,18 @@ impl<T: View> Ui<T> {
             ElementKind::Custom(custom) => Some(custom.as_ref()),
             _ => None,
         }
+    }
+    /// What `UiPainter::prepare` needs from a visible node, without building its
+    /// `ElementInfo`. `None` for hidden or removed nodes.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn visible_content(&self, id: ElementId) -> Option<VisibleContent<'_>> {
+        let node = self.nodes.get(&id).filter(|n| n.visible)?;
+        Some(match &node.element.kind {
+            ElementKind::Image(_) => VisibleContent::Image,
+            ElementKind::Custom(_) => VisibleContent::Custom,
+            _ if node.displayed_text().is_some() => VisibleContent::Text(node.text_request()),
+            _ => VisibleContent::Other,
+        })
     }
     #[cfg(feature = "rendering")]
     pub(crate) fn painting_ids(&self) -> &[ElementId] {
