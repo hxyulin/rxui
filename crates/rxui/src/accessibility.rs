@@ -216,8 +216,33 @@ impl AccessKitTree {
             if let Some(description) = semantic.description {
                 node.set_description(description);
             }
-            if semantic.role == SemanticRole::Heading {
+            if let Some(level) = semantic.level {
+                node.set_level(level);
+            } else if semantic.role == SemanticRole::Heading {
                 node.set_level(1);
+            }
+            if let Some(checked) = semantic.checked {
+                node.set_toggled(match checked {
+                    crate::Checked::False => accesskit::Toggled::False,
+                    crate::Checked::True => accesskit::Toggled::True,
+                    crate::Checked::Mixed => accesskit::Toggled::Mixed,
+                });
+            }
+            if let Some(expanded) = semantic.expanded {
+                node.set_expanded(expanded);
+            }
+            if let Some(numeric) = semantic.numeric_value {
+                node.set_numeric_value(f64::from(numeric.value));
+                node.set_min_numeric_value(f64::from(numeric.min));
+                node.set_max_numeric_value(f64::from(numeric.max));
+                if let Some(step) = numeric.step {
+                    node.set_numeric_value_step(f64::from(step));
+                }
+                if semantic.adjustable {
+                    node.add_action(Action::SetValue);
+                    node.add_action(Action::Increment);
+                    node.add_action(Action::Decrement);
+                }
             }
             node.set_children(
                 semantic
@@ -556,5 +581,19 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::TextInput => Role::TextInput,
         SemanticRole::Scrollbar => Role::ScrollBar,
         SemanticRole::Splitter => Role::Splitter,
+        SemanticRole::CheckBox => Role::CheckBox,
+        SemanticRole::RadioButton => Role::RadioButton,
+        SemanticRole::Switch => Role::Switch,
+        SemanticRole::Slider => Role::Slider,
+        SemanticRole::ProgressIndicator => Role::ProgressIndicator,
+        SemanticRole::ComboBox => Role::ComboBox,
+        SemanticRole::ListBox => Role::ListBox,
+        SemanticRole::ListBoxOption => Role::ListBoxOption,
+        SemanticRole::Tree => Role::Tree,
+        SemanticRole::TreeItem => Role::TreeItem,
+        SemanticRole::Table => Role::Table,
+        SemanticRole::TableRow => Role::Row,
+        SemanticRole::TableCell => Role::Cell,
+        SemanticRole::ColumnHeader => Role::ColumnHeader,
     }
 }

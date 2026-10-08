@@ -2970,14 +2970,16 @@ impl<T: View> Ui<T> {
             } | ElementKind::TextInput { change: None, .. }
         );
         let focusable = self.enabled(id);
+        let action = properties.is_some_and(|p| p.action.is_some());
         let activatable = !disabled
-            && matches!(
-                node.element.kind,
-                ElementKind::Button {
-                    listener: Some(_),
-                    ..
-                }
-            );
+            && (action
+                || matches!(
+                    node.element.kind,
+                    ElementKind::Button {
+                        listener: Some(_),
+                        ..
+                    }
+                ));
         let editable = !disabled && !read_only && node.editor.is_some();
         let selection = node
             .editor
@@ -3005,7 +3007,7 @@ impl<T: View> Ui<T> {
             clips_children: node.element.clip,
             value: match node.element.kind {
                 ElementKind::Label(_) | ElementKind::TextInput { .. } => node.displayed_text(),
-                _ => None,
+                _ => properties.and_then(|p| p.value.as_deref()),
             },
             text_revision: node.text_revision,
             selection,
@@ -3018,6 +3020,11 @@ impl<T: View> Ui<T> {
             scroll_range: node.scroll_range,
             text_scroll_x: node.editor.as_ref().map_or(0., |e| e.scroll_x),
             selected: properties.and_then(|p| p.selected),
+            checked: properties.and_then(|p| p.checked),
+            expanded: properties.and_then(|p| p.expanded),
+            level: properties.and_then(|p| p.level),
+            numeric_value: properties.and_then(|p| p.numeric),
+            adjustable: action && !disabled && properties.is_some_and(|p| p.numeric.is_some()),
             labelled_by: self.tab_relations(id).0,
             controls: self.tab_relations(id).1,
             orientation: match self.tab_properties(id) {
@@ -3081,6 +3088,24 @@ impl<T: View> Ui<T> {
         let id = action.target();
         if !self.semantic_visible(id) {
             return Ok(false);
+        }
+        if let crate::SemanticAction::Activate(_) | crate::SemanticAction::SetNumericValue { .. } =
+            action
+            && let Some(listener) = self.nodes[&id]
+                .element
+                .semantics
+                .as_ref()
+                .and_then(|p| p.action.clone())
+        {
+            if !self.geometry_ready || !self.input_available(id) {
+                return Ok(false);
+            }
+            if let crate::SemanticAction::SetNumericValue { value, .. } = action
+                && !value.is_finite()
+            {
+                return Ok(false);
+            }
+            return Ok(runtime.update(|cx| listener.dispatch(&action, cx))? == Dispatch::Handled);
         }
         match action {
             crate::SemanticAction::Focus(_) => {

@@ -122,6 +122,10 @@ Buttons infer their accessible name from their caption. Name text inputs explici
 with `.accessibility_label("Name")`; `.accessibility_description(...)` supplies help,
 `.accessibility_role(SemanticRole::Form)` describes a container, and
 `.accessibility_hidden(true)` excludes decorative subtrees from assistive navigation.
+Custom widgets use roles such as CheckBox, Slider, ComboBox, TreeItem and TableCell
+with `.accessibility_checked(...)`, `.accessibility_numeric_value(...)`,
+`.accessibility_expanded(...)` and `.accessibility_level(...)`, and handle assistive
+clicks and value changes with `.on_semantic_action(...)`.
 These builders do not change layout or create control behavior.
 
 Application manages one AccessKit adapter per window by default and publishes only

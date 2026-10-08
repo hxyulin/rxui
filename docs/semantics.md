@@ -37,6 +37,33 @@ Containers can be marked Group, Form, List or ListItem. Heading is initially
 published at level one. A role override describes an element; it does not add
 button handlers, editing or focus behavior to an ordinary container.
 
+## Custom widget roles and state
+
+Widgets built from containers or [custom elements](custom-elements.md) describe
+themselves with roles and state builders:
+
+| Role | State builders |
+| --- | --- |
+| CheckBox, RadioButton, Switch | `accessibility_checked(bool or Checked::Mixed)` |
+| Slider, ProgressIndicator | `accessibility_numeric_value(NumericValue { value, min, max, step })` |
+| ComboBox | `accessibility_expanded(open)`, `accessibility_value(current choice)` |
+| ListBox, ListBoxOption | `accessibility_selected(selected)` on options |
+| Tree, TreeItem | `accessibility_level(depth)`, `accessibility_expanded(open)` on items |
+| Table, TableRow, TableCell, ColumnHeader | none |
+
+`accessibility_value(text)` sets the value text of any element other than labels
+and text inputs, which expose their own text. `accessibility_level` also overrides a
+heading's default level of one. Numeric values must be finite, with `min <= max` and
+a positive step; invalid ones fail preparation with `UiError::InvalidStyle`.
+
+These builders publish state only. `on_semantic_action(listener)` lets assistive
+technology operate the widget: it receives `SemanticAction::Activate` for a click
+and `SemanticAction::SetNumericValue` for a new value, including increments and
+decrements by the numeric step. With a listener, the node advertises the Click
+action and, when it has a numeric value, SetValue/Increment/Decrement. Pointer and
+keyboard input keep using the ordinary listeners, so a custom check box usually
+binds the same toggle to `on_pointer_up`, a key listener and `on_semantic_action`.
+
 `accessibility_hidden(true)` excludes the whole subtree from assistive navigation
 and assistive actions, without changing paint or ordinary pointer/keyboard input.
 Display:none also excludes a subtree. Children outside a scroll viewport remain
@@ -140,8 +167,8 @@ SetValue still work. The fallback is retained by revision and retried when text
 changes.
 
 Per-character bounds/advances, text-range geometry, rich text attributes, multiline
-navigation, live regions, label relationships and additional control roles are
-not implemented in this first slice. Shaped pointer/caret/selection geometry used
+navigation, live regions, label relationships, table row/column indices and expand
+or collapse actions are not implemented yet. Shaped pointer/caret/selection geometry used
 for rendering remains available through UiPainter, but it is not yet exported as
 AccessKit character geometry. Native value/selection support does not establish
 full screen-reader, magnifier or every text-range interaction behavior.

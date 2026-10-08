@@ -9,7 +9,7 @@ with the Astrelis painter. Implement `CustomElement` and wrap the value with
 `custom(...)`:
 
 ```rust
-use rxui::{CustomElement, CustomMeasure, ElementInfo, UiError, custom, prelude::*};
+use rxui::{CustomElement, CustomMeasure, ElementInfo, NumericValue, UiError, custom, prelude::*};
 use rxui::astrelis::{PaintSession, Rect};
 
 #[derive(PartialEq)]
@@ -30,8 +30,9 @@ impl CustomElement for Meter {
 custom(Meter { fraction: 0.4 })
     .key("progress")
     .fill_width()
-    .accessibility_role(SemanticRole::Image)
-    .accessibility_label("40% complete")
+    .accessibility_role(SemanticRole::ProgressIndicator)
+    .accessibility_label("Upload")
+    .accessibility_numeric_value(NumericValue { value: 0.4, min: 0., max: 1., step: None })
 ```
 
 ## Contract

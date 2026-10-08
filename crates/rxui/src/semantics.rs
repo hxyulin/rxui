@@ -41,14 +41,76 @@ pub enum SemanticRole {
     Scrollbar,
     /// Adjustable pane separator.
     Splitter,
+    /// Two- or three-state check box; pair with `accessibility_checked`.
+    CheckBox,
+    /// One choice in a group; pair with `accessibility_checked`.
+    RadioButton,
+    /// On/off toggle; pair with `accessibility_checked`.
+    Switch,
+    /// Adjustable numeric value; pair with `accessibility_numeric_value`.
+    Slider,
+    /// Read-only progress; pair with `accessibility_numeric_value`.
+    ProgressIndicator,
+    /// Collapsed choice with a popup list; pair with `accessibility_expanded` and
+    /// `accessibility_value` for the current choice.
+    ComboBox,
+    /// List of selectable options, such as a combo box popup.
+    ListBox,
+    /// One option in a list box; pair with `accessibility_selected`.
+    ListBoxOption,
+    /// Hierarchical list.
+    Tree,
+    /// One tree node; pair with `accessibility_level` and `accessibility_expanded`.
+    TreeItem,
+    /// Table of rows and cells.
+    Table,
+    /// One table row.
+    TableRow,
+    /// One table cell.
+    TableCell,
+    /// Header cell labelling a table column.
+    ColumnHeader,
+}
+/// Check state of a check box, radio button or switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Checked {
+    /// Not checked.
+    False,
+    /// Checked.
+    True,
+    /// Partially checked, such as a parent of mixed children.
+    Mixed,
+}
+impl From<bool> for Checked {
+    fn from(value: bool) -> Self {
+        if value { Self::True } else { Self::False }
+    }
+}
+/// Numeric value of a slider, progress indicator or other adjustable element.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NumericValue {
+    /// Current value.
+    pub value: f32,
+    /// Smallest value.
+    pub min: f32,
+    /// Largest value.
+    pub max: f32,
+    /// Increment and decrement step; assistive technology uses 1 when absent.
+    pub step: Option<f32>,
 }
 #[derive(Clone, Default)]
 pub(crate) struct Properties {
     pub label: Option<Arc<str>>,
     pub description: Option<Arc<str>>,
+    pub value: Option<Arc<str>>,
     pub role: Option<SemanticRole>,
     pub hidden: bool,
     pub selected: Option<bool>,
+    pub checked: Option<Checked>,
+    pub expanded: Option<bool>,
+    pub level: Option<usize>,
+    pub numeric: Option<NumericValue>,
+    pub action: Option<crate::Listener<SemanticAction>>,
     pub set_size: Option<usize>,
     pub position_in_set: Option<usize>,
 }
@@ -68,6 +130,16 @@ pub struct SemanticNode<'a> {
     pub modal: bool,
     /// Explicit semantic selection state, including tab headers.
     pub selected: Option<bool>,
+    /// Check state of a check box, radio button or switch.
+    pub checked: Option<Checked>,
+    /// Whether a combo box, tree item or other disclosure is expanded.
+    pub expanded: Option<bool>,
+    /// Hierarchy depth starting at 1, such as a tree item level or heading level.
+    pub level: Option<usize>,
+    /// Application-supplied numeric value, such as a slider's.
+    pub numeric_value: Option<NumericValue>,
+    /// Whether an `on_semantic_action` listener accepts numeric changes.
+    pub adjustable: bool,
     /// Live semantic label source, such as the active panel's tab header.
     pub labelled_by: Option<ElementId>,
     /// Live associated content, such as the selected tab's panel.
@@ -125,7 +197,8 @@ pub struct SemanticNode<'a> {
 pub enum SemanticAction {
     /// Focus a control and reveal it through scroll ancestors.
     Focus(ElementId),
-    /// Use the same button listener as pointer/keyboard activation.
+    /// Use the same button listener as pointer/keyboard activation, or the element's
+    /// `on_semantic_action` listener.
     Activate(ElementId),
     /// Propose a complete controlled input value through its on_change listener.
     SetValue {
@@ -152,7 +225,8 @@ pub enum SemanticAction {
     },
     /// Reveal a retained element without requiring it already be inside the viewport.
     ScrollIntoView(ElementId),
-    /// Propose a finite numeric value to a scrollbar/splitter.
+    /// Propose a finite numeric value to a scrollbar/splitter or an element with an
+    /// `on_semantic_action` listener.
     SetNumericValue {
         /// Control identity.
         target: ElementId,

@@ -920,6 +920,43 @@ impl Element {
         self.semantics.get_or_insert_with(Default::default).role = Some(role);
         self
     }
+    /// Accessible value text, such as a combo box's current choice or a slider's
+    /// formatted value. Labels and text inputs otherwise expose their text.
+    pub fn accessibility_value(mut self, value: impl Into<Arc<str>>) -> Self {
+        self.semantics.get_or_insert_with(Default::default).value = Some(value.into());
+        self
+    }
+    /// Check state for a check box, radio button or switch role.
+    pub fn accessibility_checked(mut self, checked: impl Into<crate::Checked>) -> Self {
+        self.semantics.get_or_insert_with(Default::default).checked = Some(checked.into());
+        self
+    }
+    /// Expanded state for a combo box, tree item or other disclosure.
+    pub fn accessibility_expanded(mut self, expanded: bool) -> Self {
+        self.semantics.get_or_insert_with(Default::default).expanded = Some(expanded);
+        self
+    }
+    /// Hierarchy level starting at 1, such as a tree item's depth or a heading level.
+    pub fn accessibility_level(mut self, level: usize) -> Self {
+        self.semantics.get_or_insert_with(Default::default).level = Some(level);
+        self
+    }
+    /// Numeric value and range for a slider, progress indicator or similar role.
+    /// Values must be finite with `min <= max` and a positive step.
+    pub fn accessibility_numeric_value(mut self, value: crate::NumericValue) -> Self {
+        self.semantics.get_or_insert_with(Default::default).numeric = Some(value);
+        self
+    }
+    /// Handles assistive activation and numeric changes for an element without
+    /// built-in behavior, such as a custom check box or slider. The listener receives
+    /// `SemanticAction::Activate` for an assistive click and
+    /// `SemanticAction::SetNumericValue` for a new value, including increments by the
+    /// numeric step. It replaces the built-in handling of those two actions here.
+    /// Pointer and keyboard input still use the ordinary listeners.
+    pub fn on_semantic_action(mut self, listener: Listener<crate::SemanticAction>) -> Self {
+        self.semantics.get_or_insert_with(Default::default).action = Some(listener);
+        self
+    }
     /// Excludes this complete subtree from semantics without changing its painting
     /// or ordinary input behavior. Assistive actions cannot target hidden descendants.
     pub fn accessibility_hidden(mut self, hidden: bool) -> Self {
@@ -980,6 +1017,13 @@ impl Element {
         }
         if !self.opacity.is_finite() || !(0. ..=1.).contains(&self.opacity) {
             return Err(UiError::InvalidOpacity);
+        }
+        if let Some(n) = self.semantics.as_ref().and_then(|p| p.numeric)
+            && (![n.value, n.min, n.max].iter().all(|v| v.is_finite())
+                || n.min > n.max
+                || n.step.is_some_and(|s| !s.is_finite() || s <= 0.))
+        {
+            return Err(UiError::InvalidStyle);
         }
         if self.font_size.is_some_and(|v| !v.is_finite() || v <= 0.)
             || self.text_style.as_ref().is_some_and(|t| !t.valid())

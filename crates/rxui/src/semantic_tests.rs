@@ -286,6 +286,174 @@ fn semantic_scroll_clamps_offsets_and_preserves_text_layout_counters() {
     );
 }
 
+/// A custom check box and slider built from plain containers.
+struct Widgets {
+    checked: Checked,
+    volume: f32,
+    expanded: bool,
+}
+impl View for Widgets {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column()
+            .width(300.)
+            .child(
+                row()
+                    .key("check")
+                    .size(20., 20.)
+                    .accessibility_role(SemanticRole::CheckBox)
+                    .accessibility_label("Notify")
+                    .accessibility_checked(self.checked)
+                    .on_semantic_action(cx.listener(|this, action: &SemanticAction, _| {
+                        if let SemanticAction::Activate(_) = action {
+                            this.checked = (this.checked != Checked::True).into();
+                        }
+                    })),
+            )
+            .child(
+                row()
+                    .key("volume")
+                    .size(100., 20.)
+                    .accessibility_role(SemanticRole::Slider)
+                    .accessibility_label("Volume")
+                    .accessibility_value(format!("{}%", self.volume))
+                    .accessibility_numeric_value(NumericValue {
+                        value: self.volume,
+                        min: 0.,
+                        max: 100.,
+                        step: Some(5.),
+                    })
+                    .on_semantic_action(cx.listener(|this, action: &SemanticAction, _| {
+                        if let SemanticAction::SetNumericValue { value, .. } = action {
+                            this.volume = value.clamp(0., 100.);
+                        }
+                    })),
+            )
+            .child(
+                column()
+                    .key("tree")
+                    .accessibility_role(SemanticRole::Tree)
+                    .child(
+                        label("Root")
+                            .key("item")
+                            .accessibility_role(SemanticRole::TreeItem)
+                            .accessibility_level(1)
+                            .accessibility_expanded(self.expanded),
+                    ),
+            )
+            .child(
+                column()
+                    .key("progress")
+                    .accessibility_role(SemanticRole::ProgressIndicator)
+                    .accessibility_numeric_value(NumericValue {
+                        value: 0.25,
+                        min: 0.,
+                        max: 1.,
+                        step: None,
+                    }),
+            )
+    }
+}
+fn widgets() -> (Runtime, Entity<Widgets>, Ui<Widgets>) {
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Widgets {
+            checked: Checked::Mixed,
+            volume: 40.,
+            expanded: true,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+        .unwrap();
+    (runtime, root, ui)
+}
+fn widget(ui: &Ui<Widgets>, key: &str) -> ElementId {
+    ui.elements()
+        .find(|e| e.key == Some(&Key::from(key)))
+        .unwrap()
+        .id
+}
+#[test]
+fn custom_widget_semantics_expose_state_and_route_assistive_actions() {
+    let (mut runtime, root, mut ui) = widgets();
+    let check = ui.semantic_node(widget(&ui, "check")).unwrap();
+    assert_eq!(check.role, SemanticRole::CheckBox);
+    assert_eq!(check.checked, Some(Checked::Mixed));
+    assert!(check.activatable && !check.adjustable);
+    let volume = ui.semantic_node(widget(&ui, "volume")).unwrap();
+    assert_eq!(volume.value, Some("40%"));
+    assert_eq!(volume.numeric_value.unwrap().step, Some(5.));
+    assert!(volume.adjustable);
+    let item = ui.semantic_node(widget(&ui, "item")).unwrap();
+    assert_eq!((item.level, item.expanded), (Some(1), Some(true)));
+    let progress = ui.semantic_node(widget(&ui, "progress")).unwrap();
+    assert!(!progress.adjustable && !progress.activatable);
+
+    let check = widget(&ui, "check");
+    assert!(
+        ui.semantic_action(&mut runtime, SemanticAction::Activate(check), &mut Measure)
+            .unwrap()
+    );
+    let volume = widget(&ui, "volume");
+    assert!(
+        ui.semantic_action(
+            &mut runtime,
+            SemanticAction::SetNumericValue {
+                target: volume,
+                value: 70.,
+            },
+            &mut Measure,
+        )
+        .unwrap()
+    );
+    assert!(
+        !ui.semantic_action(
+            &mut runtime,
+            SemanticAction::SetNumericValue {
+                target: volume,
+                value: f32::NAN,
+            },
+            &mut Measure,
+        )
+        .unwrap()
+    );
+    let state = runtime.update(|cx| {
+        let w = root.read(cx);
+        (w.checked, w.volume)
+    });
+    assert_eq!(state, (Checked::True, 70.));
+    ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+        .unwrap();
+    assert_eq!(
+        ui.semantic_node(check).unwrap().checked,
+        Some(Checked::True)
+    );
+    for value in [
+        NumericValue {
+            value: f32::NAN,
+            min: 0.,
+            max: 1.,
+            step: None,
+        },
+        NumericValue {
+            value: 0.,
+            min: 2.,
+            max: 1.,
+            step: None,
+        },
+        NumericValue {
+            value: 0.,
+            min: 0.,
+            max: 1.,
+            step: Some(0.),
+        },
+    ] {
+        assert!(matches!(
+            column().accessibility_numeric_value(value).validate(),
+            Err(UiError::InvalidStyle)
+        ));
+    }
+}
 #[cfg(feature = "accessibility")]
 mod accesskit_tests {
     use super::*;
@@ -645,6 +813,64 @@ mod accesskit_tests {
         let delta = cache.update(&ui, "Test", 1.).unwrap().unwrap();
         let node = &delta.nodes.iter().find(|(id, _)| *id == field).unwrap().1;
         assert!(node.supports_action(Action::SetTextSelection));
+    }
+    #[test]
+    fn custom_widget_roles_states_and_numeric_actions_reach_accesskit() {
+        let (mut runtime, root, mut ui) = widgets();
+        let mut cache = AccessKitTree::new();
+        let update = cache.update(&ui, "Widgets", 1.).unwrap().unwrap();
+        let node = |name: &str| {
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(name))
+                .unwrap()
+                .clone()
+        };
+        let (check, node_check) = node("Notify");
+        assert_eq!(node_check.role(), accesskit::Role::CheckBox);
+        assert_eq!(node_check.toggled(), Some(accesskit::Toggled::Mixed));
+        assert!(node_check.supports_action(Action::Click));
+        let (volume, node_volume) = node("Volume");
+        assert_eq!(node_volume.role(), accesskit::Role::Slider);
+        assert_eq!(node_volume.numeric_value(), Some(40.));
+        assert_eq!(node_volume.max_numeric_value(), Some(100.));
+        assert_eq!(node_volume.value(), Some("40%"));
+        assert!(node_volume.supports_action(Action::Increment));
+        let item = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::TreeItem)
+            .unwrap();
+        assert_eq!(
+            (item.1.level(), item.1.is_expanded()),
+            (Some(1), Some(true))
+        );
+        let progress = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::ProgressIndicator)
+            .unwrap();
+        assert!(!progress.1.supports_action(Action::SetValue));
+        let increment = cache
+            .action(request(volume, Action::Increment, None))
+            .unwrap();
+        assert!(matches!(
+            increment,
+            SemanticAction::SetNumericValue { value, .. } if value == 45.
+        ));
+        ui.semantic_action(&mut runtime, increment, &mut Measure)
+            .unwrap();
+        let click = cache.action(request(check, Action::Click, None)).unwrap();
+        ui.semantic_action(&mut runtime, click, &mut Measure)
+            .unwrap();
+        assert_eq!(
+            runtime.update(|cx| {
+                let w = root.read(cx);
+                (w.checked, w.volume)
+            }),
+            (Checked::True, 45.)
+        );
     }
     #[test]
     fn different_placements_require_separate_translation_caches() {

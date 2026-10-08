@@ -231,7 +231,7 @@ pub use runtime::{Mount, Runtime, Subscription};
 #[cfg(feature = "layout")]
 pub use scrolling::{ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
-pub use semantics::{SemanticAction, SemanticNode, SemanticRole};
+pub use semantics::{Checked, NumericValue, SemanticAction, SemanticNode, SemanticRole};
 #[cfg(feature = "layout")]
 pub use tabs::{
     Tab, TabActivation, TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
@@ -289,12 +289,12 @@ pub mod prelude {
         scrollbar, split_column, split_row, virtual_list,
     };
     pub use crate::{
-        BoxShadow, ButtonVariant, ClickEvent, Context, Cursor, Entity, FontFamily, FontStyle,
-        FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter, ImageFit, InputResult, IntoElement,
-        KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle, PointerButton,
-        PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole,
-        TextAlign, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext,
-        WheelInput, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+        BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor, Entity, FontFamily,
+        FontStyle, FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter, ImageFit, InputResult,
+        IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle,
+        PointerButton, PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime,
+        SemanticRole, TextAlign, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View,
+        ViewContext, WheelInput, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };
     #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
     pub use crate::{DesktopError, DesktopResult};
