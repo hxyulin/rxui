@@ -156,6 +156,17 @@ pub struct UiPainter {
     compositions: HashMap<u64, Arc<composition::CompositionPlan>>,
     layer_stats: LayerStats,
     customs: IdMap<ElementId, Box<dyn std::any::Any>>,
+    /// Last complete text pass per placement, by tree.
+    passes: HashMap<u64, TextPass>,
+}
+/// What a text pass over one placement saw. While the placement's composition key
+/// and the raster scale are unchanged, its visible text is unchanged too, and the
+/// pass is skipped; image and custom elements are still prepared every time.
+struct TextPass {
+    key: [u64; 5],
+    raster_scale: f32,
+    images: Vec<ElementId>,
+    customs: Vec<ElementId>,
 }
 impl UiPainter {
     /// Creates empty fonts and renderer caches for this graphics device.
@@ -174,6 +185,7 @@ impl UiPainter {
             compositions: HashMap::new(),
             layer_stats: LayerStats::default(),
             customs: IdMap::default(),
+            passes: HashMap::new(),
         }
     }
     /// Cumulative image upload/binding counters.
@@ -216,9 +228,29 @@ impl UiPainter {
         {
             return Err(UiError::InvalidGeometry);
         }
+        self.painter.prepare(format)?;
+        let key = ui.composition_key();
+        let pass = match self
+            .passes
+            .remove(&ui.tree_id())
+            .filter(|p| p.key == key && p.raster_scale == raster_scale)
+        {
+            Some(pass) => pass,
+            None => self.prepare_texts(ui, raster_scale)?,
+        };
+        self.prepare_images(ui, format, &pass.images)?;
+        self.prepare_customs(ui, format, raster_scale, &pass.customs)?;
+        self.prepare_composition(ui, format, raster_scale)?;
+        self.passes.insert(ui.tree_id(), pass);
+        Ok(())
+    }
+    fn prepare_texts<T: View>(
+        &mut self,
+        ui: &Ui<T>,
+        raster_scale: f32,
+    ) -> Result<TextPass, UiError> {
         self.texts
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
-        self.painter.prepare(format)?;
         // One pass over visible nodes, without building ElementInfo for each:
         // images and custom elements are rare and prepared from their full info.
         let mut images = Vec::new();
@@ -271,10 +303,12 @@ impl UiPainter {
             resource.prepared_revision = request.revision;
             resource.font_generation = self.generation;
         }
-        self.prepare_images(ui, format, &images)?;
-        self.prepare_customs(ui, format, raster_scale, &customs)?;
-        self.prepare_composition(ui, format, raster_scale)?;
-        Ok(())
+        Ok(TextPass {
+            key: ui.composition_key(),
+            raster_scale,
+            images,
+            customs,
+        })
     }
     fn prepare_customs<T: View>(
         &mut self,
@@ -1007,6 +1041,7 @@ impl UiPainter {
         self.layers.retain(|id, _| !ui.owns_element(*id));
         self.customs.retain(|id, _| !ui.owns_element(*id));
         self.compositions.remove(&ui.tree_id());
+        self.passes.remove(&ui.tree_id());
     }
 }
 fn ast_position(p: crate::TextPosition) -> astrelis::TextPosition {
@@ -1566,6 +1601,50 @@ mod tests {
                 buffer.unmap();
             }
             assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn unchanged_placement_skips_the_text_pass_until_its_key_changes() {
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let target = graphics
+                .create_framebuffer(FramebufferOptions::new(320, 120))
+                .unwrap();
+            let format = target.render_format();
+            let mut runtime = Runtime::new();
+            let entity = runtime.update(|cx| {
+                cx.new(|_| TextView {
+                    text: "Retained text".into(),
+                    color: [1.; 4],
+                })
+            });
+            let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .fonts_mut()
+                .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
+                .unwrap();
+            ui.prepare(&mut runtime, [320., 120.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &format, 1.).unwrap();
+            let id = ui.elements().find(|e| e.text.is_some()).unwrap().id;
+            // A dropped resource shows whether the next prepare walked the text.
+            painter.texts.remove(&id);
+            ui.prepare(&mut runtime, [320., 120.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &format, 1.).unwrap();
+            assert!(!painter.texts.contains_key(&id), "unchanged placement");
+            painter.prepare(&ui, &format, 2.).unwrap();
+            assert!(painter.texts.contains_key(&id), "raster scale change");
+            painter.texts.remove(&id);
+            runtime.update(|cx| entity.update(cx, |this, _| this.color = [0.5, 0.6, 0.7, 1.]));
+            ui.prepare(&mut runtime, [320., 120.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &format, 2.).unwrap();
+            assert!(painter.texts.contains_key(&id), "reevaluated view");
+            painter.forget(&ui);
+            assert!(painter.passes.is_empty());
         });
     }
     #[test]
