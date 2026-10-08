@@ -204,7 +204,9 @@ released when the placement is removed. Each call site is one slot;
 Placements of the same entity in two windows get separate local state. Read it with
 `state.read(cx)` and update it from listeners through a cloned handle. `cx.theme()`
 returns the placement's theme, including subtree overrides; a view that reads it is
-evaluated again when that theme changes.
+evaluated again when that theme changes. An animating view calls
+`cx.request_animation_frame()` and derives its values from `cx.frame_time()`; the
+host evaluates it again on the next frame and goes idle once it stops asking.
 
 Updates mutate synchronously and conservatively invalidate dependent mounts.
 Reads during `Runtime::evaluate` register dependencies; each normally returned

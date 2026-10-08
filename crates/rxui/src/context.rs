@@ -387,6 +387,41 @@ impl<'a, T> ViewContext<'a, T> {
         }
         entity
     }
+    /// Asks for this view to be evaluated again on the next animation frame. Call it on
+    /// every evaluation while animating, computing the animated values from
+    /// [`Self::frame_time`]; stop calling it when the animation ends and the host goes
+    /// idle. The native host schedules the redraw; custom hosts check
+    /// `Runtime::animation_frame_requested` after preparing and call
+    /// `Runtime::begin_frame` before the next one.
+    ///
+    /// ```
+    /// # #[cfg(feature = "layout")]
+    /// # {
+    /// use rxui::prelude::*;
+    /// use std::time::Duration;
+    /// struct Pulse { started: Option<Duration> }
+    /// impl View for Pulse {
+    ///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+    ///         let elapsed = self.started.map_or(1., |at| {
+    ///             (cx.frame_time().saturating_sub(at)).as_secs_f32() / 0.3
+    ///         });
+    ///         if elapsed < 1. {
+    ///             cx.request_animation_frame();
+    ///         }
+    ///         column().size(40., 40.).opacity(elapsed.clamp(0., 1.)).background(ThemeColor::Accent)
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub fn request_animation_frame(&self) {
+        self.runtime.frames.borrow_mut().0.insert(self.id);
+    }
+    /// Time of the current animation frame, as passed to `Runtime::begin_frame`. The
+    /// native host uses the time since the application started. Zero before the first
+    /// frame.
+    pub fn frame_time(&self) -> std::time::Duration {
+        self.runtime.frames.borrow().1
+    }
     /// Theme of this placement, including subtree overrides from `Element::theme`.
     /// A view that reads it is evaluated again when its theme changes. Outside a
     /// `Ui` (for example in `Runtime::evaluate`), this is the default theme.

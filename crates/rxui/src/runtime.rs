@@ -66,6 +66,8 @@ pub(crate) struct RuntimeInner {
     pub(crate) tasks: RefCell<Option<crate::tasks::Tasks>>,
     #[cfg(feature = "native")]
     pub(crate) native: RefCell<Option<std::rc::Rc<crate::native::Commands>>>,
+    /// Mounts that asked to be evaluated on the next frame, and the current frame time.
+    pub(crate) frames: RefCell<(HashSet<MountId>, std::time::Duration)>,
     /// Theme of the placement whose view is being evaluated, and whether it was read.
     #[cfg(feature = "layout")]
     pub(crate) view_theme: RefCell<Option<(crate::Theme, bool)>>,
@@ -107,6 +109,7 @@ impl Runtime {
                 tasks: RefCell::new(None),
                 #[cfg(feature = "native")]
                 native: RefCell::new(None),
+                frames: RefCell::new((HashSet::new(), std::time::Duration::ZERO)),
                 #[cfg(feature = "layout")]
                 view_theme: RefCell::new(None),
             }),
@@ -180,6 +183,34 @@ impl Runtime {
         drop(evaluation);
         self.inner.synchronize();
         Ok(result)
+    }
+    /// Starts an animation frame at `time`, a monotonic host clock such as the time
+    /// since startup. Mounts whose views called `ViewContext::request_animation_frame`
+    /// since the previous frame become dirty, so the next `Ui::prepare` evaluates them
+    /// with this frame time. Returns whether any live mount was invalidated.
+    pub fn begin_frame(&mut self, time: std::time::Duration) -> bool {
+        let requested = {
+            let mut frames = self.inner.frames.borrow_mut();
+            frames.1 = time;
+            std::mem::take(&mut frames.0)
+        };
+        let mut state = self.inner.state.borrow_mut();
+        let mut invalidated = false;
+        for id in requested {
+            if let Some(record) = state.mounts.get_mut(&id)
+                && record.life.strong_count() != 0
+            {
+                record.dirty = true;
+                invalidated = true;
+            }
+        }
+        invalidated
+    }
+    /// Whether a view asked for another frame since the last [`Self::begin_frame`].
+    /// Hosts schedule a redraw when this is true after preparation, and stay idle
+    /// otherwise.
+    pub fn animation_frame_requested(&self) -> bool {
+        !self.inner.frames.borrow().0.is_empty()
     }
     /// Checks a live mount's dirty flag in O(1), without allocating a collection.
     pub fn is_dirty<T>(&self, mount: &Mount<T>) -> Result<bool, AccessError> {
@@ -384,6 +415,10 @@ impl fmt::Debug for Subscription {
 }
 
 impl RuntimeInner {
+    #[cfg(feature = "native")]
+    pub(crate) fn frame_requested(&self, mount: MountId) -> bool {
+        self.frames.borrow().0.contains(&mount)
+    }
     pub(crate) fn validate(&self, id: EntityId) -> Result<(), AccessError> {
         if id.runtime != self.id {
             return Err(AccessError::WrongRuntime);

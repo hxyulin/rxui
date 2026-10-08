@@ -1197,6 +1197,7 @@ impl Application {
             menus,
             exiting: self.exiting,
             accessibility_enabled: self.accessibility,
+            started: Instant::now(),
         };
         runner
             .run(&mut host)
@@ -1293,6 +1294,8 @@ struct Host<F> {
     quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
     accessibility_enabled: bool,
+    /// Origin of animation frame times.
+    started: Instant,
 }
 impl<F> Drop for Host<F> {
     fn drop(&mut self) {
@@ -2357,6 +2360,9 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         cx: &mut NativeContext<'_, Wake>,
         id: NativeWindowId,
     ) -> Result<PrepareAction, Self::Error> {
+        // Views that requested an animation frame become dirty before this frame's
+        // preparation; progress then also redraws their other windows.
+        self.runtime.begin_frame(self.started.elapsed());
         self.progress(cx, Some(id))?;
         let Some(native) = cx.window(id) else {
             return Ok(PrepareAction::Skip);
@@ -2406,6 +2412,21 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         self.sync_mounts(id);
         self.sync_text_platform(cx, id)?;
         self.publish_accessibility(cx, id)?;
+        if self.runtime.animation_frame_requested() {
+            for (native, window) in &self.windows {
+                if !window.life.closing.get()
+                    && cx.window(*native).is_some()
+                    && window.ui.as_ref().is_some_and(|ui| {
+                        ui.mounts()
+                            .into_iter()
+                            .any(|mount| self.runtime.inner.frame_requested(mount))
+                    })
+                {
+                    cx.request_redraw(*native)
+                        .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                }
+            }
+        }
         Ok(PrepareAction::Render)
     }
     fn render(

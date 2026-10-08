@@ -86,6 +86,16 @@ proxy wakeups rather than periodic polling. The host drains task results and
 flushes deferred effects after update scopes end, then processes window commands.
 Dirty UI preparation happens before surface acquisition.
 
+Animations are frame-driven rather than timer-driven. A view that is animating
+calls `cx.request_animation_frame()` on each evaluation and computes its values from
+`cx.frame_time()`. Before preparing a window, the host calls `Runtime::begin_frame`
+with the time since the application started, which makes requesting views dirty.
+After preparation it requests one more redraw for every window showing a view that
+asked again. Redraws follow the surface's presentation pacing, and a window with no
+requesting views returns to on-demand rendering with no polling. Custom hosts do
+the same: call `runtime.begin_frame(elapsed)` before `Ui::prepare`, and request a
+redraw when `runtime.animation_frame_requested()` is true afterwards.
+
 Pointer input, wheel scrolling, Tab/Shift-Tab focus, button activation and controlled
 text editing are routed in logical coordinates. The host wires native keyboard text,
 clipboard, IME enable/reset/candidate geometry and on-demand caret blink deadlines.

@@ -1051,3 +1051,46 @@ fn views_reading_the_theme_reevaluate_when_their_placement_theme_changes() {
     assert_eq!(size(&ui), "20");
     assert_eq!(ignored.get(), 1);
 }
+#[test]
+fn animation_frames_reevaluate_requesting_views_until_they_stop() {
+    use std::time::Duration;
+    struct Fade {
+        evaluations: Rc<Cell<u32>>,
+    }
+    impl View for Fade {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            self.evaluations.set(self.evaluations.get() + 1);
+            let progress = (cx.frame_time().as_secs_f32() / 0.5).min(1.);
+            if progress < 1. {
+                cx.request_animation_frame();
+            }
+            column().opacity(progress).key("fade")
+        }
+    }
+    let evaluations = Rc::new(Cell::new(0));
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Fade {
+            evaluations: evaluations.clone(),
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut runtime, [100., 100.], &mut measure)
+        .unwrap();
+    let opacity = |ui: &Ui<Fade>| ui.elements().next().unwrap().opacity;
+    assert!(runtime.animation_frame_requested());
+    assert!(!ui.needs_prepare(&runtime).unwrap());
+    for (ms, expected) in [(250, 0.5), (500, 1.)] {
+        assert!(runtime.begin_frame(Duration::from_millis(ms)));
+        assert!(ui.needs_prepare(&runtime).unwrap());
+        ui.prepare(&mut runtime, [100., 100.], &mut measure)
+            .unwrap();
+        assert_eq!(opacity(&ui), expected);
+    }
+    // The finished animation stops requesting frames; later frames do no work.
+    assert!(!runtime.animation_frame_requested());
+    assert!(!runtime.begin_frame(Duration::from_millis(750)));
+    assert!(!ui.needs_prepare(&runtime).unwrap());
+    assert_eq!(evaluations.get(), 3);
+}
