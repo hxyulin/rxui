@@ -1,18 +1,17 @@
 //! Standalone desktop example: copy this file into a binary using rxui's native feature.
-//! Click controls, Tab/Shift-Tab changes focus, Enter/Space activates, Escape closes.
+//! Click controls, Tab/Shift-Tab changes focus, Enter/Space activates, Cmd/Ctrl+W closes.
 //! Background work uses a native completion message; there is no hidden executor.
 use rxui::astrelis_winit::{
     AppContext as NativeContext, Handler, PrepareAction, Runner, SurfaceSettings, WindowInfo,
     astrelis::{Frame, wgpu},
     winit::{
         dpi::LogicalSize,
-        event::{ElementState, MouseButton, WindowEvent},
+        event::WindowEvent,
         event_loop::EventLoopProxy,
-        keyboard::{Key, ModifiersState, NamedKey},
         window::{Window, WindowId},
     },
 };
-use rxui::{PointerEvent, UiPainter, prelude::*};
+use rxui::{CommandId, UiPainter, WindowInput, prelude::*, standard_commands};
 use std::{error::Error, thread, time::Duration};
 
 struct Completion {
@@ -145,8 +144,7 @@ struct App {
     ui: Option<Ui<Counter>>,
     painter: Option<UiPainter>,
     window: Option<WindowId>,
-    cursor: [f32; 2],
-    modifiers: ModifiersState,
+    input: WindowInput,
 }
 impl Default for App {
     fn default() -> Self {
@@ -155,8 +153,7 @@ impl Default for App {
             ui: None,
             painter: None,
             window: None,
-            cursor: [0.; 2],
-            modifiers: ModifiersState::default(),
+            input: WindowInput::new(),
         }
     }
 }
@@ -214,48 +211,19 @@ impl Handler for App {
         if self.window != Some(id) {
             return Ok(());
         }
+        let window = cx.window(id).unwrap();
         let ui = self.ui.as_mut().unwrap();
-        let mut changed = false;
-        match event {
-            WindowEvent::CursorMoved { position, .. } => {
-                let scale = cx.window(id).unwrap().metrics().scale_factor();
-                self.cursor = [(position.x / scale) as f32, (position.y / scale) as f32];
-                changed = ui.pointer(&mut self.runtime, PointerEvent::Moved(self.cursor))?;
-            }
-            WindowEvent::CursorLeft { .. } => {
-                changed = ui.pointer(&mut self.runtime, PointerEvent::Left)?
-            }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Left,
-                ..
-            } => {
-                let input = if state == ElementState::Pressed {
-                    PointerEvent::Pressed(self.cursor)
-                } else {
-                    PointerEvent::Released(self.cursor)
-                };
-                changed = ui.pointer(&mut self.runtime, input)?;
-            }
-            WindowEvent::Focused(false) => {
-                changed = ui.pointer(&mut self.runtime, PointerEvent::Cancelled)?
-            }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed && !event.repeat =>
-            {
-                match event.logical_key {
-                    Key::Named(NamedKey::Tab) => {
-                        changed = ui.focus_next(self.modifiers.shift_key())
-                    }
-                    Key::Named(NamedKey::Enter | NamedKey::Space) => {
-                        changed = ui.activate_focused(&mut self.runtime)?
-                    }
-                    Key::Named(NamedKey::Escape) => cx.close_window(id)?,
-                    _ => {}
-                }
-            }
-            _ => {}
+        let painter = self.painter.as_mut().unwrap();
+        // WindowInput is the translation Application uses: pointer, click counts,
+        // wheel, focus traversal, activation, text editing and IME.
+        let result = self
+            .input
+            .handle(&mut self.runtime, ui, painter, window.metrics(), &event)?;
+        self.input.sync_window(ui, painter, window.window())?;
+        let changed = result.changed;
+        // Standard shortcuts no command handler took, such as Cmd/Ctrl+W, are ours.
+        if result.command == Some(CommandId::of::<standard_commands::CloseWindow>()) {
+            cx.close_window(id)?;
         }
         self.runtime.flush()?;
         if changed {

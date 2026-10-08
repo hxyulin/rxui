@@ -108,7 +108,21 @@ The host opens its own clear-color UI pass. Applications requiring custom 2D/3D
 passes or complete input/platform control can use the explicit
 [custom host example](../crates/rxui/examples/counter_custom_host.rs): route events,
 call Ui::prepare, prepare UiPainter resources, then use UiPainter::compose to
-record any opacity layers and paint into a caller-owned pass. Native hosting does
+record any opacity layers and paint into a caller-owned pass.
+
+`WindowInput` is the event translation the native host uses, public for custom
+hosts. Keep one per window and pass each winit `WindowEvent` to
+`input.handle(&mut runtime, &mut ui, &mut painter, metrics, &event)`. It prepares
+stale geometry, converts physical cursor positions to logical ones, assigns click
+counts, tracks modifiers, sends keys to listeners, then standard shortcuts to
+command handlers, then Tab traversal, Enter/Space activation and text editing, and
+translates wheel, focus and IME events. `WindowInputResult::changed` asks for a
+redraw; `WindowInputResult::command` names a standard shortcut (copy, paste, undo,
+close, quit, ...) that no handler took, so the host can apply its platform default,
+such as reading the clipboard into `TextInputEvent::Paste`. After input and after
+each preparation, `input.sync_window(&mut ui, &mut painter, window)` applies the
+cursor icon and IME enablement and area. Clipboard, caret blink deadlines,
+accessibility and file drops stay with the host. Native hosting does
 this automatically after application graphics hooks. See [group opacity](compositing.md).
 UiPainter preserves the caller's scissor and supports multiple placements; call
 `forget(&ui)` when removing a placement from a shared painter.
@@ -145,3 +159,30 @@ output and its image placement can share one submission. The recording hook rece
 no mutable model context and leaves finish/presentation to the host. Custom hosts
 can continue to own the entire sequence. See [images and graphics output](images.md)
 and the standalone [framebuffer chart](../crates/rxui/examples/framebuffer_window.rs).
+
+## Headless testing
+
+`TestUi` (feature `rendering`) mounts one root view without a window, for tests and
+tools. It owns a `Runtime`, the `Ui` and a `UiPainter` on a caller-supplied
+`GraphicsContext`, such as `GraphicsContext::headless()`, and lays out at a fixed
+logical size with raster scale one.
+
+```rust
+let graphics = pollster::block_on(GraphicsContext::headless())?;
+let mut test = TestUi::new(&graphics, [200, 80], Counter(0))?;
+test.painter_mut().fonts_mut().load_font(FONT)?;
+test.click("increment")?;                     // Center of the element keyed "increment".
+assert_eq!(test.read(|c| c.0), 1);
+let bounds = test.element("increment")?.unwrap().bounds;
+let role = test.semantics("increment")?.unwrap().role;
+let pixels = test.render()?;                  // 200 x 80 RGBA8 over transparent black.
+```
+
+Input methods (`click`, `pointer`, `wheel`, `key`, `text_input`,
+`semantic_action`) prepare stale geometry first and route through the same `Ui`
+entry points as the native host, with the painter as text measurement. Lookups
+by key return the first visible match in paint order; keys are unique among
+siblings only. `parts()` lends the runtime, placement and painter together for
+anything else, such as `Ui::focus_next`. Effects keep their host boundary: call
+`test.runtime().flush()` where a test depends on them. `render` reads back through
+`Framebuffer::read_rgba8`, and a zero size fails with `UiError::InvalidGeometry`.

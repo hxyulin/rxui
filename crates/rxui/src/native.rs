@@ -1,7 +1,7 @@
 use crate::{
     AccessKitTree, AppContext, Bounds, Color, EffectCycle, ElementId, Entity, PointerEvent,
     ReadContext, Runtime, SemanticAction, SpawnError, TaskExecutor, TextInputEvent, TextMeasure,
-    TextMovement, Theme, ThreadPoolExecutor, Ui, UiError, UiPainter, View,
+    Theme, ThreadPoolExecutor, Ui, UiError, UiPainter, View,
 };
 #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
 mod dialogs;
@@ -23,8 +23,8 @@ use astrelis_winit::{
     AppContext as NativeContext, Handler, PrepareAction, Runner, RunnerOptions, SurfaceSettings,
     WindowInfo, WindowMetrics,
     winit::{
-        dpi::{LogicalPosition, LogicalSize, Size},
-        event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
+        dpi::{LogicalSize, Size},
+        event::{MouseButton, WindowEvent},
         keyboard::{Key, ModifiersState, NamedKey},
         window::{Window, WindowAttributes, WindowId as NativeWindowId},
     },
@@ -129,6 +129,8 @@ impl From<SpawnError> for ApplicationError {
 
 mod geometry;
 pub use geometry::WindowGeometry;
+mod window_input;
+pub use window_input::{WindowInput, WindowInputResult};
 
 /// A native file-drag notification for one managed window. Multiple files produce
 /// separate events. Paths are OS payloads, not file contents or verified files.
@@ -1256,16 +1258,9 @@ struct HostedWindow {
     geometry_pending: bool,
     restore_geometry: bool,
     background: Option<Color>,
-    cursor: [f64; 2],
-    cursor_icon: Option<crate::Cursor>,
-    clicks: ClickTracker,
-    modifiers: ModifiersState,
+    input: WindowInput,
     blink_at: Instant,
     caret_visible: bool,
-    ime_focus: Option<ElementId>,
-    ime_reset_revision: u64,
-    ime_allowed: bool,
-    ime_area: Option<Bounds>,
     accessibility: Option<accesskit_winit::Adapter>,
     accesskit: AccessKitTree,
     accessibility_active: bool,
@@ -1505,36 +1500,8 @@ impl<F> Host<F> {
         let Some(ui) = &mut window.ui else {
             return Ok(());
         };
-        let cursor = ui.cursor_icon();
-        if window.cursor_icon != Some(cursor) {
-            native.window().set_cursor(native_cursor(cursor));
-            window.cursor_icon = Some(cursor);
-        }
-        let focus = ui
-            .accepts_text_input()
-            .then(|| ui.focused_element())
-            .flatten();
-        let reset_revision = ui.ime_reset_revision();
-        if focus != window.ime_focus || reset_revision != window.ime_reset_revision {
-            window.ime_reset_revision = reset_revision;
-            if window.ime_allowed {
-                native.window().set_ime_allowed(false);
-            }
-            window.ime_focus = focus;
-            window.ime_allowed = focus.is_some();
-            native.window().set_ime_allowed(window.ime_allowed);
-            window.ime_area = None;
-        }
-        if window.ime_allowed
-            && let Some(painter) = &mut self.painter
-            && let Some(area) = ui.ime_area(painter)?
-            && window.ime_area != Some(area)
-        {
-            native.window().set_ime_cursor_area(
-                LogicalPosition::new(area.x as f64, area.y as f64),
-                LogicalSize::new(area.width as f64, area.height as f64),
-            );
-            window.ime_area = Some(area);
+        if let Some(painter) = &mut self.painter {
+            window.input.sync(ui.as_mut(), painter, native.window())?;
         }
         if ui.has_text_focus() {
             cx.request_redraw_at(id, window.blink_at)
@@ -1660,16 +1627,9 @@ impl<F> Host<F> {
                                 geometry_pending: false,
                                 restore_geometry: options.restore_geometry,
                                 background: options.background,
-                                cursor: [0.; 2],
-                                cursor_icon: None,
-                                clicks: ClickTracker::default(),
-                                modifiers: ModifiersState::default(),
+                                input: WindowInput::default(),
                                 blink_at: Instant::now() + Duration::from_millis(500),
                                 caret_visible: true,
-                                ime_focus: None,
-                                ime_reset_revision: 0,
-                                ime_allowed: false,
-                                ime_area: None,
                                 accessibility: None,
                                 accesskit: AccessKitTree::new(),
                                 accessibility_active: false,
@@ -1969,50 +1929,19 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             if ui.prepare_input(&mut self.runtime, native.metrics(), painter)? {
                 record_mounts(&self.commands, window.life.id, ui.as_ref());
             }
-            if let WindowEvent::KeyboardInput {
-                event,
-                is_synthetic: false,
-                ..
-            } = &event
-            {
-                let result = ui.key(
-                    &mut self.runtime,
-                    crate::KeyEvent {
-                        key: keyboard_key(&event.logical_key),
-                        pressed: event.state == ElementState::Pressed,
-                        repeat: event.repeat,
-                        modifiers: input_modifiers(window.modifiers),
-                    },
-                )?;
-                (result.changed, result.default_prevented)
-            } else {
-                (false, false)
-            }
+            window.input.key(&mut self.runtime, ui.as_mut(), &event)?
         };
-        if !key_prevented
-            && let WindowEvent::KeyboardInput {
-                event,
-                is_synthetic: false,
-                ..
-            } = &event
-            && event.state == ElementState::Pressed
+        if !key_prevented && let Some((command, repeat)) = self.windows[&id].input.shortcut(&event)
         {
-            let modifiers = input_modifiers(self.windows[&id].modifiers);
-            let key = keyboard_key(&event.logical_key);
-            if let Some(command) = standard_shortcut(&key, modifiers) {
-                // Standard lifecycle requests do not repeat while a save/veto is
-                // outstanding. Editing still receives normal key repetition.
-                let status = if event.repeat
-                    && (command == CommandId::of::<crate::standard_commands::Quit>()
-                        || command == CommandId::of::<crate::standard_commands::CloseWindow>())
-                {
-                    CommandStatus::Disabled
-                } else {
-                    self.invoke_command(cx, Some(id), command)?
-                };
-                key_prevented = status != CommandStatus::Unhandled;
-                changed |= status == CommandStatus::Handled;
-            }
+            // Standard lifecycle requests do not repeat while a save/veto is
+            // outstanding. Editing still receives normal key repetition.
+            let status = if repeat && WindowInput::lifecycle(command) {
+                CommandStatus::Disabled
+            } else {
+                self.invoke_command(cx, Some(id), command)?
+            };
+            key_prevented = status != CommandStatus::Unhandled;
+            changed |= status == CommandStatus::Handled;
         }
         let Some(window) = self.windows.get_mut(&id) else {
             return Ok(());
@@ -2022,200 +1951,17 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         else {
             return Ok(());
         };
-        let scale = native.metrics().scale_factor();
-        match event {
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                ui.invalidate_geometry()
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                window.cursor = [position.x, position.y];
-                window
-                    .clicks
-                    .motion([(position.x / scale) as f32, (position.y / scale) as f32]);
-                changed = ui.pointer(
-                    &mut self.runtime,
-                    PointerEvent::Motion {
-                        position: [(position.x / scale) as f32, (position.y / scale) as f32],
-                        modifiers: input_modifiers(window.modifiers),
-                    },
-                    painter,
-                    window.modifiers.shift_key(),
-                    1,
-                )?;
-            }
-            WindowEvent::CursorLeft { .. } => {
-                changed = ui.pointer(&mut self.runtime, PointerEvent::Left, painter, false, 1)?
-            }
-            WindowEvent::MouseInput { state, button, .. }
-                if matches!(
-                    button,
-                    MouseButton::Left | MouseButton::Right | MouseButton::Middle
-                ) =>
-            {
-                let point = [
-                    (window.cursor[0] / scale) as f32,
-                    (window.cursor[1] / scale) as f32,
-                ];
-                let count = if state == ElementState::Pressed && button == MouseButton::Left {
-                    window
-                        .clicks
-                        .press(Instant::now(), point, ui.hit_test(point))
-                } else {
-                    1
-                };
-                changed = ui.pointer(
-                    &mut self.runtime,
-                    if state == ElementState::Pressed {
-                        PointerEvent::Down {
-                            position: point,
-                            button: input_button(button),
-                            modifiers: input_modifiers(window.modifiers),
-                        }
-                    } else {
-                        PointerEvent::Up {
-                            position: point,
-                            button: input_button(button),
-                            modifiers: input_modifiers(window.modifiers),
-                        }
-                    },
-                    painter,
-                    window.modifiers.shift_key(),
-                    count,
-                )?;
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let motion = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => [-x * 40., -y * 40.],
-                    MouseScrollDelta::PixelDelta(p) => {
-                        [-(p.x / scale) as f32, -(p.y / scale) as f32]
-                    }
-                };
-                changed = ui.wheel(
-                    &mut self.runtime,
-                    [
-                        (window.cursor[0] / scale) as f32,
-                        (window.cursor[1] / scale) as f32,
-                    ],
-                    motion,
-                    input_modifiers(window.modifiers),
-                )?;
-            }
-            WindowEvent::Focused(active) => {
-                if !active {
-                    window.clicks = ClickTracker::default();
-                }
-                if active {
-                    self.focused_window = Some(id);
-                }
-                if !active {
-                    changed |= ui.pointer(
-                        &mut self.runtime,
-                        PointerEvent::Cancelled,
-                        painter,
-                        false,
-                        1,
-                    )?;
-                }
-                changed |= ui.active(active);
-            }
-            WindowEvent::Ime(Ime::Preedit(text, cursor)) => {
-                changed = ui.text_input(
-                    &mut self.runtime,
-                    TextInputEvent::Preedit { text, cursor },
-                    painter,
-                )?;
-            }
-            WindowEvent::Ime(Ime::Commit(text)) => {
-                changed =
-                    ui.text_input(&mut self.runtime, TextInputEvent::Commit(text), painter)?;
-            }
-            WindowEvent::Ime(Ime::Disabled) => {
-                changed = ui.text_input(
-                    &mut self.runtime,
-                    TextInputEvent::CancelComposition,
-                    painter,
-                )?;
-            }
-            WindowEvent::ModifiersChanged(modifiers) => window.modifiers = modifiers.state(),
-            WindowEvent::KeyboardInput {
-                event,
-                is_synthetic: false,
-                ..
-            } if event.state == ElementState::Pressed && !key_prevented => {
-                let modifiers = window.modifiers;
-                let primary = if cfg!(target_os = "macos") {
-                    modifiers.super_key()
-                } else {
-                    modifiers.control_key() && !modifiers.alt_key()
-                };
-                let word = if cfg!(target_os = "macos") {
-                    modifiers.alt_key()
-                } else {
-                    modifiers.control_key()
-                };
-                let extend = modifiers.shift_key();
-                if event.logical_key == Key::Named(NamedKey::Tab) && !event.repeat {
-                    changed |= ui.focus_next(extend);
-                } else if ui.has_text_focus() {
-                    let input = match &event.logical_key {
-                        Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => {
-                            let right = event.logical_key == Key::Named(NamedKey::ArrowRight);
-                            let movement = if cfg!(target_os = "macos") && primary {
-                                if right {
-                                    TextMovement::End
-                                } else {
-                                    TextMovement::Start
-                                }
-                            } else if word {
-                                if right {
-                                    TextMovement::WordRight
-                                } else {
-                                    TextMovement::WordLeft
-                                }
-                            } else if right {
-                                TextMovement::Right
-                            } else {
-                                TextMovement::Left
-                            };
-                            Some(TextInputEvent::Move { movement, extend })
-                        }
-                        Key::Named(NamedKey::Home) => Some(TextInputEvent::Move {
-                            movement: TextMovement::Start,
-                            extend,
-                        }),
-                        Key::Named(NamedKey::End) => Some(TextInputEvent::Move {
-                            movement: TextMovement::End,
-                            extend,
-                        }),
-                        Key::Named(NamedKey::Backspace) => {
-                            Some(deletion_input(true, primary, word))
-                        }
-                        Key::Named(NamedKey::Delete) => Some(deletion_input(false, primary, word)),
-                        Key::Named(NamedKey::Escape) => Some(TextInputEvent::CancelComposition),
-                        Key::Named(NamedKey::Enter) if !event.repeat => {
-                            Some(TextInputEvent::Submit)
-                        }
-                        _ if !primary && (!modifiers.control_key() || modifiers.alt_key()) => event
-                            .text
-                            .as_ref()
-                            .filter(|text| text.chars().any(|c| !c.is_control()))
-                            .map(|text| TextInputEvent::Insert(text.to_string())),
-                        _ => None,
-                    };
-                    if let Some(input) = input {
-                        changed |= ui.text_input(&mut self.runtime, input, painter)?;
-                    }
-                } else if !event.repeat
-                    && matches!(
-                        event.logical_key,
-                        Key::Named(NamedKey::Enter | NamedKey::Space)
-                    )
-                {
-                    changed |= ui.activate(&mut self.runtime)?;
-                }
-            }
-            _ => {}
+        if matches!(event, WindowEvent::Focused(true)) {
+            self.focused_window = Some(id);
         }
+        changed |= window.input.event(
+            &mut self.runtime,
+            ui.as_mut(),
+            painter,
+            native.metrics().scale_factor(),
+            &event,
+            key_prevented,
+        )?;
         if changed {
             window.caret_visible = true;
             window.blink_at = Instant::now() + Duration::from_millis(500);

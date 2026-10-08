@@ -153,6 +153,8 @@ mod semantics;
 mod tabs;
 #[cfg(feature = "tasks")]
 mod tasks;
+#[cfg(feature = "rendering")]
+mod testing;
 #[cfg(feature = "layout")]
 mod theme;
 #[cfg(feature = "layout")]
@@ -217,7 +219,7 @@ pub use native::{
     Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
 };
 #[cfg(feature = "native")]
-pub use native::{FileDropEvent, WindowGeometry};
+pub use native::{FileDropEvent, WindowGeometry, WindowInput, WindowInputResult};
 #[cfg(feature = "native-menus")]
 pub use native_menus::{NativeMenu, NativeMenuBar, NativeMenuRole};
 #[cfg(feature = "layout")]
@@ -242,6 +244,8 @@ pub use tasks::{
 };
 #[cfg(all(feature = "tasks", not(target_arch = "wasm32")))]
 pub use tasks::{ThreadPoolExecutor, sleep};
+#[cfg(feature = "rendering")]
+pub use testing::TestUi;
 #[cfg(feature = "layout")]
 pub use theme::{
     BoxShadow, PaintStyle, ResolvedPaint, ResolvedShadow, StyleColor, Theme, ThemeColor,

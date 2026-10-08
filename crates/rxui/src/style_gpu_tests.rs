@@ -1,6 +1,6 @@
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use astrelis::wgpu;
 
 /// Prepares and paints one frame into a linear RGBA8 target, returning its pixels.
 pub(super) fn render<T: View>(
@@ -10,28 +10,9 @@ pub(super) fn render<T: View>(
     painter: &mut UiPainter,
     size: [u32; 2],
 ) -> Vec<u8> {
-    let mut target = graphics
-        .create_framebuffer(
-            FramebufferOptions::new(size[0], size[1])
-                .format(wgpu::TextureFormat::Rgba8Unorm)
-                .usage(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC),
-        )
-        .unwrap();
     ui.prepare(runtime, [size[0] as f32, size[1] as f32], painter)
         .unwrap();
-    painter.prepare(ui, &target.render_format(), 1.).unwrap();
-    let mut frame = target.begin_frame().unwrap();
-    painter
-        .compose(ui, &mut frame, 1., |frame, composed| {
-            let mut pass = frame
-                .render_pass()
-                .clear_color(wgpu::Color::BLACK)
-                .begin()?;
-            composed.paint(&mut pass)
-        })
-        .unwrap();
-    frame.finish().unwrap();
-    target.read_rgba8().unwrap()
+    crate::testing::render_rgba8(graphics, ui, painter, size, wgpu::Color::BLACK).unwrap()
 }
 pub(super) fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let i = ((y * width + x) * 4) as usize;
