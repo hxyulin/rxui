@@ -27,8 +27,16 @@ struct Slot {
     value: Option<Weak<dyn Any>>,
     revision: u64,
 }
+/// Identity of one `ViewContext::use_state` slot: call site, state type and key hash.
+pub(crate) type LocalKey = (
+    &'static std::panic::Location<'static>,
+    std::any::TypeId,
+    u64,
+);
 pub(crate) struct MountRecord {
     life: Weak<MountLife>,
+    /// Placement-local state entities, released with the mount.
+    pub(crate) local: HashMap<LocalKey, Box<dyn Any>>,
     pub(crate) dependencies: HashSet<EntityId>,
     pub(crate) scratch: HashSet<EntityId>,
     #[cfg(feature = "layout")]
@@ -58,6 +66,9 @@ pub(crate) struct RuntimeInner {
     pub(crate) tasks: RefCell<Option<crate::tasks::Tasks>>,
     #[cfg(feature = "native")]
     pub(crate) native: RefCell<Option<std::rc::Rc<crate::native::Commands>>>,
+    /// Theme of the placement whose view is being evaluated, and whether it was read.
+    #[cfg(feature = "layout")]
+    pub(crate) view_theme: RefCell<Option<(crate::Theme, bool)>>,
 }
 
 /// Headless, single-UI-thread state runtime. It owns metadata, not strong entities.
@@ -96,6 +107,8 @@ impl Runtime {
                 tasks: RefCell::new(None),
                 #[cfg(feature = "native")]
                 native: RefCell::new(None),
+                #[cfg(feature = "layout")]
+                view_theme: RefCell::new(None),
             }),
         }
     }
@@ -455,6 +468,7 @@ impl RuntimeInner {
             id,
             MountRecord {
                 life: Rc::downgrade(&life),
+                local: HashMap::new(),
                 dependencies: HashSet::new(),
                 scratch: HashSet::new(),
                 #[cfg(feature = "layout")]
@@ -593,6 +607,8 @@ impl RuntimeInner {
             return;
         }
         let mut state = self.state.borrow_mut();
+        // Local state values run user Drop code; release them after the borrow ends.
+        let mut local = Vec::new();
         #[cfg(feature = "tasks")]
         let mut disposed_owners = Vec::new();
         for release in releases {
@@ -626,6 +642,7 @@ impl RuntimeInner {
                 }
                 Release::Mount(id) => {
                     if let Some(record) = state.mounts.remove(&id) {
+                        local.push(record.local);
                         for source in record.dependencies {
                             if let Some(ids) = state.dependents.get_mut(&source) {
                                 ids.remove(&id);
@@ -647,6 +664,7 @@ impl RuntimeInner {
             }
         }
         drop(state);
+        drop(local);
         #[cfg(feature = "tasks")]
         {
             let callbacks = {

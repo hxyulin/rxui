@@ -29,6 +29,19 @@ Multiple placements of one entity retain separate element/focus/capture/scroll s
 The shared entity remains authoritative for application data; UI placement state
 does not duplicate that data.
 
+Views keep presentation state that belongs to one placement, such as an open
+disclosure or a hover highlight, with `cx.use_state(init)`. The slot is keyed by
+call site and state type (plus a key for `use_keyed_state`), stored with the mount
+and released, running `Drop`, when the mount is removed. Its entity tracks reads
+like any other, so updating it from a listener re-evaluates the view. A slot is
+not released when a later evaluation stops calling it; it lives as long as the
+placement.
+
+`cx.theme()` exposes the placement theme during evaluation. The Ui records which
+views read it and evaluates them again when their effective theme changes, through
+`Ui::set_theme` or a changed `Element::theme` above them. Views that do not read it
+keep the paint-only theme switch path.
+
 Keys are integer or owned string values, unique among siblings. Compatible keyed
 nodes survive reorder. Unkeyed nodes use structural position and compatible kind.
 A kind change, entity replacement at a component boundary, or removal disposes

@@ -197,6 +197,15 @@ removed. Ui routes activation through surviving retained button identities;
 replacing or removing an element clears its focus/capture. Scroll offsets follow
 retained identity; focused buttons are revealed through scroll ancestors.
 
+`cx.use_state(|_| initial)` in a view returns an `Entity<S>` that belongs to the
+current placement: it is created on first evaluation, kept across evaluations and
+released when the placement is removed. Each call site is one slot;
+`cx.use_keyed_state(key, init)` gives one slot per key, for rows built in a loop.
+Placements of the same entity in two windows get separate local state. Read it with
+`state.read(cx)` and update it from listeners through a cloned handle. `cx.theme()`
+returns the placement's theme, including subtree overrides; a view that reads it is
+evaluated again when that theme changes.
+
 Updates mutate synchronously and conservatively invalidate dependent mounts.
 Reads during `Runtime::evaluate` register dependencies; each normally returned
 evaluation replaces its previous read set. Reads in ordinary updates do not

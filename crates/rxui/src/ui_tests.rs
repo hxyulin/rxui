@@ -852,3 +852,202 @@ fn custom_leaves_measure_hit_test_and_describe_themselves() {
         Err(UiError::LeafChildren)
     ));
 }
+#[test]
+fn use_state_is_placement_local_keyed_and_released_with_the_placement() {
+    struct Dropped(Rc<Cell<u32>>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+    struct Counter {
+        drops: Rc<Cell<u32>>,
+        rows: Vec<u32>,
+    }
+    impl View for Counter {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let drops = self.drops.clone();
+            let count = cx.use_state(|_| 0_u32);
+            let _guard = cx.use_state(move |_| Dropped(drops));
+            let bump = count.clone();
+            column()
+                .child(
+                    button(format!("Count {}", *count.read(cx)))
+                        .key("bump")
+                        .on_click(cx.listener(move |_, _, cx| bump.update(cx, |n, _| *n += 1))),
+                )
+                .children(self.rows.iter().map(|row| {
+                    let value = cx.use_keyed_state(row, |_| *row * 10);
+                    label(format!("{}", *value.read(cx))).key(*row)
+                }))
+        }
+    }
+    struct Host {
+        show: bool,
+        child: Entity<Counter>,
+    }
+    impl View for Host {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let mut root = column();
+            if self.show {
+                root = root.child(self.child.clone());
+            }
+            root
+        }
+    }
+    let drops = Rc::new(Cell::new(0));
+    let mut runtime = Runtime::new();
+    let child = runtime.update(|cx| {
+        cx.new(|_| Counter {
+            drops: drops.clone(),
+            rows: vec![1, 2],
+        })
+    });
+    let host = runtime.update(|cx| {
+        cx.new(|_| Host {
+            show: true,
+            child: child.clone(),
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, host.clone()).unwrap();
+    let mut other = Ui::new(&mut runtime, child.clone()).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    other
+        .prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    let labels = |ui: &Ui<Host>| {
+        ui.elements()
+            .filter_map(|e| e.text.map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(labels(&ui), ["Count 0", "10", "20"]);
+    let point = |ui: &Ui<Host>| {
+        let b = ui
+            .elements()
+            .find(|e| e.key == Some(&"bump".into()))
+            .unwrap()
+            .bounds;
+        [b.x + 2., b.y + 2.]
+    };
+    for _ in 0..2 {
+        ui.pointer(&mut runtime, PointerEvent::Pressed(point(&ui)))
+            .unwrap();
+        ui.pointer(&mut runtime, PointerEvent::Released(point(&ui)))
+            .unwrap();
+        ui.prepare(&mut runtime, [400., 300.], &mut measure)
+            .unwrap();
+    }
+    // Keyed slots follow their keys when rows reorder or are added.
+    runtime.update(|cx| child.update(cx, |c, _| c.rows = vec![3, 1]));
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert_eq!(labels(&ui), ["Count 2", "30", "10"]);
+    // The other window's placement keeps its own count.
+    other
+        .prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert!(other.elements().any(|e| e.text == Some("Count 0")));
+    // Removing the placement releases its state; the other placement keeps its own.
+    runtime.update(|cx| host.update(cx, |h, _| h.show = false));
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    runtime.synchronize();
+    assert_eq!(drops.get(), 1);
+    drop(other);
+    runtime.synchronize();
+    assert_eq!(drops.get(), 2);
+}
+#[test]
+fn views_reading_the_theme_reevaluate_when_their_placement_theme_changes() {
+    struct Reader {
+        evaluations: Rc<Cell<u32>>,
+    }
+    impl View for Reader {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            self.evaluations.set(self.evaluations.get() + 1);
+            let size = cx.theme().sizes().font_size;
+            label(format!("{size}")).key("size")
+        }
+    }
+    struct Ignorer {
+        evaluations: Rc<Cell<u32>>,
+    }
+    impl View for Ignorer {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            self.evaluations.set(self.evaluations.get() + 1);
+            label("Static")
+        }
+    }
+    struct Root {
+        reader: Entity<Reader>,
+        ignorer: Entity<Ignorer>,
+        scoped: Option<Theme>,
+    }
+    impl View for Root {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let mut scope = column()
+                .child(self.reader.clone())
+                .child(self.ignorer.clone());
+            if let Some(theme) = &self.scoped {
+                scope = scope.theme(theme.clone());
+            }
+            column().child(scope)
+        }
+    }
+    let read = Rc::new(Cell::new(0));
+    let ignored = Rc::new(Cell::new(0));
+    let mut runtime = Runtime::new();
+    let reader = runtime.update(|cx| {
+        cx.new(|_| Reader {
+            evaluations: read.clone(),
+        })
+    });
+    let ignorer = runtime.update(|cx| {
+        cx.new(|_| Ignorer {
+            evaluations: ignored.clone(),
+        })
+    });
+    let root = runtime.update(|cx| {
+        cx.new(|_| Root {
+            reader,
+            ignorer,
+            scoped: None,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    let size = |ui: &Ui<Root>| {
+        ui.elements()
+            .find(|e| e.key == Some(&"size".into()))
+            .unwrap()
+            .text
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(size(&ui), "14");
+    assert_eq!((read.get(), ignored.get()), (1, 1));
+    ui.set_theme(Theme::dark().compact()).unwrap();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert_eq!(size(&ui), "13");
+    assert_eq!((read.get(), ignored.get()), (2, 1));
+    // A palette-only switch leaves the font size alone but still changes the theme.
+    ui.set_theme(Theme::light().compact()).unwrap();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert_eq!((read.get(), ignored.get()), (3, 1));
+    // A subtree override above the component is what its view sees.
+    runtime.update(|cx| {
+        root.update(cx, |r, _| {
+            r.scoped = Some(Theme::dark().metrics(|m| m.font_size = 20.))
+        })
+    });
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert_eq!(size(&ui), "20");
+    assert_eq!(ignored.get(), 1);
+}

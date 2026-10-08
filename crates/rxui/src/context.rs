@@ -324,6 +324,82 @@ impl<'a, T> ViewContext<'a, T> {
     ) -> Listener<E> {
         Listener::bound(self.owner.clone(), self.mount.clone(), callback)
     }
+    /// Placement-local state for this mount, created by `init` on first use and kept
+    /// across evaluations until the placement is removed. Each call site is its own
+    /// slot; use [`Self::use_keyed_state`] for slots created in loops. Read it with
+    /// `state.read(cx)` to re-evaluate on change, and update it from listeners
+    /// through the captured handle. Two placements of one entity get separate state.
+    ///
+    /// ```
+    /// # #[cfg(feature = "layout")]
+    /// # {
+    /// use rxui::prelude::*;
+    /// struct Card;
+    /// impl View for Card {
+    ///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+    ///         let open = cx.use_state(|_| false);
+    ///         let toggle = open.clone();
+    ///         column()
+    ///             .child(button(if *open.read(cx) { "Hide" } else { "Show" }).on_click(
+    ///                 cx.listener(move |_, _, cx| toggle.update(cx, |open, _| *open = !*open)),
+    ///             ))
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    #[track_caller]
+    pub fn use_state<S: 'static>(&self, init: impl FnOnce(&mut Context<'_, S>) -> S) -> Entity<S> {
+        self.local_state(std::panic::Location::caller(), 0, init)
+    }
+    /// Like [`Self::use_state`], with a separate slot per key at one call site.
+    #[track_caller]
+    pub fn use_keyed_state<S: 'static>(
+        &self,
+        key: impl std::hash::Hash,
+        init: impl FnOnce(&mut Context<'_, S>) -> S,
+    ) -> Entity<S> {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let hash = BuildHasherDefault::<DefaultHasher>::default().hash_one(key);
+        self.local_state(std::panic::Location::caller(), hash, init)
+    }
+    fn local_state<S: 'static>(
+        &self,
+        location: &'static std::panic::Location<'static>,
+        hash: u64,
+        init: impl FnOnce(&mut Context<'_, S>) -> S,
+    ) -> Entity<S> {
+        let key = (location, std::any::TypeId::of::<S>(), hash);
+        let existing = self
+            .runtime
+            .state
+            .borrow()
+            .mounts
+            .get(&self.id)
+            .and_then(|r| r.local.get(&key))
+            .and_then(|state| state.downcast_ref::<Entity<S>>())
+            .cloned();
+        if let Some(entity) = existing {
+            return entity;
+        }
+        let entity = self.runtime.create(init);
+        if let Some(record) = self.runtime.state.borrow_mut().mounts.get_mut(&self.id) {
+            record.local.insert(key, Box::new(entity.clone()));
+        }
+        entity
+    }
+    /// Theme of this placement, including subtree overrides from `Element::theme`.
+    /// A view that reads it is evaluated again when its theme changes. Outside a
+    /// `Ui` (for example in `Runtime::evaluate`), this is the default theme.
+    #[cfg(feature = "layout")]
+    pub fn theme(&self) -> crate::Theme {
+        match &mut *self.runtime.view_theme.borrow_mut() {
+            Some((theme, read)) => {
+                *read = true;
+                theme.clone()
+            }
+            None => crate::Theme::default(),
+        }
+    }
     pub(crate) fn commit(&mut self) {
         let next = std::mem::take(self.dependencies.get_mut());
         self.runtime.commit_dependencies(self.id, next);

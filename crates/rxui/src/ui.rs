@@ -447,6 +447,26 @@ pub(crate) trait MountedView {
     fn dirty(&self, runtime: &Runtime) -> Result<bool, AccessError>;
     fn evaluate(&self, runtime: &mut Runtime) -> Result<Element, UiError>;
 }
+/// Runs a view evaluation with `theme` available through `ViewContext::theme`,
+/// returning the theme when the view read it.
+fn themed<R>(
+    runtime: &mut Runtime,
+    theme: Theme,
+    evaluate: impl FnOnce(&mut Runtime) -> R,
+) -> (R, Option<Theme>) {
+    struct Clear<'a>(&'a std::cell::RefCell<Option<(Theme, bool)>>);
+    impl Drop for Clear<'_> {
+        fn drop(&mut self) {
+            self.0.borrow_mut().take();
+        }
+    }
+    let inner = runtime.inner.clone();
+    *inner.view_theme.borrow_mut() = Some((theme, false));
+    let clear = Clear(&inner.view_theme);
+    let result = evaluate(runtime);
+    let read = clear.0.borrow_mut().take();
+    (result, read.and_then(|(theme, read)| read.then_some(theme)))
+}
 fn describe<T: View>(value: &T, cx: &mut ViewContext<'_, T>) -> Result<Element, UiError> {
     let element = value.view(cx).into_element();
     element.validate()?;
@@ -518,6 +538,8 @@ pub(crate) struct Node {
     pub(crate) scroll_offset: [f32; 2],
     pub(crate) scroll_range: [f32; 2],
     editor: Option<Box<Editor>>,
+    /// Theme a component's view read during its last evaluation.
+    theme_read: Option<Theme>,
     resolved_theme: Theme,
     color_binding: StyleColor,
     font_binding: Option<f32>,
@@ -595,6 +617,8 @@ pub struct Ui<T: View> {
     active: bool,
     caret_visible: bool,
     theme: Theme,
+    /// Theme the root view read during its last evaluation.
+    root_theme_read: Option<Theme>,
     style_roots: HashSet<ElementId>,
 }
 impl<T: View> Ui<T> {
@@ -639,6 +663,7 @@ impl<T: View> Ui<T> {
             active: true,
             caret_visible: true,
             theme: Theme::default(),
+            root_theme_read: None,
             style_roots: HashSet::new(),
         })
     }
@@ -652,6 +677,13 @@ impl<T: View> Ui<T> {
         theme.validate()?;
         if self.theme == theme {
             return Ok(false);
+        }
+        if self
+            .root_theme_read
+            .as_ref()
+            .is_some_and(|read| *read != theme)
+        {
+            self.needs_evaluation = true;
         }
         self.theme = theme;
         if let Some(root) = self.root {
@@ -1027,7 +1059,11 @@ impl<T: View> Ui<T> {
         self.active_views.clear();
         self.active_views.push(self.owner.entity().id());
         if runtime.is_dirty(&self.owner)? || force_evaluation {
-            let description = runtime.evaluate_checked(&self.owner, describe)?;
+            let (description, theme_read) = themed(runtime, self.theme.clone(), |runtime| {
+                runtime.evaluate_checked(&self.owner, describe)
+            });
+            let description = description?;
+            self.root_theme_read = theme_read;
             self.stats.component_evaluations += 1;
             self.reconcile(runtime, self.root, description, None)?;
         }
@@ -1256,6 +1292,7 @@ impl<T: View> Ui<T> {
                     scroll_offset: [0.; 2],
                     scroll_range: [0.; 2],
                     editor,
+                    theme_read: None,
                     resolved_theme: Theme::default(),
                     color_binding: ThemeColor::Text.into(),
                     font_binding: None,
@@ -1359,12 +1396,13 @@ impl<T: View> Ui<T> {
             let previous = std::mem::replace(&mut self.active_views, node.ancestors.clone());
             self.active_views.push(entity_id);
             self.nodes.get_mut(&id).unwrap().needs_evaluation = true;
+            let theme = self.evaluation_theme(id);
             let result = (|| {
-                let description = self.nodes[&id]
-                    .mounted
-                    .as_ref()
-                    .unwrap()
-                    .evaluate(runtime)?;
+                let (description, theme_read) = themed(runtime, theme, |runtime| {
+                    self.nodes[&id].mounted.as_ref().unwrap().evaluate(runtime)
+                });
+                let description = description?;
+                self.nodes.get_mut(&id).unwrap().theme_read = theme_read;
                 self.stats.component_evaluations += 1;
                 self.reconcile_children(runtime, id, vec![description])
             })();
@@ -1373,6 +1411,19 @@ impl<T: View> Ui<T> {
             self.nodes.get_mut(&id).unwrap().needs_evaluation = false;
         }
         Ok(())
+    }
+    /// The theme a component placement's view sees: the nearest `Element::theme`
+    /// at or above its node, else the placement's root theme.
+    fn evaluation_theme(&self, id: ElementId) -> Theme {
+        let mut current = Some(id);
+        while let Some(id) = current {
+            let node = &self.nodes[&id];
+            if let Some(theme) = &node.element.theme {
+                return theme.clone();
+            }
+            current = node.parent;
+        }
+        self.theme.clone()
     }
     fn resolve_styles(&mut self) -> Result<(), UiError> {
         profiling::scope!("rxui::resolve_styles");
@@ -1592,6 +1643,9 @@ impl<T: View> Ui<T> {
                 .text_revision
                 .checked_add(1)
                 .expect("RXUI text revision exhausted");
+        }
+        if node.theme_read.as_ref().is_some_and(|read| *read != theme) {
+            node.needs_evaluation = true;
         }
         node.resolved_theme = theme.clone();
         node.color_binding = color;
