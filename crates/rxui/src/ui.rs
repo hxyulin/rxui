@@ -301,6 +301,8 @@ pub enum ElementType {
     Scrollbar,
     /// Controlled pane divider.
     Splitter,
+    /// Application-defined leaf from [`crate::custom`].
+    Custom,
 }
 /// Read-only snapshot for painting/inspection; iteration follows tree paint order.
 pub struct ElementInfo<'a> {
@@ -473,6 +475,7 @@ fn kind(element: &Element) -> ElementType {
         ElementKind::TextInput { .. } => ElementType::TextInput,
         ElementKind::Button { .. } => ElementType::Button,
         ElementKind::Component(_) => ElementType::Component,
+        ElementKind::Custom(_) => ElementType::Custom,
     }
 }
 fn text(element: &Element) -> Option<&str> {
@@ -492,6 +495,9 @@ fn image_properties(element: &Element) -> Option<&crate::image::Properties> {
 fn compatible(old: &Element, new: &Element) -> bool {
     match (&old.kind, &new.kind) {
         (ElementKind::Component(a), ElementKind::Component(b)) => a.entity_id() == b.entity_id(),
+        (ElementKind::Custom(a), ElementKind::Custom(b)) => {
+            std::any::Any::type_id(a.as_any()) == std::any::Any::type_id(b.as_any())
+        }
         _ => kind(old) == kind(new),
     }
 }
@@ -937,6 +943,21 @@ impl<T: View> Ui<T> {
                                 },
                             };
                         }
+                        if let ElementKind::Custom(custom) = &node.element.kind {
+                            let size = custom.measure(crate::CustomMeasure {
+                                known: [known.width, known.height],
+                                available: [available.width, available.height],
+                                font_size: node.font_size,
+                            });
+                            if size.iter().any(|v| !v.is_finite() || *v < 0.) {
+                                error.get_or_insert(UiError::InvalidGeometry);
+                                return Size::ZERO;
+                            }
+                            return Size {
+                                width: known.width.unwrap_or(size[0]),
+                                height: known.height.unwrap_or(size[1]),
+                            };
+                        }
                         let Some(text) = node.displayed_text() else {
                             return Size::ZERO;
                         };
@@ -1122,6 +1143,12 @@ impl<T: View> Ui<T> {
                 (image_properties(&node.element), image_properties(&element))
                 && (old.uv[2..] != new.uv[2..])
                 && (element.style.size.width.is_auto() || element.style.size.height.is_auto())
+            {
+                self.taffy.mark_dirty(node.layout)?;
+            }
+            if let (ElementKind::Custom(old), ElementKind::Custom(new)) =
+                (&node.element.kind, &element.kind)
+                && !old.same(new.as_ref())
             {
                 self.taffy.mark_dirty(node.layout)?;
             }
@@ -1557,7 +1584,8 @@ impl<T: View> Ui<T> {
         node.button_owner = button_owner;
         node.control_color = control_color;
         if (node.font_size != font_size || node.text_style != text_style)
-            && node.displayed_text().is_some()
+            && (node.displayed_text().is_some()
+                || matches!(node.element.kind, ElementKind::Custom(_)))
         {
             self.taffy.mark_dirty(layout_id)?;
             node.text_revision = node
@@ -1814,6 +1842,13 @@ impl<T: View> Ui<T> {
         }
     }
     #[cfg(feature = "rendering")]
+    pub(crate) fn custom_element(&self, id: ElementId) -> Option<&dyn crate::custom::AnyCustom> {
+        match &self.nodes.get(&id)?.element.kind {
+            ElementKind::Custom(custom) => Some(custom.as_ref()),
+            _ => None,
+        }
+    }
+    #[cfg(feature = "rendering")]
     pub(crate) fn painting_ids(&self) -> &[ElementId] {
         self.painting_order()
     }
@@ -1823,12 +1858,24 @@ impl<T: View> Ui<T> {
     fn pointer_allowed(&self, id: ElementId) -> bool {
         self.nodes[&id].pointer_allowed && self.modal_allows(id)
     }
+    /// Whether a visible node's clipped box, and a custom element's own hit test,
+    /// contain the point.
+    fn node_contains(n: &Node, point: [f32; 2]) -> bool {
+        n.visible
+            && n.bounds.contains(point)
+            && n.clip_bounds.contains(point)
+            && match &n.element.kind {
+                ElementKind::Custom(custom) => custom.hit_test(
+                    [point[0] - n.bounds.x, point[1] - n.bounds.y],
+                    [n.bounds.width, n.bounds.height],
+                ),
+                _ => true,
+            }
+    }
     fn pointer_target(&self, point: [f32; 2]) -> Option<ElementId> {
         self.painting_order().iter().rev().copied().find(|id| {
             let n = &self.nodes[id];
-            n.visible
-                && n.bounds.contains(point)
-                && n.clip_bounds.contains(point)
+            Self::node_contains(n, point)
                 && (matches!(
                     n.element.kind,
                     ElementKind::Button { .. }
@@ -2041,13 +2088,10 @@ impl<T: View> Ui<T> {
         if !self.geometry_ready {
             return Ok(false);
         }
-        let mut current = self.painting_order().iter().rev().copied().find(|id| {
-            let n = &self.nodes[id];
-            n.visible
-                && n.bounds.contains(point)
-                && n.clip_bounds.contains(point)
-                && self.pointer_allowed(*id)
-        });
+        let mut current =
+            self.painting_order().iter().rev().copied().find(|id| {
+                Self::node_contains(&self.nodes[id], point) && self.pointer_allowed(*id)
+            });
         if let Some(id) = current
             && let ElementKind::Scrollbar(p) = &self.nodes[&id].element.kind
         {
@@ -2885,7 +2929,8 @@ impl<T: View> Ui<T> {
             ElementKind::Row
             | ElementKind::Column
             | ElementKind::Stack
-            | ElementKind::Component(_) => crate::SemanticRole::Container,
+            | ElementKind::Component(_)
+            | ElementKind::Custom(_) => crate::SemanticRole::Container,
             ElementKind::Label(_) => crate::SemanticRole::Label,
             ElementKind::Image(_) => crate::SemanticRole::Image,
             ElementKind::Scrollbar(_) => crate::SemanticRole::Scrollbar,

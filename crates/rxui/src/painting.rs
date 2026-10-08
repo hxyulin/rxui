@@ -152,6 +152,7 @@ pub struct UiPainter {
     layers: HashMap<ElementId, composition::LayerResource>,
     compositions: HashMap<u64, Arc<composition::CompositionPlan>>,
     layer_stats: LayerStats,
+    customs: HashMap<ElementId, Box<dyn std::any::Any>>,
 }
 impl UiPainter {
     /// Creates empty fonts and renderer caches for this graphics device.
@@ -169,6 +170,7 @@ impl UiPainter {
             layers: HashMap::new(),
             compositions: HashMap::new(),
             layer_stats: LayerStats::default(),
+            customs: HashMap::new(),
         }
     }
     /// Cumulative image upload/binding counters.
@@ -263,7 +265,41 @@ impl UiPainter {
             resource.prepared_revision = element.text_revision;
             resource.font_generation = self.generation;
         }
+        self.prepare_customs(ui, format, raster_scale)?;
         self.prepare_composition(ui, format, raster_scale)?;
+        Ok(())
+    }
+    fn prepare_customs<T: View>(
+        &mut self,
+        ui: &Ui<T>,
+        format: &RenderFormat,
+        raster_scale: f32,
+    ) -> Result<(), UiError> {
+        self.customs
+            .retain(|id, _| !ui.owns_element(*id) || ui.custom_element(*id).is_some());
+        for element in ui.elements() {
+            let Some(custom) = ui.custom_element(element.id) else {
+                continue;
+            };
+            let state = self
+                .customs
+                .entry(element.id)
+                .or_insert_with(|| custom.new_state());
+            // A replacement element of another type at the same identity starts fresh.
+            if (**state).type_id() != custom.state_type() {
+                *state = custom.new_state();
+            }
+            custom.prepare(
+                state.as_mut(),
+                &element,
+                &mut crate::CustomPrepare {
+                    painter: &mut self.painter,
+                    fonts: &mut self.fonts,
+                    format,
+                    raster_scale,
+                },
+            )?;
+        }
         Ok(())
     }
     fn prepare_images<T: View>(
@@ -395,6 +431,14 @@ impl UiPainter {
                     return Err(UiError::InvalidGeometry);
                 }
             }
+            if let Some(custom) = ui.custom_element(element.id)
+                && self
+                    .customs
+                    .get(&element.id)
+                    .is_none_or(|state| (**state).type_id() != custom.state_type())
+            {
+                return Err(UiError::InvalidGeometry);
+            }
             if element.text.is_some() {
                 let resource = self
                     .texts
@@ -438,6 +482,7 @@ impl UiPainter {
         if (element.paint.background.is_some()
             || element.paint.border_color.is_some()
             || element.range.is_some()
+            || element.kind == crate::ElementType::Custom
             || (element.focused && element.paint.focus_width > 0.))
             && b.width > 0.
             && b.height > 0.
@@ -723,6 +768,13 @@ impl UiPainter {
                         }
                     }
                 }
+                if let Some(custom) = ui.custom_element(element.id) {
+                    let state = self
+                        .customs
+                        .get(&element.id)
+                        .ok_or(UiError::InvalidGeometry)?;
+                    custom.paint(state.as_ref(), &element, &mut paint)?;
+                }
                 if element.text.is_some() {
                     let resource = self
                         .texts
@@ -898,6 +950,7 @@ impl UiPainter {
         self.image_placements.retain(|id, _| !ui.owns_element(*id));
         self.prune_images();
         self.layers.retain(|id, _| !ui.owns_element(*id));
+        self.customs.retain(|id, _| !ui.owns_element(*id));
         self.compositions.remove(&ui.tree_id());
     }
 }

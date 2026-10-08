@@ -384,7 +384,9 @@ impl UiPainter {
             || e.paint.border_color.is_some()
             || matches!(
                 e.kind,
-                crate::ElementType::Button | crate::ElementType::TextInput
+                crate::ElementType::Button
+                    | crate::ElementType::TextInput
+                    | crate::ElementType::Custom
             )
         {
             bounds = nonempty(e.bounds.intersection(e.clip_bounds));

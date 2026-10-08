@@ -238,3 +238,84 @@ fn text_alignment_and_line_height_reach_the_shaped_layout() {
         assert_eq!(tall.bounds.height, tall.font_size * 3.);
     });
 }
+
+/// A bar whose prepare pass counts preparations in its retained state.
+#[derive(PartialEq)]
+struct Bar {
+    fraction: f32,
+}
+#[derive(Default)]
+struct BarState {
+    prepared: u32,
+}
+impl CustomElement for Bar {
+    type State = BarState;
+    fn measure(&self, request: CustomMeasure) -> [f32; 2] {
+        [request.known[0].unwrap_or(40.), 20.]
+    }
+    fn prepare(
+        &self,
+        state: &mut BarState,
+        _: &ElementInfo<'_>,
+        cx: &mut CustomPrepare<'_>,
+    ) -> Result<(), UiError> {
+        assert_eq!(cx.raster_scale, 1.);
+        state.prepared += 1;
+        Ok(())
+    }
+    fn paint(
+        &self,
+        state: &BarState,
+        element: &ElementInfo<'_>,
+        paint: &mut astrelis::PaintSession<'_, '_>,
+    ) -> Result<(), UiError> {
+        assert!(state.prepared > 0);
+        let b = element.content_bounds;
+        paint.fill_rect(
+            Rect::new(b.x, b.y, b.width * self.fraction, b.height),
+            element.color,
+        )?;
+        Ok(())
+    }
+}
+struct Bars;
+impl View for Bars {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column()
+            .padding(10.)
+            .color([0., 1., 0., 1.])
+            .child(custom(Bar { fraction: 0.5 }).key("bar"))
+            .child(custom(Bar { fraction: 1. }).opacity(0.5))
+    }
+}
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn custom_elements_prepare_retained_state_and_paint_in_logical_units() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| cx.new(|_| Bars));
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let mut painter = UiPainter::new(&graphics);
+        let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [60, 60]);
+        let at = |x, y| pixel(&pixels, 60, x, y);
+        assert_eq!(at(15, 20), [0, 255, 0, 255]);
+        assert_eq!(at(35, 20), [0, 0, 0, 255]); // Past the half-filled bar.
+        let faded = at(45, 40); // Second bar, inside an opacity layer.
+        assert!(faded[1] > 100 && faded[1] < 160, "{faded:?}");
+        let id = ui
+            .elements()
+            .find(|e| e.key == Some(&Key::from("bar")))
+            .unwrap()
+            .id;
+        render(&graphics, &mut runtime, &mut ui, &mut painter, [60, 60]);
+        let state = painter.customs[&id].downcast_ref::<BarState>().unwrap();
+        assert_eq!(state.prepared, 2);
+        painter.forget(&ui);
+        assert!(painter.customs.is_empty());
+        assert!(errors.pop().await.is_none());
+    });
+}

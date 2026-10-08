@@ -757,3 +757,98 @@ fn unkeyed_children_keep_identity_when_keyed_siblings_come_and_go() {
         assert_eq!(unkeyed(&ui), ids, "before={before} between={between}");
     }
 }
+#[test]
+fn custom_leaves_measure_hit_test_and_describe_themselves() {
+    // A disc that wants a square of `diameter` and only takes pointer input inside it.
+    #[derive(PartialEq)]
+    struct Disc {
+        diameter: f32,
+        measured: Rc<Cell<u32>>,
+    }
+    impl CustomElement for Disc {
+        type State = ();
+        fn measure(&self, request: CustomMeasure) -> [f32; 2] {
+            self.measured.set(self.measured.get() + 1);
+            assert!(request.font_size > 0.);
+            [self.diameter; 2]
+        }
+        fn hit_test(&self, point: [f32; 2], size: [f32; 2]) -> bool {
+            let r = size[0] / 2.;
+            (point[0] - r).hypot(point[1] - r) <= r
+        }
+    }
+    struct Page {
+        diameter: f32,
+        clicks: u32,
+        measured: Rc<Cell<u32>>,
+    }
+    impl View for Page {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            row().child(
+                custom(Disc {
+                    diameter: self.diameter,
+                    measured: self.measured.clone(),
+                })
+                .key("disc")
+                .accessibility_label("Status")
+                .on_pointer_down(cx.listener(|this, _, _| this.clicks += 1)),
+            )
+        }
+    }
+    let measured = Rc::new(Cell::new(0));
+    let mut runtime = Runtime::new();
+    let page = runtime.update(|cx| {
+        cx.new(|_| Page {
+            diameter: 40.,
+            clicks: 0,
+            measured: measured.clone(),
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, page.clone()).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    let disc = ui
+        .elements()
+        .find(|e| e.key == Some(&"disc".into()))
+        .unwrap();
+    assert_eq!(disc.kind, ElementType::Custom);
+    assert_eq!((disc.bounds.width, disc.bounds.height), (40., 40.));
+    let id = disc.id;
+    let semantic = ui.semantic_node(id).unwrap();
+    assert_eq!(
+        (semantic.role, semantic.label),
+        (SemanticRole::Container, Some("Status"))
+    );
+    // Corners of the box miss the disc; its center hits.
+    ui.pointer(&mut runtime, PointerEvent::Pressed([2., 2.]))
+        .unwrap();
+    ui.pointer(&mut runtime, PointerEvent::Released([2., 2.]))
+        .unwrap();
+    ui.pointer(&mut runtime, PointerEvent::Pressed([20., 20.]))
+        .unwrap();
+    ui.pointer(&mut runtime, PointerEvent::Released([20., 20.]))
+        .unwrap();
+    assert_eq!(runtime.update(|cx| page.read(cx).clicks), 1);
+    // Equal descriptions keep the measurement; a changed one is measured again.
+    runtime.update(|cx| page.update(cx, |this, _| this.clicks = 2));
+    let before = measured.get();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert_eq!(measured.get(), before);
+    runtime.update(|cx| page.update(cx, |this, _| this.diameter = 60.));
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    assert!(measured.get() > before);
+    let disc = ui.element(id).unwrap();
+    assert_eq!((disc.bounds.width, disc.bounds.height), (60., 60.));
+    assert!(matches!(
+        custom(Disc {
+            diameter: 1.,
+            measured: measured.clone(),
+        })
+        .child(label("No"))
+        .validate(),
+        Err(UiError::LeafChildren)
+    ));
+}

@@ -119,6 +119,8 @@ mod context;
 #[cfg(feature = "layout")]
 mod controls;
 #[cfg(feature = "layout")]
+mod custom;
+#[cfg(feature = "layout")]
 mod dock;
 #[cfg(feature = "layout")]
 mod dock_view;
@@ -178,6 +180,10 @@ pub use controls::{
     Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, Split, SplitPosition, scroll_area,
     scrollbar, split_column, split_row,
 };
+#[cfg(feature = "rendering")]
+pub use custom::CustomPrepare;
+#[cfg(feature = "layout")]
+pub use custom::{CustomElement, CustomMeasure, custom};
 #[cfg(feature = "layout")]
 pub use dock::{
     DockDropTarget, DockError, DockEvent, DockNode, DockNodeId, DockSide, DockSplit, DockTabs,

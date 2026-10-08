@@ -117,6 +117,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |
 | [Text input](docs/text-input.md) and [semantics](docs/semantics.md) | Editing, IME and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
+| [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves |
 | [Overlays and commands](docs/overlays-and-commands.md) and [docking](docs/docking.md) | Menus, dialogs, shortcuts and dock layouts |
 | [Native menus](docs/native-menus.md), [services](docs/native-services.md) and [window state](docs/window-state-and-files.md) | Desktop integration |
 

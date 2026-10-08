@@ -121,6 +121,7 @@ pub(crate) enum ElementKind {
         read_only: bool,
     },
     Component(Rc<dyn crate::ui::Component>),
+    Custom(Rc<dyn crate::custom::AnyCustom>),
 }
 
 /// Owned UI description with common properties inline and optional input/semantic
@@ -1043,6 +1044,7 @@ impl Element {
                     | ElementKind::Image(_)
                     | ElementKind::TextInput { .. }
                     | ElementKind::Component(_)
+                    | ElementKind::Custom(_)
             )
         {
             return Err(UiError::LeafChildren);

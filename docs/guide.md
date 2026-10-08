@@ -283,6 +283,11 @@ color output. `button(row().child(image(icon)).child(label("Save")))` composes c
 with normal control behavior; `.variant(ButtonVariant::Primary)` or Quiet selects
 themed appearances.
 
+Implement `CustomElement` and place it with `custom(value)` for leaves that measure,
+hit-test and paint themselves with the Astrelis painter; the
+[custom element contract](custom-elements.md) covers measurement, retained state
+and painting.
+
 `Application::prepare_graphics` owns allocation, resize and data uploads.
 `Application::render_graphics` records application passes before UI painting in the
 same frame. The [image contract](images.md) covers layout, alpha, ownership,
