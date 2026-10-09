@@ -70,31 +70,68 @@ impl FamilyMap {
         })
     }
 }
+fn family(family: &crate::FontFamily, families: &FamilyMap) -> FontFamily {
+    match families.get(family) {
+        Some(name) => FontFamily::Named(name.to_string()),
+        None => match family {
+            crate::FontFamily::Named(name) => FontFamily::Named(name.to_string()),
+            crate::FontFamily::SansSerif => FontFamily::SansSerif,
+            crate::FontFamily::Serif => FontFamily::Serif,
+            crate::FontFamily::Monospace => FontFamily::Monospace,
+        },
+    }
+}
+fn slant(style: crate::FontStyle) -> FontSlant {
+    match style {
+        crate::FontStyle::Normal => FontSlant::Normal,
+        crate::FontStyle::Italic => FontSlant::Italic,
+        crate::FontStyle::Oblique => FontSlant::Oblique,
+    }
+}
+/// Rich text spans clipped to `window`, a byte range of the span coordinates
+/// that the configured text covers, translated to the text's own offsets.
+fn spans(
+    spans: &[crate::ResolvedSpan],
+    window: std::ops::Range<usize>,
+    families: &FamilyMap,
+) -> Vec<astrelis::TextSpan> {
+    spans
+        .iter()
+        .filter(|s| s.range.start < window.end && s.range.end > window.start)
+        .map(|s| {
+            let range = s.range.start.max(window.start) - window.start
+                ..s.range.end.min(window.end) - window.start;
+            let mut span = astrelis::TextSpan::new(range);
+            span.family = s.family.as_ref().map(|f| family(f, families));
+            span.weight = s.weight.map(|w| w.0);
+            span.slant = s.style.map(slant);
+            span.font_size = s.font_size;
+            span.color = s.color;
+            span.underline = s.underline.then_some(true);
+            span.strikethrough = s.strikethrough.then_some(true);
+            span
+        })
+        .collect()
+}
 impl TextResource {
     /// Applies text, style and wrapping; the configured width is left unchanged.
-    fn configure(&mut self, request: TextRequest<'_>, families: &FamilyMap) -> Result<(), UiError> {
+    /// `offset` is where the text starts in the request's span coordinates.
+    fn configure(
+        &mut self,
+        request: TextRequest<'_>,
+        families: &FamilyMap,
+        offset: usize,
+    ) -> Result<(), UiError> {
         let style = request.style;
-        let family = match families.get(&style.family) {
-            Some(name) => FontFamily::Named(name.to_string()),
-            None => match &style.family {
-                crate::FontFamily::Named(name) => FontFamily::Named(name.to_string()),
-                crate::FontFamily::SansSerif => FontFamily::SansSerif,
-                crate::FontFamily::Serif => FontFamily::Serif,
-                crate::FontFamily::Monospace => FontFamily::Monospace,
-            },
-        };
-        self.buffer.set_text(
+        self.buffer.set_rich_text(
             request.text,
             TextStyle::new()
-                .family(family)
+                .family(family(&style.family, families))
                 .font_size(request.font_size)
                 .line_height(request.font_size * style.line_height)
                 .weight(style.weight.0)
-                .slant(match style.style {
-                    crate::FontStyle::Normal => FontSlant::Normal,
-                    crate::FontStyle::Italic => FontSlant::Italic,
-                    crate::FontStyle::Oblique => FontSlant::Oblique,
-                }),
+                .slant(slant(style.style)),
+            spans(request.spans, offset..offset + request.text.len(), families),
         )?;
         // Editors scroll horizontally from the start edge, so they ignore alignment.
         self.buffer.set_align(match style.align {
@@ -119,7 +156,17 @@ impl TextResource {
         families: &FamilyMap,
         request: TextRequest<'_>,
     ) -> Result<Arc<TextLayout>, UiError> {
-        self.configure(request, families)?;
+        self.layout_at(fonts, families, request, 0)
+    }
+    /// Lays out text starting at `offset` in the request's span coordinates.
+    fn layout_at(
+        &mut self,
+        fonts: &mut TextSystem,
+        families: &FamilyMap,
+        request: TextRequest<'_>,
+        offset: usize,
+    ) -> Result<Arc<TextLayout>, UiError> {
+        self.configure(request, families, offset)?;
         self.buffer.set_width(text_width(request.width))?;
         Ok(self.buffer.layout(fonts)?)
     }
@@ -192,7 +239,16 @@ impl TextResource {
         families: &FamilyMap,
         request: TextRequest<'_>,
     ) -> Result<[f32; 2], UiError> {
-        self.configure(request, families)?;
+        self.measure_at(fonts, families, request, 0)
+    }
+    fn measure_at(
+        &mut self,
+        fonts: &mut TextSystem,
+        families: &FamilyMap,
+        request: TextRequest<'_>,
+        offset: usize,
+    ) -> Result<[f32; 2], UiError> {
+        self.configure(request, families, offset)?;
         Ok(self.buffer.measure(fonts, text_width(request.width))?)
     }
     /// Size of whole or chunked text at the requested width.
@@ -1189,10 +1245,12 @@ impl UiPainter {
                                     selected_clip[2],
                                     selected_clip[3],
                                 )?;
+                                // Selected text takes one color, including rich spans.
                                 paint.draw_text(
                                     prepared,
                                     TextDraw::new([origin[0], origin[1] + offset])
-                                        .color(appearance.selection_text_color),
+                                        .color(appearance.selection_text_color)
+                                        .span_colors(false),
                                 )?;
                             }
                         }
@@ -1986,6 +2044,7 @@ mod tests {
                     width: TextWidth::Available(info.content_bounds.width),
                     single_line: false,
                     style: info.text_style,
+                    spans: &[],
                     revision: info.text_revision,
                 };
                 assert!(painter.texts[&id].chunks.is_some());
@@ -2132,6 +2191,182 @@ mod tests {
     }
     #[test]
     #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn rich_text_spans_size_color_and_chunk_like_a_single_buffer() {
+        use crate::{rich_text, span};
+        struct Rich(usize);
+        impl View for Rich {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                let mut spans = vec![
+                    span("MMMM").color([1., 1., 1., 1.]),
+                    span("MMMM").color([1., 0., 0., 1.]),
+                ];
+                // Spans that cross paragraph and chunk boundaries.
+                for i in 0..self.0 {
+                    spans.push(span(format!("\nline {i} ")));
+                    spans.push(span(format!("big {i}\nnext")).font_size(22.).underline());
+                }
+                column()
+                    .child(label("MMMM").key("plain"))
+                    .child(rich_text([span("MMMM").font_size(28.)]).key("large"))
+                    .child(rich_text(spans).key("rich").width(300.))
+            }
+        }
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let errors = graphics
+                .device()
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let mut target =
+                graphics
+                    .create_framebuffer(FramebufferOptions::new(320, 2048).usage(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    ))
+                    .unwrap();
+            let mut runtime = Runtime::new();
+            let root = runtime.update(|cx| cx.new(|_| Rich(20)));
+            let mut ui = Ui::new(&mut runtime, root).unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
+                .unwrap();
+            ui.prepare(&mut runtime, [320., 2048.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+            let id = |key: &str| {
+                let key = crate::Key::from(key);
+                ui.elements().find(|e| e.key == Some(&key)).unwrap().id
+            };
+            let plain = ui.element(id("plain")).unwrap().content_bounds;
+            let large = ui.element(id("large")).unwrap().content_bounds;
+            assert!(large.height > plain.height * 1.5, "{plain:?} {large:?}");
+            // Chunked spans, clipped to each chunk, lay out like one buffer.
+            let rich = id("rich");
+            assert!(painter.texts[&rich].chunks.is_some());
+            let info = ui.element(rich).unwrap();
+            let value = info.text.unwrap().to_owned();
+            let spans: Vec<_> = ui.nodes[&rich].spans.to_vec();
+            let request = TextRequest {
+                text: &value,
+                font_size: info.font_size,
+                width: TextWidth::Available(info.content_bounds.width),
+                single_line: false,
+                style: info.text_style,
+                spans: &spans,
+                revision: info.text_revision,
+            };
+            let mut reference = TextResource::default();
+            let single = reference
+                .layout(&mut painter.fonts, &painter.families, request)
+                .unwrap();
+            assert!((single.size()[1] - info.content_bounds.height).abs() < 0.1);
+            assert_eq!(
+                single.decorations().len(),
+                painter.texts[&rich]
+                    .chunks
+                    .as_ref()
+                    .unwrap()
+                    .list
+                    .iter()
+                    .map(|c| c.layout.as_ref().unwrap().decorations().len())
+                    .sum::<usize>()
+            );
+            for offset in (0..value.len())
+                .filter(|i| single.is_text_boundary(*i))
+                .step_by(5)
+            {
+                let position = crate::TextPosition::new(offset);
+                let expected = single.caret(ast_position(position)).unwrap();
+                let actual = painter
+                    .text_caret(rich, request, position)
+                    .unwrap()
+                    .unwrap();
+                assert!((expected.origin[0] - actual.x).abs() < 0.1, "{offset}");
+                assert!((expected.origin[1] - actual.y).abs() < 0.1, "{offset}");
+            }
+            // The second span paints red; the first keeps white.
+            let texture = target.color_texture().unwrap().clone();
+            let buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("RXUI rich text readback"),
+                size: 320 * 4 * 2048,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut frame = target.begin_frame().unwrap();
+            {
+                let mut pass = frame
+                    .render_pass()
+                    .clear_color(wgpu::Color::BLACK)
+                    .begin()
+                    .unwrap();
+                painter.paint(&ui, &mut pass, 1.).unwrap();
+            }
+            frame.encoder().copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: Default::default(),
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(320 * 4),
+                        rows_per_image: Some(2048),
+                    },
+                },
+                texture.size(),
+            );
+            let submission = frame.finish().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+            graphics
+                .device()
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                })
+                .unwrap();
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .unwrap();
+            let pixels = buffer.slice(..).get_mapped_range().unwrap();
+            let mut caret = |offset: usize| {
+                painter
+                    .text_caret(rich, request, crate::TextPosition::new(offset))
+                    .unwrap()
+                    .unwrap()
+            };
+            let (first, second, end) = (caret(0), caret(4), caret(8));
+            let count = |from: f32, to: f32, red: bool| {
+                let mut count = 0;
+                for y in (info.content_bounds.y + first.y) as usize
+                    ..(info.content_bounds.y + first.y + first.height) as usize
+                {
+                    for x in (info.content_bounds.x + from) as usize
+                        ..(info.content_bounds.x + to) as usize
+                    {
+                        let p = &pixels[y * 1280 + x * 4..y * 1280 + x * 4 + 4];
+                        if red && p[0] > 128 && p[1] < 64 || !red && p[0] > 128 && p[1] > 128 {
+                            count += 1;
+                        }
+                    }
+                }
+                count
+            };
+            assert!(count(first.x, second.x, false) > 20);
+            assert_eq!(count(first.x, second.x, true), 0);
+            assert!(count(second.x, end.x, true) > 20);
+            assert_eq!(count(second.x + 1., end.x, false), 0);
+            drop(pixels);
+            buffer.unmap();
+            assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
     fn intrinsic_probes_measure_without_replacing_the_prepared_layout() {
         pollster::block_on(async {
             let graphics = GraphicsContext::headless().await.unwrap();
@@ -2163,6 +2398,7 @@ mod tests {
                 width,
                 single_line: false,
                 style: element.text_style,
+                spans: &[],
                 revision: element.text_revision,
             };
             let [min, height] = painter.measure(id, request(TextWidth::MinContent)).unwrap();

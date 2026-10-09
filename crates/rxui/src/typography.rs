@@ -152,3 +152,162 @@ impl Overrides {
             && !matches!(&self.family, Some(FontFamily::Named(name)) if name.is_empty())
     }
 }
+
+/// One styled run of a [`crate::rich_text`] paragraph. Unset attributes inherit the
+/// element's resolved text style and color; theme colors follow theme switches.
+///
+/// ```
+/// use rxui::prelude::*;
+/// let notice = rich_text([
+///     span("Saved "),
+///     span("3 files").bold(),
+///     span(" to "),
+///     span("~/notes").monospace().color(ThemeColor::Accent),
+/// ]);
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSpan {
+    pub(crate) text: String,
+    pub(crate) style: SpanStyle,
+}
+/// Attribute overrides of one span; see [`TextSpan`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SpanStyle {
+    pub family: Option<FontFamily>,
+    pub weight: Option<FontWeight>,
+    pub style: Option<FontStyle>,
+    pub font_size: Option<f32>,
+    pub color: Option<crate::StyleColor>,
+    pub underline: bool,
+    pub strikethrough: bool,
+}
+/// A span of text for [`crate::rich_text`], inheriting every attribute until set.
+pub fn span(text: impl Into<String>) -> TextSpan {
+    TextSpan {
+        text: text.into(),
+        style: SpanStyle::default(),
+    }
+}
+impl TextSpan {
+    /// Preferred family, such as `FontFamily::Monospace` for inline code.
+    pub fn family(mut self, family: impl Into<FontFamily>) -> Self {
+        self.style.family = Some(family.into());
+        self
+    }
+    /// The generic monospace family.
+    pub fn monospace(self) -> Self {
+        self.family(FontFamily::Monospace)
+    }
+    /// Weight in `1..=1000`.
+    pub fn weight(mut self, weight: FontWeight) -> Self {
+        self.style.weight = Some(weight);
+        self
+    }
+    /// `FontWeight::BOLD`.
+    pub fn bold(self) -> Self {
+        self.weight(FontWeight::BOLD)
+    }
+    /// Slope.
+    pub fn style(mut self, style: FontStyle) -> Self {
+        self.style.style = Some(style);
+        self
+    }
+    /// `FontStyle::Italic`.
+    pub fn italic(self) -> Self {
+        self.style(FontStyle::Italic)
+    }
+    /// Font size in logical units; a line grows to fit its tallest span.
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.style.font_size = Some(size);
+        self
+    }
+    /// Literal or theme-bound color, replacing the element's text color.
+    pub fn color(mut self, color: impl Into<crate::StyleColor>) -> Self {
+        self.style.color = Some(color.into());
+        self
+    }
+    /// Draws a single underline in the span's color.
+    pub fn underline(mut self) -> Self {
+        self.style.underline = true;
+        self
+    }
+    /// Draws a line through the text in the span's color.
+    pub fn strikethrough(mut self) -> Self {
+        self.style.strikethrough = true;
+        self
+    }
+}
+impl From<&str> for TextSpan {
+    fn from(text: &str) -> Self {
+        span(text)
+    }
+}
+impl From<String> for TextSpan {
+    fn from(text: String) -> Self {
+        span(text)
+    }
+}
+impl SpanStyle {
+    pub fn valid(&self) -> bool {
+        self.weight.is_none_or(|w| (1..=1000).contains(&w.0))
+            && self.font_size.is_none_or(|s| s.is_finite() && s > 0.)
+            && self.color.is_none_or(|c| c.valid())
+            && !matches!(&self.family, Some(FontFamily::Named(name)) if name.is_empty())
+    }
+    pub fn resolve(&self, range: std::ops::Range<usize>, theme: &crate::Theme) -> ResolvedSpan {
+        ResolvedSpan {
+            range,
+            family: self.family.clone(),
+            weight: self.weight,
+            style: self.style,
+            font_size: self.font_size,
+            color: self.color.map(|c| c.resolve(theme)),
+            underline: self.underline,
+            strikethrough: self.strikethrough,
+        }
+    }
+}
+/// Rich text content: the concatenated text and each styled span's byte range.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RichText {
+    pub text: String,
+    pub spans: Vec<(std::ops::Range<usize>, SpanStyle)>,
+}
+impl RichText {
+    pub fn new(spans: impl IntoIterator<Item = TextSpan>) -> Self {
+        let mut text = String::new();
+        let mut styled = Vec::new();
+        for span in spans {
+            let start = text.len();
+            text.push_str(&span.text);
+            if span.style != SpanStyle::default() && !span.text.is_empty() {
+                styled.push((start..text.len(), span.style));
+            }
+        }
+        Self {
+            text,
+            spans: styled,
+        }
+    }
+}
+/// A styled byte range with theme colors resolved, as passed to text measurement.
+/// Unset attributes inherit the request's [`TextStyle`] and the element's color.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedSpan {
+    /// Byte range in the request text.
+    pub range: std::ops::Range<usize>,
+    /// Family override.
+    pub family: Option<FontFamily>,
+    /// Weight override.
+    pub weight: Option<FontWeight>,
+    /// Slope override.
+    pub style: Option<FontStyle>,
+    /// Font size override in logical units.
+    pub font_size: Option<f32>,
+    /// Linear RGBA color override.
+    pub color: Option<crate::Color>,
+    /// Single underline.
+    pub underline: bool,
+    /// Strikethrough line.
+    pub strikethrough: bool,
+}

@@ -174,10 +174,11 @@ impl Chunks {
         }
         let mut size = [0f32, 0f32];
         for chunk in &mut self.list {
-            let [w, h] = chunk.resource.measure(
+            let [w, h] = chunk.resource.measure_at(
                 fonts,
                 families,
                 chunk_request(request, chunk.start..chunk.end()),
+                chunk.start,
             )?;
             size = [size[0].max(w), size[1] + h];
         }
@@ -203,10 +204,11 @@ impl Chunks {
         }
         let mut top = 0.;
         for chunk in &mut self.list {
-            let layout = chunk.resource.layout(
+            let layout = chunk.resource.layout_at(
                 fonts,
                 families,
                 chunk_request(request, chunk.start..chunk.end()),
+                chunk.start,
             )?;
             chunk.top = top;
             top += layout.size()[1];

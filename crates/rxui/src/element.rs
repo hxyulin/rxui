@@ -107,6 +107,8 @@ pub(crate) enum ElementKind {
     Scrollbar(Box<crate::controls::ScrollbarProps>),
     Splitter(Box<crate::controls::SplitterProps>),
     Label(String),
+    /// Label text with styled spans; see [`rich_text`].
+    RichText(Box<crate::typography::RichText>),
     Image(Box<crate::image::Properties>),
     Button {
         text: Option<String>,
@@ -952,7 +954,7 @@ impl Element {
     /// caret and accept no edits.
     pub fn selectable(mut self, value: bool) -> Self {
         assert!(
-            matches!(self.kind, ElementKind::Label(_)),
+            matches!(self.kind, ElementKind::Label(_) | ElementKind::RichText(_)),
             "selectable requires a label"
         );
         let input = self.input.get_or_insert_with(Default::default);
@@ -1155,10 +1157,16 @@ impl Element {
         {
             return Err(UiError::InvalidTextValue);
         }
+        if let ElementKind::RichText(rich) = &self.kind
+            && !rich.spans.iter().all(|(_, style)| style.valid())
+        {
+            return Err(UiError::InvalidStyle);
+        }
         if !self.children.is_empty()
             && matches!(
                 self.kind,
                 ElementKind::Label(_)
+                    | ElementKind::RichText(_)
                     | ElementKind::Scrollbar(_)
                     | ElementKind::Splitter(_)
                     | ElementKind::Button { text: Some(_), .. }
@@ -1225,6 +1233,27 @@ pub fn stack() -> Element {
 /// Owned text leaf measured by the host's text measurer.
 pub fn label(text: impl Into<String>) -> Element {
     Element::new(ElementKind::Label(text.into()))
+}
+/// A label whose text is the concatenation of styled spans: weights, slopes,
+/// families, sizes, colors, underlines and strikethroughs within one wrapped
+/// paragraph. Unset span attributes inherit the element's text style and color,
+/// and theme-bound span colors follow theme switches. It measures, wraps, aligns,
+/// selects (with `.selectable(true)`) and publishes its plain text exactly like
+/// [`label`]; assistive technology receives the text without attributes.
+///
+/// ```
+/// use rxui::prelude::*;
+/// let status = rich_text([
+///     span("Build "),
+///     span("failed").bold().color(ThemeColor::Accent),
+///     span(" in "),
+///     span("src/main.rs").monospace().underline(),
+/// ]);
+/// ```
+pub fn rich_text(spans: impl IntoIterator<Item = impl Into<crate::TextSpan>>) -> Element {
+    Element::new(ElementKind::RichText(Box::new(
+        crate::typography::RichText::new(spans.into_iter().map(Into::into)),
+    )))
 }
 /// Button with a caption or composed content, default padding and themed state paint.
 /// Plain strings retain the leaf fast path; composed content cannot contain controls.

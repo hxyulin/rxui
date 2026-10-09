@@ -216,6 +216,8 @@ pub use editing::{
     TextSelection, TextSubmitEvent,
 };
 #[cfg(feature = "layout")]
+pub use element::rich_text;
+#[cfg(feature = "layout")]
 pub use element::text_area;
 #[cfg(feature = "layout")]
 pub use element::{
@@ -277,7 +279,7 @@ pub use theme::{
     ThemeColors, ThemeMetrics, rgb8, rgba8,
 };
 #[cfg(feature = "layout")]
-pub use typography::FontFace;
+pub use typography::{FontFace, ResolvedSpan, TextSpan, span};
 #[cfg(feature = "layout")]
 pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
 #[cfg(feature = "layout")]
@@ -352,7 +354,7 @@ pub mod prelude {
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
         TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
     };
-    pub use crate::{FontFace, SubmitShortcut, text_area};
+    pub use crate::{FontFace, SubmitShortcut, TextSpan, rich_text, span, text_area};
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
     #[cfg(feature = "tasks")]

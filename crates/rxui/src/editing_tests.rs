@@ -1406,3 +1406,90 @@ fn control_character_validation_scans_blocks_and_allows_text_area_breaks() {
         assert!(!has_control(&text, true), "{pad}");
     }
 }
+struct Rich {
+    accent: bool,
+    size: f32,
+}
+impl View for Rich {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        let colored = if self.accent {
+            span("accent").color(ThemeColor::TextMuted)
+        } else {
+            span("accent").color([1., 0., 0., 1.])
+        };
+        column().child(
+            rich_text([
+                span("plain "),
+                span("bold").bold(),
+                " ".into(),
+                colored,
+                span(" big").font_size(self.size).underline(),
+            ])
+            .key("rich")
+            .selectable(true),
+        )
+    }
+}
+#[test]
+fn rich_text_publishes_plain_text_and_restyles_only_when_spans_or_theme_colors_change() {
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Rich {
+            accent: true,
+            size: 20.,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut runtime, [400., 400.], &mut measure)
+        .unwrap();
+    let id = keyed(&ui, "rich");
+    let info = ui.element(id).unwrap();
+    assert_eq!(info.kind, ElementType::Label);
+    assert_eq!(info.text, Some("plain bold accent big"));
+    let revision = info.text_revision;
+    let node = ui.semantic_node(id).unwrap();
+    assert_eq!(node.role, SemanticRole::Label);
+    assert_eq!(node.value, Some("plain bold accent big"));
+    // Selectable rich text selects and copies its plain text.
+    ui.focus(id);
+    ui.text_input(&mut runtime, TextInputEvent::SelectAll, &mut measure)
+        .unwrap();
+    assert_eq!(ui.selected_text(), Some("plain bold accent big"));
+    // A palette switch re-resolves theme-bound span colors.
+    let original = ui.theme().clone();
+    let other = if original == Theme::light() {
+        Theme::dark()
+    } else {
+        Theme::light()
+    };
+    assert!(ui.set_theme(other).unwrap());
+    ui.prepare(&mut runtime, [400., 400.], &mut measure)
+        .unwrap();
+    let themed = ui.element(id).unwrap().text_revision;
+    assert!(themed > revision);
+    // Literal colors do not depend on the theme.
+    runtime.update(|cx| root.update(cx, |r, _| r.accent = false));
+    ui.prepare(&mut runtime, [400., 400.], &mut measure)
+        .unwrap();
+    let literal = ui.element(id).unwrap().text_revision;
+    assert!(literal > themed);
+    let measurements = ui.stats().measurements;
+    assert!(ui.set_theme(original).unwrap());
+    ui.prepare(&mut runtime, [400., 400.], &mut measure)
+        .unwrap();
+    assert_eq!(ui.element(id).unwrap().text_revision, literal);
+    assert_eq!(ui.stats().measurements, measurements);
+    // A size change re-measures.
+    runtime.update(|cx| root.update(cx, |r, _| r.size = 30.));
+    ui.prepare(&mut runtime, [400., 400.], &mut measure)
+        .unwrap();
+    assert!(ui.stats().measurements > measurements);
+    assert!(ui.element(id).unwrap().text_revision > literal);
+    // Invalid span attributes are rejected before they commit.
+    runtime.update(|cx| root.update(cx, |r, _| r.size = f32::NAN));
+    assert!(matches!(
+        ui.prepare(&mut runtime, [400., 400.], &mut measure),
+        Err(UiError::InvalidStyle)
+    ));
+}

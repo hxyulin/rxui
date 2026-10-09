@@ -233,6 +233,8 @@ pub struct TextRequest<'a> {
     pub single_line: bool,
     /// Resolved family, weight, slope, line height and alignment.
     pub style: &'a crate::TextStyle,
+    /// Styled byte ranges of rich text, overriding `style`; empty for plain text.
+    pub spans: &'a [crate::ResolvedSpan],
     /// Retained text/font revision, scoped to the element identity.
     pub revision: u64,
 }
@@ -497,7 +499,7 @@ fn kind(element: &Element) -> ElementType {
         ElementKind::Stack => ElementType::Stack,
         ElementKind::Scrollbar(_) => ElementType::Scrollbar,
         ElementKind::Splitter(_) => ElementType::Splitter,
-        ElementKind::Label(_) => ElementType::Label,
+        ElementKind::Label(_) | ElementKind::RichText(_) => ElementType::Label,
         ElementKind::Image(_) => ElementType::Image,
         ElementKind::TextInput { .. } => ElementType::TextInput,
         ElementKind::Button { .. } => ElementType::Button,
@@ -508,7 +510,16 @@ fn kind(element: &Element) -> ElementType {
 fn text(element: &Element) -> Option<&str> {
     match &element.kind {
         ElementKind::Label(text) | ElementKind::TextInput { value: text, .. } => Some(text),
+        ElementKind::RichText(rich) => Some(&rich.text),
         ElementKind::Button { text, .. } => text.as_deref(),
+        _ => None,
+    }
+}
+fn rich_spans(
+    element: &Element,
+) -> Option<&[(std::ops::Range<usize>, crate::typography::SpanStyle)]> {
+    match &element.kind {
+        ElementKind::RichText(rich) => Some(&rich.spans),
         _ => None,
     }
 }
@@ -572,6 +583,8 @@ pub(crate) struct Node {
     font_size: f32,
     text_binding: crate::typography::Overrides,
     text_style: crate::TextStyle,
+    /// Theme-resolved rich text spans; empty for other text.
+    pub(crate) spans: Box<[crate::ResolvedSpan]>,
     paint: ResolvedPaint,
     state_paints: Option<Box<[ResolvedPaint; 3]>>,
     border: [f32; 4],
@@ -615,6 +628,7 @@ impl Node {
     fn edit_value(&self) -> &str {
         match &self.element.kind {
             ElementKind::TextInput { value, .. } | ElementKind::Label(value) => value,
+            ElementKind::RichText(rich) => &rich.text,
             _ => "",
         }
     }
@@ -641,6 +655,7 @@ impl Node {
             width: TextWidth::Available(self.content_bounds.width),
             single_line: self.single_line(),
             style: &self.text_style,
+            spans: &self.spans,
             revision: self.text_revision,
         }
     }
@@ -650,7 +665,9 @@ impl Node {
 fn has_editor(element: &Element) -> bool {
     match element.kind {
         ElementKind::TextInput { .. } => true,
-        ElementKind::Label(_) => element.input.as_ref().is_some_and(|p| p.selectable),
+        ElementKind::Label(_) | ElementKind::RichText(_) => {
+            element.input.as_ref().is_some_and(|p| p.selectable)
+        }
         _ => false,
     }
 }
@@ -1112,6 +1129,7 @@ impl<T: View> Ui<T> {
                                 width,
                                 single_line: node.single_line(),
                                 style: &node.text_style,
+                                spans: &node.spans,
                                 revision: node.text_revision,
                             },
                         ) {
@@ -1197,6 +1215,9 @@ impl<T: View> Ui<T> {
         if let ElementKind::Label(text) = &node.element.kind {
             labels.push(text.clone());
         }
+        if let ElementKind::RichText(rich) = &node.element.kind {
+            labels.push(rich.text.clone());
+        }
         for child in &node.children {
             self.button_labels(*child, labels);
         }
@@ -1281,6 +1302,9 @@ impl<T: View> Ui<T> {
             {
                 self.taffy.mark_dirty(node.layout)?;
             }
+            if rich_spans(&node.element) != rich_spans(&element) {
+                self.style_roots.insert(id);
+            }
             if text(&node.element) != text(&element) {
                 self.taffy.mark_dirty(node.layout)?;
                 node.text_revision = node
@@ -1301,8 +1325,9 @@ impl<T: View> Ui<T> {
                         self.editor_nodes.push(id);
                     }
                 }
-            } else if let (Some(editor), ElementKind::Label(old), ElementKind::Label(new)) =
-                (&mut node.editor, &node.element.kind, &element.kind)
+            } else if !matches!(element.kind, ElementKind::TextInput { .. })
+                && let (Some(editor), Some(old), Some(new)) =
+                    (&mut node.editor, text(&node.element), text(&element))
             {
                 editor.reconcile(old, new);
             }
@@ -1417,6 +1442,7 @@ impl<T: View> Ui<T> {
                     font_binding: None,
                     font_size: 16.,
                     text_binding: Default::default(),
+                    spans: Box::default(),
                     text_style: Default::default(),
                     paint: ResolvedPaint::new(&Theme::default(), Theme::default().palette().text),
                     state_paints: None,
@@ -1758,6 +1784,34 @@ impl<T: View> Ui<T> {
         node.pointer_allowed = pointer_allowed;
         node.button_owner = button_owner;
         node.control_color = control_color;
+        // Theme-bound span colors change with the theme; sizes and families can
+        // change with the description.
+        let spans: Box<[crate::ResolvedSpan]> = match &node.element.kind {
+            ElementKind::RichText(rich) => rich
+                .spans
+                .iter()
+                .map(|(range, style)| style.resolve(range.clone(), &theme))
+                .collect(),
+            _ => Box::default(),
+        };
+        if spans != node.spans {
+            let metrics = spans.len() != node.spans.len()
+                || spans.iter().zip(&node.spans).any(|(a, b)| {
+                    a.range != b.range
+                        || a.family != b.family
+                        || a.weight != b.weight
+                        || a.style != b.style
+                        || a.font_size != b.font_size
+                });
+            if metrics {
+                self.taffy.mark_dirty(layout_id)?;
+            }
+            node.spans = spans;
+            node.text_revision = node
+                .text_revision
+                .checked_add(1)
+                .expect("RXUI text revision exhausted");
+        }
         if (node.font_size != font_size || node.text_style != text_style)
             && (node.displayed_text().is_some()
                 || matches!(node.element.kind, ElementKind::Custom(_)))
@@ -2500,7 +2554,10 @@ impl<T: View> Ui<T> {
                     editor.drag_selection = None;
                     editor.goal = None;
                     // A selectable label's selection does not outlive its focus.
-                    if matches!(node.element.kind, ElementKind::Label(_)) {
+                    if matches!(
+                        node.element.kind,
+                        ElementKind::Label(_) | ElementKind::RichText(_)
+                    ) {
                         editor.selection = TextSelection {
                             anchor: editor.selection.focus,
                             focus: editor.selection.focus,
@@ -3466,7 +3523,7 @@ impl<T: View> Ui<T> {
             | ElementKind::Stack
             | ElementKind::Component(_)
             | ElementKind::Custom(_) => crate::SemanticRole::Container,
-            ElementKind::Label(_) => crate::SemanticRole::Label,
+            ElementKind::Label(_) | ElementKind::RichText(_) => crate::SemanticRole::Label,
             ElementKind::Image(_) => crate::SemanticRole::Image,
             ElementKind::Scrollbar(_) => crate::SemanticRole::Scrollbar,
             ElementKind::Splitter(_) => crate::SemanticRole::Splitter,
@@ -3490,6 +3547,9 @@ impl<T: View> Ui<T> {
                     }
                     ElementKind::Label(text) if role == crate::SemanticRole::Heading => {
                         Some(text.as_str())
+                    }
+                    ElementKind::RichText(rich) if role == crate::SemanticRole::Heading => {
+                        Some(rich.text.as_str())
                     }
                     _ => None,
                 });
@@ -3549,7 +3609,9 @@ impl<T: View> Ui<T> {
             clip_bounds: node.clip_bounds,
             clips_children: node.element.clip,
             value: match node.element.kind {
-                ElementKind::Label(_) | ElementKind::TextInput { .. } => node.displayed_text(),
+                ElementKind::Label(_)
+                | ElementKind::RichText(_)
+                | ElementKind::TextInput { .. } => node.displayed_text(),
                 _ => properties.and_then(|p| p.value.as_deref()),
             },
             text_revision: node.text_revision,
@@ -3707,7 +3769,8 @@ impl<T: View> Ui<T> {
                 let (ElementKind::TextInput {
                     disabled: false, ..
                 }
-                | ElementKind::Label(_)) = &node.element.kind
+                | ElementKind::Label(_)
+                | ElementKind::RichText(_)) = &node.element.kind
                 else {
                     return Ok(false);
                 };
