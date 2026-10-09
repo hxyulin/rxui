@@ -366,6 +366,9 @@ pub struct ElementInfo<'a> {
     pub pressed: bool,
     /// Whether this element has keyboard focus.
     pub focused: bool,
+    /// Whether to draw the focus ring: focused and, under the default
+    /// [`crate::FocusRingPolicy::Keyboard`], reached by keyboard or a text input.
+    pub focus_visible: bool,
     /// Whether the underlying element participates in focus navigation.
     pub focusable: bool,
     /// Numeric control geometry, when this element is a scrollbar/divider.
@@ -624,6 +627,9 @@ pub struct Ui<T: View> {
     hovered: Option<ElementId>,
     pressed: Option<ElementId>,
     focused: Option<ElementId>,
+    /// The last focus-relevant input was a key, not a pointer press.
+    keyboard_modality: bool,
+    focus_ring: crate::FocusRingPolicy,
     focus_state: Option<Box<focus::State>>,
     dock_drag: Option<Box<dock_dispatch::Drag>>,
     overlays: Option<Box<overlay_dispatch::State>>,
@@ -671,6 +677,8 @@ impl<T: View> Ui<T> {
             hovered: None,
             pressed: None,
             focused: None,
+            keyboard_modality: true,
+            focus_ring: crate::FocusRingPolicy::default(),
             focus_state: None,
             dock_drag: None,
             overlays: None,
@@ -2177,6 +2185,7 @@ impl<T: View> Ui<T> {
             hovered: self.hovered == Some(id),
             pressed: self.pressed == Some(id) || self.captured_pointer() == Some(id),
             focused: self.focused == Some(id),
+            focus_visible: self.focus_visible(id),
             focusable: self.enabled(id),
             range: self.range_info(id),
         })
@@ -2323,8 +2332,46 @@ impl<T: View> Ui<T> {
         self.pointer_general(runtime, event, 1)
     }
     /// Moves focus in tree order, wrapping at the end. Hidden/disabled controls are skipped.
+    /// This is keyboard navigation, so the focus ring becomes visible.
     pub fn focus_next(&mut self, reverse: bool) -> bool {
-        self.scoped_focus_next(reverse)
+        let shown = self.set_keyboard_modality(true);
+        self.scoped_focus_next(reverse) | shown
+    }
+    /// When focus rings are drawn. The default shows them after keyboard navigation
+    /// and on text inputs, and hides them after a pointer press, like CSS
+    /// `:focus-visible`. Returns whether the policy changed.
+    pub fn set_focus_ring_policy(&mut self, policy: crate::FocusRingPolicy) -> bool {
+        std::mem::replace(&mut self.focus_ring, policy) != policy
+    }
+    /// Whether the focused element, if any, currently shows its focus ring.
+    pub fn focus_ring_visible(&self) -> bool {
+        self.focused.is_some_and(|id| self.focus_visible(id))
+    }
+    fn focus_visible(&self, id: ElementId) -> bool {
+        self.focused == Some(id)
+            && (self.focus_ring == crate::FocusRingPolicy::Always
+                || self.keyboard_modality
+                || self.nodes.get(&id).is_some_and(|n| n.editor.is_some()))
+    }
+    /// Records the input modality; returns whether a visible ring changed.
+    pub(crate) fn set_keyboard_modality(&mut self, keyboard: bool) -> bool {
+        let before = self.focus_ring_visible();
+        self.keyboard_modality = keyboard;
+        before != self.focus_ring_visible()
+    }
+    /// Whether a primary press at `point` should move the native window: the
+    /// topmost pointer target there is marked with `Element::window_drag_region`.
+    /// Interactive descendants, such as title-bar buttons, keep their input.
+    pub fn window_drag_region_at(&self, point: [f32; 2]) -> bool {
+        let Some([width, height]) = self.viewport.filter(|_| self.is_prepared()) else {
+            return false;
+        };
+        (0. ..width).contains(&point[0])
+            && (0. ..height).contains(&point[1])
+            && self
+                .pointer_target(point)
+                .and_then(|id| self.nodes[&id].element.input.as_ref())
+                .is_some_and(|p| p.window_drag_region)
     }
     /// Activates the focused button through the same handler as pointer input.
     pub fn activate_focused(&mut self, runtime: &mut Runtime) -> Result<bool, UiError> {

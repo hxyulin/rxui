@@ -46,14 +46,18 @@ struct TextResource {
 }
 impl TextResource {
     /// Applies text, style and wrapping; the configured width is left unchanged.
-    fn configure(&mut self, request: TextRequest<'_>) -> Result<(), UiError> {
+    /// `sans` substitutes a named family for the generic sans-serif default.
+    fn configure(&mut self, request: TextRequest<'_>, sans: Option<&str>) -> Result<(), UiError> {
         let style = request.style;
         self.buffer.set_text(
             request.text,
             TextStyle::new()
                 .family(match &style.family {
                     crate::FontFamily::Named(name) => FontFamily::Named(name.to_string()),
-                    crate::FontFamily::SansSerif => FontFamily::SansSerif,
+                    crate::FontFamily::SansSerif => match sans {
+                        Some(name) => FontFamily::Named(name.to_string()),
+                        None => FontFamily::SansSerif,
+                    },
                     crate::FontFamily::Serif => FontFamily::Serif,
                     crate::FontFamily::Monospace => FontFamily::Monospace,
                 })
@@ -87,8 +91,9 @@ impl TextResource {
         &mut self,
         fonts: &mut TextSystem,
         request: TextRequest<'_>,
+        sans: Option<&str>,
     ) -> Result<Arc<TextLayout>, UiError> {
-        self.configure(request)?;
+        self.configure(request, sans)?;
         self.buffer.set_width(text_width(request.width))?;
         Ok(self.buffer.layout(fonts)?)
     }
@@ -98,8 +103,9 @@ impl TextResource {
         &mut self,
         fonts: &mut TextSystem,
         request: TextRequest<'_>,
+        sans: Option<&str>,
     ) -> Result<[f32; 2], UiError> {
-        self.configure(request)?;
+        self.configure(request, sans)?;
         Ok(self.buffer.measure(fonts, text_width(request.width))?)
     }
 }
@@ -144,6 +150,8 @@ fn image_key(image: &crate::ImageInfo<'_>) -> ImageKey {
 /// Painting uses caller-selected passes/clipping. No font discovery is implicit.
 pub struct UiPainter {
     fonts: TextSystem,
+    /// Family used for the generic sans-serif default, such as the system UI font.
+    sans_serif: Option<Arc<str>>,
     generation: u64,
     painter: Painter,
     texts: IdMap<ElementId, TextResource>,
@@ -173,6 +181,7 @@ impl UiPainter {
     pub fn new(graphics: &GraphicsContext) -> Self {
         Self {
             fonts: TextSystem::new(),
+            sans_serif: None,
             generation: 0,
             painter: Painter::new(graphics),
             texts: IdMap::default(),
@@ -204,6 +213,19 @@ impl UiPainter {
     /// Read-only font information.
     pub fn fonts(&self) -> &TextSystem {
         &self.fonts
+    }
+    /// Shapes text whose family is the generic sans-serif default with this loaded
+    /// family instead; None restores the generic family. The native host sets the
+    /// platform interface font here. Advances the measurement generation on change.
+    pub fn set_sans_serif_family(&mut self, family: Option<Arc<str>>) {
+        if self.sans_serif != family {
+            self.sans_serif = family;
+            self.fonts_mut();
+        }
+    }
+    /// Family substituted for the generic sans-serif default, if any.
+    pub fn sans_serif_family(&self) -> Option<&str> {
+        self.sans_serif.as_deref()
     }
     /// Astrelis renderer access for cache statistics and explicit customization.
     pub fn painter(&mut self) -> &mut Painter {
@@ -279,7 +301,7 @@ impl UiPainter {
             {
                 continue;
             }
-            let layout = resource.layout(&mut self.fonts, request)?;
+            let layout = resource.layout(&mut self.fonts, request, self.sans_serif.as_deref())?;
             if request.single_line {
                 layout.prepare_interaction()?;
             }
@@ -532,7 +554,7 @@ impl UiPainter {
             || element.paint.border_color.is_some()
             || element.range.is_some()
             || element.kind == crate::ElementType::Custom
-            || (element.focused && element.paint.focus_width > 0.))
+            || (element.focus_visible && element.paint.focus_width > 0.))
             && b.width > 0.
             && b.height > 0.
         {
@@ -984,7 +1006,7 @@ impl UiPainter {
                         .pass()
                         .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
                 }
-                if element.focused
+                if element.focus_visible
                     && appearance.focus_width > 0.
                     && bounds.width > 0.
                     && bounds.height > 0.
@@ -1117,7 +1139,7 @@ impl UiPainter {
         {
             return Ok(layout.clone());
         }
-        resource.layout(&mut self.fonts, request)
+        resource.layout(&mut self.fonts, request, self.sans_serif.as_deref())
     }
 }
 impl TextMeasure for UiPainter {
@@ -1164,10 +1186,11 @@ impl TextMeasure for UiPainter {
             .map(ui_position))
     }
     fn measure(&mut self, id: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError> {
-        self.texts
-            .entry(id)
-            .or_default()
-            .measure(&mut self.fonts, request)
+        self.texts.entry(id).or_default().measure(
+            &mut self.fonts,
+            request,
+            self.sans_serif.as_deref(),
+        )
     }
     fn generation(&self) -> u64 {
         self.generation

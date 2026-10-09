@@ -26,6 +26,9 @@
 //! Native clipboard text access shares the host's persistent clipboard owner.
 //! Native window geometry snapshots support application-owned persistence and
 //! monitor-aware restoration; file-drop hooks deliver window-level native paths.
+//! The native host follows the system appearance, accent and accessibility
+//! preferences, draws focus rings after keyboard navigation and supports custom
+//! title bars through window drag regions.
 //! Portable semantics are part of layout; the optional accessibility feature adds
 //! AccessKit translation for custom hosts. Fixed-height virtual lists describe only
 //! viewport rows plus overscan; shared windows retain independent scroll offsets.
@@ -114,10 +117,14 @@
 #[cfg(feature = "accessibility")]
 mod accessibility;
 #[cfg(feature = "layout")]
+mod appearance;
+#[cfg(feature = "layout")]
 mod commands;
 mod context;
 #[cfg(feature = "layout")]
 mod controls;
+#[cfg(feature = "layout")]
+mod conventions;
 #[cfg(feature = "layout")]
 mod custom;
 #[cfg(feature = "layout")]
@@ -170,6 +177,8 @@ mod virtual_list;
 pub use accessibility::{AccessKitStats, AccessKitTree};
 #[cfg(feature = "accessibility")]
 pub use accesskit;
+#[cfg(feature = "layout")]
+pub use appearance::{ColorScheme, SystemPreferences, ThemeMode, ThemeSet};
 /// OS close-request policy used by Application's lifecycle hook.
 #[cfg(feature = "native")]
 pub use astrelis_winit::CloseResponse;
@@ -181,8 +190,12 @@ pub use commands::{
 pub use context::{AppContext, Context, ReadContext, ViewContext};
 #[cfg(feature = "layout")]
 pub use controls::{
-    Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, Split, SplitPosition, scroll_area,
-    scrollbar, split_column, split_row,
+    Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollbarStyle, Split, SplitPosition,
+    scroll_area, scrollbar, split_column, split_row,
+};
+#[cfg(feature = "layout")]
+pub use conventions::{
+    DialogButtonOrder, DialogButtonRole, FocusRingPolicy, system_ui_font_families,
 };
 #[cfg(feature = "rendering")]
 pub use custom::CustomPrepare;
@@ -313,6 +326,10 @@ pub mod prelude {
         Toggle, ToggleEvent, checkbox, choice, progress_bar, radio_group, select, select_keyed,
         slider, spinner, switch, tooltip,
     };
+    pub use crate::{
+        ColorScheme, DialogButtonOrder, DialogButtonRole, FocusRingPolicy, ScrollbarStyle,
+        SystemPreferences, ThemeMode, ThemeSet,
+    };
     #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
     pub use crate::{DesktopError, DesktopResult};
     #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
@@ -382,3 +399,6 @@ mod focus_tab_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod virtual_list_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod platform_tests;

@@ -575,6 +575,7 @@ impl<T: View> Ui<T> {
         }
         self.input.position = position.unwrap();
         self.input.modifiers = modifiers;
+        let ring_changed = kind == 0 && self.set_keyboard_modality(false);
         if let Some(button) = button {
             self.input.buttons.set(button, kind == 0);
         }
@@ -645,6 +646,7 @@ impl<T: View> Ui<T> {
         }
         result.changed |= self.flush_input_cancellations(runtime)?;
         Ok(result.changed
+            || ring_changed
             || before
                 != (
                     self.hovered,
@@ -666,10 +668,18 @@ impl<T: View> Ui<T> {
         let Some(target) = self.focused.or(self.root) else {
             return Ok(InputResult::default());
         };
+        // Typing or navigating shows the focus ring; shortcuts and bare modifiers do not.
+        let ring_changed = event.pressed
+            && !(event.modifiers.control || event.modifiers.alt || event.modifiers.meta)
+            && !matches!(event.key, KeyboardKey::Other(_))
+            && self.set_keyboard_modality(true);
         let mut path = std::mem::take(&mut self.input.route);
         self.input_path(target, &mut path);
         let result = (|| {
-            let mut result = InputResult::default();
+            let mut result = InputResult {
+                changed: ring_changed,
+                ..Default::default()
+            };
             for (id, capturing) in path
                 .iter()
                 .rev()

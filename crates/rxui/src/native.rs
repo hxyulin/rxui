@@ -1,7 +1,8 @@
 use crate::{
-    AccessKitTree, AppContext, Bounds, Color, EffectCycle, ElementId, Entity, PointerEvent,
-    ReadContext, Runtime, SemanticAction, SpawnError, TaskExecutor, TextInputEvent, TextMeasure,
-    Theme, ThreadPoolExecutor, Ui, UiError, UiPainter, View,
+    AccessKitTree, AppContext, Bounds, Color, ColorScheme, EffectCycle, ElementId, Entity,
+    FocusRingPolicy, PointerEvent, ReadContext, Runtime, SemanticAction, SpawnError,
+    SystemPreferences, TaskExecutor, TextInputEvent, TextMeasure, Theme, ThemeMode, ThemeSet,
+    ThreadPoolExecutor, Ui, UiError, UiPainter, View,
 };
 #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
 mod dialogs;
@@ -26,7 +27,7 @@ use astrelis_winit::{
         dpi::{LogicalSize, Size},
         event::{MouseButton, WindowEvent},
         keyboard::{Key, ModifiersState, NamedKey},
-        window::{Window, WindowAttributes, WindowId as NativeWindowId},
+        window::{Theme as NativeTheme, Window, WindowAttributes, WindowId as NativeWindowId},
     },
 };
 #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
@@ -129,6 +130,7 @@ impl From<SpawnError> for ApplicationError {
 
 mod geometry;
 pub use geometry::WindowGeometry;
+mod preferences;
 mod window_input;
 pub use window_input::{WindowInput, WindowInputResult};
 
@@ -252,6 +254,115 @@ impl WindowOptions {
         self.attributes = attributes;
         self
     }
+    /// Lets the desktop show through unpainted areas. The default clear color
+    /// becomes transparent, and the host asks the surface for a non-opaque alpha
+    /// mode, falling back to an opaque surface where the graphics backend has none
+    /// (DirectX 12 window surfaces, for example). Paint a background where needed.
+    #[must_use]
+    pub fn transparent(mut self, transparent: bool) -> Self {
+        self.attributes = self.attributes.with_transparent(transparent);
+        self
+    }
+    /// Shows or hides the platform title bar and borders (default true). Without
+    /// them, draw a title bar and mark it with `Element::window_drag_region`.
+    #[must_use]
+    pub fn decorations(mut self, decorations: bool) -> Self {
+        self.attributes = self.attributes.with_decorations(decorations);
+        self
+    }
+    /// Whether the user can resize the window (default true).
+    #[must_use]
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.attributes = self.attributes.with_resizable(resizable);
+        self
+    }
+    /// Smallest logical inner size the user can resize to; finite and positive.
+    #[must_use]
+    pub fn min_size(mut self, width: f64, height: f64) -> Self {
+        self.attributes = self
+            .attributes
+            .with_min_inner_size(LogicalSize::new(width, height));
+        self
+    }
+    /// Largest logical inner size the user can resize to; finite, positive and at
+    /// least the minimum size.
+    #[must_use]
+    pub fn max_size(mut self, width: f64, height: f64) -> Self {
+        self.attributes = self
+            .attributes
+            .with_max_inner_size(LogicalSize::new(width, height));
+        self
+    }
+    /// Keeps the window above normal windows, for palettes and floating tools.
+    /// Change it later through `WindowHandle::native_window().set_window_level`.
+    #[must_use]
+    pub fn always_on_top(mut self, on_top: bool) -> Self {
+        use astrelis_winit::winit::window::WindowLevel;
+        self.attributes = self.attributes.with_window_level(if on_top {
+            WindowLevel::AlwaysOnTop
+        } else {
+            WindowLevel::Normal
+        });
+        self
+    }
+    /// macOS: draws the title bar transparently over the window content. Ignored
+    /// on other platforms, so portable code can set it unconditionally.
+    #[must_use]
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    pub fn titlebar_transparent(mut self, transparent: bool) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            use astrelis_winit::winit::platform::macos::WindowAttributesExtMacOS;
+            self.attributes = self.attributes.with_titlebar_transparent(transparent);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = transparent;
+        self
+    }
+    /// macOS: extends the content view under the title bar, so the application
+    /// draws there and the traffic-light buttons float over it. Ignored elsewhere.
+    #[must_use]
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    pub fn fullsize_content_view(mut self, fullsize: bool) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            use astrelis_winit::winit::platform::macos::WindowAttributesExtMacOS;
+            self.attributes = self.attributes.with_fullsize_content_view(fullsize);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = fullsize;
+        self
+    }
+    /// macOS: hides the title text while keeping the title bar and its buttons.
+    /// The title is still used by the Window menu and accessibility. Ignored elsewhere.
+    #[must_use]
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    pub fn title_hidden(mut self, hidden: bool) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            use astrelis_winit::winit::platform::macos::WindowAttributesExtMacOS;
+            self.attributes = self.attributes.with_title_hidden(hidden);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = hidden;
+        self
+    }
+    /// Prepares a window for an application-drawn title bar. macOS keeps its
+    /// traffic-light buttons over a transparent, untitled, full-size title bar;
+    /// leave about 78 logical units clear at the leading edge and 28 at the top.
+    /// Windows and Linux remove the platform decorations, so the application also
+    /// draws minimize/maximize/close buttons. Mark the bar with
+    /// `Element::window_drag_region` so it moves the window.
+    #[must_use]
+    pub fn custom_title_bar(self) -> Self {
+        if cfg!(target_os = "macos") {
+            self.titlebar_transparent(true)
+                .fullsize_content_view(true)
+                .title_hidden(true)
+        } else {
+            self.decorations(false)
+        }
+    }
     fn validate(&self) -> Result<(), ApplicationError> {
         let invalid_size = match self.attributes.inner_size {
             Some(Size::Logical(size)) => {
@@ -264,8 +375,23 @@ impl WindowOptions {
             None => false,
         };
         let invalid_position = matches!(self.attributes.position, Some(astrelis_winit::winit::dpi::Position::Logical(p)) if !p.x.is_finite() || !p.y.is_finite());
+        let logical = |size: Option<Size>| match size {
+            Some(Size::Logical(size)) => Some([size.width, size.height]),
+            _ => None,
+        };
+        let (min, max) = (
+            logical(self.attributes.min_inner_size),
+            logical(self.attributes.max_inner_size),
+        );
+        let invalid_limits = min
+            .iter()
+            .chain(max.iter())
+            .flatten()
+            .any(|v| !v.is_finite() || *v <= 0.)
+            || matches!((min, max), (Some(min), Some(max)) if min[0] > max[0] || min[1] > max[1]);
         if invalid_size
             || invalid_position
+            || invalid_limits
             || self
                 .background
                 .iter()
@@ -384,6 +510,8 @@ trait HostedUi {
         painter: &mut UiPainter,
     ) -> Result<bool, UiError>;
     fn hit_test(&self, point: [f32; 2]) -> Option<ElementId>;
+    fn window_drag_region_at(&self, point: [f32; 2]) -> bool;
+    fn set_focus_ring_policy(&mut self, policy: FocusRingPolicy);
     fn cursor_icon(&self) -> crate::Cursor;
     fn prepare_input(
         &mut self,
@@ -503,6 +631,12 @@ impl<T: View> HostedUi for Ui<T> {
     }
     fn hit_test(&self, point: [f32; 2]) -> Option<ElementId> {
         self.hit_test(point)
+    }
+    fn window_drag_region_at(&self, point: [f32; 2]) -> bool {
+        self.window_drag_region_at(point)
+    }
+    fn set_focus_ring_policy(&mut self, policy: FocusRingPolicy) {
+        self.set_focus_ring_policy(policy);
     }
     fn cursor_icon(&self) -> crate::Cursor {
         self.cursor()
@@ -631,6 +765,10 @@ pub(crate) struct Commands {
     exited: Cell<bool>,
     mounts: RefCell<HashMap<crate::MountId, WindowId>>,
     theme: RefCell<Theme>,
+    /// Some while the application theme follows a mode rather than an explicit theme.
+    theme_mode: Cell<Option<ThemeMode>>,
+    themes: RefCell<ThemeSet>,
+    preferences: RefCell<SystemPreferences>,
 }
 fn record_mounts(commands: &Commands, window: WindowId, ui: &dyn HostedUi) {
     let ids: HashSet<_> = ui.mounts().into_iter().collect();
@@ -661,7 +799,50 @@ impl Commands {
             exited: Cell::new(false),
             mounts: RefCell::new(HashMap::new()),
             theme: RefCell::new(Theme::default()),
+            theme_mode: Cell::new(None),
+            themes: RefCell::new(ThemeSet::default()),
+            preferences: RefCell::new(SystemPreferences::default()),
         }
+    }
+    /// Installs the application theme and queues its inheriting windows. `force`
+    /// queues them even for an unchanged theme, so a mode change also updates
+    /// whether their native title bars follow the system.
+    fn install_theme(&self, theme: Theme, force: bool) {
+        if *self.theme.borrow() == theme && !force {
+            return;
+        }
+        *self.theme.borrow_mut() = theme.clone();
+        for life in self.lives.borrow().values() {
+            if life.inherits_theme.get() && life.alive.get() && !life.closing.get() {
+                *life.theme.borrow_mut() = theme.clone();
+                self.queue.borrow_mut().push_back(Command::Theme(life.id));
+            }
+        }
+    }
+    fn resolved_theme(&self) -> Option<Theme> {
+        let mode = self.theme_mode.get()?;
+        Some(
+            self.themes
+                .borrow()
+                .resolve(mode, &self.preferences.borrow()),
+        )
+    }
+    /// Stores a preference snapshot and re-resolves a mode theme; false if unchanged.
+    fn set_preferences(&self, preferences: SystemPreferences) -> bool {
+        if *self.preferences.borrow() == preferences {
+            return false;
+        }
+        *self.preferences.borrow_mut() = preferences;
+        if let Some(theme) = self.resolved_theme() {
+            self.install_theme(theme, false);
+        }
+        true
+    }
+    /// Native title-bar appearance: follow the system while the window inherits a
+    /// System-mode theme, otherwise match the window theme's scheme.
+    fn native_theme(&self, life: &Life) -> Option<NativeTheme> {
+        let follows = life.inherits_theme.get() && self.theme_mode.get() == Some(ThemeMode::System);
+        (!follows).then(|| preferences::native_theme(ColorScheme::of(&life.theme.borrow())))
     }
     fn read_clipboard(&self) -> Result<String, arboard::Error> {
         clipboard(&mut self.clipboard.borrow_mut()).and_then(|c| c.get_text())
@@ -752,24 +933,47 @@ impl AppContext<'_> {
         Ok(self.native_commands()?.theme.borrow().clone())
     }
     /// Changes the application theme and queues updates for inheriting windows.
-    /// Explicit window/subtree themes and literal styling remain unchanged.
+    /// Explicit window/subtree themes and literal styling remain unchanged. An
+    /// explicit theme stops following the system until `set_theme_mode`.
     pub fn set_theme(&mut self, theme: Theme) -> Result<(), ApplicationError> {
         theme.validate()?;
         let commands = self.native_commands()?;
-        if *commands.theme.borrow() == theme {
-            return Ok(());
+        let mode_changed = commands.theme_mode.replace(None).is_some();
+        commands.install_theme(theme, mode_changed);
+        Ok(())
+    }
+    /// Current theme mode, or None while an explicit application theme is in use.
+    pub fn theme_mode(&self) -> Result<Option<ThemeMode>, ApplicationError> {
+        Ok(self.native_commands()?.theme_mode.get())
+    }
+    /// Chooses the application theme by mode from the application's [`ThemeSet`]:
+    /// System follows the OS appearance, high contrast and accent live; Light and
+    /// Dark fix the scheme. Inheriting windows update like `set_theme`.
+    pub fn set_theme_mode(&mut self, mode: ThemeMode) -> Result<(), ApplicationError> {
+        let commands = self.native_commands()?;
+        let changed = commands.theme_mode.replace(Some(mode)) != Some(mode);
+        let theme = commands.resolved_theme().expect("theme mode was just set");
+        commands.install_theme(theme, changed);
+        Ok(())
+    }
+    /// Replaces the themes that modes choose between, for example to switch every
+    /// mode to compact density. Applies immediately while a mode is active.
+    pub fn set_theme_set(&mut self, themes: ThemeSet) -> Result<(), ApplicationError> {
+        for theme in [&themes.light, &themes.dark, &themes.high_contrast] {
+            theme.validate()?;
         }
-        *commands.theme.borrow_mut() = theme.clone();
-        for life in commands.lives.borrow().values() {
-            if life.inherits_theme.get() && life.alive.get() && !life.closing.get() {
-                *life.theme.borrow_mut() = theme.clone();
-                commands
-                    .queue
-                    .borrow_mut()
-                    .push_back(Command::Theme(life.id));
-            }
+        let commands = self.native_commands()?;
+        *commands.themes.borrow_mut() = themes;
+        if let Some(theme) = commands.resolved_theme() {
+            commands.install_theme(theme, false);
         }
         Ok(())
+    }
+    /// Latest detected OS appearance and accessibility preferences. The host
+    /// refreshes it on system appearance changes and window activation; see
+    /// `Application::system_preferences_changed` to react to changes.
+    pub fn system_preferences(&self) -> Result<SystemPreferences, ApplicationError> {
+        Ok(self.native_commands()?.preferences.borrow().clone())
     }
     /// Sets one window's explicit theme. Creation may still be queued; updates take
     /// effect after the current scope without resetting that window's input state.
@@ -920,6 +1124,7 @@ type GraphicsRenderHook = dyn FnMut(
 ) -> Result<(), ApplicationError>;
 type GeometryHook = dyn FnMut(&WindowHandle, WindowGeometry, &mut AppContext<'_>);
 type FileDropHook = dyn FnMut(&WindowHandle, &FileDropEvent, &mut AppContext<'_>);
+type PreferencesHook = dyn FnMut(&SystemPreferences, &mut AppContext<'_>);
 type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
 type QuitHook = dyn FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
@@ -931,6 +1136,11 @@ pub struct Application {
     #[cfg(feature = "native-menus")]
     menu_bar: Option<crate::NativeMenuBar>,
     theme: Theme,
+    theme_mode: Option<ThemeMode>,
+    themes: ThemeSet,
+    preferences_changed: Option<Box<PreferencesHook>>,
+    focus_ring: FocusRingPolicy,
+    system_ui_font: bool,
     fonts: Vec<Arc<[u8]>>,
     system_fonts: bool,
     accessibility: bool,
@@ -957,6 +1167,11 @@ impl Application {
     pub fn new() -> Self {
         Self {
             theme: Theme::default(),
+            theme_mode: Some(ThemeMode::System),
+            themes: ThemeSet::default(),
+            preferences_changed: None,
+            focus_ring: FocusRingPolicy::default(),
+            system_ui_font: true,
             fonts: Vec::new(),
             system_fonts: true,
             accessibility: true,
@@ -975,10 +1190,51 @@ impl Application {
             exiting: None,
         }
     }
-    /// Default theme for windows without an explicit WindowOptions theme.
+    /// Explicit default theme for windows without a WindowOptions theme. It
+    /// replaces the default [`ThemeMode::System`], so the system appearance no
+    /// longer changes it; use `theme_mode`/`themes` to keep following the system.
     #[must_use]
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
+        self.theme_mode = None;
+        self
+    }
+    /// Chooses the default theme by mode (System by default): System follows the
+    /// OS light/dark appearance, high contrast and accent color live.
+    #[must_use]
+    pub fn theme_mode(mut self, mode: ThemeMode) -> Self {
+        self.theme_mode = Some(mode);
+        self
+    }
+    /// Themes that modes choose between; the built-in presets by default.
+    #[must_use]
+    pub fn themes(mut self, themes: ThemeSet) -> Self {
+        self.themes = themes;
+        self
+    }
+    /// Receives each changed OS preference snapshot, after mode themes update, in
+    /// a fresh application update with no source window. Read the snapshot at any
+    /// time with `AppContext::system_preferences`, for example in initialization.
+    #[must_use]
+    pub fn system_preferences_changed(
+        mut self,
+        hook: impl FnMut(&SystemPreferences, &mut AppContext<'_>) + 'static,
+    ) -> Self {
+        self.preferences_changed = Some(Box::new(hook));
+        self
+    }
+    /// When managed windows draw focus rings; keyboard-only by default.
+    #[must_use]
+    pub fn focus_ring(mut self, policy: FocusRingPolicy) -> Self {
+        self.focus_ring = policy;
+        self
+    }
+    /// Uses the platform's interface font for the generic sans-serif family when
+    /// system font discovery finds one (default true); see
+    /// [`crate::system_ui_font_families`]. Named families are unaffected.
+    #[must_use]
+    pub fn system_ui_font(mut self, enabled: bool) -> Self {
+        self.system_ui_font = enabled;
         self
     }
     /// Runs GPU resource preparation before acquisition and before UiPainter's GPU
@@ -1132,6 +1388,13 @@ impl Application {
         initialize: impl FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>,
     ) -> Result<(), ApplicationError> {
         self.theme.validate()?;
+        for theme in [
+            &self.themes.light,
+            &self.themes.dark,
+            &self.themes.high_contrast,
+        ] {
+            theme.validate()?;
+        }
         #[cfg(all(
             feature = "native-menus",
             not(any(target_os = "macos", target_os = "windows"))
@@ -1174,6 +1437,11 @@ impl Application {
         })?;
         let commands = Rc::new(Commands::new(runtime.inner.id));
         *commands.theme.borrow_mut() = self.theme;
+        *commands.themes.borrow_mut() = self.themes;
+        commands.theme_mode.set(self.theme_mode);
+        if let Some(theme) = commands.resolved_theme() {
+            *commands.theme.borrow_mut() = theme;
+        }
         *runtime.inner.native.borrow_mut() = Some(commands.clone());
         let mut host = Host {
             runtime,
@@ -1189,6 +1457,10 @@ impl Application {
             created: self.created,
             geometry_changed: self.geometry_changed,
             file_drop: self.file_drop,
+            preferences_changed: self.preferences_changed,
+            preferences_started: false,
+            focus_ring: self.focus_ring,
+            system_ui_font: self.system_ui_font,
             close: self.close,
             quit: self.quit,
             focused_window: None,
@@ -1208,6 +1480,8 @@ impl Application {
 }
 enum Wake {
     Geometry(NativeWindowId),
+    /// Pushed preference snapshot (the Linux/BSD portal watcher).
+    Preferences(SystemPreferences),
     #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
     Dialog(dialogs::Packet),
     #[cfg(all(
@@ -1264,6 +1538,40 @@ struct HostedWindow {
     accessibility: Option<accesskit_winit::Adapter>,
     accesskit: AccessKitTree,
     accessibility_active: bool,
+    /// The default clear is transparent.
+    transparent: bool,
+    /// False when native attributes chose an explicit native theme.
+    sync_native_theme: bool,
+    /// Native appearance last applied, None before the first sync.
+    native_theme: Option<Option<NativeTheme>>,
+}
+/// Matches the native title bar to the window theme; see `Commands::native_theme`.
+fn sync_native_theme(commands: &Commands, window: &mut HostedWindow) {
+    if !window.sync_native_theme {
+        return;
+    }
+    let wanted = commands.native_theme(&window.life);
+    if window.native_theme != Some(wanted)
+        && let Some(native) = window.life.native.borrow().as_ref()
+    {
+        native.set_theme(wanted);
+        window.native_theme = Some(wanted);
+    }
+}
+/// Stores a new snapshot; a changed one updates mode themes, then notifies.
+fn deliver_preferences(
+    runtime: &mut Runtime,
+    commands: &Commands,
+    preferences: SystemPreferences,
+    hook: &mut Option<Box<PreferencesHook>>,
+) -> bool {
+    if commands.exited.get() || !commands.set_preferences(preferences.clone()) {
+        return false;
+    }
+    if let Some(hook) = hook {
+        runtime.update(|cx| hook(&preferences, cx));
+    }
+    true
 }
 struct Host<F> {
     focused_window: Option<NativeWindowId>,
@@ -1285,6 +1593,11 @@ struct Host<F> {
     created: Option<Box<CreatedHook>>,
     geometry_changed: Option<Box<GeometryHook>>,
     file_drop: Option<Box<FileDropHook>>,
+    preferences_changed: Option<Box<PreferencesHook>>,
+    /// Initial preferences were read and any watcher was started.
+    preferences_started: bool,
+    focus_ring: FocusRingPolicy,
+    system_ui_font: bool,
     close: Option<Box<CloseHook>>,
     quit: Option<Box<QuitHook>>,
     exiting: Option<Box<ExitHook>>,
@@ -1309,6 +1622,27 @@ impl<F> Drop for Host<F> {
     }
 }
 impl<F> Host<F> {
+    /// Re-reads preferences after an appearance change or activation. `hint` is
+    /// winit's reported appearance for the event's window.
+    fn refresh_preferences(&mut self, cx: &NativeContext<'_, Wake>, hint: Option<NativeTheme>) {
+        let system = cx.event_loop().system_theme().or(hint);
+        let preferences = if preferences::REFRESH_ON_FOCUS {
+            preferences::detect(system)
+        } else {
+            // The portal watcher owns the other values on Linux/BSD.
+            let current = self.commands.preferences.borrow().clone();
+            SystemPreferences {
+                color_scheme: system.map(preferences::scheme).or(current.color_scheme),
+                ..current
+            }
+        };
+        deliver_preferences(
+            &mut self.runtime,
+            &self.commands,
+            preferences,
+            &mut self.preferences_changed,
+        );
+    }
     fn invoke_command(
         &mut self,
         cx: &mut NativeContext<'_, Wake>,
@@ -1614,9 +1948,9 @@ impl<F> Host<F> {
                         if options.restore_geometry {
                             options.attributes.maximized = false;
                         }
-                        let native = cx
-                            .create_window(options.attributes, options.surface)
-                            .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                        let transparent = options.attributes.transparent;
+                        let sync_native_theme = options.attributes.preferred_theme.is_none();
+                        let native = create_window(cx, options.attributes, options.surface)?;
                         self.windows.insert(
                             native,
                             HostedWindow {
@@ -1633,6 +1967,9 @@ impl<F> Host<F> {
                                 accessibility: None,
                                 accesskit: AccessKitTree::new(),
                                 accessibility_active: false,
+                                transparent,
+                                sync_native_theme,
+                                native_theme: None,
                             },
                         );
                     }
@@ -1727,6 +2064,7 @@ impl<F> Host<F> {
                             if let Some(ui) = &mut window.ui {
                                 ui.set_theme(window.life.theme.borrow().clone())?;
                             }
+                            sync_native_theme(&self.commands, window);
                             if cx.window(*native).is_some() {
                                 cx.request_redraw(*native)
                                     .map_err(|e| ApplicationError::Native(Box::new(e)))?;
@@ -1795,6 +2133,14 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     type Error = ApplicationError;
     fn resumed(&mut self, cx: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
         self.active = true;
+        if !self.preferences_started {
+            // Before initialization, so its windows open with the system theme.
+            self.preferences_started = true;
+            let detected = preferences::detect(cx.event_loop().system_theme());
+            self.commands.set_preferences(detected);
+            let proxy = cx.proxy();
+            preferences::watch(move |p| proxy.send_event(Wake::Preferences(p)).is_ok());
+        }
         #[cfg(all(
             feature = "native-menus",
             any(target_os = "macos", target_os = "windows")
@@ -1827,6 +2173,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                     .load_font_shared(bytes.clone())
                     .map_err(UiError::from)?;
             }
+            if self.system_ui_font && self.system_fonts {
+                let family = system_ui_family(painter.fonts().fonts().flat_map(|f| f.families));
+                painter.set_sans_serif_family(family);
+            }
             self.painter = Some(painter);
         }
         let window = self.windows.get_mut(&id).unwrap();
@@ -1851,11 +2201,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             .geometry
             .set(geometry::initial(native, requested));
         window.ui = Some(window.factory.take().unwrap()(&mut self.runtime)?);
-        window
-            .ui
-            .as_mut()
-            .unwrap()
-            .set_theme(window.life.theme.borrow().clone())?;
+        let ui = window.ui.as_mut().unwrap();
+        ui.set_theme(window.life.theme.borrow().clone())?;
+        ui.set_focus_ring_policy(self.focus_ring);
+        sync_native_theme(&self.commands, window);
         if self.accessibility_enabled {
             window.accessibility = Some(accesskit_winit::Adapter::with_event_loop_proxy(
                 cx.event_loop(),
@@ -1891,6 +2240,14 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         }
         if self.windows.get(&id).is_none_or(|w| w.life.closing.get()) {
             return self.progress(cx, None);
+        }
+        match event {
+            WindowEvent::ThemeChanged(theme) => self.refresh_preferences(cx, Some(theme)),
+            // Accessibility settings change while another app is active.
+            WindowEvent::Focused(true) if preferences::REFRESH_ON_FOCUS => {
+                self.refresh_preferences(cx, None)
+            }
+            _ => {}
         }
         if matches!(
             event,
@@ -2012,6 +2369,24 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 self.progress(cx, None)
             }
             Wake::Tasks => self.progress(cx, None),
+            Wake::Preferences(preferences) => {
+                let preferences = SystemPreferences {
+                    // Keep winit's appearance where the portal has none.
+                    color_scheme: preferences.color_scheme.or(self
+                        .commands
+                        .preferences
+                        .borrow()
+                        .color_scheme),
+                    ..preferences
+                };
+                deliver_preferences(
+                    &mut self.runtime,
+                    &self.commands,
+                    preferences,
+                    &mut self.preferences_changed,
+                );
+                self.progress(cx, None)
+            }
             Wake::Accessibility(event) => {
                 let id = event.window_id;
                 if !self.windows.contains_key(&id) || cx.window(id).is_none() {
@@ -2187,9 +2562,13 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             hook(&handle, window, frame)?;
         }
         let hosted = &self.windows[&window.id()];
-        let c = hosted
-            .background
-            .unwrap_or_else(|| hosted.life.theme.borrow().palette().background);
+        let c = hosted.background.unwrap_or_else(|| {
+            if hosted.transparent {
+                [0.; 4]
+            } else {
+                hosted.life.theme.borrow().palette().background
+            }
+        });
         hosted.ui.as_ref().unwrap().compose(
             self.painter.as_mut().unwrap(),
             frame,
@@ -2269,6 +2648,40 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     }
 }
 
+/// Creates a native window; a transparent one first tries non-opaque surface
+/// alpha modes, falling back to the requested settings where none is offered.
+fn create_window(
+    cx: &mut NativeContext<'_, Wake>,
+    attributes: WindowAttributes,
+    surface: SurfaceSettings,
+) -> Result<NativeWindowId, ApplicationError> {
+    use wgpu::CompositeAlphaMode as Alpha;
+    let automatic = surface
+        .surface_options(astrelis_winit::winit::dpi::PhysicalSize::new(1, 1))
+        .alpha_mode
+        == Alpha::Auto;
+    if attributes.transparent && automatic {
+        for mode in [Alpha::PreMultiplied, Alpha::PostMultiplied] {
+            match cx.create_window(attributes.clone(), surface.alpha_mode(mode)) {
+                Ok(id) => return Ok(id),
+                Err(astrelis_winit::WindowError::Graphics(
+                    astrelis::Error::UnsupportedPresentation { .. },
+                )) => continue,
+                Err(e) => return Err(ApplicationError::Native(Box::new(e))),
+            }
+        }
+    }
+    cx.create_window(attributes, surface)
+        .map_err(|e| ApplicationError::Native(Box::new(e)))
+}
+/// First platform interface family among the loaded font families.
+fn system_ui_family(loaded: impl Iterator<Item = String>) -> Option<Arc<str>> {
+    let loaded: HashSet<String> = loaded.collect();
+    crate::system_ui_font_families()
+        .iter()
+        .find(|name| loaded.contains(**name))
+        .map(|name| Arc::from(*name))
+}
 fn input_modifiers(m: ModifiersState) -> crate::Modifiers {
     crate::Modifiers {
         shift: m.shift_key(),
@@ -2305,19 +2718,38 @@ fn keyboard_key(key: &Key) -> crate::KeyboardKey {
         other => K::Other(format!("{other:?}")),
     }
 }
-fn native_cursor(cursor: crate::Cursor) -> astrelis_winit::winit::window::CursorIcon {
+/// Winit icon for a portable cursor; `None` hides the pointer.
+fn native_cursor(cursor: crate::Cursor) -> Option<astrelis_winit::winit::window::CursorIcon> {
+    use crate::Cursor as R;
     use astrelis_winit::winit::window::CursorIcon as C;
-    match cursor {
-        crate::Cursor::Default => C::Default,
-        crate::Cursor::Pointer => C::Pointer,
-        crate::Cursor::Text => C::Text,
-        crate::Cursor::Grab => C::Grab,
-        crate::Cursor::Grabbing => C::Grabbing,
-        crate::Cursor::ResizeHorizontal => C::ColResize,
-        crate::Cursor::ResizeVertical => C::RowResize,
-        crate::Cursor::Crosshair => C::Crosshair,
-        crate::Cursor::NotAllowed => C::NotAllowed,
-    }
+    Some(match cursor {
+        R::Default => C::Default,
+        R::Pointer => C::Pointer,
+        R::Text => C::Text,
+        R::Grab => C::Grab,
+        R::Grabbing => C::Grabbing,
+        R::ResizeHorizontal | R::ResizeColumn => C::ColResize,
+        R::ResizeVertical | R::ResizeRow => C::RowResize,
+        R::Crosshair => C::Crosshair,
+        R::NotAllowed => C::NotAllowed,
+        R::ResizeNorthSouth => C::NsResize,
+        R::ResizeEastWest => C::EwResize,
+        R::ResizeNorthEastSouthWest => C::NeswResize,
+        R::ResizeNorthWestSouthEast => C::NwseResize,
+        R::Move => C::Move,
+        R::Wait => C::Wait,
+        R::Progress => C::Progress,
+        R::Help => C::Help,
+        R::ZoomIn => C::ZoomIn,
+        R::ZoomOut => C::ZoomOut,
+        R::ContextMenu => C::ContextMenu,
+        R::Copy => C::Copy,
+        R::Alias => C::Alias,
+        R::NoDrop => C::NoDrop,
+        R::VerticalText => C::VerticalText,
+        R::Cell => C::Cell,
+        R::Hidden => return None,
+    })
 }
 
 fn deletion_input(backward: bool, primary: bool, word: bool) -> TextInputEvent {
@@ -2813,6 +3245,201 @@ mod tests {
         let shifted = shortcut.clone().shift();
         assert!(standard_shortcut(&shifted.key, shifted.modifiers).is_none());
         assert!(standard_shortcut(&shortcut.key, Default::default()).is_none());
+    }
+
+    fn preferences(scheme: ColorScheme) -> SystemPreferences {
+        SystemPreferences {
+            color_scheme: Some(scheme),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn system_mode_follows_injected_preferences_while_explicit_themes_win() {
+        let mut runtime = Runtime::new();
+        let commands = attach(&mut runtime);
+        let root = runtime.update(|cx| cx.new(|_| Counter(0)));
+        runtime
+            .update(|cx| cx.set_theme_mode(ThemeMode::System))
+            .unwrap();
+        let (inherited, explicit) = runtime.update(|cx| {
+            (
+                cx.open_window(WindowOptions::new(), root.clone()).unwrap(),
+                cx.open_window(WindowOptions::new().theme(Theme::dark()), root.clone())
+                    .unwrap(),
+            )
+        });
+        // A fake source: every snapshot goes through the host's delivery path.
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let output = seen.clone();
+        let mut hook: Option<Box<PreferencesHook>> = Some(Box::new(move |p, cx| {
+            assert!(cx.window().is_none());
+            assert_eq!(cx.system_preferences().unwrap(), *p);
+            output.borrow_mut().push(p.clone());
+        }));
+        let light = preferences(ColorScheme::Light);
+        assert!(deliver_preferences(
+            &mut runtime,
+            &commands,
+            light.clone(),
+            &mut hook
+        ));
+        assert!(!deliver_preferences(
+            &mut runtime,
+            &commands,
+            light.clone(),
+            &mut hook
+        ));
+        assert_eq!(inherited.theme(), Theme::light());
+        assert_eq!(explicit.theme(), Theme::dark());
+        // System-following windows leave the title bar to the OS; others match.
+        assert_eq!(commands.native_theme(&inherited.life), None);
+        assert_eq!(
+            commands.native_theme(&explicit.life),
+            Some(NativeTheme::Dark)
+        );
+        let contrast = SystemPreferences {
+            high_contrast: true,
+            reduce_motion: true,
+            ..light.clone()
+        };
+        deliver_preferences(&mut runtime, &commands, contrast.clone(), &mut hook);
+        assert_eq!(inherited.theme(), Theme::high_contrast());
+        assert_eq!(*seen.borrow(), vec![light.clone(), contrast]);
+
+        // An explicit application theme stops following the system.
+        runtime.update(|cx| cx.set_theme(Theme::dark())).unwrap();
+        assert_eq!(runtime.update(|cx| cx.theme_mode()).unwrap(), None);
+        deliver_preferences(&mut runtime, &commands, light.clone(), &mut hook);
+        assert_eq!(inherited.theme(), Theme::dark());
+        assert_eq!(
+            commands.native_theme(&inherited.life),
+            Some(NativeTheme::Dark)
+        );
+        // Modes resume it; Light ignores the dark system appearance.
+        runtime
+            .update(|cx| cx.set_theme_mode(ThemeMode::Light))
+            .unwrap();
+        deliver_preferences(
+            &mut runtime,
+            &commands,
+            preferences(ColorScheme::Dark),
+            &mut hook,
+        );
+        assert_eq!(inherited.theme(), Theme::light());
+        runtime
+            .update(|cx| cx.set_theme_set(ThemeSet::default().map(Theme::compact)))
+            .unwrap();
+        assert_eq!(inherited.theme(), Theme::light().compact());
+        let invalid = ThemeSet {
+            dark: Theme::dark().metrics(|m| m.font_size = 0.),
+            ..ThemeSet::default()
+        };
+        assert!(runtime.update(|cx| cx.set_theme_set(invalid)).is_err());
+        commands.exited.set(true);
+        assert!(!deliver_preferences(
+            &mut runtime,
+            &commands,
+            light,
+            &mut hook
+        ));
+    }
+
+    #[test]
+    fn every_cursor_has_a_native_icon_except_hidden() {
+        use crate::Cursor as C;
+        use astrelis_winit::winit::window::CursorIcon as I;
+        let all = [
+            C::Default,
+            C::Pointer,
+            C::Text,
+            C::Grab,
+            C::Grabbing,
+            C::ResizeHorizontal,
+            C::ResizeVertical,
+            C::Crosshair,
+            C::NotAllowed,
+            C::ResizeNorthSouth,
+            C::ResizeEastWest,
+            C::ResizeNorthEastSouthWest,
+            C::ResizeNorthWestSouthEast,
+            C::ResizeColumn,
+            C::ResizeRow,
+            C::Move,
+            C::Wait,
+            C::Progress,
+            C::Help,
+            C::ZoomIn,
+            C::ZoomOut,
+            C::ContextMenu,
+            C::Copy,
+            C::Alias,
+            C::NoDrop,
+            C::VerticalText,
+            C::Cell,
+        ];
+        let icons: HashSet<_> = all.iter().map(|c| native_cursor(*c).unwrap()).collect();
+        // Horizontal/Vertical are the column/row resize aliases.
+        assert_eq!(icons.len(), all.len() - 2);
+        assert_eq!(native_cursor(C::ResizeHorizontal), Some(I::ColResize));
+        assert_eq!(
+            native_cursor(C::ResizeNorthWestSouthEast),
+            Some(I::NwseResize)
+        );
+        assert_eq!(native_cursor(C::Hidden), None);
+    }
+
+    #[test]
+    fn window_chrome_options_validate_size_limits() {
+        let mut runtime = Runtime::new();
+        attach(&mut runtime);
+        let root = runtime.update(|cx| cx.new(|_| Counter(0)));
+        for options in [
+            WindowOptions::new().min_size(f64::NAN, 10.),
+            WindowOptions::new().max_size(0., 10.),
+            WindowOptions::new()
+                .min_size(400., 300.)
+                .max_size(300., 300.),
+        ] {
+            assert!(matches!(
+                runtime.update(|cx| cx.open_window(options, root.clone())),
+                Err(ApplicationError::InvalidWindowOptions)
+            ));
+        }
+        let options = WindowOptions::new()
+            .min_size(200., 100.)
+            .max_size(800., 600.)
+            .transparent(true)
+            .resizable(false)
+            .always_on_top(true)
+            .custom_title_bar();
+        assert!(options.attributes.transparent);
+        assert!(!options.attributes.resizable);
+        assert_eq!(options.attributes.decorations, cfg!(target_os = "macos"));
+        assert!(runtime.update(|cx| cx.open_window(options, root)).is_ok());
+    }
+
+    #[test]
+    fn the_first_installed_platform_family_becomes_the_interface_font() {
+        let candidates = crate::system_ui_font_families();
+        let last = candidates[candidates.len() - 1];
+        let loaded = ["Comic Sans", last].map(String::from);
+        assert_eq!(system_ui_family(loaded.into_iter()).as_deref(), Some(last));
+        assert_eq!(system_ui_family(std::iter::empty()), None);
+    }
+
+    #[test]
+    #[ignore = "scans installed fonts; run on a desktop with -- --ignored"]
+    fn a_platform_interface_font_is_installed() {
+        let mut fonts = astrelis::TextSystem::new();
+        fonts.load_system_fonts();
+        let family = system_ui_family(fonts.fonts().flat_map(|f| f.families));
+        assert!(
+            family.is_some(),
+            "none of {:?}",
+            crate::system_ui_font_families()
+        );
+        eprintln!("interface font: {family:?}");
     }
 
     #[test]

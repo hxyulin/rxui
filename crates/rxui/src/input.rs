@@ -305,14 +305,53 @@ pub enum Cursor {
     Grab,
     /// Closed dragging hand.
     Grabbing,
-    /// Horizontal resizing.
+    /// Horizontal resizing; the native host shows a column-resize cursor.
     ResizeHorizontal,
-    /// Vertical resizing.
+    /// Vertical resizing; the native host shows a row-resize cursor.
     ResizeVertical,
     /// Crosshair.
     Crosshair,
     /// Operation not allowed.
     NotAllowed,
+    /// Bidirectional north-south resize, such as a horizontal edge.
+    ResizeNorthSouth,
+    /// Bidirectional east-west resize, such as a vertical edge.
+    ResizeEastWest,
+    /// Diagonal resize between the north-east and south-west corners.
+    ResizeNorthEastSouthWest,
+    /// Diagonal resize between the north-west and south-east corners.
+    ResizeNorthWestSouthEast,
+    /// Resizing a column boundary; the default for horizontal splitters.
+    ResizeColumn,
+    /// Resizing a row boundary; the default for vertical splitters.
+    ResizeRow,
+    /// Something can be moved in any direction.
+    Move,
+    /// The application is busy and does not accept input.
+    Wait,
+    /// Work is running in the background; input is still accepted.
+    Progress,
+    /// Help is available for the hovered element.
+    Help,
+    /// Zoom in.
+    ZoomIn,
+    /// Zoom out.
+    ZoomOut,
+    /// A context menu is available.
+    ContextMenu,
+    /// Dropping here copies.
+    Copy,
+    /// Dropping here creates a link or alias.
+    Alias,
+    /// The dragged item cannot be dropped here.
+    NoDrop,
+    /// Vertical text insertion.
+    VerticalText,
+    /// Selecting table cells.
+    Cell,
+    /// Hides the pointer while it is over the element, for example in a video
+    /// view. The native host shows it again when another cursor applies.
+    Hidden,
 }
 #[derive(Clone, Default)]
 pub(crate) struct InputProperties {
@@ -329,12 +368,14 @@ pub(crate) struct InputProperties {
     pub wheel: Option<Listener<WheelInput>>,
     pub focusable: Option<bool>,
     pub cursor: Option<Cursor>,
+    pub window_drag_region: bool,
 }
 impl InputProperties {
     pub fn pointer_target(&self) -> bool {
         self.pointer.iter().any(Option::is_some)
             || self.hover.is_some()
             || self.cursor.is_some()
+            || self.window_drag_region
             || self.focusable == Some(true)
     }
 }

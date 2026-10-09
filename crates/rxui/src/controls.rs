@@ -158,6 +158,36 @@ pub fn scrollbar(handle: ScrollHandle, axis: Axis) -> Element {
     }
     e
 }
+/// How a scroll area places its scrollbars.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ScrollbarStyle {
+    /// Bars in reserved 12-unit gutters beside the content, as on Windows and most
+    /// Linux desktops. Layout never changes when content starts to overflow.
+    #[default]
+    Classic,
+    /// Thin 8-unit bars drawn over the content's trailing edge on a transparent
+    /// track, like macOS overlay scrollbars. No space is reserved. They stay
+    /// visible; fading them out while idle is a follow-up.
+    Overlay,
+}
+impl ScrollbarStyle {
+    /// Overlay on macOS, Classic elsewhere. Scroll areas default to Classic so
+    /// layout is identical on every platform; opt in with
+    /// `.scrollbar_style(ScrollbarStyle::platform())`.
+    pub const fn platform() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Overlay
+        } else {
+            Self::Classic
+        }
+    }
+    fn default_thickness(self) -> f32 {
+        match self {
+            Self::Classic => 12.,
+            Self::Overlay => 8.,
+        }
+    }
+}
 /// Scroll area builder with an explicit viewport and optional persistent scrollbar gutters.
 #[must_use]
 pub struct ScrollArea {
@@ -166,7 +196,8 @@ pub struct ScrollArea {
     handle: ScrollHandle,
     axes: ScrollAxes,
     bars: bool,
-    thickness: f32,
+    thickness: Option<f32>,
+    style: ScrollbarStyle,
 }
 /// Scrollable viewport with vertical scrollbar. Give it bounded space through its
 /// parent or size; bars reserve gutters and do not change layout on overflow changes.
@@ -182,7 +213,8 @@ pub fn scroll_area(content: impl IntoElement) -> ScrollArea {
         handle: ScrollHandle::new(),
         axes: ScrollAxes::Vertical,
         bars: true,
-        thickness: 12.,
+        thickness: None,
+        style: ScrollbarStyle::Classic,
     }
 }
 impl ScrollArea {
@@ -207,17 +239,44 @@ impl ScrollArea {
     }
     /// Logical gutter width/height; must be positive and finite.
     pub fn scrollbar_size(mut self, size: f32) -> Self {
-        self.thickness = size;
+        self.thickness = Some(size);
+        self
+    }
+    /// Gutter or overlay placement; see [`ScrollbarStyle`]. Classic by default.
+    pub fn scrollbar_style(mut self, style: ScrollbarStyle) -> Self {
+        self.style = style;
         self
     }
 }
 impl IntoElement for ScrollArea {
     fn into_element(self) -> Element {
         let [x, y] = self.axes.allowed();
-        let safe = if self.thickness.is_finite() && self.thickness > 0. {
-            self.thickness
+        let thickness = self
+            .thickness
+            .unwrap_or_else(|| self.style.default_thickness());
+        let safe = if thickness.is_finite() && thickness > 0. {
+            thickness
         } else {
-            12.
+            self.style.default_thickness()
+        };
+        let overlay = self.style == ScrollbarStyle::Overlay;
+        // Overlay bars share the viewport's cell, above it, on a transparent track.
+        let place = |bar: Element, vertical: bool| {
+            let bar = bar.layout(|s| {
+                s.grid_column = line(if vertical && !overlay { 2 } else { 1 });
+                s.grid_row = line(if !vertical && !overlay { 2 } else { 1 });
+                if overlay && vertical {
+                    s.justify_self = Some(AlignSelf::END);
+                } else if overlay {
+                    s.align_self = Some(AlignSelf::END);
+                }
+            });
+            if overlay {
+                bar.z_index(1)
+                    .paint_style(PaintStyle::new().no_background())
+            } else {
+                bar
+            }
         };
         let mut viewport = column()
             .fill_width()
@@ -240,33 +299,25 @@ impl IntoElement for ScrollArea {
                 s.display = Display::Grid;
                 s.grid_template_columns = vec![minmax(length(0.), fr(1.))];
                 s.grid_template_rows = vec![minmax(length(0.), fr(1.))];
-                if self.bars && y {
+                if self.bars && y && !overlay {
                     s.grid_template_columns.push(length(safe));
                 }
-                if self.bars && x {
+                if self.bars && x && !overlay {
                     s.grid_template_rows.push(length(safe));
                 }
             })
             .child(viewport);
         if self.bars && y {
-            root = root.child(
-                scrollbar(self.handle.clone(), Axis::Vertical)
-                    .width(self.thickness)
-                    .layout(|s| {
-                        s.grid_column = line(2);
-                        s.grid_row = line(1);
-                    }),
-            );
+            root = root.child(place(
+                scrollbar(self.handle.clone(), Axis::Vertical).width(thickness),
+                true,
+            ));
         }
         if self.bars && x {
-            root = root.child(
-                scrollbar(self.handle.clone(), Axis::Horizontal)
-                    .height(self.thickness)
-                    .layout(|s| {
-                        s.grid_column = line(1);
-                        s.grid_row = line(2);
-                    }),
-            );
+            root = root.child(place(
+                scrollbar(self.handle.clone(), Axis::Horizontal).height(thickness),
+                false,
+            ));
         }
         root
     }

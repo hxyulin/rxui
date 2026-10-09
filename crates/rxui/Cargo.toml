@@ -12,7 +12,7 @@ publish = false
 [features]
 default = ["layout"]
 rendering = ["layout", "dep:astrelis"]
-native = ["accessibility", "dep:accesskit_winit", "rendering", "tasks", "dep:astrelis-winit", "dep:arboard"]
+native = ["accessibility", "dep:accesskit_winit", "rendering", "tasks", "dep:astrelis-winit", "dep:arboard", "dep:objc2-app-kit", "dep:windows-registry", "dep:zbus"]
 native-dialogs = ["native", "dep:rfd"]
 desktop-services = ["native", "dep:opener"]
 native-menus = ["native", "dep:muda", "dep:windows-sys"]
@@ -46,6 +46,21 @@ muda = { version = "0.20.0", default-features = false, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"], optional = true }
+
+# System appearance detection for `native`; see docs/native-feel.md. The macOS and
+# Linux crates are already in the native dependency graph (arboard, AccessKit).
+# AppKit accessibility flags and the accent color through safe objc2 bindings.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAccessibility", "NSColor", "NSColorSpace", "NSWorkspace", "objc2-core-foundation"], optional = true }
+
+# Microsoft's safe registry wrapper: high contrast, accent and animation settings.
+[target.'cfg(target_os = "windows")'.dependencies.windows-registry]
+version = "0.6.1"
+optional = true
+
+# XDG desktop portal Settings over the session bus.
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+zbus = { version = "5.19.0", default-features = false, features = ["async-io"], optional = true }
 
 [dev-dependencies]
 pollster = "0.4.0"
@@ -148,6 +163,10 @@ required-features = ["native-menus"]
 [[example]]
 name = "document_window"
 required-features = ["native-menus", "native-dialogs", "desktop-services"]
+
+[[example]]
+name = "native_feel_window"
+required-features = ["native"]
 
 [[example]]
 name = "window_state"

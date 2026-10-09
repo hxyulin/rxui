@@ -289,6 +289,16 @@ impl Element {
         self.input.get_or_insert_with(Default::default).cursor = Some(value);
         self
     }
+    /// Marks a custom title bar or other window-moving area. A primary press on it,
+    /// outside any interactive descendant, starts a native window move in the
+    /// native host, and a double press toggles maximization. Hosts query
+    /// `Ui::window_drag_region_at`; headless placements only record the flag.
+    pub fn window_drag_region(mut self) -> Self {
+        self.input
+            .get_or_insert_with(Default::default)
+            .window_drag_region = true;
+        self
+    }
     /// Registers a pointer down listener in the target/bubble route.
     pub fn on_pointer_down(mut self, listener: Listener<crate::PointerInput>) -> Self {
         self.input.get_or_insert_with(Default::default).pointer[0] = Some(listener);

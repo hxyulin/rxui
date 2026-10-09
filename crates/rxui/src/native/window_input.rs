@@ -54,6 +54,8 @@ pub struct WindowInput {
     ime_reset_revision: u64,
     ime_allowed: bool,
     ime_area: Option<Bounds>,
+    /// Click count of a press on a window drag region, applied by `sync`.
+    window_drag: Option<u8>,
 }
 /// Outcome of [`WindowInput::handle`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,8 +117,10 @@ impl WindowInput {
         )?;
         Ok(WindowInputResult { changed, command })
     }
-    /// Applies the placement's cursor icon and IME enablement and area to `window`.
-    /// Call it after input and after each preparation.
+    /// Applies the placement's cursor icon and IME enablement and area to `window`,
+    /// and starts a pending window move from a press on a window drag region (a
+    /// double press toggles maximization instead). Call it after input, within the
+    /// same event callback, and after each preparation.
     pub fn sync_window<T: View>(
         &mut self,
         ui: &mut Ui<T>,
@@ -226,6 +230,12 @@ impl WindowInput {
                 } else {
                     1
                 };
+                // A drag region moves the window instead of reaching the UI, like a
+                // native title bar; focus and capture stay where they were.
+                if pressed && *button == MouseButton::Left && ui.window_drag_region_at(position) {
+                    self.window_drag = Some(count);
+                    return Ok(false);
+                }
                 let button = input_button(*button);
                 let event = if pressed {
                     PointerEvent::Down {
@@ -359,9 +369,24 @@ impl WindowInput {
         painter: &mut UiPainter,
         window: &Window,
     ) -> Result<(), UiError> {
+        match self.window_drag.take() {
+            Some(2) => window.set_maximized(!window.is_maximized()),
+            // A failed move (no button held, unsupported backend) is not an error.
+            Some(_) => drop(window.drag_window()),
+            None => {}
+        }
         let cursor = ui.cursor_icon();
         if self.cursor_icon != Some(cursor) {
-            window.set_cursor(native_cursor(cursor));
+            let hidden = |c: Option<crate::Cursor>| c == Some(crate::Cursor::Hidden);
+            match native_cursor(cursor) {
+                Some(icon) => {
+                    window.set_cursor(icon);
+                    if hidden(self.cursor_icon) {
+                        window.set_cursor_visible(true);
+                    }
+                }
+                None => window.set_cursor_visible(false),
+            }
             self.cursor_icon = Some(cursor);
         }
         let focus = ui
