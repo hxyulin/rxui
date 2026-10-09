@@ -1,0 +1,52 @@
+{
+  "recorded_date": "2026-10-10",
+  "base_commit": "db84b44",
+  "commit": "feat/text working tree after 02e6d90 (see source_sha256)",
+  "os": "macOS 27.0.1 (26A434)",
+  "rust": "1.99.0",
+  "adapter": "Apple M3 Pro, Metal, integrated GPU",
+  "profile": "optimized bench",
+  "astrelis_git_revision": "d8ac1d1b5fd0c57d5ae0811abb3a004f6e3f6923",
+  "text": {
+    "command": "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench text --features rendering,accessibility --locked",
+    "accessibility_command": "CARGO_INCREMENTAL=0 cargo bench -p rxui --bench text --features rendering,accessibility --locked -- --accessibility",
+    "warmups": 10,
+    "batches": 20,
+    "operations_per_batch": 10,
+    "single_buffer_run": "text-single-buffer.csv",
+    "single_buffer_note": "Same benchmark with the whole text area in one Astrelis buffer, before paragraph chunks; one run.",
+    "whole_runs_accessibility_run": "text-accessibility-whole-runs.csv",
+    "whole_runs_note": "With 8-paragraph chunks but before incremental AccessKit text runs; one run.",
+    "runs": ["text-1.csv", "text-2.csv", "text-3.csv"],
+    "accessibility_runs": [
+      "text-accessibility-1.csv",
+      "text-accessibility-2.csv",
+      "text-accessibility-3.csv"
+    ]
+  },
+  "frame": {
+    "command": "target/release/deps/frame-<hash> --bench, built with CARGO_INCREMENTAL=0 cargo bench -p rxui --bench frame --features rendering,accessibility --locked --no-run",
+    "baseline": "git archive of db84b44 built into a separate target directory; base and current binaries alternated run by run",
+    "base_runs": ["frame-base-1.csv", "frame-base-2.csv", "frame-base-3.csv", "frame-base-4.csv"],
+    "runs": ["frame-1.csv", "frame-2.csv", "frame-3.csv", "frame-4.csv"],
+    "accessibility_base_runs": [
+      "frame-accessibility-base-1.csv",
+      "frame-accessibility-base-2.csv"
+    ],
+    "accessibility_runs": ["frame-accessibility-1.csv", "frame-accessibility-2.csv"]
+  },
+  "notes": [
+    "Interactive machine shared with other builds; values are batch averages, not individual-frame latency.",
+    "CPU only: no surface acquisition, submission, presentation or native event loop."
+  ],
+  "source_sha256": {
+    "crates/rxui/benches/text.rs": "e020e2cd24a787e8c55ccea625cbe0b1b15244695994d7c34d0f888126fca9dd",
+    "crates/rxui/benches/frame.rs": "6fb9a5050219fe859962c398fd9040fe1429fce2b930083585a0e69102cdf3b5",
+    "crates/rxui/src/painting.rs": "c3d399aa998aae4aec1c8a5a0695c06a76cc1527fb542e21c74f23e6073e700f",
+    "crates/rxui/src/text_chunks.rs": "e3cf986c7e0b671c80d8e1dba1b4e52ce85e4c173dccd40335154a00359ae7d6",
+    "crates/rxui/src/accessibility.rs": "cfbdfc141b95d29260d06aff22eb3240094ee7a8bae95aba4bca9f4ea6f6a79a",
+    "crates/rxui/src/ui.rs": "43f76b782b6e6f70ebfaff238ebb432f32f98b417e5eef80dde744ee7cfd7b22",
+    "crates/rxui/src/editing.rs": "b435a9b2fc02701bce99b3392b9ae580bc3a97c4a8c5e628f2a0019987160ab1",
+    "Cargo.lock": "d8d42add3eb3e646eb0f302b900ba8f7d27f8a7702386cfa3295aa02c327db37"
+  }
+}

@@ -24,35 +24,74 @@ pub struct AccessKitStats {
 /// with its line break, so consumers derive line and paragraph boundaries.
 struct TextRun {
     revision: u64,
-    /// Run node identities in text order.
-    ids: Vec<NodeId>,
-    nodes: Vec<Arc<Node>>,
-    /// Index into `boundaries` where each run starts.
-    starts: Vec<usize>,
-    /// Grapheme boundaries of the whole value, including its end.
+    /// Value the runs describe.
+    value: String,
+    /// Paragraph runs in text order.
+    runs: Vec<Run>,
+}
+struct Run {
+    id: NodeId,
+    node: Arc<Node>,
+    /// Byte offset of the paragraph in the value.
+    start: usize,
+    /// Grapheme boundaries relative to `start`, from zero through the run's length.
     boundaries: Vec<usize>,
+}
+impl Run {
+    fn len(&self) -> usize {
+        *self.boundaries.last().unwrap()
+    }
 }
 impl TextRun {
     /// Run and character index of a grapheme boundary byte offset. A boundary
     /// between two runs belongs to the start of the later run.
     fn position(&self, byte_offset: usize) -> Option<accesskit::TextPosition> {
-        let index = self.boundaries.binary_search(&byte_offset).ok()?;
-        let run = self.starts.partition_point(|s| *s <= index) - 1;
+        let run = &self.runs[self
+            .runs
+            .partition_point(|r| r.start <= byte_offset)
+            .checked_sub(1)?];
+        let index = run
+            .boundaries
+            .binary_search(&(byte_offset - run.start))
+            .ok()?;
         Some(accesskit::TextPosition {
-            node: self.ids[run],
-            character_index: index - self.starts[run],
+            node: run.id,
+            character_index: index,
         })
     }
     fn byte_offset(&self, position: accesskit::TextPosition) -> Option<usize> {
-        let run = self.ids.iter().position(|id| *id == position.node)?;
-        let end = self
-            .starts
-            .get(run + 1)
-            .copied()
-            .unwrap_or(self.boundaries.len() - 1);
-        let index = self.starts[run] + position.character_index;
-        (index <= end).then(|| self.boundaries[index])
+        let run = self.runs.iter().find(|r| r.id == position.node)?;
+        run.boundaries
+            .get(position.character_index)
+            .map(|b| run.start + b)
     }
+}
+/// Encodes `value[start..end]` as one run, or None when a grapheme exceeds the u8
+/// character length AccessKit allows.
+fn encode_run(value: &str, start: usize, end: usize, id: NodeId) -> Option<Run> {
+    let text = &value[start..end];
+    let mut boundaries: Vec<_> = text.grapheme_indices(true).map(|(i, _)| i).collect();
+    boundaries.push(text.len());
+    if boundaries
+        .windows(2)
+        .any(|pair| pair[1] - pair[0] > u8::MAX as usize)
+    {
+        return None;
+    }
+    let mut node = Node::new(Role::TextRun);
+    node.set_value(text);
+    node.set_character_lengths(
+        boundaries
+            .windows(2)
+            .map(|p| (p[1] - p[0]) as u8)
+            .collect::<Vec<_>>(),
+    );
+    Some(Run {
+        id,
+        node: Arc::new(node),
+        start,
+        boundaries,
+    })
 }
 /// One placement's optional AccessKit translation/publication cache. Use alongside
 /// a platform adapter and call update only when accessibility is active. Stable
@@ -117,6 +156,60 @@ impl AccessKitTree {
         self.runs.clear();
         self.value_only_revisions.clear();
         self.reverse.clear();
+    }
+    /// Splits a value into paragraph runs, each ending with its line break; a
+    /// trailing break leaves an empty final run. Paragraphs unchanged since `old`
+    /// keep their run, identity and encoding, so an edit re-encodes only the
+    /// paragraphs it touched. A changed paragraph always gets a new identity, so a
+    /// queued native selection cannot address replacement text.
+    fn encode(&mut self, old: Option<TextRun>, value: &str, revision: u64) -> Option<TextRun> {
+        let mut runs = Vec::new();
+        let mut suffix_runs = Vec::new();
+        let (mut from, mut to) = (0, value.len());
+        if let Some(old) = old {
+            let (prefix, suffix) = crate::editing::common_ends(&old.value, value);
+            let changed_end = old.value.len() - suffix;
+            let mut old_runs = old.runs.into_iter().peekable();
+            // A paragraph is unchanged when it lies in the common prefix with its
+            // line break, or in the common suffix after the break preceding it.
+            while let Some(run) = old_runs.next_if(|r| {
+                r.len() > 0
+                    && r.start + r.len() <= prefix
+                    && old.value.as_bytes()[r.start + r.len() - 1] == b'\n'
+            }) {
+                from = run.start + run.len();
+                runs.push(run);
+            }
+            for mut run in old_runs {
+                if run.start > changed_end {
+                    run.start = run.start + value.len() - old.value.len();
+                    suffix_runs.push(run);
+                }
+            }
+            if let Some(first) = suffix_runs.first() {
+                to = first.start;
+            }
+        }
+        let mut start = from;
+        while start < to {
+            let end = value[start..to].find('\n').map_or(to, |i| start + i + 1);
+            let id = self.allocate();
+            runs.push(encode_run(value, start, end, id)?);
+            start = end;
+        }
+        runs.append(&mut suffix_runs);
+        if runs
+            .last()
+            .is_none_or(|r| value[r.start..r.start + r.len()].ends_with('\n'))
+        {
+            let id = self.allocate();
+            runs.push(encode_run(value, value.len(), value.len(), id)?);
+        }
+        Some(TextRun {
+            revision,
+            value: value.to_owned(),
+            runs,
+        })
     }
     fn allocate(&mut self) -> NodeId {
         let id = NodeId(self.next_id);
@@ -362,63 +455,23 @@ impl AccessKitTree {
                         && self.value_only_revisions.get(&semantic.id)
                             != Some(&semantic.text_revision);
                     if stale {
-                        self.runs.remove(&semantic.id);
+                        let old = self.runs.remove(&semantic.id);
                         self.value_only_revisions.remove(&semantic.id);
-                        let mut boundaries: Vec<_> =
-                            value.grapheme_indices(true).map(|(i, _)| i).collect();
-                        if boundaries.last().copied() != Some(value.len()) {
-                            boundaries.push(value.len());
-                        }
-                        if boundaries
-                            .windows(2)
-                            .all(|pair| pair[1] - pair[0] <= u8::MAX as usize)
-                        {
-                            let mut run = TextRun {
-                                revision: semantic.text_revision,
-                                ids: Vec::new(),
-                                nodes: Vec::new(),
-                                starts: Vec::new(),
-                                boundaries,
-                            };
-                            // Split after each line break; a trailing break leaves
-                            // an empty final paragraph run.
-                            let mut start = 0;
-                            loop {
-                                let end = value[start..]
-                                    .find('\n')
-                                    .map_or(value.len(), |i| start + i + 1);
-                                let first = run.boundaries.binary_search(&start).unwrap();
-                                let last = run.boundaries.binary_search(&end).unwrap();
-                                let mut text = Node::new(Role::TextRun);
-                                text.set_value(&value[start..end]);
-                                text.set_character_lengths(
-                                    run.boundaries[first..=last]
-                                        .windows(2)
-                                        .map(|p| (p[1] - p[0]) as u8)
-                                        .collect::<Vec<_>>(),
-                                );
-                                let id = self.allocate();
-                                run.ids.push(id);
-                                run.nodes.push(Arc::new(text));
-                                run.starts.push(first);
-                                if end == value.len() && !value[..end].ends_with('\n')
-                                    || end == start
-                                {
-                                    break;
-                                }
-                                start = end;
+                        match self.encode(old, value, semantic.text_revision) {
+                            Some(run) => {
+                                self.runs.insert(semantic.id, run);
+                                self.stats.prepared_text_runs += 1;
                             }
-                            self.runs.insert(semantic.id, run);
-                            self.stats.prepared_text_runs += 1;
-                        } else {
-                            self.value_only_revisions
-                                .insert(semantic.id, semantic.text_revision);
+                            None => {
+                                self.value_only_revisions
+                                    .insert(semantic.id, semantic.text_revision);
+                            }
                         }
                     }
                     if let Some(run) = self.runs.get(&semantic.id) {
-                        node.set_children(run.ids.clone());
-                        for (id, text) in run.ids.iter().zip(&run.nodes) {
-                            next.insert(*id, text.clone());
+                        node.set_children(run.runs.iter().map(|r| r.id).collect::<Vec<_>>());
+                        for run in &run.runs {
+                            next.insert(run.id, run.node.clone());
                         }
                         if !semantic.disabled
                             && let Some(selection) = semantic.selection
@@ -635,5 +688,66 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::TableRow => Role::Row,
         SemanticRole::TableCell => Role::Cell,
         SemanticRole::ColumnHeader => Role::ColumnHeader,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn summary(run: &TextRun) -> Vec<(usize, Vec<usize>, Option<String>)> {
+        run.runs
+            .iter()
+            .map(|r| {
+                (
+                    r.start,
+                    r.boundaries.clone(),
+                    r.node.value().map(str::to_owned),
+                )
+            })
+            .collect()
+    }
+    #[test]
+    fn incremental_paragraph_runs_match_a_fresh_encoding_and_renew_changed_ids() {
+        let mut tree = AccessKitTree::new();
+        // Deterministic edits over paragraphs with combining marks, emoji and
+        // empty lines, including edits of line breaks themselves.
+        let pieces = ["", "a", "e\u{301}", "👩‍👩‍👧‍👦", "\n", "\n\n", "word ", "שלום"];
+        let mut value = String::from("one\ntwo\n\nthree e\u{301}\nfour\n");
+        let mut current = tree.encode(None, &value, 1).unwrap();
+        let mut seed = 7u64;
+        for revision in 2..400 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let pick = |n: usize, shift: u32| ((seed >> shift) as usize) % n.max(1);
+            let bounds: Vec<_> = value
+                .grapheme_indices(true)
+                .map(|(i, _)| i)
+                .chain([value.len()])
+                .collect();
+            let a = bounds[pick(bounds.len(), 8)];
+            let b = bounds[pick(bounds.len(), 24)];
+            let (a, b) = (a.min(b), a.max(b));
+            let b = if pick(3, 40) == 0 { b } else { a };
+            value.replace_range(a..b, pieces[pick(pieces.len(), 48)]);
+            if value.len() > 400 {
+                value.truncate(value.char_indices().nth(200).map_or(0, |(i, _)| i));
+            }
+            let ids: Vec<_> = current
+                .runs
+                .iter()
+                .map(|r| (r.id, r.node.clone()))
+                .collect();
+            let next = tree.encode(Some(current), &value, revision).unwrap();
+            let fresh = AccessKitTree::new().encode(None, &value, revision).unwrap();
+            assert_eq!(summary(&next), summary(&fresh), "{value:?}");
+            // A retained identity always carries identical paragraph text.
+            for run in &next.runs {
+                if let Some((_, node)) = ids.iter().find(|(id, _)| *id == run.id) {
+                    assert_eq!(node.value(), run.node.value());
+                }
+            }
+            current = next;
+        }
     }
 }

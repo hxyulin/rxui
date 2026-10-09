@@ -43,6 +43,11 @@ struct TextResource {
     prepared_width: f32,
     prepared_revision: u64,
     font_generation: u64,
+    /// Long wrapped text in separately prepared paragraph chunks; when present, the
+    /// buffer and prepared fields above are unused.
+    chunks: Option<Box<chunks::Chunks>>,
+    /// Text revision the chunking decision was made for.
+    chunked_revision: Option<u64>,
 }
 /// Families resolved to other loaded families before shaping; see
 /// [`UiPainter::map_family`] and [`UiPainter::set_sans_serif_family`].
@@ -118,6 +123,67 @@ impl TextResource {
         self.buffer.set_width(text_width(request.width))?;
         Ok(self.buffer.layout(fonts)?)
     }
+    /// Whether this text uses paragraph chunks, deciding again when its revision
+    /// changes. Single-line text never does.
+    fn chunked(&mut self, request: &TextRequest<'_>) -> bool {
+        if request.single_line {
+            self.chunks = None;
+            return false;
+        }
+        if self.chunked_revision != Some(request.revision) {
+            self.chunked_revision = Some(request.revision);
+            let wanted = chunks::wanted(request.text, self.chunks.is_some());
+            if wanted && self.chunks.is_none() {
+                self.chunks = Some(Box::default());
+                self.buffer = TextBuffer::new();
+                self.prepared = None;
+                self.prepared_layout = None;
+            } else if !wanted {
+                self.chunks = None;
+            }
+        }
+        self.chunks.is_some()
+    }
+    /// Prepared glyph ink in text-local units.
+    fn ink_bounds(&self) -> Option<Rect> {
+        match &self.prepared {
+            Some(prepared) => prepared.ink_bounds(),
+            None => self.chunks.as_ref()?.ink,
+        }
+    }
+    /// Whether drawable geometry exists for the current layout.
+    fn ready(&self) -> bool {
+        self.prepared.is_some() || self.chunks.as_ref().is_some_and(|c| c.prepared())
+    }
+    /// Selection rectangles with the index of the drawable part each lies in.
+    fn selection_rects(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Result<Vec<(Rect, usize)>, UiError> {
+        match &self.chunks {
+            Some(chunks) => chunks.selection_rects(range),
+            None => Ok(self
+                .prepared_layout
+                .as_ref()
+                .ok_or(UiError::InvalidGeometry)?
+                .selection_rects(range)?
+                .map(|r| (r, 0))
+                .collect()),
+        }
+    }
+    fn caret(&self, position: astrelis::TextPosition) -> Option<astrelis::TextCaret> {
+        match &self.chunks {
+            Some(chunks) => chunks.caret(position),
+            None => self.prepared_layout.as_ref()?.caret(position),
+        }
+    }
+    /// One drawable part and its vertical offset: a chunk, or the whole text.
+    fn part(&self, index: usize) -> Option<(&PreparedText, f32)> {
+        match &self.chunks {
+            Some(chunks) => chunks.chunk(index),
+            None => self.prepared.as_ref().map(|p| (p, 0.)),
+        }
+    }
     /// Size at the requested width. Probe widths reuse the configured snapshot's
     /// shaped runs without building glyph snapshots or changing its width.
     fn measure(
@@ -128,6 +194,23 @@ impl TextResource {
     ) -> Result<[f32; 2], UiError> {
         self.configure(request, families)?;
         Ok(self.buffer.measure(fonts, text_width(request.width))?)
+    }
+    /// Size of whole or chunked text at the requested width.
+    fn measure_text(
+        &mut self,
+        fonts: &mut TextSystem,
+        families: &FamilyMap,
+        request: TextRequest<'_>,
+        generation: u64,
+    ) -> Result<[f32; 2], UiError> {
+        if self.chunked(&request) {
+            return self
+                .chunks
+                .as_mut()
+                .unwrap()
+                .measure(fonts, families, request, generation);
+        }
+        self.measure(fonts, families, request)
     }
 }
 /// Prepared placeholder of an empty input, retained separately from its value text.
@@ -382,7 +465,10 @@ impl UiPainter {
                 }
             };
             let width = text_width(request.width).unwrap_or_default();
-            if let Some(placeholder) = ui.placeholder_request(id) {
+            // Only an empty input shows a placeholder.
+            if request.text.is_empty()
+                && let Some(placeholder) = ui.placeholder_request(id)
+            {
                 let entry = self.placeholders.entry(id).or_default();
                 if !entry.current(&placeholder, self.generation, raster_scale) {
                     let layout =
@@ -404,12 +490,26 @@ impl UiPainter {
                 }
             }
             let resource = self.texts.entry(id).or_default();
-            if resource.prepared.is_some()
-                && resource.prepared_revision == request.revision
+            let current = resource.prepared_revision == request.revision
                 && resource.prepared_width == width
                 && resource.font_generation == self.generation
-                && resource.raster_scale == raster_scale
-            {
+                && resource.raster_scale == raster_scale;
+            // The common unchanged case reads only these fields; chunked text never
+            // holds whole-text geometry.
+            if current && resource.prepared.is_some() {
+                continue;
+            }
+            if resource.chunked(&request) {
+                if current && resource.ready() {
+                    continue;
+                }
+                let chunks = resource.chunks.as_mut().unwrap();
+                chunks.layout(&mut self.fonts, &self.families, request, self.generation)?;
+                chunks.prepare(&mut self.painter, raster_scale)?;
+                resource.prepared_revision = request.revision;
+                resource.prepared_width = width;
+                resource.font_generation = self.generation;
+                resource.raster_scale = raster_scale;
                 continue;
             }
             let layout = resource.layout(&mut self.fonts, &self.families, request)?;
@@ -599,14 +699,15 @@ impl UiPainter {
                 None | Some(VisibleContent::Other) => {}
                 Some(VisibleContent::Text(request)) => {
                     let resource = self.texts.get(&id).ok_or(UiError::InvalidGeometry)?;
-                    if resource.prepared.is_none()
+                    if !resource.ready()
                         || resource.prepared_revision != request.revision
                         || resource.font_generation != self.generation
                         || Some(resource.prepared_width) != text_width(request.width)
                     {
                         return Err(UiError::InvalidGeometry);
                     }
-                    if let Some(placeholder) = ui.placeholder_request(id)
+                    if request.text.is_empty()
+                        && let Some(placeholder) = ui.placeholder_request(id)
                         && self.placeholders.get(&id).is_none_or(|p| {
                             !p.current(&placeholder, self.generation, p.resource.raster_scale)
                         })
@@ -700,7 +801,6 @@ impl UiPainter {
         }
         texts
             .get(&element.id)
-            .and_then(|t| t.prepared.as_ref())
             .and_then(|t| t.ink_bounds())
             .is_some_and(|ink| {
                 visible(Bounds {
@@ -756,7 +856,6 @@ impl UiPainter {
                     })
                     || texts
                         .get(&id)
-                        .and_then(|t| t.prepared.as_ref())
                         .and_then(|t| t.ink_bounds())
                         .is_some_and(|i| {
                             visible(Bounds {
@@ -972,7 +1071,7 @@ impl UiPainter {
                             content_clip[2],
                             content_clip[3],
                         )?;
-                        let layout = self.texts[&element.id].prepared_layout.as_ref().unwrap();
+                        let resource = &self.texts[&element.id];
                         let origin = [
                             element.content_bounds.x - editing.scroll_x,
                             element.content_bounds.y,
@@ -984,7 +1083,7 @@ impl UiPainter {
                         } else {
                             editing.display_selection.range()
                         };
-                        for rect in layout.selection_rects(selected)? {
+                        for (rect, _) in resource.selection_rects(selected)? {
                             paint.fill_rect(
                                 Rect::new(
                                     origin[0] + rect.x,
@@ -1009,29 +1108,39 @@ impl UiPainter {
                         .texts
                         .get(&element.id)
                         .ok_or(UiError::InvalidGeometry)?;
-                    let prepared = resource.prepared.as_ref().ok_or(UiError::InvalidGeometry)?;
                     let color = appearance.color;
                     // Native Metal can drop later retained glyph draws when cached
                     // pass bindings survive mixed-renderer/opacity transitions.
                     // Reapply text state; retain shaping, atlas and geometry caches.
                     let _ = paint.pass().as_wgpu();
-                    paint.draw_text(
-                        prepared,
-                        TextDraw::new([
-                            element.content_bounds.x
-                                - element.editing.as_ref().map_or(0., |e| e.scroll_x),
-                            element.content_bounds.y,
-                        ])
-                        .color(color),
-                    )?;
+                    let origin = [
+                        element.content_bounds.x
+                            - element.editing.as_ref().map_or(0., |e| e.scroll_x),
+                        element.content_bounds.y,
+                    ];
+                    if let Some(prepared) = &resource.prepared {
+                        paint.draw_text(prepared, TextDraw::new(origin).color(color))?;
+                    } else {
+                        // Only chunks overlapping the clip record draws.
+                        let chunks = resource.chunks.as_ref().ok_or(UiError::InvalidGeometry)?;
+                        let top = element.clip_bounds.y - origin[1];
+                        for (prepared, offset) in
+                            chunks.visible(top, top + element.clip_bounds.height)
+                        {
+                            paint.draw_text(
+                                prepared,
+                                TextDraw::new([origin[0], origin[1] + offset]).color(color),
+                            )?;
+                        }
+                    }
                     // An empty input's placeholder, inside the same content clip.
-                    if let (Some(_), Some(editing), Some(placeholder)) = (
-                        element.placeholder,
-                        &element.editing,
-                        self.placeholders
+                    if element.placeholder.is_some()
+                        && let Some(editing) = &element.editing
+                        && let Some(placeholder) = self
+                            .placeholders
                             .get(&element.id)
-                            .and_then(|p| p.resource.prepared.as_ref()),
-                    ) {
+                            .and_then(|p| p.resource.prepared.as_ref())
+                    {
                         paint.draw_text(
                             placeholder,
                             TextDraw::new([element.content_bounds.x, element.content_bounds.y])
@@ -1040,7 +1149,7 @@ impl UiPainter {
                     }
                 }
                 if let Some(editing) = &element.editing {
-                    let layout = self.texts[&element.id].prepared_layout.as_ref().unwrap();
+                    let resource = &self.texts[&element.id];
                     let origin = [
                         element.content_bounds.x - editing.scroll_x,
                         element.content_bounds.y,
@@ -1055,8 +1164,7 @@ impl UiPainter {
                         } else {
                             editing.display_selection.range()
                         };
-                        let prepared = self.texts[&element.id].prepared.as_ref().unwrap();
-                        for rect in layout.selection_rects(selected)? {
+                        for (rect, part) in resource.selection_rects(selected)? {
                             let selected_bounds = Bounds {
                                 x: origin[0] + rect.x,
                                 y: origin[1] + rect.y,
@@ -1071,7 +1179,10 @@ impl UiPainter {
                                 [viewport[0] + shift[0], viewport[1] + shift[1]],
                                 original_scissor,
                             );
-                            if selected_clip[2] > 0 && selected_clip[3] > 0 {
+                            if selected_clip[2] > 0
+                                && selected_clip[3] > 0
+                                && let Some((prepared, offset)) = resource.part(part)
+                            {
                                 paint.pass().set_scissor_rect(
                                     selected_clip[0],
                                     selected_clip[1],
@@ -1080,7 +1191,8 @@ impl UiPainter {
                                 )?;
                                 paint.draw_text(
                                     prepared,
-                                    TextDraw::new(origin).color(appearance.selection_text_color),
+                                    TextDraw::new([origin[0], origin[1] + offset])
+                                        .color(appearance.selection_text_color),
                                 )?;
                             }
                         }
@@ -1098,7 +1210,7 @@ impl UiPainter {
                         )?;
                     }
                     if let Some(range) = &editing.preedit_range {
-                        for rect in layout.selection_rects(range.clone())? {
+                        for (rect, _) in resource.selection_rects(range.clone())? {
                             paint.fill_rect(
                                 Rect::new(
                                     origin[0] + rect.x,
@@ -1123,7 +1235,7 @@ impl UiPainter {
                     if editing.caret_visible
                         && (editing.preedit_range.is_some()
                             || editing.display_selection.is_collapsed())
-                        && let Some(caret) = cursor.and_then(|p| layout.caret(ast_position(p)))
+                        && let Some(caret) = cursor.and_then(|p| resource.caret(ast_position(p)))
                     {
                         paint.fill_rect(
                             Rect::new(
@@ -1272,21 +1384,59 @@ fn physical_clip(
         .max(top);
     [left, top, right - left, bottom - top]
 }
+/// Geometry for interaction queries: one layout, or stacked paragraph chunks.
+enum Query<'a> {
+    Single(Arc<TextLayout>),
+    Chunked(&'a chunks::Chunks),
+}
+impl Query<'_> {
+    fn hit_test(&self, point: [f32; 2]) -> Option<astrelis::TextPosition> {
+        match self {
+            Self::Single(layout) => layout.hit_test(point),
+            Self::Chunked(chunks) => chunks.hit_test(point),
+        }
+    }
+    fn caret(&self, position: astrelis::TextPosition) -> Option<astrelis::TextCaret> {
+        match self {
+            Self::Single(layout) => layout.caret(position),
+            Self::Chunked(chunks) => chunks.caret(position),
+        }
+    }
+    fn neighbor(
+        &self,
+        position: astrelis::TextPosition,
+        right: bool,
+    ) -> Option<astrelis::TextPosition> {
+        match self {
+            Self::Single(layout) => layout.visual_neighbor(position, right),
+            Self::Chunked(chunks) => chunks.neighbor(position, right),
+        }
+    }
+}
 impl UiPainter {
     fn interaction_layout(
         &mut self,
         id: ElementId,
         request: TextRequest<'_>,
-    ) -> Result<Arc<TextLayout>, UiError> {
+    ) -> Result<Query<'_>, UiError> {
         let resource = self.texts.entry(id).or_default();
+        if resource.chunked(&request) {
+            let chunks = resource.chunks.as_mut().unwrap();
+            chunks.layout(&mut self.fonts, &self.families, request, self.generation)?;
+            return Ok(Query::Chunked(chunks));
+        }
         if resource.prepared_revision == request.revision
             && resource.font_generation == self.generation
             && request.width == TextWidth::Available(resource.prepared_width)
             && let Some(layout) = &resource.prepared_layout
         {
-            return Ok(layout.clone());
+            return Ok(Query::Single(layout.clone()));
         }
-        resource.layout(&mut self.fonts, &self.families, request)
+        Ok(Query::Single(resource.layout(
+            &mut self.fonts,
+            &self.families,
+            request,
+        )?))
     }
 }
 impl TextMeasure for UiPainter {
@@ -1329,14 +1479,16 @@ impl TextMeasure for UiPainter {
     ) -> Result<Option<crate::TextPosition>, UiError> {
         Ok(self
             .interaction_layout(id, request)?
-            .visual_neighbor(ast_position(position), right)
+            .neighbor(ast_position(position), right)
             .map(ui_position))
     }
     fn measure(&mut self, id: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError> {
-        self.texts
-            .entry(id)
-            .or_default()
-            .measure(&mut self.fonts, &self.families, request)
+        self.texts.entry(id).or_default().measure_text(
+            &mut self.fonts,
+            &self.families,
+            request,
+            self.generation,
+        )
     }
     fn generation(&self) -> u64 {
         self.generation
@@ -1780,6 +1932,206 @@ mod tests {
     }
     #[test]
     #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn chunked_long_text_matches_single_buffer_geometry_through_edits() {
+        use crate::{TextChangeEvent, TextInputEvent, TextSelection, text_area};
+        struct Doc(String);
+        impl View for Doc {
+            fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                column().size(320., 400.).scroll_y().child(
+                    text_area(self.0.clone()).key("doc").width(300.).on_change(
+                        cx.listener(|this, e: &TextChangeEvent, _| this.0 = e.value.clone()),
+                    ),
+                )
+            }
+        }
+        let text: String = (0..300)
+            .map(|i| match i % 7 {
+                0 => String::new(),
+                1 => "שלום עולם, mixed direction text".into(),
+                2 => "a long paragraph that wraps across several visual lines because it \
+                      keeps going well past the width of the area"
+                    .into(),
+                _ => format!("paragraph {i} e\u{301}"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let target = graphics
+                .create_framebuffer(FramebufferOptions::new(320, 400))
+                .unwrap();
+            let mut runtime = Runtime::new();
+            let root = runtime.update(|cx| cx.new(|_| Doc(text)));
+            let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
+                .unwrap();
+            ui.prepare(&mut runtime, [320., 400.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+            let id = ui
+                .elements()
+                .find(|e| e.kind == crate::ElementType::TextInput)
+                .unwrap()
+                .id;
+            assert!(ui.focus(id));
+            // Compares every query against one unchunked buffer of the same text.
+            let compare = |ui: &Ui<Doc>, painter: &mut UiPainter| {
+                let info = ui.element(id).unwrap();
+                let value = info.text.unwrap().to_owned();
+                let request = TextRequest {
+                    text: &value,
+                    font_size: info.font_size,
+                    width: TextWidth::Available(info.content_bounds.width),
+                    single_line: false,
+                    style: info.text_style,
+                    revision: info.text_revision,
+                };
+                assert!(painter.texts[&id].chunks.is_some());
+                let mut reference = TextResource::default();
+                let single = reference
+                    .layout(&mut painter.fonts, &painter.families, request)
+                    .unwrap();
+                let size = painter.measure(id, request).unwrap();
+                // Stacked chunk heights and per-line accumulation round differently
+                // in f32: about 0.03 units after 7,500.
+                let near = |a: f32, b: f32| (a - b).abs() <= 0.1;
+                assert!(
+                    near(size[1], single.size()[1]),
+                    "{size:?} {:?}",
+                    single.size()
+                );
+                assert!(near(info.content_bounds.height, single.size()[1]));
+                let boundaries: Vec<_> = (0..=value.len())
+                    .filter(|i| single.is_text_boundary(*i))
+                    .collect();
+                for &offset in boundaries.iter().step_by(7) {
+                    for affinity in [
+                        crate::TextAffinity::Downstream,
+                        crate::TextAffinity::Upstream,
+                    ] {
+                        let position = crate::TextPosition {
+                            byte_offset: offset,
+                            affinity,
+                        };
+                        let expected = single.caret(ast_position(position));
+                        let actual = painter.text_caret(id, request, position).unwrap();
+                        match (expected, actual) {
+                            (Some(e), Some(a)) => {
+                                assert!(near(e.origin[0], a.x), "x at {offset}");
+                                assert!(near(e.origin[1], a.y), "y at {offset}");
+                            }
+                            (None, None) => {}
+                            other => panic!("caret at {offset}: {other:?}"),
+                        }
+                        for right in [false, true] {
+                            let expected = single
+                                .visual_neighbor(ast_position(position), right)
+                                .map(ui_position)
+                                .map(|p| p.byte_offset);
+                            let actual = painter
+                                .text_neighbor(id, request, position, right)
+                                .unwrap()
+                                .map(|p| p.byte_offset);
+                            assert_eq!(expected, actual, "neighbor of {offset} right {right}");
+                        }
+                    }
+                }
+                for y in (0..(single.size()[1] as usize)).step_by(9) {
+                    // Avoid points within rounding distance of a line edge.
+                    let y = y as f32 + 0.5;
+                    if single.lines().iter().any(|l| (l.top - y).abs() < 0.2) {
+                        continue;
+                    }
+                    for x in [-5., 3., 47., 151., 290., 500.] {
+                        let point = [x, y];
+                        assert_eq!(
+                            single.hit_test(point).map(ui_position),
+                            painter.text_hit_test(id, request, point).unwrap(),
+                            "hit {point:?}"
+                        );
+                    }
+                }
+                let resource = &painter.texts[&id];
+                for range in [
+                    0..value.len(),
+                    40..value.len() / 2,
+                    value.len() / 3..value.len() - 9,
+                ] {
+                    let start = boundaries[boundaries.partition_point(|b| *b < range.start)];
+                    let end = boundaries[boundaries.partition_point(|b| *b < range.end)];
+                    let expected: Vec<_> = single
+                        .selection_rects(start..end)
+                        .unwrap()
+                        .map(|r| (r.x, r.y, r.width, r.height))
+                        .collect();
+                    let actual: Vec<_> = resource
+                        .selection_rects(start..end)
+                        .unwrap()
+                        .into_iter()
+                        .map(|(r, _)| (r.x, r.y, r.width, r.height))
+                        .collect();
+                    assert_eq!(expected.len(), actual.len());
+                    for (e, a) in expected.iter().zip(&actual) {
+                        assert!(near(e.0, a.0) && near(e.1, a.1), "{e:?} {a:?}");
+                        assert!(near(e.2, a.2) && near(e.3, a.3), "{e:?} {a:?}");
+                    }
+                }
+            };
+            compare(&ui, &mut painter);
+            let chunks = painter.texts[&id].chunks.as_ref().unwrap().list.len();
+            assert!(chunks >= 4, "{chunks} chunks");
+            // Edits at a chunk boundary, joining chunks and inserting many lines.
+            let boundary = painter.texts[&id].chunks.as_ref().unwrap().list[1].start;
+            let mut select =
+                |ui: &mut Ui<Doc>, painter: &mut UiPainter, range: std::ops::Range<usize>| {
+                    let revision = ui.semantic_node(id).unwrap().text_revision;
+                    ui.semantic_action(
+                        &mut runtime,
+                        crate::SemanticAction::SetSelection {
+                            target: id,
+                            text_revision: revision,
+                            selection: TextSelection {
+                                anchor: crate::TextPosition::new(range.start),
+                                focus: crate::TextPosition::new(range.end),
+                            },
+                        },
+                        painter,
+                    )
+                    .unwrap();
+                };
+            select(&mut ui, &mut painter, boundary..boundary);
+            for event in [
+                TextInputEvent::Insert("x".into()),
+                TextInputEvent::Backspace,
+                TextInputEvent::Backspace,
+                TextInputEvent::Paste("one\ntwo\nthree\n".repeat(80)),
+            ] {
+                ui.text_input(&mut runtime, event, &mut painter).unwrap();
+                ui.prepare(&mut runtime, [320., 400.], &mut painter)
+                    .unwrap();
+                painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+                compare(&ui, &mut painter);
+            }
+            // Painting records only visible chunks and passes validation.
+            let mut target = target;
+            let errors = graphics
+                .device()
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            {
+                let mut frame = target.begin_frame().unwrap();
+                {
+                    let mut pass = frame.render_pass().begin().unwrap();
+                    painter.paint(&ui, &mut pass, 1.).unwrap();
+                }
+                frame.finish().unwrap();
+            }
+            assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
     fn intrinsic_probes_measure_without_replacing_the_prepared_layout() {
         pollster::block_on(async {
             let graphics = GraphicsContext::headless().await.unwrap();
@@ -2176,6 +2528,9 @@ mod layout_gpu_tests;
 
 #[path = "compositing.rs"]
 mod composition;
+
+#[path = "text_chunks.rs"]
+mod chunks;
 pub use composition::{ComposedUi, LayerStats};
 
 #[cfg(test)]

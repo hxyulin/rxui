@@ -116,10 +116,10 @@ pub(crate) enum ElementKind {
     TextInput {
         value: String,
         change: Option<Listener<TextChangeEvent>>,
-        submit: Option<Listener<TextSubmitEvent>>,
         disabled: bool,
         read_only: bool,
-        /// Placeholder, masking and multiline options; absent for plain inputs.
+        /// Submission, placeholder, masking and multiline options; absent for plain
+        /// inputs, keeping this variant no larger than the others.
         options: Option<Box<crate::editing::InputOptions>>,
     },
     Component(Rc<dyn crate::ui::Component>),
@@ -897,11 +897,7 @@ impl Element {
     }
     /// Installs single-line Enter submission outside active IME composition.
     pub fn on_submit(mut self, listener: Listener<TextSubmitEvent>) -> Self {
-        if let ElementKind::TextInput { submit, .. } = &mut self.kind {
-            *submit = Some(listener);
-        } else {
-            panic!("on_submit requires a text input");
-        }
+        self.input_options("on_submit").on_submit = Some(listener);
         self
     }
     /// Keeps selection/copy available while preventing committed edits and IME.
@@ -945,7 +941,7 @@ impl Element {
     /// Which Enter chord submits a text area; see [`crate::SubmitShortcut`].
     /// Single-line inputs always submit on Enter.
     pub fn submit_shortcut(mut self, shortcut: crate::SubmitShortcut) -> Self {
-        self.input_options("submit_shortcut").submit = shortcut;
+        self.input_options("submit_shortcut").shortcut = shortcut;
         self
     }
     /// Lets pointer drags, double/triple clicks and Select All select a label's text
@@ -1154,14 +1150,10 @@ impl Element {
         if let Some(theme) = &self.theme {
             theme.validate()?;
         }
-        if let ElementKind::TextInput { value, options, .. } = &self.kind {
-            let multiline = options.as_ref().is_some_and(|o| o.multiline);
-            if value
-                .chars()
-                .any(|c| c.is_control() && !(multiline && matches!(c, '\n' | '\t')))
-            {
-                return Err(UiError::InvalidTextValue);
-            }
+        if let ElementKind::TextInput { value, options, .. } = &self.kind
+            && crate::editing::has_control(value, options.as_ref().is_some_and(|o| o.multiline))
+        {
+            return Err(UiError::InvalidTextValue);
         }
         if !self.children.is_empty()
             && matches!(
@@ -1310,7 +1302,6 @@ pub fn text_input(value: impl Into<String>) -> Element {
     let mut element = Element::new(ElementKind::TextInput {
         value: value.into(),
         change: None,
-        submit: None,
         disabled: false,
         read_only: false,
         options: None,

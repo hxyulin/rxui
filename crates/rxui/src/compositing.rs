@@ -441,12 +441,7 @@ impl UiPainter {
                 bounds,
                 nonempty(e.content_bounds.intersection(e.clip_bounds)),
             );
-        } else if let Some(ink) = self
-            .texts
-            .get(&e.id)
-            .and_then(|t| t.prepared.as_ref())
-            .and_then(|p| p.ink_bounds())
-        {
+        } else if let Some(ink) = self.texts.get(&e.id).and_then(|t| t.ink_bounds()) {
             bounds = union(
                 bounds,
                 nonempty(

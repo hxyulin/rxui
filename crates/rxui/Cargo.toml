@@ -185,3 +185,8 @@ required-features = ["layout"]
 name = "frame"
 harness = false
 required-features = ["rendering", "accessibility"]
+
+[[bench]]
+name = "text"
+harness = false
+required-features = ["rendering", "accessibility"]

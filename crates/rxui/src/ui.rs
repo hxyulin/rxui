@@ -600,7 +600,9 @@ impl Node {
     }
     /// A text input without multiline editing: no wrapping, horizontal scrolling.
     fn single_line(&self) -> bool {
-        matches!(self.element.kind, ElementKind::TextInput { .. })
+        // Most text leaves are labels without editing state; test that field first.
+        self.editor.is_some()
+            && matches!(self.element.kind, ElementKind::TextInput { .. })
             && !self.input_options().is_some_and(|o| o.multiline)
     }
     fn multiline(&self) -> bool {
@@ -2789,10 +2791,14 @@ impl<T: View> Ui<T> {
         let (change, submit, read_only) = match &node.element.kind {
             ElementKind::TextInput {
                 change,
-                submit,
                 read_only,
+                options,
                 ..
-            } => (change.clone(), submit.clone(), *read_only),
+            } => (
+                change.clone(),
+                options.as_ref().and_then(|o| o.on_submit.clone()),
+                *read_only,
+            ),
             _ => (None, None, true),
         };
         let value = node.edit_value();
@@ -2804,7 +2810,7 @@ impl<T: View> Ui<T> {
         let event = match event {
             TextInputEvent::Enter { modifiers, repeat } => {
                 let submits = !multiline
-                    || match node.input_options().map(|o| o.submit).unwrap_or_default() {
+                    || match node.input_options().map(|o| o.shortcut).unwrap_or_default() {
                         crate::SubmitShortcut::PrimaryEnter => {
                             modifiers.primary() && !modifiers.shift && !modifiers.alt
                         }

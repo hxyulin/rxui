@@ -213,13 +213,14 @@ pub struct TextInputInfo {
     pub caret_visible: bool,
 }
 /// Per-input options beyond the common controlled-input fields, allocated only when
-/// a placeholder, masking or multiline editing is requested.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// submission, a placeholder, masking or multiline editing is requested.
+#[derive(Clone, Default)]
 pub(crate) struct InputOptions {
+    pub on_submit: Option<crate::Listener<TextSubmitEvent>>,
     pub placeholder: Option<String>,
     pub password: bool,
     pub multiline: bool,
-    pub submit: SubmitShortcut,
+    pub shortcut: SubmitShortcut,
 }
 pub(crate) struct Composition {
     pub text: String,
@@ -269,7 +270,7 @@ pub(crate) struct Snapshot {
 }
 /// Byte lengths of the longest common prefix and suffix of two values, aligned to
 /// UTF-8 character boundaries and never overlapping in either value.
-fn common_ends(old: &str, new: &str) -> (usize, usize) {
+pub(crate) fn common_ends(old: &str, new: &str) -> (usize, usize) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
     let n = a.len().min(b.len());
     let mut prefix = 0;
@@ -708,6 +709,39 @@ pub(crate) fn next(value: &str, offset: usize) -> usize {
         .ok()
         .flatten()
         .unwrap_or(value.len())
+}
+/// Whether a controlled value contains control characters other than the line
+/// breaks and tabs a text area allows. Descriptions are validated on every
+/// evaluation, so this scans bytes in fixed blocks that compile to vector compares
+/// and decodes only blocks that may hold a C0, DEL or C1 control.
+pub(crate) fn has_control(value: &str, multiline: bool) -> bool {
+    let suspect = |b: u8| {
+        (b < 0x20 && !(multiline && (b == b'\n' || b == b'\t'))) | (b == 0x7f) | (b == 0xc2)
+    };
+    let mut offset = 0;
+    for block in value.as_bytes().chunks(64) {
+        if block.iter().fold(false, |any, &b| any | suspect(b)) {
+            // C1 controls are U+0080..=U+009F, encoded 0xC2 0x80..=0x9F, which may
+            // straddle the block end; decode from the previous char boundary.
+            let mut start = offset;
+            while !value.is_char_boundary(start) {
+                start -= 1;
+            }
+            let end = (offset + block.len() + 1).min(value.len());
+            let mut end = end;
+            while !value.is_char_boundary(end) {
+                end += 1;
+            }
+            if value[start..end]
+                .chars()
+                .any(|c| c.is_control() && !(multiline && matches!(c, '\n' | '\t')))
+            {
+                return true;
+            }
+        }
+        offset += block.len();
+    }
+    false
 }
 pub(crate) fn single_line(value: &str) -> String {
     value

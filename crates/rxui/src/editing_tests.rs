@@ -1390,3 +1390,19 @@ fn selectable_labels_select_and_copy_without_tab_stops_or_edits() {
     assert!(ui.text_input_info(id).is_none());
     assert!(!ui.focus(id));
 }
+#[test]
+fn control_character_validation_scans_blocks_and_allows_text_area_breaks() {
+    use crate::editing::has_control;
+    assert!(!has_control("plain é © ° text", false));
+    assert!(has_control("tab\there", false));
+    assert!(!has_control("tab\there\nline", true));
+    assert!(has_control("cr\r", true));
+    assert!(has_control("del\u{7f}", true));
+    // A C1 control (0xC2 0x85) at every alignment, including across 64-byte blocks.
+    for pad in 0..70 {
+        let text = format!("{}\u{85}", "x".repeat(pad));
+        assert!(has_control(&text, true), "{pad}");
+        let text = format!("{}\u{a0}{}", "x".repeat(pad), "y".repeat(70));
+        assert!(!has_control(&text, true), "{pad}");
+    }
+}
