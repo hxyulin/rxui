@@ -369,6 +369,8 @@ pub(crate) struct InputProperties {
     pub focusable: Option<bool>,
     pub cursor: Option<Cursor>,
     pub window_drag_region: bool,
+    /// A label whose text can be selected and copied; see `Element::selectable`.
+    pub selectable: bool,
 }
 impl InputProperties {
     pub fn pointer_target(&self) -> bool {

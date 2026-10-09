@@ -209,10 +209,14 @@ pub use dock::{
 #[cfg(feature = "layout")]
 pub use dock_view::{Dock, DockContextEvent, DockPanel, dock, dock_panel};
 #[cfg(feature = "layout")]
+pub use editing::SubmitShortcut;
+#[cfg(feature = "layout")]
 pub use editing::{
     TextAffinity, TextChangeEvent, TextInputEvent, TextInputInfo, TextMovement, TextPosition,
     TextSelection, TextSubmitEvent,
 };
+#[cfg(feature = "layout")]
+pub use element::text_area;
 #[cfg(feature = "layout")]
 pub use element::{
     ButtonVariant, ClickEvent, Color, Element, IntoElement, Key, PointerEvents, ScrollAxes, View,
@@ -348,6 +352,7 @@ pub mod prelude {
     };
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
+    pub use crate::{SubmitShortcut, text_area};
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
 }

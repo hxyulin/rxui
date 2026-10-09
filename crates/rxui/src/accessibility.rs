@@ -20,11 +20,39 @@ pub struct AccessKitStats {
     /// New grapheme encodings prepared for changed text snapshots.
     pub prepared_text_runs: u64,
 }
+/// Published text of one element: one AccessKit run per paragraph, each ending
+/// with its line break, so consumers derive line and paragraph boundaries.
 struct TextRun {
     revision: u64,
-    id: NodeId,
+    /// Run node identities in text order.
+    ids: Vec<NodeId>,
+    nodes: Vec<Arc<Node>>,
+    /// Index into `boundaries` where each run starts.
+    starts: Vec<usize>,
+    /// Grapheme boundaries of the whole value, including its end.
     boundaries: Vec<usize>,
-    node: Arc<Node>,
+}
+impl TextRun {
+    /// Run and character index of a grapheme boundary byte offset. A boundary
+    /// between two runs belongs to the start of the later run.
+    fn position(&self, byte_offset: usize) -> Option<accesskit::TextPosition> {
+        let index = self.boundaries.binary_search(&byte_offset).ok()?;
+        let run = self.starts.partition_point(|s| *s <= index) - 1;
+        Some(accesskit::TextPosition {
+            node: self.ids[run],
+            character_index: index - self.starts[run],
+        })
+    }
+    fn byte_offset(&self, position: accesskit::TextPosition) -> Option<usize> {
+        let run = self.ids.iter().position(|id| *id == position.node)?;
+        let end = self
+            .starts
+            .get(run + 1)
+            .copied()
+            .unwrap_or(self.boundaries.len() - 1);
+        let index = self.starts[run] + position.character_index;
+        (index <= end).then(|| self.boundaries[index])
+    }
 }
 /// One placement's optional AccessKit translation/publication cache. Use alongside
 /// a platform adapter and call update only when accessibility is active. Stable
@@ -33,8 +61,8 @@ struct TextRun {
 ///
 /// Bounds and parent-relative transforms compose into physical window coordinates.
 /// Scrolling moves content containers without republishing every descendant's position.
-/// Single-line text runs expose grapheme
-/// selection units; character geometry and rich text attributes are not yet exposed.
+/// Text runs expose grapheme selection units, one run per paragraph; character
+/// geometry, soft-wrapped visual lines and rich text attributes are not yet exposed.
 pub struct AccessKitTree {
     placement: Option<u64>,
     next_id: u64,
@@ -315,8 +343,18 @@ impl AccessKitTree {
                     }
                 }
             }
+            if let Some(placeholder) = semantic.placeholder {
+                node.set_placeholder(placeholder);
+            }
             if let Some(value) = semantic.value {
-                if semantic.selection.is_some() || semantic.role == SemanticRole::TextInput {
+                if semantic.selection.is_some()
+                    || matches!(
+                        semantic.role,
+                        SemanticRole::TextInput
+                            | SemanticRole::MultilineTextInput
+                            | SemanticRole::PasswordInput
+                    )
+                {
                     let stale = self
                         .runs
                         .get(&semantic.id)
@@ -335,24 +373,42 @@ impl AccessKitTree {
                             .windows(2)
                             .all(|pair| pair[1] - pair[0] <= u8::MAX as usize)
                         {
-                            let run_id = self.allocate();
-                            let mut text = Node::new(Role::TextRun);
-                            text.set_value(value);
-                            text.set_character_lengths(
-                                boundaries
-                                    .windows(2)
-                                    .map(|p| (p[1] - p[0]) as u8)
-                                    .collect::<Vec<_>>(),
-                            );
-                            self.runs.insert(
-                                semantic.id,
-                                TextRun {
-                                    revision: semantic.text_revision,
-                                    id: run_id,
-                                    boundaries,
-                                    node: Arc::new(text),
-                                },
-                            );
+                            let mut run = TextRun {
+                                revision: semantic.text_revision,
+                                ids: Vec::new(),
+                                nodes: Vec::new(),
+                                starts: Vec::new(),
+                                boundaries,
+                            };
+                            // Split after each line break; a trailing break leaves
+                            // an empty final paragraph run.
+                            let mut start = 0;
+                            loop {
+                                let end = value[start..]
+                                    .find('\n')
+                                    .map_or(value.len(), |i| start + i + 1);
+                                let first = run.boundaries.binary_search(&start).unwrap();
+                                let last = run.boundaries.binary_search(&end).unwrap();
+                                let mut text = Node::new(Role::TextRun);
+                                text.set_value(&value[start..end]);
+                                text.set_character_lengths(
+                                    run.boundaries[first..=last]
+                                        .windows(2)
+                                        .map(|p| (p[1] - p[0]) as u8)
+                                        .collect::<Vec<_>>(),
+                                );
+                                let id = self.allocate();
+                                run.ids.push(id);
+                                run.nodes.push(Arc::new(text));
+                                run.starts.push(first);
+                                if end == value.len() && !value[..end].ends_with('\n')
+                                    || end == start
+                                {
+                                    break;
+                                }
+                                start = end;
+                            }
+                            self.runs.insert(semantic.id, run);
                             self.stats.prepared_text_runs += 1;
                         } else {
                             self.value_only_revisions
@@ -360,25 +416,19 @@ impl AccessKitTree {
                         }
                     }
                     if let Some(run) = self.runs.get(&semantic.id) {
-                        node.set_children(vec![run.id]);
-                        next.insert(run.id, run.node.clone());
+                        node.set_children(run.ids.clone());
+                        for (id, text) in run.ids.iter().zip(&run.nodes) {
+                            next.insert(*id, text.clone());
+                        }
                         if !semantic.disabled
                             && let Some(selection) = semantic.selection
+                            && let (Some(anchor), Some(focus)) = (
+                                run.position(selection.anchor.byte_offset),
+                                run.position(selection.focus.byte_offset),
+                            )
                         {
-                            let position = |p: TextPosition| {
-                                run.boundaries.binary_search(&p.byte_offset).ok().map(
-                                    |character_index| accesskit::TextPosition {
-                                        node: run.id,
-                                        character_index,
-                                    },
-                                )
-                            };
-                            if let (Some(anchor), Some(focus)) =
-                                (position(selection.anchor), position(selection.focus))
-                            {
-                                node.set_text_selection(accesskit::TextSelection { anchor, focus });
-                                node.add_action(Action::SetTextSelection);
-                            }
+                            node.set_text_selection(accesskit::TextSelection { anchor, focus });
+                            node.add_action(Action::SetTextSelection);
                         }
                     } else {
                         node.set_value(value);
@@ -476,15 +526,7 @@ impl AccessKitTree {
                     return None;
                 };
                 let run = self.runs.get(&target)?;
-                let decode = |p: accesskit::TextPosition| {
-                    if p.node != run.id {
-                        return None;
-                    }
-                    run.boundaries
-                        .get(p.character_index)
-                        .copied()
-                        .map(TextPosition::new)
-                };
+                let decode = |p: accesskit::TextPosition| run.byte_offset(p).map(TextPosition::new);
                 SemanticAction::SetSelection {
                     target,
                     text_revision: run.revision,
@@ -575,6 +617,8 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::Image => Role::Image,
         SemanticRole::Button => Role::Button,
         SemanticRole::TextInput => Role::TextInput,
+        SemanticRole::MultilineTextInput => Role::MultilineTextInput,
+        SemanticRole::PasswordInput => Role::PasswordInput,
         SemanticRole::Scrollbar => Role::ScrollBar,
         SemanticRole::Splitter => Role::Splitter,
         SemanticRole::CheckBox => Role::CheckBox,

@@ -624,10 +624,10 @@ impl<T: View> Ui<T> {
                 self.change_focus(target.filter(|id| self.enabled(*id)));
                 self.pressed = target.filter(|id| {
                     self.input_available(*id)
-                        && matches!(
+                        && (matches!(
                             self.nodes[id].element.kind,
                             ElementKind::Button { .. } | ElementKind::TextInput { .. }
-                        )
+                        ) || self.nodes[id].editor.is_some())
                 });
             } else if kind == 2 && button == Some(PointerButton::Primary) {
                 let pressed = self.pressed.take();

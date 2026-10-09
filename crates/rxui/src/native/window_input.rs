@@ -298,17 +298,19 @@ impl WindowInput {
                 } else {
                     modifiers.control_key()
                 };
+                let mac = cfg!(target_os = "macos");
+                let movement = |movement| Some(TextInputEvent::Move { movement, extend });
                 if event.logical_key == Key::Named(NamedKey::Tab) && !event.repeat {
                     changed |= ui.focus_next(extend);
                 } else if ui.has_text_focus() {
                     let input = match &event.logical_key {
                         Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => {
                             let right = event.logical_key == Key::Named(NamedKey::ArrowRight);
-                            let movement = if cfg!(target_os = "macos") && primary {
+                            let movement = if mac && primary {
                                 if right {
-                                    TextMovement::End
+                                    TextMovement::LineEnd
                                 } else {
-                                    TextMovement::Start
+                                    TextMovement::LineStart
                                 }
                             } else if word {
                                 if right {
@@ -323,22 +325,39 @@ impl WindowInput {
                             };
                             Some(TextInputEvent::Move { movement, extend })
                         }
-                        Key::Named(NamedKey::Home) => Some(TextInputEvent::Move {
-                            movement: TextMovement::Start,
-                            extend,
+                        // Command+Up/Down on macOS, and Control+Home/End elsewhere,
+                        // reach the start/end of the value.
+                        Key::Named(NamedKey::ArrowUp) if mac && primary => {
+                            movement(TextMovement::Start)
+                        }
+                        Key::Named(NamedKey::ArrowDown) if mac && primary => {
+                            movement(TextMovement::End)
+                        }
+                        Key::Named(NamedKey::ArrowUp) => movement(TextMovement::Up),
+                        Key::Named(NamedKey::ArrowDown) => movement(TextMovement::Down),
+                        Key::Named(NamedKey::PageUp) => movement(TextMovement::PageUp),
+                        Key::Named(NamedKey::PageDown) => movement(TextMovement::PageDown),
+                        // macOS Home/End reach the document edges, as in Cocoa text
+                        // views; elsewhere they stay on the line.
+                        Key::Named(NamedKey::Home) => movement(if mac || primary {
+                            TextMovement::Start
+                        } else {
+                            TextMovement::LineStart
                         }),
-                        Key::Named(NamedKey::End) => Some(TextInputEvent::Move {
-                            movement: TextMovement::End,
-                            extend,
+                        Key::Named(NamedKey::End) => movement(if mac || primary {
+                            TextMovement::End
+                        } else {
+                            TextMovement::LineEnd
                         }),
                         Key::Named(NamedKey::Backspace) => {
                             Some(deletion_input(true, primary, word))
                         }
                         Key::Named(NamedKey::Delete) => Some(deletion_input(false, primary, word)),
                         Key::Named(NamedKey::Escape) => Some(TextInputEvent::CancelComposition),
-                        Key::Named(NamedKey::Enter) if !event.repeat => {
-                            Some(TextInputEvent::Submit)
-                        }
+                        Key::Named(NamedKey::Enter) => Some(TextInputEvent::Enter {
+                            modifiers: input_modifiers(modifiers),
+                            repeat: event.repeat,
+                        }),
                         _ if !primary && (!modifiers.control_key() || modifiers.alt_key()) => event
                             .text
                             .as_ref()
@@ -389,10 +408,8 @@ impl WindowInput {
             }
             self.cursor_icon = Some(cursor);
         }
-        let focus = ui
-            .accepts_text_input()
-            .then(|| ui.focused_element())
-            .flatten();
+        // Password inputs keep IME disabled; they take committed text only.
+        let focus = ui.accepts_ime().then(|| ui.focused_element()).flatten();
         let reset_revision = ui.ime_reset_revision();
         if focus != self.ime_focus || reset_revision != self.ime_reset_revision {
             self.ime_reset_revision = reset_revision;

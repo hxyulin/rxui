@@ -119,6 +119,8 @@ pub(crate) enum ElementKind {
         submit: Option<Listener<TextSubmitEvent>>,
         disabled: bool,
         read_only: bool,
+        /// Placeholder, masking and multiline options; absent for plain inputs.
+        options: Option<Box<crate::editing::InputOptions>>,
     },
     Component(Rc<dyn crate::ui::Component>),
     Custom(Rc<dyn crate::custom::AnyCustom>),
@@ -911,6 +913,61 @@ impl Element {
         }
         self
     }
+    fn input_options(&mut self, method: &str) -> &mut crate::editing::InputOptions {
+        if let ElementKind::TextInput { options, .. } = &mut self.kind {
+            options.get_or_insert_with(Default::default)
+        } else {
+            panic!("{method} requires a text input")
+        }
+    }
+    /// Hint shown in the theme's muted text color while the value is empty and no
+    /// IME composition is active. Assistive technology receives it as the
+    /// placeholder, separately from the accessible name and the empty value.
+    pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+        let text = text.into();
+        self.input_options("placeholder").placeholder = (!text.is_empty()).then_some(text);
+        self
+    }
+    /// Masks the value with one bullet per grapheme. Copy and cut are unavailable,
+    /// word movement/deletion and double-click act on the whole value, platform IME
+    /// composition is disabled, and assistive technology sees a password field whose
+    /// value is the mask. The value itself is still the application's plain text.
+    /// Text areas cannot be masked.
+    pub fn password(mut self, value: bool) -> Self {
+        let options = self.input_options("password");
+        assert!(
+            !options.multiline,
+            "password masking requires a single-line input"
+        );
+        options.password = value;
+        self
+    }
+    /// Which Enter chord submits a text area; see [`crate::SubmitShortcut`].
+    /// Single-line inputs always submit on Enter.
+    pub fn submit_shortcut(mut self, shortcut: crate::SubmitShortcut) -> Self {
+        self.input_options("submit_shortcut").submit = shortcut;
+        self
+    }
+    /// Lets pointer drags, double/triple clicks and Select All select a label's text
+    /// and the standard Copy command copy it. A selectable label receives pointer
+    /// focus but stays out of Tab traversal unless `.tab_stop(true)` follows this
+    /// call. Its selection collapses when focus moves elsewhere, and hovering shows
+    /// the text cursor. Labels otherwise keep their alignment and wrapping, show no
+    /// caret and accept no edits.
+    pub fn selectable(mut self, value: bool) -> Self {
+        assert!(
+            matches!(self.kind, ElementKind::Label(_)),
+            "selectable requires a label"
+        );
+        let input = self.input.get_or_insert_with(Default::default);
+        input.selectable = value;
+        input.focusable = Some(value);
+        input.cursor = value.then_some(crate::Cursor::Text);
+        if value {
+            self = self.tab_stop(false);
+        }
+        self
+    }
     /// Accessible name, separate from displayed text/value. Buttons default to
     /// their caption; text inputs should supply a meaningful name explicitly.
     pub fn accessibility_label(mut self, label: impl Into<Arc<str>>) -> Self {
@@ -1097,10 +1154,14 @@ impl Element {
         if let Some(theme) = &self.theme {
             theme.validate()?;
         }
-        if let ElementKind::TextInput { value, .. } = &self.kind
-            && value.chars().any(char::is_control)
-        {
-            return Err(UiError::InvalidTextValue);
+        if let ElementKind::TextInput { value, options, .. } = &self.kind {
+            let multiline = options.as_ref().is_some_and(|o| o.multiline);
+            if value
+                .chars()
+                .any(|c| c.is_control() && !(multiline && matches!(c, '\n' | '\t')))
+            {
+                return Err(UiError::InvalidTextValue);
+            }
         }
         if !self.children.is_empty()
             && matches!(
@@ -1252,8 +1313,53 @@ pub fn text_input(value: impl Into<String>) -> Element {
         submit: None,
         disabled: false,
         read_only: false,
+        options: None,
     });
     element.control_defaults(true);
+    element
+}
+
+/// Controlled multiline text area with the same proposal, selection, history and
+/// IME contract as [`text_input`]. Values may contain `\n` line breaks and tabs but
+/// no other control characters; typed or pasted CRLF/CR line breaks become `\n`.
+/// Text wraps at the content width and the area grows with its content from a
+/// minimum of four lines, so place long documents in a scrolling container: caret
+/// movement and edits reveal the caret through scrolling ancestors. An explicit
+/// height clips overflowing text without scrolling it.
+///
+/// Enter inserts a line break and the [`crate::SubmitShortcut`] (Primary+Enter by
+/// default) submits. Up/Down keep the horizontal caret position, Home/End (Command+
+/// Left/Right on macOS) move within the visual line, and Page Up/Down move by the
+/// visible height. Tab still moves focus.
+///
+/// ```
+/// use rxui::prelude::*;
+/// struct Notes { text: String }
+/// impl View for Notes {
+///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+///         column().scroll_y().height(240.).child(
+///             text_area(self.text.clone()).key("notes").fill_width()
+///                 .placeholder("Write something")
+///                 .on_change(cx.listener(|this, edit: &TextChangeEvent, _| {
+///                     this.text = edit.value.clone();
+///                 })))
+///     }
+/// }
+/// ```
+pub fn text_area(value: impl Into<String>) -> Element {
+    let mut element = text_input(value);
+    let theme = Theme::default();
+    let metrics = theme.sizes();
+    if let ElementKind::TextInput { options, .. } = &mut element.kind {
+        options.get_or_insert_with(Default::default).multiline = true;
+    }
+    element.style.size.height = Dimension::auto();
+    // Four lines of the default font plus padding and border; an explicit minimum
+    // height overrides it.
+    element.style.min_size.height = length(
+        4. * metrics.font_size * metrics.line_height
+            + 2. * (metrics.input_padding_y + metrics.border_width),
+    );
     element
 }
 

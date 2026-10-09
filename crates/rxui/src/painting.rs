@@ -109,6 +109,22 @@ impl TextResource {
         Ok(self.buffer.measure(fonts, text_width(request.width))?)
     }
 }
+/// Prepared placeholder of an empty input, retained separately from its value text.
+#[derive(Default)]
+struct PlaceholderResource {
+    text: String,
+    resource: TextResource,
+}
+impl PlaceholderResource {
+    fn current(&self, request: &TextRequest<'_>, generation: u64, raster_scale: f32) -> bool {
+        self.resource.prepared.is_some()
+            && self.text == request.text
+            && self.resource.prepared_revision == request.revision
+            && Some(self.resource.prepared_width) == text_width(request.width)
+            && self.resource.font_generation == generation
+            && self.resource.raster_scale == raster_scale
+    }
+}
 fn text_width(width: TextWidth) -> Option<f32> {
     match width {
         TextWidth::MinContent => Some(0.),
@@ -164,6 +180,7 @@ pub struct UiPainter {
     compositions: HashMap<u64, Arc<composition::CompositionPlan>>,
     layer_stats: LayerStats,
     customs: IdMap<ElementId, Box<dyn std::any::Any>>,
+    placeholders: IdMap<ElementId, PlaceholderResource>,
     /// Last complete text pass per placement, by tree.
     passes: HashMap<u64, TextPass>,
 }
@@ -194,6 +211,7 @@ impl UiPainter {
             compositions: HashMap::new(),
             layer_stats: LayerStats::default(),
             customs: IdMap::default(),
+            placeholders: IdMap::default(),
             passes: HashMap::new(),
         }
     }
@@ -273,6 +291,8 @@ impl UiPainter {
     ) -> Result<TextPass, UiError> {
         self.texts
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
+        self.placeholders
+            .retain(|id, _| !ui.owns_element(*id) || ui.placeholder_request(*id).is_some());
         // One pass over visible nodes, without building ElementInfo for each:
         // images and custom elements are rare and prepared from their full info.
         let mut images = Vec::new();
@@ -292,6 +312,28 @@ impl UiPainter {
                 }
             };
             let width = text_width(request.width).unwrap_or_default();
+            if let Some(placeholder) = ui.placeholder_request(id) {
+                let entry = self.placeholders.entry(id).or_default();
+                if !entry.current(&placeholder, self.generation, raster_scale) {
+                    let layout = entry.resource.layout(
+                        &mut self.fonts,
+                        placeholder,
+                        self.sans_serif.as_deref(),
+                    )?;
+                    entry.resource.prepared = None;
+                    entry.resource.prepared = Some(self.painter.prepare_text(
+                        &layout,
+                        TextRasterOptions::new().raster_scale(raster_scale),
+                    )?);
+                    entry.resource.prepared_layout = Some(layout);
+                    entry.resource.raster_scale = raster_scale;
+                    entry.resource.prepared_width = width;
+                    entry.resource.prepared_revision = placeholder.revision;
+                    entry.resource.font_generation = self.generation;
+                    entry.text.clear();
+                    entry.text.push_str(placeholder.text);
+                }
+            }
             let resource = self.texts.entry(id).or_default();
             if resource.prepared.is_some()
                 && resource.prepared_revision == request.revision
@@ -492,6 +534,13 @@ impl UiPainter {
                         || resource.prepared_revision != request.revision
                         || resource.font_generation != self.generation
                         || Some(resource.prepared_width) != text_width(request.width)
+                    {
+                        return Err(UiError::InvalidGeometry);
+                    }
+                    if let Some(placeholder) = ui.placeholder_request(id)
+                        && self.placeholders.get(&id).is_none_or(|p| {
+                            !p.current(&placeholder, self.generation, p.resource.raster_scale)
+                        })
                     {
                         return Err(UiError::InvalidGeometry);
                     }
@@ -864,7 +913,7 @@ impl UiPainter {
                         } else if editing.preedit_range.is_some() {
                             0..0
                         } else {
-                            editing.selection.range()
+                            editing.display_selection.range()
                         };
                         for rect in layout.selection_rects(selected)? {
                             paint.fill_rect(
@@ -906,6 +955,20 @@ impl UiPainter {
                         ])
                         .color(color),
                     )?;
+                    // An empty input's placeholder, inside the same content clip.
+                    if let (Some(_), Some(editing), Some(placeholder)) = (
+                        element.placeholder,
+                        &element.editing,
+                        self.placeholders
+                            .get(&element.id)
+                            .and_then(|p| p.resource.prepared.as_ref()),
+                    ) {
+                        paint.draw_text(
+                            placeholder,
+                            TextDraw::new([element.content_bounds.x, element.content_bounds.y])
+                                .color(editing.placeholder_color),
+                        )?;
+                    }
                 }
                 if let Some(editing) = &element.editing {
                     let layout = self.texts[&element.id].prepared_layout.as_ref().unwrap();
@@ -921,7 +984,7 @@ impl UiPainter {
                         } else if editing.preedit_range.is_some() {
                             0..0
                         } else {
-                            editing.selection.range()
+                            editing.display_selection.range()
                         };
                         let prepared = self.texts[&element.id].prepared.as_ref().unwrap();
                         for rect in layout.selection_rects(selected)? {
@@ -986,10 +1049,11 @@ impl UiPainter {
                             editing
                                 .preedit_range
                                 .is_none()
-                                .then_some(editing.selection.focus)
+                                .then_some(editing.display_selection.focus)
                         });
                     if editing.caret_visible
-                        && (editing.preedit_range.is_some() || editing.selection.is_collapsed())
+                        && (editing.preedit_range.is_some()
+                            || editing.display_selection.is_collapsed())
                         && let Some(caret) = cursor.and_then(|p| layout.caret(ast_position(p)))
                     {
                         paint.fill_rect(
@@ -1062,6 +1126,7 @@ impl UiPainter {
         self.prune_images();
         self.layers.retain(|id, _| !ui.owns_element(*id));
         self.customs.retain(|id, _| !ui.owns_element(*id));
+        self.placeholders.retain(|id, _| !ui.owns_element(*id));
         self.compositions.remove(&ui.tree_id());
         self.passes.remove(&ui.tree_id());
     }
@@ -1368,6 +1433,214 @@ mod tests {
                 .unwrap();
             painter.prepare(&ui, &target.render_format(), 1.).unwrap();
             assert!(ui.ime_cursor_area(&mut painter).unwrap().is_some());
+            assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn text_areas_wrap_and_move_by_visual_lines_and_placeholders_paint_only_when_set() {
+        use crate::{TextChangeEvent, TextInputEvent, TextMovement, text_area, text_input};
+        struct Fields {
+            notes: String,
+            hint: bool,
+        }
+        impl View for Fields {
+            fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                let empty = text_input("").key("empty").width(160.);
+                column()
+                    .child(
+                        text_area(self.notes.clone())
+                            .key("notes")
+                            .width(140.)
+                            .on_change(cx.listener(|this, e: &TextChangeEvent, _| {
+                                this.notes = e.value.clone()
+                            })),
+                    )
+                    .child(
+                        text_input("secret")
+                            .key("secret")
+                            .width(160.)
+                            .password(true),
+                    )
+                    .child(if self.hint {
+                        empty.placeholder("Search")
+                    } else {
+                        empty
+                    })
+            }
+        }
+        fn ink(
+            graphics: &GraphicsContext,
+            target: &mut astrelis::Framebuffer,
+            painter: &mut UiPainter,
+            ui: &Ui<Fields>,
+            area: Bounds,
+        ) -> usize {
+            let texture = target.color_texture().unwrap().clone();
+            let buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("RXUI placeholder readback"),
+                size: 256 * 4 * 320,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut frame = target.begin_frame().unwrap();
+            {
+                let mut pass = frame
+                    .render_pass()
+                    .clear_color(wgpu::Color::BLACK)
+                    .begin()
+                    .unwrap();
+                painter.paint(ui, &mut pass, 1.).unwrap();
+            }
+            frame.encoder().copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: Default::default(),
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(256 * 4),
+                        rows_per_image: Some(320),
+                    },
+                },
+                texture.size(),
+            );
+            let submission = frame.finish().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+            graphics
+                .device()
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                })
+                .unwrap();
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .unwrap();
+            let pixels = buffer.slice(..).get_mapped_range().unwrap();
+            let pixel = |x: usize, y: usize| &pixels[y * 1024 + x * 4..y * 1024 + x * 4 + 4];
+            let background = pixel(area.x as usize + 1, area.y as usize + 1).to_vec();
+            let mut count = 0;
+            for y in area.y as usize..(area.y + area.height) as usize {
+                for x in area.x as usize..(area.x + area.width) as usize {
+                    count += usize::from(pixel(x, y) != background.as_slice());
+                }
+            }
+            count
+        }
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let errors = graphics
+                .device()
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let mut target =
+                graphics
+                    .create_framebuffer(FramebufferOptions::new(256, 320).usage(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    ))
+                    .unwrap();
+            let format = target.render_format();
+            let mut runtime = Runtime::new();
+            let root = runtime.update(|cx| {
+                cx.new(|_| Fields {
+                    notes: "alpha beta gamma delta epsilon zeta eta theta".into(),
+                    hint: true,
+                })
+            });
+            let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .fonts_mut()
+                .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
+                .unwrap();
+            ui.prepare(&mut runtime, [256., 320.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &format, 1.).unwrap();
+            let id = |ui: &Ui<Fields>, key: &str| {
+                let key = crate::Key::from(key);
+                ui.elements().find(|e| e.key == Some(&key)).unwrap().id
+            };
+            let notes = id(&ui, "notes");
+            let lines = painter.texts[&notes]
+                .prepared_layout
+                .as_ref()
+                .unwrap()
+                .lines()
+                .len();
+            assert!(lines >= 3, "the area wraps: {lines} lines");
+            assert!(ui.focus(notes));
+            let mut send = |ui: &mut Ui<Fields>, movement| {
+                ui.text_input(
+                    &mut runtime,
+                    TextInputEvent::Move {
+                        movement,
+                        extend: false,
+                    },
+                    &mut painter,
+                )
+                .unwrap();
+                let caret = ui.ime_cursor_area(&mut painter).unwrap().unwrap();
+                let offset = ui.text_input_info(notes).unwrap().selection.focus;
+                (caret, offset)
+            };
+            let (start, _) = send(&mut ui, TextMovement::Start);
+            for _ in 0..8 {
+                send(&mut ui, TextMovement::Right);
+            }
+            let (first, at) = send(&mut ui, TextMovement::Right);
+            let (second, below) = send(&mut ui, TextMovement::Down);
+            assert!(second.y > first.y && below.byte_offset > at.byte_offset);
+            // The goal X survives a move to a line whose caret stops differ.
+            assert!((second.x - first.x).abs() < 8.);
+            let (back, above) = send(&mut ui, TextMovement::Up);
+            assert_eq!((back.x, back.y, above), (first.x, first.y, at));
+            // Line end stays on the soft-wrapped visual line instead of the next one.
+            let (end, wrap) = send(&mut ui, TextMovement::LineEnd);
+            assert_eq!(end.y, start.y);
+            assert!(end.x > first.x);
+            assert_eq!(wrap.affinity, crate::TextAffinity::Upstream);
+            let (line_start, _) = send(&mut ui, TextMovement::LineStart);
+            assert_eq!((line_start.x, line_start.y), (start.x, start.y));
+            // The whole area is visible: a page reaches the last line, and paging
+            // past it reaches the end.
+            let (paged, on_last) = send(&mut ui, TextMovement::PageDown);
+            assert!(paged.y >= second.y + second.height);
+            let (end_caret, last) = send(&mut ui, TextMovement::PageDown);
+            assert_eq!(end_caret.y, paged.y);
+            assert!(last.byte_offset > on_last.byte_offset);
+            assert_eq!(
+                last.byte_offset,
+                runtime.update(|cx| root.read(cx).notes.len())
+            );
+            let height = ui.element(notes).unwrap().bounds.height;
+            ui.text_input(
+                &mut runtime,
+                TextInputEvent::Insert("\n\n".into()),
+                &mut painter,
+            )
+            .unwrap();
+            ui.prepare(&mut runtime, [256., 320.], &mut painter)
+                .unwrap();
+            assert!(ui.element(notes).unwrap().bounds.height > height);
+            let secret = id(&ui, "secret");
+            assert_eq!(ui.element(secret).unwrap().text, Some("••••••"));
+            painter.prepare(&ui, &format, 1.).unwrap();
+            let empty = ui.element(id(&ui, "empty")).unwrap().content_bounds;
+            let hinted = ink(&graphics, &mut target, &mut painter, &ui, empty);
+            assert!(hinted > 0, "placeholder ink is painted");
+            runtime.update(|cx| root.update(cx, |f, _| f.hint = false));
+            ui.prepare(&mut runtime, [256., 320.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &format, 1.).unwrap();
+            assert!(painter.placeholders.is_empty());
+            assert_eq!(ink(&graphics, &mut target, &mut painter, &ui, empty), 0);
             assert!(errors.pop().await.is_none());
         });
     }

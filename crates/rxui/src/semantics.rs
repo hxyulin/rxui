@@ -31,6 +31,10 @@ pub enum SemanticRole {
     Button,
     /// Single-line text control.
     TextInput,
+    /// Multiline text area.
+    MultilineTextInput,
+    /// Masked password input; its published value is the mask.
+    PasswordInput,
     /// Tab group header strip.
     TabList,
     /// Selectable tab header.
@@ -158,6 +162,8 @@ pub struct SemanticNode<'a> {
     pub label: Option<&'a str>,
     /// Additional help/description, separate from the name and value.
     pub description: Option<&'a str>,
+    /// Input placeholder hint, separate from the name and the (possibly empty) value.
+    pub placeholder: Option<&'a str>,
     /// Full logical border bounds, preserving offscreen geometry.
     pub bounds: Bounds,
     /// Logical content bounds, excluding border/padding.
@@ -167,10 +173,12 @@ pub struct SemanticNode<'a> {
     /// Whether this element clips descendants.
     pub clips_children: bool,
     /// Static text or the displayed input value, including transient preedit.
+    /// Password inputs expose one mask character per grapheme.
     pub value: Option<&'a str>,
     /// Current text revision for rejecting stale text-position requests.
     pub text_revision: u64,
-    /// Committed directional selection, omitted while composing.
+    /// Committed directional selection, omitted while composing. Offsets index
+    /// `value`, so a password input's selection addresses its mask.
     pub selection: Option<TextSelection>,
     /// Whether interaction is disabled.
     pub disabled: bool,
@@ -204,7 +212,7 @@ pub enum SemanticAction {
     SetValue {
         /// Input to update.
         target: ElementId,
-        /// Proposed single-line value; user-input normalization rules apply.
+        /// Proposed value; the input's user-input normalization rules apply.
         value: String,
     },
     /// Set the directional selection in the published committed text snapshot.

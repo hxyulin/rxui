@@ -886,4 +886,167 @@ mod accesskit_tests {
             Err(UiError::InvalidGeometry)
         ));
     }
+    struct Fields {
+        notes: String,
+        secret: String,
+    }
+    impl View for Fields {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .width(300.)
+                .child(
+                    text_area(self.notes.clone())
+                        .key("notes")
+                        .accessibility_label("Notes")
+                        .placeholder("Write notes")
+                        .on_change(
+                            cx.listener(|this, e: &TextChangeEvent, _| {
+                                this.notes = e.value.clone()
+                            }),
+                        ),
+                )
+                .child(
+                    text_input(self.secret.clone())
+                        .key("secret")
+                        .password(true)
+                        .accessibility_label("Secret")
+                        .on_change(cx.listener(|this, e: &TextChangeEvent, _| {
+                            this.secret = e.value.clone()
+                        })),
+                )
+                .child(label("Copy me").key("static").selectable(true))
+        }
+    }
+    #[test]
+    fn text_areas_publish_paragraph_runs_and_passwords_publish_masked_protected_values() {
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| {
+            cx.new(|_| Fields {
+                notes: "ab\ncd\n".into(),
+                secret: "pw".into(),
+            })
+        });
+        let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+        ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+            .unwrap();
+        let mut cache = AccessKitTree::new();
+        let first = cache.update(&ui, "Test", 1.).unwrap().unwrap();
+        let node = |update: &accesskit::TreeUpdate, id: NodeId| {
+            update
+                .nodes
+                .iter()
+                .find(|(n, _)| *n == id)
+                .unwrap()
+                .1
+                .clone()
+        };
+        let notes = named(&first, "Notes");
+        let field = node(&first, notes);
+        assert_eq!(field.role(), accesskit::Role::MultilineTextInput);
+        assert_eq!(field.placeholder(), Some("Write notes"));
+        let runs = field.children().to_vec();
+        let values: Vec<_> = runs
+            .iter()
+            .map(|id| node(&first, *id).value().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            values,
+            [
+                Some("ab\n".into()),
+                Some("cd\n".into()),
+                Some(String::new())
+            ]
+        );
+        let secret = named(&first, "Secret");
+        let password = node(&first, secret);
+        assert_eq!(password.role(), accesskit::Role::PasswordInput);
+        let consumer = accesskit_consumer::Tree::new(first.clone(), true);
+        let state = consumer.state();
+        let notes_node = state.node_by_tree_local_id(notes, TreeId::ROOT).unwrap();
+        // Multiline values come from text ranges rather than a single value.
+        assert!(notes_node.supports_text_ranges());
+        assert_eq!(notes_node.document_range().text(), "ab\ncd\n");
+        assert_eq!(
+            state
+                .node_by_tree_local_id(secret, TreeId::ROOT)
+                .unwrap()
+                .value()
+                .as_deref(),
+            Some("••")
+        );
+        // Selection in the second paragraph addresses the second run.
+        let target = ui
+            .semantics()
+            .find(|n| n.label == Some("Notes"))
+            .unwrap()
+            .id;
+        let revision = ui.semantic_node(target).unwrap().text_revision;
+        ui.semantic_action(
+            &mut runtime,
+            SemanticAction::SetSelection {
+                target,
+                text_revision: revision,
+                selection: TextSelection {
+                    anchor: TextPosition::new(3),
+                    focus: TextPosition::new(6),
+                },
+            },
+            &mut Measure,
+        )
+        .unwrap();
+        let delta = cache.update(&ui, "Test", 1.).unwrap().unwrap();
+        let selection = *node(&delta, notes).text_selection().unwrap();
+        assert_eq!(
+            (selection.anchor.node, selection.anchor.character_index),
+            (runs[1], 0)
+        );
+        assert_eq!(
+            (selection.focus.node, selection.focus.character_index),
+            (runs[2], 0)
+        );
+        // A native request on the second run decodes to whole-value offsets.
+        let action = cache
+            .action(request(
+                notes,
+                Action::SetTextSelection,
+                Some(ActionData::SetTextSelection(accesskit::TextSelection {
+                    anchor: accesskit::TextPosition {
+                        node: runs[1],
+                        character_index: 1,
+                    },
+                    focus: accesskit::TextPosition {
+                        node: runs[1],
+                        character_index: 2,
+                    },
+                })),
+            ))
+            .unwrap();
+        assert!(matches!(
+            action,
+            SemanticAction::SetSelection { selection, .. }
+                if selection.range() == (4..5)
+        ));
+        ui.semantic_action(&mut runtime, action, &mut Measure)
+            .unwrap();
+        assert_eq!(ui.selected_text(), Some("d"));
+        // A selectable label publishes its selection through a text run.
+        let label = ui
+            .semantics()
+            .find(|n| n.value == Some("Copy me"))
+            .unwrap()
+            .id;
+        assert!(ui.focus(label));
+        ui.text_input(&mut runtime, TextInputEvent::SelectAll, &mut Measure)
+            .unwrap();
+        let delta = cache.update(&ui, "Test", 1.).unwrap().unwrap();
+        let mut consumer = consumer;
+        consumer.update_and_process_changes(delta.clone(), &mut Changes);
+        let published = delta
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::Label)
+            .unwrap();
+        assert!(published.1.text_selection().is_some());
+        assert!(!published.1.supports_action(Action::SetValue));
+    }
 }

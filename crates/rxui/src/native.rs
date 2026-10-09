@@ -534,7 +534,7 @@ trait HostedUi {
         painter: &mut UiPainter,
     ) -> Result<bool, UiError>;
     fn has_text_focus(&self) -> bool;
-    fn accepts_text_input(&self) -> bool;
+    fn accepts_ime(&self) -> bool;
     fn focused_element(&self) -> Option<ElementId>;
     fn ime_reset_revision(&self) -> u64;
     fn selected_text(&self) -> Option<String>;
@@ -675,8 +675,8 @@ impl<T: View> HostedUi for Ui<T> {
     fn has_text_focus(&self) -> bool {
         self.has_text_focus()
     }
-    fn accepts_text_input(&self) -> bool {
-        self.accepts_text_input()
+    fn accepts_ime(&self) -> bool {
+        self.accepts_ime()
     }
     fn focused_element(&self) -> Option<ElementId> {
         self.focused_element()

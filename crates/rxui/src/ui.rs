@@ -3,8 +3,9 @@ use crate::{
     TextInputEvent, TextInputInfo, TextMovement, TextPosition, TextSelection, TextSubmitEvent,
     Theme, ThemeColor, ViewContext,
     editing::{
-        Composition, EditAction, EditKind, Editor, Pending, Proposal, after_boundary, boundary,
-        next, previous, single_line, word_left, word_right, word_selection,
+        Composition, EditAction, EditKind, Editor, InputOptions, Pending, Proposal, after_boundary,
+        boundary, logical_column, logical_vertical, multi_line, next, paragraph_selection,
+        previous, single_line, word_left, word_right, word_selection,
     },
     element::{ClickEvent, Color, Element, ElementKind, IntoElement, Key, View},
     id::{IdMap, IdSet, next_runtime},
@@ -293,7 +294,7 @@ pub enum ElementType {
     Image,
     /// Activatable caption or composed-content button.
     Button,
-    /// Controlled single-line editable text leaf.
+    /// Controlled editable text leaf, single-line or a text area.
     TextInput,
     /// Stateful component boundary.
     Component,
@@ -332,8 +333,11 @@ pub struct ElementInfo<'a> {
     pub scroll_offset: [f32; 2],
     /// Maximum reachable scroll offset after layout.
     pub scroll_range: [f32; 2],
-    /// Owned node text, borrowed for the snapshot.
+    /// Owned node text, borrowed for the snapshot. Password inputs expose the mask.
     pub text: Option<&'a str>,
+    /// Placeholder to paint in `editing.placeholder_color`, present only while the
+    /// input is empty and not composing.
+    pub placeholder: Option<&'a str>,
     /// Sibling-scoped paint order; layout and focus retain description order.
     pub z_index: i32,
     /// Pointer targeting policy, independent of keyboard/semantic focus.
@@ -588,16 +592,68 @@ impl Node {
             .map(|e| e.display.as_str())
             .or_else(|| text(&self.element))
     }
+    fn input_options(&self) -> Option<&InputOptions> {
+        match &self.element.kind {
+            ElementKind::TextInput { options, .. } => options.as_deref(),
+            _ => None,
+        }
+    }
+    /// A text input without multiline editing: no wrapping, horizontal scrolling.
+    fn single_line(&self) -> bool {
+        matches!(self.element.kind, ElementKind::TextInput { .. })
+            && !self.input_options().is_some_and(|o| o.multiline)
+    }
+    fn multiline(&self) -> bool {
+        self.input_options().is_some_and(|o| o.multiline)
+    }
+    fn masked(&self) -> bool {
+        self.input_options().is_some_and(|o| o.password)
+    }
+    /// Committed text of an input or selectable label, independent of preedit/masking.
+    fn edit_value(&self) -> &str {
+        match &self.element.kind {
+            ElementKind::TextInput { value, .. } | ElementKind::Label(value) => value,
+            _ => "",
+        }
+    }
+    /// Placeholder text while an input is empty and not composing.
+    fn placeholder(&self) -> Option<&str> {
+        let ElementKind::TextInput { value, options, .. } = &self.element.kind else {
+            return None;
+        };
+        options
+            .as_ref()?
+            .placeholder
+            .as_deref()
+            .filter(|_| value.is_empty())
+            .filter(|_| {
+                self.editor
+                    .as_ref()
+                    .is_some_and(|e| e.composition.is_none())
+            })
+    }
     fn text_request(&self) -> TextRequest<'_> {
         TextRequest {
             text: self.displayed_text().unwrap_or(""),
             font_size: self.font_size,
             width: TextWidth::Available(self.content_bounds.width),
-            single_line: self.editor.is_some(),
+            single_line: self.single_line(),
             style: &self.text_style,
             revision: self.text_revision,
         }
     }
+}
+/// Whether an element retains editing state: every text input, and labels marked
+/// selectable.
+fn has_editor(element: &Element) -> bool {
+    match element.kind {
+        ElementKind::TextInput { .. } => true,
+        ElementKind::Label(_) => element.input.as_ref().is_some_and(|p| p.selectable),
+        _ => false,
+    }
+}
+fn masked(element: &Element) -> bool {
+    matches!(&element.kind, ElementKind::TextInput { options: Some(o), .. } if o.password)
 }
 
 /// One retained UI placement, with keyed reconciliation and Taffy flex layout.
@@ -1052,7 +1108,7 @@ impl<T: View> Ui<T> {
                                 text,
                                 font_size: node.font_size,
                                 width,
-                                single_line: node.editor.is_some(),
+                                single_line: node.single_line(),
                                 style: &node.text_style,
                                 revision: node.text_revision,
                             },
@@ -1230,6 +1286,24 @@ impl<T: View> Ui<T> {
                     .checked_add(1)
                     .expect("RXUI text revision exhausted");
             }
+            // Selectable labels gain or lose their editing state with the flag.
+            if has_editor(&element) != node.editor.is_some() {
+                if node.editor.is_some() {
+                    node.editor = None;
+                } else {
+                    node.editor = Some(Box::new(Editor::new(
+                        text(&element).unwrap_or(""),
+                        masked(&element),
+                    )));
+                    if !self.editor_nodes.contains(&id) {
+                        self.editor_nodes.push(id);
+                    }
+                }
+            } else if let (Some(editor), ElementKind::Label(old), ElementKind::Label(new)) =
+                (&mut node.editor, &node.element.kind, &element.kind)
+            {
+                editor.reconcile(old, new);
+            }
             if let (
                 Some(editor),
                 ElementKind::TextInput { value: old, .. },
@@ -1242,8 +1316,13 @@ impl<T: View> Ui<T> {
                 },
             ) = (&mut node.editor, &node.element.kind, &element.kind)
             {
-                if (*read_only || *disabled || change.is_none()) && editor.cancel_composition() {
-                    editor.rebuild(new);
+                let mask = masked(&element);
+                if ((*read_only || *disabled || change.is_none() || mask)
+                    && editor.cancel_composition())
+                    || editor.masked != mask
+                {
+                    editor.masked = mask;
+                    editor.rebuild(old);
                     node.text_revision = node
                         .text_revision
                         .checked_add(1)
@@ -1291,9 +1370,12 @@ impl<T: View> Ui<T> {
             let layout = self
                 .taffy
                 .new_leaf_with_context(element.style.clone(), id)?;
-            let editor = if let ElementKind::TextInput { value, .. } = &element.kind {
+            let editor = if has_editor(&element) {
                 self.editor_nodes.push(id);
-                Some(Box::new(Editor::new(value)))
+                Some(Box::new(Editor::new(
+                    text(&element).unwrap_or(""),
+                    masked(&element),
+                )))
             } else {
                 None
             };
@@ -1567,7 +1649,12 @@ impl<T: View> Ui<T> {
                     if element.layout_overrides & 2 == 0 {
                         layout.size.width = length(metrics.input_width);
                     }
-                    if element.layout_overrides & 4 == 0 {
+                    // Text areas size to their content above their minimum height.
+                    let area = matches!(
+                        &element.kind,
+                        ElementKind::TextInput { options: Some(o), .. } if o.multiline
+                    );
+                    if element.layout_overrides & 4 == 0 && !area {
                         layout.size.height = length(metrics.input_height);
                     }
                 }
@@ -1949,6 +2036,16 @@ impl<T: View> Ui<T> {
             _ => VisibleContent::Other,
         })
     }
+    /// Measurement request for a visible empty input's placeholder, sharing the
+    /// input's font, width and text revision.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn placeholder_request(&self, id: ElementId) -> Option<TextRequest<'_>> {
+        let node = self.nodes.get(&id).filter(|n| n.visible)?;
+        Some(TextRequest {
+            text: node.placeholder()?,
+            ..node.text_request()
+        })
+    }
     /// Where a visible node's own ink can appear, without building its
     /// `ElementInfo`; `None` for hidden or removed nodes.
     #[cfg(feature = "rendering")]
@@ -2159,6 +2256,7 @@ impl<T: View> Ui<T> {
             pointer_events: node.element.pointer_events,
             inert: node.inert,
             text: node.displayed_text(),
+            placeholder: node.placeholder(),
             image: if let ElementKind::Image(props) = &node.element.kind {
                 let (destination, uv) =
                     crate::image::placement(node.content_bounds, node.image_size, props);
@@ -2284,13 +2382,22 @@ impl<T: View> Ui<T> {
         Ok(())
     }
     fn reveal(&mut self, id: ElementId) -> bool {
+        self.reveal_area(id, None)
+    }
+    /// Reveals `area`, relative to the element's content box, or the whole element.
+    fn reveal_area(&mut self, id: ElementId, area: Option<Bounds>) -> bool {
         let mut parent = self.nodes[&id].parent;
         let mut changed = false;
         while let Some(ancestor) = parent {
             if self.is_overlay(ancestor) {
                 break;
             }
-            let target = self.nodes[&id].bounds;
+            let node = &self.nodes[&id];
+            let target = area.map_or(node.bounds, |a| Bounds {
+                x: node.content_bounds.x + a.x,
+                y: node.content_bounds.y + a.y,
+                ..a
+            });
             let node = self.nodes.get_mut(&ancestor).unwrap();
             if let Some(axes) = node.element.scroll {
                 let allowed = axes.allowed();
@@ -2384,9 +2491,19 @@ impl<T: View> Ui<T> {
     fn change_focus(&mut self, next: Option<ElementId>) {
         if self.focused != next {
             if let Some(old) = self.focused {
-                if let Some(editor) = self.nodes.get_mut(&old).and_then(|n| n.editor.as_mut()) {
+                if let Some(node) = self.nodes.get_mut(&old)
+                    && let Some(editor) = node.editor.as_mut()
+                {
                     editor.break_group();
                     editor.drag_selection = None;
+                    editor.goal = None;
+                    // A selectable label's selection does not outlive its focus.
+                    if matches!(node.element.kind, ElementKind::Label(_)) {
+                        editor.selection = TextSelection {
+                            anchor: editor.selection.focus,
+                            focus: editor.selection.focus,
+                        };
+                    }
                 }
                 self.cancel_composition(old);
             }
@@ -2448,26 +2565,36 @@ impl<T: View> Ui<T> {
         self.clear_invalid_interaction();
         Ok(())
     }
-    /// Current selection, composition and history availability for a retained input.
-    /// This needs no prepared geometry; controlled values reflect the most recent
-    /// reconciliation. Returns None for foreign/removed identities or other kinds.
+    /// Current selection, composition and history availability for a retained input
+    /// or selectable label. This needs no prepared geometry; controlled values reflect
+    /// the most recent reconciliation. Returns None for foreign/removed identities
+    /// and other kinds. Selectable labels report read-only state and no caret.
     pub fn text_input_info(&self, id: ElementId) -> Option<TextInputInfo> {
         let node = self.nodes.get(&id)?;
-        let ElementKind::TextInput {
-            read_only,
-            disabled,
-            change,
-            ..
-        } = &node.element.kind
-        else {
-            return None;
+        let editor = node.editor.as_ref()?;
+        let (read_only, disabled, caret) = match &node.element.kind {
+            ElementKind::TextInput {
+                read_only,
+                disabled,
+                change,
+                ..
+            } => (*read_only || change.is_none(), *disabled, true),
+            _ => (true, false, false),
         };
-        let mut info = node.editor.as_ref()?.info(
-            *read_only || change.is_none(),
-            self.focused == Some(id) && self.active && self.caret_visible,
+        let mut info = editor.info(
+            read_only,
+            caret && self.focused == Some(id) && self.active && self.caret_visible,
         );
-        info.can_undo &= !*disabled;
-        info.can_redo &= !*disabled;
+        info.can_undo &= !disabled;
+        info.can_redo &= !disabled;
+        if editor.masked {
+            let value = node.edit_value();
+            info.display_selection = TextSelection {
+                anchor: editor.to_display(value, editor.selection.anchor),
+                focus: editor.to_display(value, editor.selection.focus),
+            };
+        }
+        info.placeholder_color = node.resolved_theme.palette().text_muted;
         Some(info)
     }
     /// Current retained focus identity, independent of native activation.
@@ -2499,7 +2626,13 @@ impl<T: View> Ui<T> {
                     )
             })
     }
-    /// Whether focus is on a selectable text input, including read-only inputs.
+    /// Whether the focused input accepts platform IME composition: an editable input
+    /// that is not masked. Password inputs take committed text only.
+    pub fn accepts_ime(&self) -> bool {
+        self.accepts_text_input() && self.focused.is_some_and(|id| !self.nodes[&id].masked())
+    }
+    /// Whether focus is on selectable text: any text input, including read-only
+    /// inputs, or a selectable label.
     pub fn has_text_focus(&self) -> bool {
         self.active
             && self
@@ -2538,33 +2671,64 @@ impl<T: View> Ui<T> {
         changed && self.has_text_focus()
     }
     /// Current retained selection text for clipboard integration; prepare/synchronize
-    /// after external model updates before relying on this snapshot.
+    /// after external model updates before relying on this snapshot. Password inputs
+    /// never expose their selection, so Copy and Cut are unavailable there.
     pub fn selected_text(&self) -> Option<&str> {
         let node = self.nodes.get(&self.focused?)?;
-        let ElementKind::TextInput { value, .. } = &node.element.kind else {
+        if node.masked() {
             return None;
-        };
+        }
         let range = node.editor.as_ref()?.selection.range();
-        (!range.is_empty()).then(|| &value[range])
+        (!range.is_empty()).then(|| &node.edit_value()[range])
     }
+    /// Whether layout and retained bounds are current, so geometry can be revealed.
+    fn layout_current(&self) -> Result<bool, UiError> {
+        Ok(match (self.viewport, self.root) {
+            (Some(_), Some(root)) => !self.taffy.dirty(self.nodes[&root].layout)?,
+            _ => false,
+        })
+    }
+    /// Keeps the active caret visible: single-line inputs scroll horizontally; text
+    /// areas and selectable labels reveal it through scrolling ancestors. That reveal
+    /// waits for current layout, which the next preparation completes.
     fn update_text_scroll(
         &mut self,
         id: ElementId,
         measure: &mut impl TextMeasure,
     ) -> Result<(), UiError> {
-        if !self.nodes.get(&id).is_some_and(|node| node.visible) {
+        let Some(node) = self
+            .nodes
+            .get(&id)
+            .filter(|node| node.visible && node.editor.is_some())
+        else {
+            return Ok(());
+        };
+        let editor = node.editor.as_ref().unwrap();
+        let position = editor.ime_position(node.edit_value());
+        if !node.single_line() {
+            if !editor.reveal || !self.layout_current()? {
+                return Ok(());
+            }
+            let caret = measure.text_caret(id, node.text_request(), position)?;
+            self.nodes
+                .get_mut(&id)
+                .unwrap()
+                .editor
+                .as_mut()
+                .unwrap()
+                .reveal = false;
+            if let Some(caret) = caret {
+                self.reveal_area(id, Some(Bounds { width: 1., ..caret }));
+            }
             return Ok(());
         }
-
-        let node = &self.nodes[&id];
-        let editor = node.editor.as_ref().unwrap();
-        let position = editor.ime_position();
         let Some(caret) = measure.text_caret(id, node.text_request(), position)? else {
             return Ok(());
         };
         let node = self.nodes.get_mut(&id).unwrap();
         let width = node.content_bounds.width;
         let editor = node.editor.as_mut().unwrap();
+        editor.reveal = false;
         if caret.x < editor.scroll_x {
             editor.scroll_x = caret.x.max(0.);
         } else if caret.x + 1. > editor.scroll_x + width {
@@ -2580,14 +2744,14 @@ impl<T: View> Ui<T> {
         &mut self,
         measure: &mut impl TextMeasure,
     ) -> Result<Option<Bounds>, UiError> {
-        if !self.accepts_text_input() {
+        if !self.accepts_ime() {
             return Ok(None);
         }
         let id = self.focused.unwrap();
         self.update_text_scroll(id, measure)?;
         let node = &self.nodes[&id];
         let editor = node.editor.as_ref().unwrap();
-        let position = editor.ime_position();
+        let position = editor.ime_position(node.edit_value());
         let Some(caret) = measure.text_caret(id, node.text_request(), position)? else {
             return Ok(None);
         };
@@ -2598,10 +2762,11 @@ impl<T: View> Ui<T> {
             height: caret.height,
         }))
     }
-    /// Routes controlled single-line editing without requiring a frame. Dirty
-    /// descriptions reconcile before input and after each committed proposal, so
-    /// application acceptance/normalization/rejection is authoritative for the next
-    /// event. Selection/preedit do not dispatch model changes or rerun Taffy here.
+    /// Routes controlled editing without requiring a frame. Dirty descriptions
+    /// reconcile before input and after each committed proposal, so application
+    /// acceptance/normalization/rejection is authoritative for the next event.
+    /// Selection/preedit do not dispatch model changes or rerun Taffy here.
+    /// A focused selectable label accepts selection, navigation and copy only.
     pub fn text_input(
         &mut self,
         runtime: &mut Runtime,
@@ -2621,22 +2786,46 @@ impl<T: View> Ui<T> {
         let caret_was_hidden = !self.caret_visible;
         self.caret_visible = true;
         let node = &self.nodes[&id];
-        let ElementKind::TextInput {
-            value,
-            change,
-            submit,
-            read_only,
-            ..
-        } = &node.element.kind
-        else {
-            unreachable!()
+        let (change, submit, read_only) = match &node.element.kind {
+            ElementKind::TextInput {
+                change,
+                submit,
+                read_only,
+                ..
+            } => (change.clone(), submit.clone(), *read_only),
+            _ => (None, None, true),
         };
-        let value = value.as_str();
-        let change = change.clone();
-        let submit = submit.clone();
-        let readonly = *read_only || change.is_none();
+        let value = node.edit_value();
+        let readonly = read_only || change.is_none();
+        let multiline = node.multiline();
+        let masked = node.masked();
         let selection = node.editor.as_ref().unwrap().selection;
         let composing = node.editor.as_ref().unwrap().composition.is_some();
+        let event = match event {
+            TextInputEvent::Enter { modifiers, repeat } => {
+                let submits = !multiline
+                    || match node.input_options().map(|o| o.submit).unwrap_or_default() {
+                        crate::SubmitShortcut::PrimaryEnter => {
+                            modifiers.primary() && !modifiers.shift && !modifiers.alt
+                        }
+                        crate::SubmitShortcut::Enter => !modifiers.shift,
+                        crate::SubmitShortcut::Never => false,
+                    };
+                if submits && repeat {
+                    return Ok(false);
+                }
+                if submits {
+                    TextInputEvent::Submit
+                } else {
+                    TextInputEvent::Insert("\n".into())
+                }
+            }
+            // A password input reveals neither words nor composition text.
+            TextInputEvent::BackspaceWord if masked => TextInputEvent::BackspaceToStart,
+            TextInputEvent::DeleteWord if masked => TextInputEvent::DeleteToEnd,
+            TextInputEvent::Preedit { .. } if masked => return Ok(false),
+            event => event,
+        };
         let edit_kind = match &event {
             TextInputEvent::Insert(text)
                 if selection.is_collapsed()
@@ -2657,19 +2846,20 @@ impl<T: View> Ui<T> {
         match event {
             TextInputEvent::Undo | TextInputEvent::Redo if !readonly && !composing => {
                 let redo = event == TextInputEvent::Redo;
-                let Some(snapshot) = node.editor.as_ref().unwrap().replay(redo) else {
+                let value = value.to_owned();
+                let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
+                let Some(step) = editor.replay(&value, redo) else {
                     return Ok(false);
                 };
-                let proposed = snapshot.value.clone();
-                let restored = snapshot.selection;
-                let value = value.to_owned();
+                let (range, insert, restored) =
+                    (step.range.clone(), step.text.clone(), step.selection);
                 self.propose_edit(
                     runtime,
                     id,
                     &value,
                     Proposal {
-                        range: 0..value.len(),
-                        insert: &proposed,
+                        range,
+                        insert: &insert,
                         action: if redo {
                             EditAction::Redo
                         } else {
@@ -2696,6 +2886,7 @@ impl<T: View> Ui<T> {
                 }
                 let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
                 editor.break_group();
+                editor.reveal = true;
                 let replacement = editor
                     .composition
                     .as_ref()
@@ -2710,19 +2901,43 @@ impl<T: View> Ui<T> {
                 return Ok(true);
             }
             TextInputEvent::Move { movement, extend } if !composing => {
+                let single = node.single_line();
+                let movement = match movement {
+                    TextMovement::LineStart | TextMovement::Up | TextMovement::PageUp if single => {
+                        TextMovement::Start
+                    }
+                    TextMovement::LineEnd | TextMovement::Down | TextMovement::PageDown
+                        if single =>
+                    {
+                        TextMovement::End
+                    }
+                    TextMovement::WordLeft if masked => TextMovement::Start,
+                    TextMovement::WordRight if masked => TextMovement::End,
+                    movement => movement,
+                };
+                let editor = node.editor.as_ref().unwrap();
+                let goal = editor.goal.filter(|(_, s)| *s == selection).map(|(x, _)| x);
                 let right = matches!(
                     movement,
                     TextMovement::Right | TextMovement::WordRight | TextMovement::End
                 );
                 let focus = selection.focus;
+                let mut next_goal = None;
                 let position = if !extend
                     && !selection.is_collapsed()
                     && matches!(movement, TextMovement::Left | TextMovement::Right)
                 {
-                    let a =
-                        measure.text_caret(id, self.nodes[&id].text_request(), selection.anchor)?;
-                    let b =
-                        measure.text_caret(id, self.nodes[&id].text_request(), selection.focus)?;
+                    let request = node.text_request();
+                    let a = measure.text_caret(
+                        id,
+                        request,
+                        editor.to_display(value, selection.anchor),
+                    )?;
+                    let b = measure.text_caret(
+                        id,
+                        node.text_request(),
+                        editor.to_display(value, selection.focus),
+                    )?;
                     if let (Some(a), Some(b)) = (a, b) {
                         if (a.x >= b.x) == right {
                             selection.anchor
@@ -2747,7 +2962,13 @@ impl<T: View> Ui<T> {
                             TextPosition::new(word_right(value, focus.byte_offset))
                         }
                         TextMovement::Left | TextMovement::Right => measure
-                            .text_neighbor(id, self.nodes[&id].text_request(), focus, right)?
+                            .text_neighbor(
+                                id,
+                                node.text_request(),
+                                editor.to_display(value, focus),
+                                right,
+                            )?
+                            .map(|p| editor.to_value(value, p))
                             .unwrap_or_else(|| {
                                 if measure.supports_text_geometry() {
                                     return focus;
@@ -2758,11 +2979,35 @@ impl<T: View> Ui<T> {
                                     previous(value, focus.byte_offset)
                                 })
                             }),
+                        TextMovement::LineStart | TextMovement::LineEnd => {
+                            self.line_edge(id, measure, focus, movement == TextMovement::LineEnd)?
+                        }
+                        TextMovement::Up
+                        | TextMovement::Down
+                        | TextMovement::PageUp
+                        | TextMovement::PageDown => {
+                            let (position, x) = self.vertical_position(
+                                id,
+                                measure,
+                                focus,
+                                goal,
+                                matches!(movement, TextMovement::Down | TextMovement::PageDown),
+                                matches!(movement, TextMovement::PageUp | TextMovement::PageDown),
+                            )?;
+                            next_goal = Some(x);
+                            position
+                        }
                     }
                 };
+                let node = &self.nodes[&id];
+                let value = node.edit_value();
                 let valid = if measure.supports_text_geometry() {
                     measure
-                        .text_caret(id, self.nodes[&id].text_request(), position)?
+                        .text_caret(
+                            id,
+                            node.text_request(),
+                            node.editor.as_ref().unwrap().to_display(value, position),
+                        )?
                         .is_some()
                 } else {
                     position.byte_offset <= value.len()
@@ -2778,6 +3023,8 @@ impl<T: View> Ui<T> {
                     anchor: if extend { selection.anchor } else { position },
                     focus: position,
                 };
+                editor.goal = next_goal.map(|x| (x, editor.selection));
+                editor.reveal = true;
                 let changed = selection != editor.selection;
                 self.update_text_scroll(id, measure)?;
                 return Ok(changed || caret_was_hidden);
@@ -2836,14 +3083,18 @@ impl<T: View> Ui<T> {
             TextInputEvent::Insert(insert)
             | TextInputEvent::Commit(insert)
             | TextInputEvent::Paste(insert) => {
-                let range = self.nodes[&id]
+                let range = node
                     .editor
                     .as_ref()
                     .unwrap()
                     .composition
                     .as_ref()
                     .map_or(selection.range(), |c| c.replacement.range());
-                let insert = single_line(&insert);
+                let insert = if multiline {
+                    multi_line(&insert)
+                } else {
+                    single_line(&insert)
+                };
                 let value = value.to_owned();
                 self.propose_edit(
                     runtime,
@@ -2883,10 +3134,99 @@ impl<T: View> Ui<T> {
             }
             _ => return Ok(false),
         }
-        if self.nodes.get(&id).is_some_and(|n| n.editor.is_some()) {
+        if let Some(editor) = self.nodes.get_mut(&id).and_then(|n| n.editor.as_mut()) {
+            editor.reveal = true;
             self.update_text_scroll(id, measure)?;
         }
         Ok(true)
+    }
+    /// Start or end of the visual line holding `focus`: the lower and higher offsets
+    /// at that line's two horizontal edges, so right-to-left lines also start at
+    /// their logical start. Hosts without geometry use the paragraph.
+    fn line_edge(
+        &self,
+        id: ElementId,
+        measure: &mut impl TextMeasure,
+        focus: TextPosition,
+        end: bool,
+    ) -> Result<TextPosition, UiError> {
+        let node = &self.nodes[&id];
+        let editor = node.editor.as_ref().unwrap();
+        let value = node.edit_value();
+        if measure.supports_text_geometry()
+            && let Some(caret) =
+                measure.text_caret(id, node.text_request(), editor.to_display(value, focus))?
+        {
+            let y = caret.y + caret.height / 2.;
+            let left = measure.text_hit_test(id, node.text_request(), [-1e9, y])?;
+            let right = measure.text_hit_test(id, node.text_request(), [1e9, y])?;
+            if let (Some(left), Some(right)) = (left, right) {
+                let (low, high) = if left.byte_offset <= right.byte_offset {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                return Ok(editor.to_value(value, if end { high } else { low }));
+            }
+        }
+        let offset = focus.byte_offset;
+        Ok(TextPosition::new(if end {
+            crate::editing::paragraph_end(value, offset)
+        } else {
+            crate::editing::paragraph_start(value, offset)
+        }))
+    }
+    /// Target of a vertical move and the horizontal goal it preserves. Geometry hosts
+    /// hit-test the preferred X one line (or one visible page) away; past the first
+    /// or last line the caret moves to the start or end. Hosts without geometry move
+    /// between paragraphs by grapheme column, ten paragraphs per page.
+    fn vertical_position(
+        &self,
+        id: ElementId,
+        measure: &mut impl TextMeasure,
+        focus: TextPosition,
+        goal: Option<f32>,
+        down: bool,
+        page: bool,
+    ) -> Result<(TextPosition, f32), UiError> {
+        let node = &self.nodes[&id];
+        let editor = node.editor.as_ref().unwrap();
+        let value = node.edit_value();
+        let edge = || TextPosition::new(if down { value.len() } else { 0 });
+        if measure.supports_text_geometry()
+            && let Some(caret) =
+                measure.text_caret(id, node.text_request(), editor.to_display(value, focus))?
+        {
+            let x = goal.unwrap_or(caret.x);
+            let visible = node.bounds.intersection(node.clip_bounds).height;
+            let distance = if page {
+                (visible - caret.height).max(caret.height)
+            } else {
+                caret.height
+            };
+            let y = caret.y + caret.height / 2. + if down { distance } else { -distance };
+            if y < 0. {
+                return Ok((edge(), x));
+            }
+            let Some(hit) = measure.text_hit_test(id, node.text_request(), [x, y])? else {
+                return Ok((edge(), x));
+            };
+            let line = measure.text_caret(id, node.text_request(), hit)?;
+            // Hit testing clamps below the last line; that is the end of the text.
+            if line.is_none_or(|line| (line.y - caret.y).abs() < caret.height / 4.) {
+                return Ok((edge(), x));
+            }
+            return Ok((editor.to_value(value, hit), x));
+        }
+        let column = goal.map_or_else(|| logical_column(value, focus.byte_offset), |g| g as usize);
+        let lines = if page { 10 } else { 1 };
+        let target = logical_vertical(
+            value,
+            focus.byte_offset,
+            if down { lines } else { -lines },
+            column,
+        );
+        Ok((TextPosition::new(target), column as f32))
     }
     fn propose_edit(
         &mut self,
@@ -3012,23 +3352,42 @@ impl<T: View> Ui<T> {
                 ..position
             }
         };
+        // Composition was cancelled above, so only masking separates display offsets
+        // from the committed value.
+        let value = node.edit_value();
+        let position = editor.to_value(value, position);
+        let whole = TextSelection {
+            anchor: TextPosition::new(0),
+            focus: TextPosition::new(value.len()),
+        };
+        // Triple-click selects the paragraph in wrapped text, else the whole value;
+        // a password reveals no word boundaries.
+        let line = |position: TextPosition| {
+            if node.single_line() {
+                whole
+            } else {
+                paragraph_selection(value, position.byte_offset)
+            }
+        };
         let segment = if (kind == 0 && click_count >= 3 && !extend)
             || (kind == 1 && editor.drag_line && editor.drag_selection.is_some())
         {
-            Some(TextSelection {
-                anchor: TextPosition::new(0),
-                focus: TextPosition::new(editor.display.len()),
-            })
+            Some(line(position))
         } else if (kind == 0 && click_count == 2 && !extend)
             || (kind == 1 && editor.drag_selection.is_some())
         {
-            Some(word_selection(&editor.display, position))
+            Some(if editor.masked {
+                whole
+            } else {
+                word_selection(value, position)
+            })
         } else {
             None
         };
         let editor = self.nodes.get_mut(&id).unwrap().editor.as_mut().unwrap();
         let old = editor.selection;
         editor.break_group();
+        editor.reveal = true;
         if kind == 0 {
             editor.drag_selection = segment;
             editor.drag_line = click_count >= 3 && !extend;
@@ -3106,6 +3465,10 @@ impl<T: View> Ui<T> {
             ElementKind::Scrollbar(_) => crate::SemanticRole::Scrollbar,
             ElementKind::Splitter(_) => crate::SemanticRole::Splitter,
             ElementKind::Button { .. } => crate::SemanticRole::Button,
+            ElementKind::TextInput { .. } if node.masked() => crate::SemanticRole::PasswordInput,
+            ElementKind::TextInput { .. } if node.multiline() => {
+                crate::SemanticRole::MultilineTextInput
+            }
             ElementKind::TextInput { .. } => crate::SemanticRole::TextInput,
         };
         let role = properties.and_then(|p| p.role).unwrap_or(inferred);
@@ -3148,12 +3511,17 @@ impl<T: View> Ui<T> {
                         ..
                     }
                 ));
-        let editable = !disabled && !read_only && node.editor.is_some();
+        let editable =
+            !disabled && !read_only && matches!(node.element.kind, ElementKind::TextInput { .. });
+        // Published offsets index the displayed (masked) value.
         let selection = node
             .editor
             .as_ref()
             .filter(|e| e.composition.is_none())
-            .map(|e| e.selection);
+            .map(|e| TextSelection {
+                anchor: e.to_display(node.edit_value(), e.selection.anchor),
+                focus: e.to_display(node.edit_value(), e.selection.focus),
+            });
         Some(crate::SemanticNode {
             set_size: properties.and_then(|p| p.set_size),
             position_in_set: properties.and_then(|p| p.position_in_set),
@@ -3169,6 +3537,7 @@ impl<T: View> Ui<T> {
             role,
             label,
             description: properties.and_then(|p| p.description.as_deref()),
+            placeholder: node.input_options().and_then(|o| o.placeholder.as_deref()),
             bounds: node.bounds,
             content_bounds: node.content_bounds,
             clip_bounds: node.clip_bounds,
@@ -3292,15 +3661,21 @@ impl<T: View> Ui<T> {
             crate::SemanticAction::SetValue {
                 value: proposed, ..
             } => {
+                let node = &self.nodes[&id];
                 let ElementKind::TextInput {
                     value,
                     change: Some(change),
                     read_only: false,
                     disabled: false,
                     ..
-                } = &self.nodes[&id].element.kind
+                } = &node.element.kind
                 else {
                     return Ok(false);
+                };
+                let proposed = if node.multiline() {
+                    multi_line(&proposed)
+                } else {
+                    single_line(&proposed)
                 };
                 let old = value.clone();
                 let change = change.clone();
@@ -3309,7 +3684,7 @@ impl<T: View> Ui<T> {
                     runtime,
                     id,
                     &old,
-                    Proposal::new(0..old.len(), &single_line(&proposed), EditKind::Separate),
+                    Proposal::new(0..old.len(), &proposed, EditKind::Separate),
                     change,
                 )?;
                 if self.nodes.get(&id).is_some_and(|n| n.editor.is_some()) {
@@ -3323,26 +3698,34 @@ impl<T: View> Ui<T> {
                 ..
             } => {
                 let node = &self.nodes[&id];
-                let ElementKind::TextInput {
-                    value,
-                    disabled: false,
-                    ..
-                } = &node.element.kind
+                let (ElementKind::TextInput {
+                    disabled: false, ..
+                }
+                | ElementKind::Label(_)) = &node.element.kind
                 else {
                     return Ok(false);
                 };
-                if node.text_revision != text_revision
-                    || node.editor.as_ref().unwrap().composition.is_some()
-                {
+                let Some(editor) = node.editor.as_ref() else {
+                    return Ok(false);
+                };
+                if node.text_revision != text_revision || editor.composition.is_some() {
                     return Ok(false);
                 }
+                // Offsets index the published display text, which is masked for
+                // password inputs.
+                let display = &editor.display;
                 for endpoint in [selection.anchor, selection.focus] {
-                    if endpoint.byte_offset > value.len()
-                        || boundary(value, endpoint.byte_offset) != endpoint.byte_offset
+                    if endpoint.byte_offset > display.len()
+                        || boundary(display, endpoint.byte_offset) != endpoint.byte_offset
                     {
                         return Ok(false);
                     }
                 }
+                let value = node.edit_value();
+                let selection = TextSelection {
+                    anchor: editor.to_value(value, selection.anchor),
+                    focus: editor.to_value(value, selection.focus),
+                };
                 let changed = node.editor.as_ref().unwrap().selection != selection
                     || self.focused != Some(id);
                 self.change_focus(Some(id));
