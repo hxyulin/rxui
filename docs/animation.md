@@ -35,6 +35,11 @@ loop {
 }
 ```
 
+Only the first `Ui::prepare` after `begin_frame` sees a current frame time. Hosts
+also prepare between frames to route input, at the previous frame's time; motion
+that starts there waits at its starting value and begins at the next frame, so a
+late frame never makes a transition jump to its end.
+
 `TestUi` prepares while `Ui::is_animating` holds, so tests call
 `test.runtime().begin_frame(time)` before each `render`.
 
@@ -206,8 +211,8 @@ per on-screen element whose paint changes. Overlay motion rebuilds the compositi
 plan each frame and adds one layer pass for the moving overlay, as group opacity
 does. Paint transitions never touch text preparation, layout or semantics.
 
-[Frame measurements](performance/frames.md) compare the per-frame cost before and
-after this feature.
+[Animation measurements](performance/animation.md) compare the per-frame cost
+before and after this feature. Idle frames cost about 10 ns more for the state check.
 
 Headless tests cover easing and spring math, value retargeting and spring
 velocity, hover/pressed/disabled/focus/theme transitions, retargeting without jumps,

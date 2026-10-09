@@ -1,0 +1,17 @@
+operation,rows,samples,iterations_per_sample,median_us,p95_us
+idle,100,20,20,0.279,0.285
+idle_encode,100,20,20,13.381,13.658
+hover_move,100,20,20,0.869,0.877
+pointer_listener_move,100,20,20,0.881,0.917
+wheel_scroll,100,20,20,31.802,32.142
+type_character,100,20,20,42.244,46.529
+theme_switch,100,20,20,9.504,9.552
+opacity_animation,100,20,20,34.571,34.790
+idle,1000,20,20,0.277,0.283
+idle_encode,1000,20,20,28.708,30.071
+hover_move,1000,20,20,2.473,2.498
+pointer_listener_move,1000,20,20,2.388,2.417
+wheel_scroll,1000,20,20,295.554,300.531
+type_character,1000,20,20,297.400,304.073
+theme_switch,1000,20,20,92.921,94.200
+opacity_animation,1000,20,20,292.071,294.442
