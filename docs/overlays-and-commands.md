@@ -181,6 +181,12 @@ content regardless of sibling z. Modal scopes and their child portals paint abov
 unrelated popovers. Geometry/hit testing use the same order and viewport clipping.
 No extra framebuffer/pass is needed for ordinary opaque overlays.
 
+Opening and closing fade (popovers also slide) over the theme's motion durations;
+`Overlay::transition(Transition::None)` snaps. Focus, semantics, dismissal and modal
+blocking change immediately in both directions. A closed overlay's subtree is
+removed as before, and only a paint-only snapshot fades out through an isolated
+layer. See [the animation contract](animation.md).
+
 `ElementInfo::viewport_overlay` marks the boundary for custom painters. Keep
 logical ownership distinct from visual parentage when implementing composition.
 `SemanticNode::viewport_overlay` marks native adapter boundaries: AccessKit attaches

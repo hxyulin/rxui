@@ -56,6 +56,7 @@ fn main() -> Result<(), ApplicationError> {
 | Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, tabs, menus, popovers, modals and docking |
 | Input | Pointer and keyboard routing, capture, focus scopes, Tab traversal and typed commands with shortcuts |
 | Styling | Light, dark and high-contrast themes, compact density, inherited text styles and state paints |
+| Animation | Implicit state and theme transitions, overlay enter/exit, springs and animated values, reduce motion |
 | Accessibility | Roles, names and actions, published through AccessKit only while assistive technology is active |
 | Graphics | Images, live framebuffers, group opacity and hooks to record your own Astrelis passes |
 | Desktop | Multiple windows, native menus, file dialogs, clipboard, file drop and saved window geometry |
@@ -118,6 +119,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |
 | [Text input](docs/text-input.md), [fonts](docs/fonts.md) and [semantics](docs/semantics.md) | Editing, IME, font registration and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
+| [Animation](docs/animation.md) | Transitions, overlay motion, animated values and reduce motion |
 | [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves |
 | [Standard controls](docs/controls.md) | Check boxes, switches, radio groups, sliders, progress, selects and tooltips |
 | [Overlays and commands](docs/overlays-and-commands.md) and [docking](docs/docking.md) | Menus, dialogs, shortcuts and dock layouts |

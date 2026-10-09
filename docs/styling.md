@@ -253,7 +253,9 @@ the affected subtree, and a root theme switch resolves the retained tree. Palett
 changes skip Taffy style replacement, text measurement, layout and text revision
 changes. Effective font/box changes invalidate the relevant text/layout inputs.
 Hover/pressed/focus choose cached appearance without description/style rebuilding.
-Idle preparation skips style traversal when no styling is pending.
+Idle preparation skips style traversal when no styling is pending. With a host
+that drives frames, state and theme changes interpolate between those cached
+appearances over `ThemeMetrics::motion` durations; see [animation](animation.md).
 
 The selected-text foreground uses the existing prepared glyphs with an additional
 clipped draw per visual selection rectangle when its color differs from ordinary

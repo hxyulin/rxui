@@ -154,8 +154,6 @@ pub struct Element {
     pub(crate) scroll_handle: Option<crate::ScrollHandle>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
     pub(crate) input: Option<Box<crate::input::InputProperties>>,
-    /// Explicit paint/overlay transition; `None` uses the element kind's default.
-    pub(crate) transition: Option<Box<crate::Transition>>,
 }
 impl IntoElement for Element {
     fn into_element(self) -> Element {
@@ -209,7 +207,6 @@ impl Element {
             scroll_handle: None,
             semantics: None,
             input: None,
-            transition: None,
         }
     }
     fn control_defaults(&mut self, input: bool) {
@@ -398,7 +395,7 @@ impl Element {
     /// set explicitly. On a popover or modal it also selects the enter/exit motion.
     /// Requires a host that drives `Runtime::begin_frame`; see `docs/animation.md`.
     pub fn transition(mut self, transition: crate::Transition) -> Self {
-        self.transition = Some(Box::new(transition));
+        self.states.get_or_insert_with(Default::default).transition = Some(transition);
         self
     }
     /// Snaps paint changes immediately, as `.transition(Transition::None)`. Use it

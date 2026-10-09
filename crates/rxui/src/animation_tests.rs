@@ -53,7 +53,17 @@ impl View for Buttons {
         }
         let mut page = column().key("page").size(400., 300.).child(target);
         if self.theme_background {
-            page = page.background(ThemeColor::Surface);
+            // A row clipped out of view, like one scrolled away.
+            page = page.background(ThemeColor::Surface).child(
+                stack().size(40., 10.).clip().child(
+                    column()
+                        .key("clipped")
+                        .absolute()
+                        .top(20.)
+                        .size(40., 10.)
+                        .background(ThemeColor::Surface),
+                ),
+            );
         }
         page
     }
@@ -206,6 +216,8 @@ fn theme_switches_crossfade_plain_containers_and_controls() {
     frame(&mut r, &mut ui, 2000);
     assert_eq!(background(&ui, "page"), dark.palette().surface);
     assert_eq!(text(&ui), dark.palette().text);
+    // Elements that were not painted change without a transition.
+    assert_eq!(background(&ui, "clipped"), light.palette().surface);
     let state = dark.sizes().motion.state.as_millis() as u64;
     frame(&mut r, &mut ui, 2000 + state / 2);
     let mid = background(&ui, "page");
@@ -411,6 +423,9 @@ fn overlays_fade_and_slide_in_while_focus_and_semantics_are_immediate() {
     assert_eq!(layer(&ui, "item"), Some((0., [0., -offset])));
     frame(&mut r, &mut ui, 1066);
     assert_eq!(layer(&ui, "item"), Some((0.5, [0., -offset / 2.])));
+    // Custom painters see the fade on the overlay root.
+    let root = ui.element(find(&ui, "menu")).unwrap();
+    assert!(root.viewport_overlay && root.opacity == 0.5);
     frame(&mut r, &mut ui, 1116);
     assert_eq!(layer(&ui, "item"), Some((1., [0., 0.])));
     assert!(!ui.is_animating() && !ui.needs_composition());
@@ -529,5 +544,48 @@ fn dropping_an_animating_placement_releases_its_frame_request() {
     frame(&mut r, &mut ui, 1016);
     assert!(r.animation_frame_requested());
     drop(ui);
+    assert!(!r.animation_frame_requested());
+}
+
+#[test]
+fn changes_prepared_between_frames_start_at_the_next_frame() {
+    let (mut r, root, mut ui) = buttons(Buttons {
+        transition: linear(),
+        ..Default::default()
+    });
+    // Input handling prepares long after the last frame, at its stale time.
+    r.update(|cx| root.update(cx, |v, _| v.disabled = true));
+    ui.prepare(&mut r, [400., 300.], &mut Measure).unwrap();
+    assert_eq!(background(&ui, "target"), RED);
+    assert!(ui.is_animating() && r.animation_frame_requested());
+    frame(&mut r, &mut ui, 5000);
+    assert_eq!(background(&ui, "target"), RED);
+    frame(&mut r, &mut ui, 5050);
+    assert!(close(background(&ui, "target"), [0.5, 0., 0.5, 1.]));
+    frame(&mut r, &mut ui, 5100);
+    assert_eq!(background(&ui, "target"), BLUE);
+
+    // The same holds for animated values evaluated between frames.
+    let evaluations = Rc::new(Cell::new(0));
+    let mut r = Runtime::new();
+    let drawer = r.update(|cx| {
+        cx.new(|_| Drawer {
+            open: false,
+            evaluations: evaluations.clone(),
+        })
+    });
+    let mut ui = Ui::new(&mut r, drawer.clone()).unwrap();
+    frame(&mut r, &mut ui, 1000);
+    r.update(|cx| drawer.update(cx, |d, _| d.open = true));
+    ui.prepare(&mut r, [400., 300.], &mut Measure).unwrap();
+    let width = |ui: &Ui<Drawer>| ui.element(find(ui, "drawer")).unwrap().bounds.width;
+    assert_eq!(width(&ui), 100.);
+    assert!(r.animation_frame_requested());
+    frame(&mut r, &mut ui, 9000);
+    assert_eq!(width(&ui), 100.);
+    frame(&mut r, &mut ui, 9050);
+    assert_eq!(width(&ui), 150.);
+    frame(&mut r, &mut ui, 9100);
+    assert_eq!(width(&ui), 200.);
     assert!(!r.animation_frame_requested());
 }

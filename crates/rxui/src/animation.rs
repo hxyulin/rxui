@@ -448,6 +448,8 @@ pub struct Animated<T> {
     from: T,
     to: T,
     start: Duration,
+    /// The move waits for the next frame time to start; see [`Self::defer`].
+    pending: bool,
     timing: Option<Timing>,
     /// Initial progress velocity of the current move, per second.
     velocity: f32,
@@ -459,8 +461,29 @@ impl<T: Interpolate> Animated<T> {
             from: value.clone(),
             to: value,
             start: Duration::ZERO,
+            pending: false,
             timing: None,
             velocity: 0.,
+        }
+    }
+    /// Time into the current move; zero while it waits for a frame.
+    fn elapsed(&self, now: Duration) -> Duration {
+        if self.pending {
+            Duration::ZERO
+        } else {
+            now.saturating_sub(self.start)
+        }
+    }
+    /// Makes the latest move wait at its starting value until [`Self::resume`],
+    /// for changes observed between frames at a stale frame time.
+    pub(crate) fn defer(&mut self) {
+        self.pending = self.timing.is_some();
+    }
+    /// Starts a deferred move at frame time `now`.
+    pub(crate) fn resume(&mut self, now: Duration) {
+        if self.pending {
+            self.pending = false;
+            self.start = now;
         }
     }
     /// The latest target.
@@ -471,7 +494,7 @@ impl<T: Interpolate> Animated<T> {
     pub fn value(&self, now: Duration) -> T {
         match &self.timing {
             Some(timing) => {
-                let (t, done) = timing.progress(now.saturating_sub(self.start), self.velocity);
+                let (t, done) = timing.progress(self.elapsed(now), self.velocity);
                 if done {
                     self.to.clone()
                 } else {
@@ -484,11 +507,8 @@ impl<T: Interpolate> Animated<T> {
     /// Whether the value is still moving at frame time `now`. Hosts need further
     /// frames only while this holds.
     pub fn is_animating(&self, now: Duration) -> bool {
-        self.timing.is_some_and(|timing| {
-            !timing
-                .progress(now.saturating_sub(self.start), self.velocity)
-                .1
-        })
+        self.timing
+            .is_some_and(|timing| !timing.progress(self.elapsed(now), self.velocity).1)
     }
     /// Moves toward `target` from the value at `now`, keeping the motion continuous
     /// when retargeted mid-flight. A spring also keeps its velocity along the new
@@ -505,7 +525,7 @@ impl<T: Interpolate> Animated<T> {
         let current = self.value(now);
         let mut velocity = 0.;
         if let (Some(old), true) = (self.timing, self.is_animating(now)) {
-            let progress = old.velocity(now.saturating_sub(self.start), self.velocity);
+            let progress = old.velocity(self.elapsed(now), self.velocity);
             if let (Some(a), Some(b), Some(c), Some(d)) = (
                 self.from.components(),
                 self.to.components(),
@@ -524,6 +544,7 @@ impl<T: Interpolate> Animated<T> {
         self.from = current;
         self.to = target;
         self.start = now;
+        self.pending = false;
         self.timing = Some(timing);
         self.velocity = if velocity.is_finite() { velocity } else { 0. };
     }
@@ -541,8 +562,19 @@ pub(crate) struct Clock {
     pub(crate) started: bool,
     /// Transitions complete immediately.
     pub(crate) reduce_motion: bool,
+    /// Serial of the latest `Runtime::begin_frame`.
+    pub(crate) frame: u64,
+    /// Frame whose first `Ui::prepare` has completed. Preparations after it, such
+    /// as input handling between frames, see a stale frame time.
+    pub(crate) consumed: u64,
 }
 impl Clock {
+    /// Whether the current frame time is fresh: no preparation has completed since
+    /// the latest `Runtime::begin_frame`. Motion created otherwise starts at the
+    /// next frame instead of a stale time.
+    pub(crate) fn fresh(self) -> bool {
+        self.frame != self.consumed
+    }
     /// Whether transitions animate: a frame clock runs and motion is not reduced.
     pub(crate) fn animates(self) -> bool {
         self.started && !self.reduce_motion

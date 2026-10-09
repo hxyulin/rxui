@@ -823,6 +823,8 @@ pub(crate) struct StateStyles {
     pub hover: PaintStyle,
     pub pressed: PaintStyle,
     pub disabled: PaintStyle,
+    /// Explicit paint/overlay transition; `None` uses the element kind's default.
+    pub transition: Option<crate::Transition>,
 }
 /// Fully resolved paint values for one element's current interaction state. No token
 /// lookup, ancestor traversal or theme allocation is required by the painter.

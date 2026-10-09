@@ -485,7 +485,8 @@ impl<'a, T> ViewContext<'a, T> {
             std::any::TypeId::of::<crate::Animated<V>>(),
             hash,
         );
-        let animates = self.runtime.motion.get().animates();
+        let clock = self.runtime.motion.get();
+        let animates = clock.animates();
         let now = self.frame_time();
         let transition = match transition {
             _ if !animates => crate::Transition::None,
@@ -511,7 +512,15 @@ impl<'a, T> ViewContext<'a, T> {
             .downcast_mut::<crate::Animated<V>>()
             .expect("animation slot type");
         if animates {
+            // Between frames the frame time is stale: a new move waits for the next one.
+            if clock.fresh() {
+                animated.resume(now);
+            }
+            let retarget = *animated.target() != target;
             animated.set(target, transition, now);
+            if retarget && !clock.fresh() {
+                animated.defer();
+            }
         } else if animated.is_animating(now) || *animated.target() != target {
             animated.jump_to(target);
         }

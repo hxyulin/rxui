@@ -317,7 +317,8 @@ pub struct ElementInfo<'a> {
     pub id: ElementId,
     /// Description-tree parent, independent of sibling paint order.
     pub parent: Option<ElementId>,
-    /// Local group opacity, applied once to this complete painted subtree.
+    /// Local group opacity, applied once to this complete painted subtree. On an
+    /// overlay root it includes the enter/exit fade.
     pub opacity: f32,
     /// Explicit sibling key, if provided.
     pub key: Option<&'a Key>,
@@ -957,7 +958,7 @@ impl<T: View> Ui<T> {
             self.geometry_ready = true;
             self.needs_evaluation = false;
             if !self.needs_prepare(runtime)? {
-                self.finish_motion();
+                self.finish_motion(runtime);
                 return Ok(());
             }
             self.geometry_ready = false;
@@ -2312,7 +2313,7 @@ impl<T: View> Ui<T> {
             viewport_overlay: self.is_overlay(id),
             id,
             parent: node.parent,
-            opacity: node.element.opacity,
+            opacity: node.element.opacity * self.overlay_opacity(id),
             key: node.element.key.as_ref(),
             kind: kind(&node.element),
             bounds: node.bounds,

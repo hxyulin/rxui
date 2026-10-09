@@ -14,6 +14,9 @@ use std::time::Duration;
 pub(super) struct Motion {
     /// Whether transitions animate this preparation, read from the runtime clock.
     animates: bool,
+    /// Whether this is the first preparation since `Runtime::begin_frame`, so the
+    /// frame time is current. Moves created otherwise start at the next frame.
+    in_frame: bool,
     /// Frame time of the current preparation.
     now: Duration,
     /// Interaction targets at the end of the previous preparation.
@@ -124,6 +127,10 @@ impl Ghost {
         [self.offset[0] * t, self.offset[1] * t]
     }
 }
+/// The element's explicit transition, kept with its state styles.
+fn transition(element: &Element) -> Option<Transition> {
+    element.states.as_ref().and_then(|s| s.transition)
+}
 impl<T: View> Ui<T> {
     /// Whether retained motion is in flight: a paint transition, a focus ring fade
     /// or an overlay entering or exiting. Hosts keep scheduling frames, calling
@@ -136,6 +143,7 @@ impl<T: View> Ui<T> {
     pub(super) fn begin_motion(&mut self, runtime: &Runtime) {
         let clock = runtime.inner.motion.get();
         self.motion.animates = clock.animates();
+        self.motion.in_frame = clock.fresh();
         self.motion.now = runtime.inner.frames.borrow().1;
         // A preparation that failed while removing an overlay leaves a partial ghost.
         self.motion.exiting = None;
@@ -157,11 +165,17 @@ impl<T: View> Ui<T> {
     /// that does not opt out.
     fn paint_timing(node: &Node, theme_change: bool) -> Option<Timing> {
         let state = node.resolved_theme.sizes().motion.state;
-        match node.element.transition.as_deref() {
+        match transition(&node.element) {
             Some(transition) => transition.timing(state),
             None if theme_change || node.state_paints.is_some() => Transition::Theme.timing(state),
             None => None,
         }
+    }
+    /// Whether `node` was painted in the previous frame: visible and not clipped
+    /// away, like rows scrolled out of view. Others change without a transition.
+    fn on_screen(node: &Node) -> bool {
+        let b = node.bounds.intersection(node.clip_bounds);
+        node.visible && b.width > 0. && b.height > 0.
     }
     fn disabled(&self, id: ElementId, node: &Node) -> bool {
         self.range_unavailable(id)
@@ -197,7 +211,7 @@ impl<T: View> Ui<T> {
             return;
         }
         let node = &self.nodes[&id];
-        if !node.visible
+        if !Self::on_screen(node)
             || Self::paint_timing(node, theme.is_some_and(|t| *t != node.resolved_theme)).is_none()
         {
             return;
@@ -321,7 +335,11 @@ impl<T: View> Ui<T> {
             viewport_overlay: id == ghost.root,
             id,
             parent: node.parent,
-            opacity: node.element.opacity,
+            opacity: if id == ghost.root {
+                node.element.opacity * ghost.opacity(self.motion.now)
+            } else {
+                node.element.opacity
+            },
             key: node.element.key.as_ref(),
             kind: kind(&node.element),
             bounds: node.bounds,
@@ -378,11 +396,7 @@ impl<T: View> Ui<T> {
         }
         let node = &self.nodes[&id];
         let motion = node.resolved_theme.sizes().motion.clone();
-        let Some(timing) = node
-            .element
-            .transition
-            .as_deref()
-            .copied()
+        let Some(timing) = transition(&node.element)
             .unwrap_or_default()
             .timing(motion.overlay_exit)
         else {
@@ -491,7 +505,10 @@ impl<T: View> Ui<T> {
     }
     /// Starts transitions for changes since the previous preparation, then advances
     /// and retires motion at the current frame time. O(1) while idle.
-    pub(super) fn finish_motion(&mut self) {
+    pub(super) fn finish_motion(&mut self, runtime: &Runtime) {
+        let mut clock = runtime.inner.motion.get();
+        clock.consumed = clock.frame;
+        runtime.inner.motion.set(clock);
         let interaction = [
             self.hovered,
             self.pressed,
@@ -548,7 +565,7 @@ impl<T: View> Ui<T> {
                 let timing = Self::paint_timing(node, true);
                 if let Some(timing) = timing
                     && target != from
-                    && node.visible
+                    && Self::on_screen(node)
                 {
                     self.active().paints.insert(
                         id,
@@ -592,7 +609,8 @@ impl<T: View> Ui<T> {
             let Some(node) = self.nodes.get(&id) else {
                 continue;
             };
-            let Some(timing) = Self::paint_timing(node, false).filter(|_| node.visible) else {
+            let Some(timing) = Self::paint_timing(node, false).filter(|_| Self::on_screen(node))
+            else {
                 continue;
             };
             let disabled = self.disabled(id, node);
@@ -617,7 +635,7 @@ impl<T: View> Ui<T> {
         if focused != self.visible_ring()
             && let Some(id) = self.visible_ring()
             && let Some(node) = self.nodes.get(&id)
-            && node.visible
+            && Self::on_screen(node)
             && let Some(timing) = Self::paint_timing(node, false)
         {
             self.active().focus = Some((id, Progress::new(timing)));
@@ -642,11 +660,7 @@ impl<T: View> Ui<T> {
             if !self.motion.animates || !node.visible {
                 continue;
             }
-            let Some(timing) = node
-                .element
-                .transition
-                .as_deref()
-                .copied()
+            let Some(timing) = transition(&node.element)
                 .unwrap_or_default()
                 .timing(motion.overlay_enter)
             else {
@@ -676,11 +690,13 @@ impl<T: View> Ui<T> {
     }
     /// Starts pending moves at this frame and drops finished ones.
     fn advance_motion(&mut self) {
-        let now = self.motion.now;
+        let (now, in_frame) = (self.motion.now, self.motion.in_frame);
         let nodes = &self.nodes;
         let active = self.motion.active.as_mut().unwrap();
         let start = |p: &mut Progress| {
-            p.start.get_or_insert(now);
+            if in_frame {
+                p.start.get_or_insert(now);
+            }
             !p.at(now).1
         };
         active

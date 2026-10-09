@@ -176,6 +176,10 @@ required-features = ["native"]
 name = "virtual_list_window"
 required-features = ["native"]
 
+[[example]]
+name = "animation_window"
+required-features = ["native"]
+
 [[bench]]
 name = "virtual_list"
 harness = false

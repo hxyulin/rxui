@@ -207,6 +207,31 @@ cargo run -p rxui --example theme_gallery --features native --locked
 The [theme measurements](performance/themes.md) record palette/font switch
 costs and the retained-cache boundary.
 
+## Animation
+
+Hover, pressed, focus, disabled, explicit paint and theme changes interpolate the
+retained paint over `ThemeMetrics::motion` durations instead of snapping, so
+buttons, tabs and menus animate without configuration. `.transition(Transition::spring(...))`
+or `.transition(Transition::tween(duration, Easing::EaseOut))` configures an element,
+and `.no_transition()` opts out. Popovers and modals fade (popovers also slide) in
+and out; a closed overlay releases focus, input and semantics at once while only its
+visual lingers. Layout never animates implicitly. Animate any value, including
+sizes, with `cx.animate(key, target, transition)`:
+
+```rust
+let width = cx.animate("width", if self.open { 240. } else { 48. }, Transition::Theme);
+column().width(width).fill_height()
+```
+
+Motion follows the host's frame time, so it is deterministic in tests, and nothing
+requests a frame once it settles. `Runtime::set_reduce_motion(true)` completes all
+motion immediately; the native host sets it from the system preference. See
+[the animation contract](animation.md) and the standalone example:
+
+```sh
+cargo run -p rxui --example animation_window --features native --locked
+```
+
 ## State and live listeners
 
 ```rust

@@ -224,7 +224,9 @@ impl IntoElement for Overlay {
             root = root.background([0., 0., 0., 0.4]);
         }
         root.key = key;
-        root.transition = self.transition.map(Box::new);
+        if let Some(transition) = self.transition {
+            root = root.transition(transition);
+        }
         root.input.get_or_insert_with(Default::default).overlay = Some(Box::new(self.props));
         root.child(self.surface)
     }

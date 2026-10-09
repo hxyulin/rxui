@@ -201,6 +201,7 @@ impl Runtime {
     pub fn begin_frame(&mut self, time: std::time::Duration) -> bool {
         let mut clock = self.inner.motion.get();
         clock.started = true;
+        clock.frame = clock.frame.wrapping_add(1);
         self.inner.motion.set(clock);
         let requested = {
             let mut frames = self.inner.frames.borrow_mut();
