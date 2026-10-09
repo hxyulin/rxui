@@ -92,6 +92,27 @@ impl FocusHandle {
     pub fn blur(&self, cx: &mut crate::AppContext<'_>) -> Result<(), FocusError> {
         self.placement(cx)?.blur(cx)
     }
+    /// Queues focus in this handle's only live binding, without a source mount.
+    /// Stock controls create a fresh handle per description, so it has one
+    /// placement; their internal listeners run outside any component scope.
+    pub(crate) fn focus_bound(&self, cx: &mut crate::AppContext<'_>) -> bool {
+        let data = self.0.borrow();
+        let mut live = data.values().filter(|b| {
+            b.life.strong_count() != 0
+                && b.scopes.first().is_some_and(|s| s.runtime == cx.runtime.id)
+        });
+        let (Some(binding), None) = (live.next(), live.next()) else {
+            return false;
+        };
+        let Some(commands) = binding.commands.upgrade() else {
+            return false;
+        };
+        commands.borrow_mut().push(Command {
+            target: binding.target,
+            blur: false,
+        });
+        true
+    }
 }
 /// Weak focus command destination. It does not retain an element or window and
 /// cannot address a replacement that happens to reuse the same description key.

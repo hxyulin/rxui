@@ -150,6 +150,8 @@ mod scrolling;
 #[cfg(feature = "layout")]
 mod semantics;
 #[cfg(feature = "layout")]
+mod standard;
+#[cfg(feature = "layout")]
 mod tabs;
 #[cfg(feature = "tasks")]
 mod tasks;
@@ -235,6 +237,12 @@ pub use scrolling::{ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
 pub use semantics::{Checked, NumericValue, SemanticAction, SemanticNode, SemanticRole};
 #[cfg(feature = "layout")]
+pub use standard::{
+    Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
+    TOOLTIP_DELAY, Toggle, ToggleEvent, checkbox, choice, progress_bar, radio_group, select,
+    select_keyed, slider, spinner, switch, tooltip,
+};
+#[cfg(feature = "layout")]
 pub use tabs::{
     Tab, TabActivation, TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
 };
@@ -299,6 +307,11 @@ pub mod prelude {
         PointerButton, PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime,
         SemanticRole, TextAlign, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View,
         ViewContext, WheelInput, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+    };
+    pub use crate::{
+        Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
+        Toggle, ToggleEvent, checkbox, choice, progress_bar, radio_group, select, select_keyed,
+        slider, spinner, switch, tooltip,
     };
     #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
     pub use crate::{DesktopError, DesktopResult};
