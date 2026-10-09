@@ -120,7 +120,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves |
 | [Standard controls](docs/controls.md) | Check boxes, switches, radio groups, sliders, progress, selects and tooltips |
 | [Overlays and commands](docs/overlays-and-commands.md) and [docking](docs/docking.md) | Menus, dialogs, shortcuts and dock layouts |
-| [Native menus](docs/native-menus.md), [services](docs/native-services.md) and [window state](docs/window-state-and-files.md) | Desktop integration |
+| [Native menus](docs/native-menus.md), [services](docs/native-services.md), [window state](docs/window-state-and-files.md) and [native feel](docs/native-feel.md) | Desktop integration |
 
 `cargo doc -p rxui --all-features --open` builds the API reference.
 

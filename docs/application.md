@@ -47,13 +47,18 @@ view entity for each window and give both a cloned handle to one domain model.
 
 ## Theme selection
 
-Application::theme selects the default; windows inherit it unless WindowOptions::theme
-supplies an explicit override. AppContext::set_theme updates inheriting windows,
+By default the application theme follows the system: `ThemeMode::System` picks the
+light, dark or high-contrast theme of a `ThemeSet` and applies the system accent.
+Application::theme selects an explicit default instead, and Application::theme_mode
+and Application::themes configure the mode. Windows inherit the application theme
+unless WindowOptions::theme supplies an explicit override. AppContext::set_theme updates inheriting windows,
 set_window_theme chooses an explicit window value, and use_application_theme resumes
 inheritance. WindowHandle::theme reports the latest selection, including pending
 creation. Updates are queued outside active entity borrows. The default clear color
 follows the effective palette; an explicit WindowOptions::background stays fixed.
-See [the styling contract](styling.md) for subtree scopes, overrides and cache behavior.
+See [the styling contract](styling.md) for subtree scopes, overrides and cache behavior,
+and [native feel](native-feel.md) for system preferences, title-bar appearance,
+cursors and window chrome options such as custom title bars and transparency.
 
 ## Event source and lifecycle hooks
 

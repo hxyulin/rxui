@@ -174,6 +174,11 @@ backgrounds, borders and dimensions stay local.
 `Theme::define_color(name, color)` and `define_metric(name, value)` add application
 tokens, used as `ThemeColor::Custom(name)` or read with `cx.theme()`.
 
+Native applications follow the system appearance by default: `ThemeMode::System`
+switches between light, dark and high-contrast themes and applies the system
+accent color as the user changes them. `Application::theme(...)` or `cx.set_theme`
+chooses an explicit theme instead, and `cx.set_theme_mode(...)` returns to a mode.
+
 Use `.theme(...)` for a subtree and `WindowOptions::theme(...)` for a window override.
 `cx.set_theme`, `cx.set_window_theme` and `cx.use_application_theme` update native
 placements live. `Ui::set_theme` supports custom hosts. Explicit element overrides
@@ -420,4 +425,22 @@ registrations. See [the overlay and command contract](overlays-and-commands.md).
 
 ```sh
 cargo run -p rxui --example desktop_window --features native --locked
+```
+
+## Native feel
+
+RXUI follows the operating system where users notice it. `SystemPreferences`
+reports the light/dark appearance, increased contrast, reduced motion, reduced
+transparency and the accent color, refreshed live; animations should honor
+`reduce_motion`. Focus rings appear only after keyboard navigation, `Cursor`
+covers the standard cursor set including diagonal resizes and `Hidden`, and the
+platform interface font replaces the generic sans-serif default.
+`WindowOptions::custom_title_bar()` with `.window_drag_region()` builds an
+application-drawn title bar; `.transparent`, `.min_size`, `.max_size`,
+`.always_on_top`, `.resizable` and `.decorations` cover common window chrome.
+`DialogButtonOrder` and `ScrollbarStyle` capture per-platform conventions for
+RXUI-drawn dialogs and scroll areas. See [native feel](native-feel.md).
+
+```sh
+cargo run -p rxui --example native_feel_window --features native --locked
 ```

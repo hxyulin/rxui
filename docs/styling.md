@@ -70,7 +70,10 @@ For a control, resolution combines its theme defaults and inherited text styling
 then ordinary explicit paint builders, then the active local state patch.
 `disabled_style` takes precedence over `pressed_style`, which takes precedence over
 `hover_style`. Focus remains a separate outline over whichever state is active;
-its color/width can be customized with PaintStyle or the theme. Inactive native
+its color/width can be customized with PaintStyle or the theme. It is drawn only
+when `ElementInfo::focus_visible` is set: after keyboard navigation and on text
+inputs, not after a pointer press (see [focus rings](native-feel.md#platform-conventions)
+and `FocusRingPolicy::Always`). Inactive native
 windows retain logical focus; input caret visibility still follows native activation.
 
 State patches affect local painting only, including local text color; they do not
@@ -235,8 +238,11 @@ These are design targets informed by [W3C text contrast guidance](https://www.w3
 [enhanced contrast](https://www.w3.org/WAI/WCAG21/Understanding/contrast-enhanced)
 and [non-text contrast](https://www.w3.org/WAI/WCAG21/Understanding/non-text-contrast).
 They do not establish complete application accessibility. Theme state changes do
-not change AccessKit roles/actions. System appearance following, platform forced
-colors, theme persistence and native title-bar appearance are outside this slice.
+not change AccessKit roles/actions. Native applications follow the system
+light/dark appearance, high-contrast setting and accent color by default through
+`ThemeMode::System`, and match native title bars to explicit themes; see
+[native feel](native-feel.md#following-the-system-appearance). Windows forced-color
+palettes and theme persistence remain outside this slice.
 
 ## Performance and verification
 

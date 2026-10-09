@@ -60,7 +60,8 @@ ancestor does not automatically override the descendant's default; prevent it
 when taking ownership of the interaction. `.focusable(true)` includes a custom
 container in sequential/accessible focus without creating button or editing
 behavior. `.cursor(...)` applies under the pointer; the capture owner's cursor
-wins during a drag.
+wins during a drag. The full cursor set, including diagonal resizes, busy states,
+drag feedback and `Cursor::Hidden`, is listed in [native feel](native-feel.md#cursors).
 
 `capture_pointer()` routes subsequent motion and release to the requesting
 element while a mouse button is held. Matching release ends capture automatically;
@@ -114,7 +115,10 @@ scroll_area(column().children(rows))
 
 `scroll_area(content)` defaults to vertical scrolling and a 12-unit persistent
 scrollbar gutter. `.axes(ScrollAxes::Horizontal | Both)`, `.scrollbars(false)` and
-`.scrollbar_size(...)` select the presentation. It needs bounded parent space;
+`.scrollbar_size(...)` select the presentation, and
+`.scrollbar_style(ScrollbarStyle::Overlay)` draws thin bars over the content
+without gutters, as on macOS ([conventions](native-feel.md#platform-conventions)).
+It needs bounded parent space;
 its default flex growth/basis and zero minima allow it to occupy the remaining
 space below a fixed header. Gutters stay reserved when content fits, avoiding
 layout jumps. `scrollbar(handle, axis)` can also be placed separately in the same

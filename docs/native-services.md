@@ -128,3 +128,28 @@ entered through accessibility for the file workflow checks. Native Edit selector
 replacement was observed, but that alone does not establish keyboard Paste behavior.
 Windows has compilation/Clippy coverage; its native dialogs were not interactively
 tested here. Linux portal behavior likewise still needs native runtime validation.
+
+## Platform integration roadmap
+
+System appearance, cursors, focus-visible rings, window chrome and custom title
+bars are implemented; see [native feel](native-feel.md). These desktop services
+remain open:
+
+- **Linux native menus.** Muda's Linux backend needs a GTK window, which the winit
+  host does not create. Options are a GTK-hosted window, a D-Bus `com.canonical.dbusmenu`
+  global menu where the desktop offers one, or RXUI-drawn menu bars (the portable
+  `menu()` popovers already work).
+- **Tray/status icons.** A `tray-icon`-style integration with the same command
+  resolution as native menus, plus StatusNotifierItem on Linux.
+- **Notifications.** `UNUserNotificationCenter` on macOS (requires a bundled app),
+  toast notifications on Windows and the XDG notification portal on Linux, with
+  activation routed back through the event-loop proxy.
+- **Single instance and deep links.** A per-user instance lock that forwards the
+  second launch's arguments and URLs to the running instance, URL scheme
+  registration, and macOS `application:openURLs:` / Apple Events delivery, which
+  winit does not currently surface.
+- **Window effects.** macOS vibrancy and Windows Mica/Acrylic backdrops visible
+  through the UI, which need composited surfaces; see
+  [native feel follow-ups](native-feel.md#follow-ups).
+- **Recent documents and dock/taskbar menus.** `NSDocumentController` recents,
+  Windows jump lists and dock menus.
