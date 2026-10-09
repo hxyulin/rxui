@@ -1,6 +1,7 @@
 //! Every built-in component on one page, with live theme and density switching.
 use rxui::Element;
 use rxui::prelude::*;
+use rxui::taffy::AlignItems;
 
 const ROWS: usize = 1_000;
 const ROW_HEIGHT: f32 = 32.;
@@ -42,6 +43,13 @@ struct Gallery {
     split: SplitPosition,
     dialog: bool,
     status: String,
+    email: bool,
+    push: bool,
+    wrap: bool,
+    sync: bool,
+    endings: Key,
+    zoom: f32,
+    language: Key,
 }
 impl Gallery {
     fn theme(&self) -> Theme {
@@ -300,6 +308,118 @@ impl View for Gallery {
             ),
         );
 
+        // Form controls: every value lives in Gallery and changes through a listener.
+        let notifications = match (self.email, self.push) {
+            (true, true) => Checked::True,
+            (false, false) => Checked::False,
+            _ => Checked::Mixed,
+        };
+        let mut status_row = row()
+            .gap(12.)
+            .align_items(AlignItems::CENTER)
+            .child(if self.sync {
+                progress_bar(None)
+                    .width(160.)
+                    .accessibility_label("Sync progress")
+                    .animate(cx)
+            } else {
+                progress_bar(self.zoom / 200.)
+                    .width(160.)
+                    .accessibility_label("Zoom level")
+            });
+        if self.sync {
+            status_row = status_row.child(spinner(cx).accessibility_label("Syncing"));
+        }
+        let controls = section(
+            "Form controls",
+            column()
+                .gap(10.)
+                .fill_width()
+                .child(
+                    checkbox(notifications, "All notifications").on_change(cx.listener(
+                        |s, e: &ToggleEvent, _| {
+                            s.email = e.checked;
+                            s.push = e.checked;
+                        },
+                    )),
+                )
+                .child(
+                    column()
+                        .padding_x(24.)
+                        .child(
+                            checkbox(self.email, "Email").on_change(
+                                cx.listener(|s, e: &ToggleEvent, _| s.email = e.checked),
+                            ),
+                        )
+                        .child(
+                            checkbox(self.push, "Push")
+                                .on_change(cx.listener(|s, e: &ToggleEvent, _| s.push = e.checked)),
+                        ),
+                )
+                .child(
+                    row()
+                        .gap(16.)
+                        .child(
+                            switch(self.wrap, "Wrap lines")
+                                .on_change(cx.listener(|s, e: &ToggleEvent, _| s.wrap = e.checked)),
+                        )
+                        .child(
+                            switch(self.sync, "Background sync")
+                                .on_change(cx.listener(|s, e: &ToggleEvent, _| s.sync = e.checked)),
+                        ),
+                )
+                .child(
+                    radio_group()
+                        .axis(Axis::Horizontal)
+                        .selected(self.endings.clone())
+                        .accessibility_label("Line endings")
+                        .option(choice("lf", "LF"))
+                        .option(choice("crlf", "CRLF"))
+                        .option(choice("cr", "CR").disabled(true))
+                        .on_change(cx.listener(|s, e: &ChoiceEvent, _| s.endings = e.key.clone())),
+                )
+                .child(
+                    row()
+                        .gap(12.)
+                        .align_items(AlignItems::CENTER)
+                        .child(
+                            slider(self.zoom)
+                                .range(50., 200.)
+                                .step(10.)
+                                .accessibility_label("Zoom")
+                                .on_change(cx.listener(|s, e: &SliderEvent, _| s.zoom = e.value)),
+                        )
+                        .child(label(format!("{}%", self.zoom)).color(ThemeColor::TextMuted)),
+                )
+                .child(status_row)
+                .child(
+                    row()
+                        .gap(8.)
+                        .align_items(AlignItems::CENTER)
+                        .child(
+                            select(cx)
+                                .selected(self.language.clone())
+                                .accessibility_label("Language")
+                                .options([
+                                    choice("rust", "Rust"),
+                                    choice("toml", "TOML"),
+                                    choice("md", "Markdown"),
+                                    choice("cpp", "C++").disabled(true),
+                                    choice("py", "Python"),
+                                ])
+                                .on_change(
+                                    cx.listener(|s, e: &ChoiceEvent, _| s.language = e.key.clone()),
+                                ),
+                        )
+                        .child(tooltip(
+                            cx,
+                            button("Format")
+                                .on_click(cx.listener(|s, _, _| s.status = "Formatted".into())),
+                            "Reformat the document with the selected language's rules",
+                        )),
+                ),
+        );
+
         let dialog = section(
             "Dialog",
             row()
@@ -317,6 +437,7 @@ impl View for Gallery {
                     .gap(28.)
                     .child(buttons)
                     .child(inputs)
+                    .child(controls)
                     .child(menu_section)
                     .child(dialog),
             )
@@ -403,6 +524,13 @@ fn main() -> Result<(), ApplicationError> {
             split: SplitPosition::default(),
             dialog: false,
             status: "Click anything; Primary+N/O/W run the menu commands.".into(),
+            email: true,
+            push: false,
+            wrap: true,
+            sync: false,
+            endings: Key::from("lf"),
+            zoom: 100.,
+            language: Key::from("rust"),
         });
         cx.open_window(
             WindowOptions::new()
