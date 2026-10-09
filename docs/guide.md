@@ -116,6 +116,30 @@ and external replacement:
 cargo run -p rxui --example text_input_window --features native --locked
 ```
 
+## Standard form controls
+
+```rust
+checkbox(self.wrap, "Wrap lines")
+    .on_change(cx.listener(|this, e: &ToggleEvent, _| this.wrap = e.checked))
+```
+
+`checkbox`, `switch`, `radio_group`, `slider` and `select` are controlled like
+text inputs: the application owns the value and accepts typed `ToggleEvent`,
+`ChoiceEvent` or `SliderEvent` proposals. They are built from buttons and popovers,
+so focus, Tab stops, Enter/Space, disabled state and theming behave the same way;
+radio groups add arrow-key roving focus, sliders capture drags and take
+arrow/Page/Home/End keys, and selects open a list box with keyboard highlight and
+type-ahead. `progress_bar` and `spinner` show determinate or indeterminate
+progress, animated from the frame clock. `tooltip(cx, target, text)` adds a
+delayed hover popover that never takes focus or blocks input. Each control
+publishes its role, state and assistive actions. The
+[controls contract](controls.md) documents keys, semantics, theming and current
+limits; the gallery shows them all:
+
+```sh
+cargo run -p rxui --example gallery --features native --locked
+```
+
 ## Semantics and accessibility
 
 Buttons infer their accessible name from their caption. Name text inputs explicitly
