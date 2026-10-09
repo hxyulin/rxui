@@ -72,7 +72,8 @@ Application for native input, Tab/Shift-Tab focus, Enter/Space activation, scrol
 keyed items, resize, and a cancellable background future. It can open a second
 window sharing the same model. Application discovers system fonts once by default;
 `.font(...)` selects application-provided fonts, with `.system_fonts(true)` allowing
-additional discovery explicitly.
+additional discovery explicitly. See [fonts](fonts.md) for family mapping, runtime
+registration and fallback.
 
 ```sh
 cargo run -p rxui --example counter_window --features native --locked

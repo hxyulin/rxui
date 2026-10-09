@@ -24,6 +24,21 @@ impl From<String> for FontFamily {
         Self::Named(value.into())
     }
 }
+/// One face added by registered font data, as reported by the font itself.
+/// Select it with [`FontFamily::Named`] and one of its family names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontFace {
+    /// Family names the face declares, without duplicate localized names.
+    pub families: Vec<String>,
+    /// PostScript name of the face.
+    pub postscript_name: String,
+    /// Weight the face reports.
+    pub weight: FontWeight,
+    /// Slope the face reports.
+    pub style: FontStyle,
+    /// Whether the face reports a fixed pitch.
+    pub monospaced: bool,
+}
 /// OpenType/CSS font weight in `1..=1000`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FontWeight(pub u16);

@@ -142,8 +142,9 @@ column()
 Unset fields inherit from the nearest ancestor that sets them, across component
 boundaries. Defaults are the sans-serif family, `FontWeight::NORMAL`, upright text,
 the theme's `ThemeMetrics::line_height` and start alignment. A named family must be
-loaded through `UiPainter::fonts_mut` (or `Application::font`); otherwise shaping
-falls back to another loaded face. Alignment positions lines inside the text leaf's
+loaded through `UiPainter::register_font` (or `Application::font`); otherwise shaping
+falls back to another loaded face. [Fonts](fonts.md) covers registration, mapping
+generic families to bundled fonts, and the fallback order. Alignment positions lines inside the text leaf's
 content width, so it only moves text in a leaf wider than its text, such as one with
 `fill_width` or a fixed width. Single-line text inputs always start-align because
 they scroll horizontally from the start edge. Changing any of these attributes

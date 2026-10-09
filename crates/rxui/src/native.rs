@@ -752,7 +752,14 @@ enum Command {
     RequestQuit,
     Redraw(WindowId),
     Theme(WindowId),
+    /// Validated font data or a family mapping for the shared painter.
+    Font(FontChange),
     Exit,
+}
+/// A font registration queued from application code.
+enum FontChange {
+    Load(Arc<[u8]>),
+    Map(crate::FontFamily, Arc<str>),
 }
 pub(crate) struct Commands {
     clipboard: RefCell<Option<arboard::Clipboard>>,
@@ -1012,6 +1019,43 @@ impl AppContext<'_> {
         }
         Ok(())
     }
+    /// Registers TrueType/OpenType data (including collections) with the
+    /// application's shared painter and returns the faces it adds. The data is
+    /// validated now and loaded before the next frame, after which every window
+    /// re-measures its text. Use the returned family names with
+    /// `FontFamily::Named`, or [`Self::map_font_family`] to make a family the
+    /// default. Invalid data returns `ApplicationError::Ui(UiError::Text)`.
+    /// Registration is a startup or settings-time operation, not a per-frame one.
+    pub fn register_font(
+        &mut self,
+        bytes: impl Into<Arc<[u8]>>,
+    ) -> Result<Vec<crate::FontFace>, ApplicationError> {
+        let commands = self.native_commands()?;
+        let bytes = bytes.into();
+        let faces = astrelis::TextSystem::new()
+            .load_font_shared(bytes.clone())
+            .map_err(UiError::from)?;
+        commands
+            .queue
+            .borrow_mut()
+            .push_back(Command::Font(FontChange::Load(bytes)));
+        Ok(faces.into_iter().map(crate::painting::font_face).collect())
+    }
+    /// Resolves `family` to the loaded family `target` in every window, as
+    /// [`UiPainter::map_family`] does; for example, map `FontFamily::SansSerif` to
+    /// change the default face. Applied before the next frame.
+    pub fn map_font_family(
+        &mut self,
+        family: impl Into<crate::FontFamily>,
+        target: impl Into<Arc<str>>,
+    ) -> Result<(), ApplicationError> {
+        let commands = self.native_commands()?;
+        commands
+            .queue
+            .borrow_mut()
+            .push_back(Command::Font(FontChange::Map(family.into(), target.into())));
+        Ok(())
+    }
     /// Reads system clipboard text using the host's persistent clipboard owner.
     /// Empty/non-text content and platform failures are returned as native errors.
     pub fn read_clipboard_text(&self) -> Result<String, ApplicationError> {
@@ -1142,6 +1186,7 @@ pub struct Application {
     focus_ring: FocusRingPolicy,
     system_ui_font: bool,
     fonts: Vec<Arc<[u8]>>,
+    families: Vec<(crate::FontFamily, Arc<str>)>,
     system_fonts: bool,
     accessibility: bool,
     executor: Option<Arc<dyn TaskExecutor>>,
@@ -1173,6 +1218,7 @@ impl Application {
             focus_ring: FocusRingPolicy::default(),
             system_ui_font: true,
             fonts: Vec::new(),
+            families: Vec::new(),
             system_fonts: true,
             accessibility: true,
             executor: None,
@@ -1295,10 +1341,24 @@ impl Application {
         self
     }
     /// Adds application font data, selecting it instead of default system discovery.
+    /// Invalid data fails `run` when the first window is created. To validate data
+    /// or learn its family names at runtime, use `AppContext::register_font`.
     #[must_use]
     pub fn font(mut self, bytes: impl Into<Arc<[u8]>>) -> Self {
         self.fonts.push(bytes.into());
         self.system_fonts = false;
+        self
+    }
+    /// Resolves `family` to the loaded family `target` before shaping, for example
+    /// `.map_font_family(FontFamily::SansSerif, "Inter")` to make a bundled face the
+    /// default. See `UiPainter::map_family`.
+    #[must_use]
+    pub fn map_font_family(
+        mut self,
+        family: impl Into<crate::FontFamily>,
+        target: impl Into<Arc<str>>,
+    ) -> Self {
+        self.families.push((family.into(), target.into()));
         self
     }
     /// Explicitly enables/disables discovery alongside application-provided fonts.
@@ -1450,6 +1510,7 @@ impl Application {
             windows: HashMap::new(),
             painter: None,
             fonts: self.fonts,
+            families: self.families,
             system_fonts: self.system_fonts,
             active: false,
             prepare_graphics: self.prepare_graphics,
@@ -1586,6 +1647,7 @@ struct Host<F> {
     windows: HashMap<NativeWindowId, HostedWindow>,
     painter: Option<UiPainter>,
     fonts: Vec<Arc<[u8]>>,
+    families: Vec<(crate::FontFamily, Arc<str>)>,
     system_fonts: bool,
     active: bool,
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
@@ -2071,6 +2133,28 @@ impl<F> Host<F> {
                             }
                         }
                     }
+                    Command::Font(change) => {
+                        // Before the shared painter exists, join the startup fonts.
+                        match (&mut self.painter, change) {
+                            (Some(painter), FontChange::Load(bytes)) => {
+                                painter.register_font(bytes)?;
+                            }
+                            (Some(painter), FontChange::Map(family, target)) => {
+                                painter.map_family(family, target)
+                            }
+                            (None, FontChange::Load(bytes)) => self.fonts.push(bytes),
+                            (None, FontChange::Map(family, target)) => {
+                                self.families.push((family, target))
+                            }
+                        }
+                        // A new font generation re-measures each window as it prepares.
+                        for native in self.windows.keys() {
+                            if cx.window(*native).is_some() {
+                                cx.request_redraw(*native)
+                                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+                            }
+                        }
+                    }
                     Command::Exit => {
                         #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
                         if self.commands.dialogs.borrow().running() {
@@ -2168,10 +2252,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 painter.fonts_mut().load_system_fonts();
             }
             for bytes in &self.fonts {
-                painter
-                    .fonts_mut()
-                    .load_font_shared(bytes.clone())
-                    .map_err(UiError::from)?;
+                painter.register_font(bytes.clone())?;
+            }
+            for (family, target) in &self.families {
+                painter.map_family(family.clone(), target.clone());
             }
             if self.system_ui_font && self.system_fonts {
                 let family = system_ui_family(painter.fonts().fonts().flat_map(|f| f.families));
@@ -2820,6 +2904,34 @@ mod tests {
         commands
     }
 
+    #[test]
+    fn font_registration_validates_now_and_queues_for_the_shared_painter() {
+        let mut runtime = Runtime::new();
+        let commands = attach(&mut runtime);
+        let font: Arc<[u8]> = include_bytes!("../tests/fonts/SourceSans3-Regular.otf")
+            .as_slice()
+            .into();
+        let faces = runtime.update(|cx| cx.register_font(font.clone())).unwrap();
+        assert!(faces[0].families.iter().any(|f| f == "Source Sans 3"));
+        assert!(matches!(
+            runtime.update(|cx| cx.register_font(vec![1u8, 2, 3])),
+            Err(ApplicationError::Ui(UiError::Text(_)))
+        ));
+        runtime
+            .update(|cx| cx.map_font_family(crate::FontFamily::Monospace, "Source Sans 3"))
+            .unwrap();
+        let queue = commands.queue.borrow();
+        assert_eq!(queue.len(), 2);
+        assert!(matches!(
+            &queue[0],
+            Command::Font(FontChange::Load(bytes)) if Arc::ptr_eq(bytes, &font)
+        ));
+        assert!(matches!(
+            &queue[1],
+            Command::Font(FontChange::Map(crate::FontFamily::Monospace, target))
+                if &**target == "Source Sans 3"
+        ));
+    }
     #[test]
     fn file_drop_hooks_preserve_paths_order_and_window_identity_without_a_ui() {
         let mut runtime = Runtime::new();

@@ -277,6 +277,8 @@ pub use theme::{
     ThemeColors, ThemeMetrics, rgb8, rgba8,
 };
 #[cfg(feature = "layout")]
+pub use typography::FontFace;
+#[cfg(feature = "layout")]
 pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
 #[cfg(feature = "layout")]
 pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
@@ -350,9 +352,9 @@ pub mod prelude {
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
         TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
     };
+    pub use crate::{FontFace, SubmitShortcut, text_area};
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
-    pub use crate::{SubmitShortcut, text_area};
     #[cfg(feature = "tasks")]
     pub use crate::{Task, TaskError, TaskResult};
 }

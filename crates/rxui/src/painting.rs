@@ -44,23 +44,44 @@ struct TextResource {
     prepared_revision: u64,
     font_generation: u64,
 }
+/// Families resolved to other loaded families before shaping; see
+/// [`UiPainter::map_family`] and [`UiPainter::set_sans_serif_family`].
+#[derive(Default)]
+struct FamilyMap {
+    mapped: HashMap<crate::FontFamily, Arc<str>>,
+    /// Family used for an unmapped generic sans-serif default, such as the system UI font.
+    sans_serif: Option<Arc<str>>,
+}
+impl FamilyMap {
+    fn new() -> Self {
+        Self::default()
+    }
+    /// Loaded family that `family` shapes with; explicit mappings win over the
+    /// sans-serif substitute.
+    fn get(&self, family: &crate::FontFamily) -> Option<&Arc<str>> {
+        self.mapped.get(family).or(match family {
+            crate::FontFamily::SansSerif => self.sans_serif.as_ref(),
+            _ => None,
+        })
+    }
+}
 impl TextResource {
     /// Applies text, style and wrapping; the configured width is left unchanged.
-    /// `sans` substitutes a named family for the generic sans-serif default.
-    fn configure(&mut self, request: TextRequest<'_>, sans: Option<&str>) -> Result<(), UiError> {
+    fn configure(&mut self, request: TextRequest<'_>, families: &FamilyMap) -> Result<(), UiError> {
         let style = request.style;
+        let family = match families.get(&style.family) {
+            Some(name) => FontFamily::Named(name.to_string()),
+            None => match &style.family {
+                crate::FontFamily::Named(name) => FontFamily::Named(name.to_string()),
+                crate::FontFamily::SansSerif => FontFamily::SansSerif,
+                crate::FontFamily::Serif => FontFamily::Serif,
+                crate::FontFamily::Monospace => FontFamily::Monospace,
+            },
+        };
         self.buffer.set_text(
             request.text,
             TextStyle::new()
-                .family(match &style.family {
-                    crate::FontFamily::Named(name) => FontFamily::Named(name.to_string()),
-                    crate::FontFamily::SansSerif => match sans {
-                        Some(name) => FontFamily::Named(name.to_string()),
-                        None => FontFamily::SansSerif,
-                    },
-                    crate::FontFamily::Serif => FontFamily::Serif,
-                    crate::FontFamily::Monospace => FontFamily::Monospace,
-                })
+                .family(family)
                 .font_size(request.font_size)
                 .line_height(request.font_size * style.line_height)
                 .weight(style.weight.0)
@@ -90,10 +111,10 @@ impl TextResource {
     fn layout(
         &mut self,
         fonts: &mut TextSystem,
+        families: &FamilyMap,
         request: TextRequest<'_>,
-        sans: Option<&str>,
     ) -> Result<Arc<TextLayout>, UiError> {
-        self.configure(request, sans)?;
+        self.configure(request, families)?;
         self.buffer.set_width(text_width(request.width))?;
         Ok(self.buffer.layout(fonts)?)
     }
@@ -102,10 +123,10 @@ impl TextResource {
     fn measure(
         &mut self,
         fonts: &mut TextSystem,
+        families: &FamilyMap,
         request: TextRequest<'_>,
-        sans: Option<&str>,
     ) -> Result<[f32; 2], UiError> {
-        self.configure(request, sans)?;
+        self.configure(request, families)?;
         Ok(self.buffer.measure(fonts, text_width(request.width))?)
     }
 }
@@ -163,11 +184,13 @@ fn image_key(image: &crate::ImageInfo<'_>) -> ImageKey {
 /// Explicit Astrelis text measurement and painting adapter for a retained Ui.
 /// It owns fonts and caches, but no window or application lifecycle. Call Ui::prepare
 /// using this as TextMeasure, then prepare GPU resources before frame acquisition.
-/// Painting uses caller-selected passes/clipping. No font discovery is implicit.
+/// Painting uses caller-selected passes/clipping. No font discovery is implicit:
+/// register application fonts with [`Self::register_font`] or discover installed
+/// ones through [`Self::fonts_mut`]. The repository's `docs/fonts.md` describes
+/// family matching and fallback.
 pub struct UiPainter {
     fonts: TextSystem,
-    /// Family used for the generic sans-serif default, such as the system UI font.
-    sans_serif: Option<Arc<str>>,
+    families: FamilyMap,
     generation: u64,
     painter: Painter,
     texts: IdMap<ElementId, TextResource>,
@@ -198,7 +221,7 @@ impl UiPainter {
     pub fn new(graphics: &GraphicsContext) -> Self {
         Self {
             fonts: TextSystem::new(),
-            sans_serif: None,
+            families: FamilyMap::new(),
             generation: 0,
             painter: Painter::new(graphics),
             texts: IdMap::default(),
@@ -222,11 +245,58 @@ impl UiPainter {
     /// Font loading/configuration access. Each call advances measurement generation,
     /// invalidating text measurements on the next prepare. Load/discover once at startup.
     pub fn fonts_mut(&mut self) -> &mut TextSystem {
+        self.invalidate_fonts();
+        &mut self.fonts
+    }
+    fn invalidate_fonts(&mut self) {
         self.generation = self
             .generation
             .checked_add(1)
             .expect("RXUI font generation exhausted");
-        &mut self.fonts
+    }
+    /// Loads TrueType/OpenType data, including collections, retaining the bytes
+    /// without copying them. Returns the faces it added; select one with
+    /// `FontFamily::Named` and a family name it reports, or make it a generic
+    /// family's choice with [`Self::map_family`]. Invalid data returns
+    /// `UiError::Text` and changes nothing. Success re-measures every placement
+    /// using this painter on its next prepare. Registering is not expected per frame.
+    pub fn register_font(
+        &mut self,
+        bytes: impl Into<Arc<[u8]>>,
+    ) -> Result<Vec<crate::FontFace>, UiError> {
+        let faces = self.fonts.load_font_shared(bytes.into())?;
+        self.invalidate_fonts();
+        Ok(faces.into_iter().map(font_face).collect())
+    }
+    /// Resolves `family` to the loaded family `target` before shaping: map
+    /// `FontFamily::SansSerif` to choose the default UI face, or a named alias
+    /// such as "Brand" to a concrete family. Mapping is one step, not recursive.
+    /// Missing glyphs still fall back to other loaded faces. A changed mapping
+    /// re-measures text on the next prepare.
+    pub fn map_family(
+        &mut self,
+        family: impl Into<crate::FontFamily>,
+        target: impl Into<Arc<str>>,
+    ) {
+        let target = target.into();
+        let family = family.into();
+        if self.families.mapped.get(&family) != Some(&target) {
+            self.families.mapped.insert(family, target);
+            self.invalidate_fonts();
+        }
+    }
+    /// Removes a mapping from [`Self::map_family`], restoring the family's own
+    /// matching. Returns whether a mapping existed.
+    pub fn unmap_family(&mut self, family: &crate::FontFamily) -> bool {
+        let removed = self.families.mapped.remove(family).is_some();
+        if removed {
+            self.invalidate_fonts();
+        }
+        removed
+    }
+    /// Loaded family `family` currently resolves to, if mapped.
+    pub fn family_mapping(&self, family: &crate::FontFamily) -> Option<&str> {
+        self.families.mapped.get(family).map(|name| &**name)
     }
     /// Read-only font information.
     pub fn fonts(&self) -> &TextSystem {
@@ -236,14 +306,14 @@ impl UiPainter {
     /// family instead; None restores the generic family. The native host sets the
     /// platform interface font here. Advances the measurement generation on change.
     pub fn set_sans_serif_family(&mut self, family: Option<Arc<str>>) {
-        if self.sans_serif != family {
-            self.sans_serif = family;
+        if self.families.sans_serif != family {
+            self.families.sans_serif = family;
             self.fonts_mut();
         }
     }
     /// Family substituted for the generic sans-serif default, if any.
     pub fn sans_serif_family(&self) -> Option<&str> {
-        self.sans_serif.as_deref()
+        self.families.sans_serif.as_deref()
     }
     /// Astrelis renderer access for cache statistics and explicit customization.
     pub fn painter(&mut self) -> &mut Painter {
@@ -315,11 +385,10 @@ impl UiPainter {
             if let Some(placeholder) = ui.placeholder_request(id) {
                 let entry = self.placeholders.entry(id).or_default();
                 if !entry.current(&placeholder, self.generation, raster_scale) {
-                    let layout = entry.resource.layout(
-                        &mut self.fonts,
-                        placeholder,
-                        self.sans_serif.as_deref(),
-                    )?;
+                    let layout =
+                        entry
+                            .resource
+                            .layout(&mut self.fonts, &self.families, placeholder)?;
                     entry.resource.prepared = None;
                     entry.resource.prepared = Some(self.painter.prepare_text(
                         &layout,
@@ -343,7 +412,7 @@ impl UiPainter {
             {
                 continue;
             }
-            let layout = resource.layout(&mut self.fonts, request, self.sans_serif.as_deref())?;
+            let layout = resource.layout(&mut self.fonts, &self.families, request)?;
             if request.single_line {
                 layout.prepare_interaction()?;
             }
@@ -1131,6 +1200,19 @@ impl UiPainter {
         self.passes.remove(&ui.tree_id());
     }
 }
+pub(crate) fn font_face(info: astrelis::FontInfo) -> crate::FontFace {
+    crate::FontFace {
+        families: info.families,
+        postscript_name: info.postscript_name,
+        weight: crate::FontWeight(info.weight),
+        style: match info.slant {
+            FontSlant::Normal => crate::FontStyle::Normal,
+            FontSlant::Italic => crate::FontStyle::Italic,
+            FontSlant::Oblique => crate::FontStyle::Oblique,
+        },
+        monospaced: info.monospaced,
+    }
+}
 fn ast_position(p: crate::TextPosition) -> astrelis::TextPosition {
     astrelis::TextPosition::new(p.byte_offset).affinity(match p.affinity {
         crate::TextAffinity::Upstream => astrelis::TextAffinity::Upstream,
@@ -1204,7 +1286,7 @@ impl UiPainter {
         {
             return Ok(layout.clone());
         }
-        resource.layout(&mut self.fonts, request, self.sans_serif.as_deref())
+        resource.layout(&mut self.fonts, &self.families, request)
     }
 }
 impl TextMeasure for UiPainter {
@@ -1251,11 +1333,10 @@ impl TextMeasure for UiPainter {
             .map(ui_position))
     }
     fn measure(&mut self, id: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError> {
-        self.texts.entry(id).or_default().measure(
-            &mut self.fonts,
-            request,
-            self.sans_serif.as_deref(),
-        )
+        self.texts
+            .entry(id)
+            .or_default()
+            .measure(&mut self.fonts, &self.families, request)
     }
     fn generation(&self) -> u64 {
         self.generation
@@ -1642,6 +1723,59 @@ mod tests {
             assert!(painter.placeholders.is_empty());
             assert_eq!(ink(&graphics, &mut target, &mut painter, &ui, empty), 0);
             assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn registered_fonts_report_faces_and_family_maps_re_measure_text() {
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            let generation = painter.generation();
+            assert!(matches!(
+                painter.register_font(vec![0u8; 16]),
+                Err(UiError::Text(_))
+            ));
+            assert_eq!(painter.generation(), generation);
+            let faces = painter
+                .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
+                .unwrap();
+            assert_eq!(faces.len(), 1);
+            assert!(faces[0].families.iter().any(|f| f == "Source Sans 3"));
+            assert_eq!(faces[0].weight, crate::FontWeight::NORMAL);
+            assert_eq!(faces[0].style, crate::FontStyle::Normal);
+            assert!(!faces[0].monospaced);
+            assert!(painter.generation() > generation);
+
+            let mut runtime = Runtime::new();
+            let root = runtime.update(|cx| {
+                cx.new(|_| TextView {
+                    text: "Mapped".into(),
+                    color: [1.; 4],
+                })
+            });
+            let mut ui = Ui::new(&mut runtime, root).unwrap();
+            ui.prepare(&mut runtime, [200., 80.], &mut painter).unwrap();
+            let id = ui.elements().find(|e| e.text.is_some()).unwrap().id;
+            let family = |painter: &UiPainter| painter.texts[&id].buffer.style().family.clone();
+            assert_eq!(family(&painter), FontFamily::SansSerif);
+            let measured = ui.stats().measurements;
+            painter.map_family(crate::FontFamily::SansSerif, "Source Sans 3");
+            assert_eq!(
+                painter.family_mapping(&crate::FontFamily::SansSerif),
+                Some("Source Sans 3")
+            );
+            let mapped = painter.generation();
+            // An unchanged mapping keeps measurements.
+            painter.map_family(crate::FontFamily::SansSerif, "Source Sans 3");
+            assert_eq!(painter.generation(), mapped);
+            ui.prepare(&mut runtime, [200., 80.], &mut painter).unwrap();
+            assert!(ui.stats().measurements > measured);
+            assert_eq!(family(&painter), FontFamily::Named("Source Sans 3".into()));
+            assert!(painter.unmap_family(&crate::FontFamily::SansSerif));
+            assert!(!painter.unmap_family(&crate::FontFamily::SansSerif));
+            ui.prepare(&mut runtime, [200., 80.], &mut painter).unwrap();
+            assert_eq!(family(&painter), FontFamily::SansSerif);
         });
     }
     #[test]
