@@ -53,7 +53,8 @@ pub enum UiError {
     LeafChildren,
     /// Viewport or input coordinates are invalid.
     InvalidGeometry,
-    /// Application supplied a single-line input value containing control characters.
+    /// Application supplied an input value containing control characters (text areas
+    /// allow line breaks and tabs), or a host sent invalid IME preedit offsets.
     InvalidTextValue,
     /// Opacity is non-finite or outside 0..=1.
     InvalidOpacity,
@@ -118,7 +119,7 @@ impl fmt::Display for UiError {
             #[cfg(feature = "rendering")]
             Self::TextRender(e) => e.fmt(f),
             Self::InvalidTextValue => {
-                f.write_str("single-line input value contains control characters")
+                f.write_str("text input value contains disallowed control characters")
             }
             Self::InvalidStyle => f.write_str("invalid RXUI element style"),
             Self::NestedControl => f.write_str("buttons cannot contain interactive controls"),
