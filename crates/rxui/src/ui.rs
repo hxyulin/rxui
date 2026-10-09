@@ -531,6 +531,12 @@ fn image_properties(element: &Element) -> Option<&crate::image::Properties> {
         None
     }
 }
+fn disabled_kind(element: &Element) -> bool {
+    matches!(
+        element.kind,
+        ElementKind::Button { disabled: true, .. } | ElementKind::TextInput { disabled: true, .. }
+    )
+}
 fn compatible(old: &Element, new: &Element) -> bool {
     match (&old.kind, &new.kind) {
         (ElementKind::Component(a), ElementKind::Component(b)) => a.entity_id() == b.entity_id(),
@@ -724,6 +730,7 @@ pub struct Ui<T: View> {
     /// Theme the root view read during its last evaluation.
     root_theme_read: Option<Theme>,
     style_roots: IdSet<ElementId>,
+    motion: animation_dispatch::Motion,
 }
 impl<T: View> Ui<T> {
     /// Mounts a root view. Preparing evaluates it for the first time.
@@ -772,6 +779,7 @@ impl<T: View> Ui<T> {
             theme: Theme::default(),
             root_theme_read: None,
             style_roots: IdSet::default(),
+            motion: Default::default(),
         })
     }
     /// Root theme for this placement; subtree overrides remain independent.
@@ -802,7 +810,7 @@ impl<T: View> Ui<T> {
     /// Custom GPU hosts use compose when this is true; CPU/custom painters can inspect
     /// ElementInfo.opacity and parent to implement their own subtree composition.
     pub fn needs_composition(&self) -> bool {
-        self.opacity_count != 0
+        self.opacity_count != 0 || self.motion_layers()
     }
     #[cfg(feature = "rendering")]
     pub(crate) fn tree_id(&self) -> u64 {
@@ -817,6 +825,13 @@ impl<T: View> Ui<T> {
             self.geometry_revision,
             self.measurement_generation,
         ]
+    }
+    /// [`Self::composition_key`] plus the overlay motion revision, which changes
+    /// layer opacity and offsets without other preparation work.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn layer_key(&self) -> [u64; 6] {
+        let [a, b, c, d, e] = self.composition_key();
+        [a, b, c, d, e, self.motion_revision()]
     }
     /// Root's persistent state, retained by this UI placement.
     pub fn entity(&self) -> &Entity<T> {
@@ -900,6 +915,7 @@ impl<T: View> Ui<T> {
         measurer: &mut impl TextMeasure,
     ) -> Result<(), UiError> {
         profiling::scope!("rxui::Ui::prepare");
+        self.begin_motion(runtime);
         if self.partial_tree {
             self.clean_partial_tree();
         }
@@ -941,6 +957,7 @@ impl<T: View> Ui<T> {
             self.geometry_ready = true;
             self.needs_evaluation = false;
             if !self.needs_prepare(runtime)? {
+                self.finish_motion();
                 return Ok(());
             }
             self.geometry_ready = false;
@@ -1261,6 +1278,9 @@ impl<T: View> Ui<T> {
         let id = if let Some(id) = old
             && compatible(&self.nodes[&id].element, &element)
         {
+            if disabled_kind(&self.nodes[&id].element) != disabled_kind(&element) {
+                self.capture_paint(id, None);
+            }
             let node = self.nodes.get_mut(&id).unwrap();
             self.order_dirty |= node.element.z_index != element.z_index
                 || node
@@ -1780,6 +1800,7 @@ impl<T: View> Ui<T> {
             && self.nodes[&id].element.pointer_events != crate::PointerEvents::None
             && inherited.is_none_or(|n| n.pointer_allowed);
         let control_color = control_color && self.nodes[&id].element.paint.color.is_none();
+        self.capture_paint(id, Some(&theme));
         let node = self.nodes.get_mut(&id).unwrap();
         node.inert = inert;
         node.pointer_allowed = pointer_allowed;
@@ -1888,17 +1909,19 @@ impl<T: View> Ui<T> {
             }
             capture = self.nodes.get(&current).and_then(|n| n.parent);
         }
-        let node = self.nodes.remove(&id).unwrap();
+        let exit = self.begin_exit(id);
+        let mut node = self.nodes.remove(&id).unwrap();
         if let Some(overlays) = &mut self.overlays {
             overlays.forget(id);
         }
         self.opacity_count -= usize::from(node.element.opacity < 1.);
-        for child in node.children {
+        for child in std::mem::take(&mut node.children) {
             self.remove(child)?;
         }
         self.taffy.remove(node.layout)?;
         self.stats.removed_nodes += 1;
         self.order_dirty = true;
+        self.retire_node(id, node, exit);
         Ok(())
     }
     fn update_bounds(
@@ -2076,7 +2099,7 @@ impl<T: View> Ui<T> {
     }
     #[cfg(feature = "rendering")]
     pub(crate) fn custom_element(&self, id: ElementId) -> Option<&dyn crate::custom::AnyCustom> {
-        match &self.nodes.get(&id)?.element.kind {
+        match &self.painted_node(id)?.element.kind {
             ElementKind::Custom(custom) => Some(custom.as_ref()),
             _ => None,
         }
@@ -2085,7 +2108,7 @@ impl<T: View> Ui<T> {
     /// `ElementInfo`. `None` for hidden or removed nodes.
     #[cfg(feature = "rendering")]
     pub(crate) fn visible_content(&self, id: ElementId) -> Option<VisibleContent<'_>> {
-        let node = self.nodes.get(&id).filter(|n| n.visible)?;
+        let node = self.painted_node(id).filter(|n| n.visible)?;
         Some(match &node.element.kind {
             ElementKind::Image(_) => VisibleContent::Image,
             ElementKind::Custom(_) => VisibleContent::Custom,
@@ -2107,7 +2130,7 @@ impl<T: View> Ui<T> {
     /// `ElementInfo`; `None` for hidden or removed nodes.
     #[cfg(feature = "rendering")]
     pub(crate) fn ink_extent(&self, id: ElementId) -> Option<InkExtent> {
-        let node = self.nodes.get(&id).filter(|n| n.visible)?;
+        let node = self.painted_node(id).filter(|n| n.visible)?;
         Some(InkExtent {
             clip: node.clip_bounds,
             bounds: node.bounds,
@@ -2116,27 +2139,39 @@ impl<T: View> Ui<T> {
                 || node
                     .state_paints
                     .as_ref()
-                    .is_some_and(|states| states.iter().any(|p| p.shadow.is_some())),
+                    .is_some_and(|states| states.iter().any(|p| p.shadow.is_some()))
+                || self.motion_shadow(id),
         })
     }
     /// A visible node's parent for composition (`None` for roots and overlays,
     /// which composite on their own) and its opacity. `None` for hidden nodes.
     #[cfg(feature = "rendering")]
     pub(crate) fn composition_node(&self, id: ElementId) -> Option<(Option<ElementId>, f32)> {
-        let node = self.nodes.get(&id).filter(|n| n.visible)?;
-        let parent = if self.is_overlay(id) {
-            None
-        } else {
-            node.parent
+        let Some(node) = self.nodes.get(&id) else {
+            return self.ghost_composition_node(id);
         };
-        Some((parent, node.element.opacity))
+        if !node.visible {
+            return None;
+        }
+        if self.is_overlay(id) {
+            return Some((None, node.element.opacity * self.overlay_opacity(id)));
+        }
+        Some((node.parent, node.element.opacity))
     }
     #[cfg(feature = "rendering")]
     pub(crate) fn painting_ids(&self) -> &[ElementId] {
-        self.painting_order()
+        self.painted_order()
     }
     fn painting_order(&self) -> &[ElementId] {
         self.paint_order.as_deref().unwrap_or(&self.order)
+    }
+    /// Paint order including the retained visuals of exiting overlays.
+    fn painted_order(&self) -> &[ElementId] {
+        self.motion_order().unwrap_or_else(|| self.painting_order())
+    }
+    /// A live node, or one retained for an exiting overlay's visual.
+    fn painted_node(&self, id: ElementId) -> Option<&Node> {
+        self.nodes.get(&id).or_else(|| self.ghost_node(id))
     }
     fn pointer_allowed(&self, id: ElementId) -> bool {
         self.nodes[&id].pointer_allowed && self.modal_allows(id)
@@ -2236,14 +2271,14 @@ impl<T: View> Ui<T> {
     }
     /// Iterates visible retained elements in paint order after successful preparation.
     pub fn elements(&self) -> impl Iterator<Item = ElementInfo<'_>> {
-        self.painting_order()
+        self.painted_order()
             .iter()
             .filter_map(|id| self.element(*id))
     }
     /// Whether a retained identity still exists, including hidden/unprepared nodes.
     /// Hosts can use this to dispose per-node measurement and GPU caches.
     pub fn contains_element(&self, id: ElementId) -> bool {
-        self.nodes.contains_key(&id)
+        self.nodes.contains_key(&id) || self.ghost_node(id).is_some()
     }
     /// Whether geometry is ready for inspection, painting and input routing.
     pub fn is_prepared(&self) -> bool {
@@ -2254,7 +2289,9 @@ impl<T: View> Ui<T> {
         if !self.is_prepared() {
             return None;
         }
-        let node = self.nodes.get(&id)?;
+        let Some(node) = self.nodes.get(&id) else {
+            return self.ghost_element(id);
+        };
         if !node.visible {
             return None;
         }
@@ -2264,38 +2301,13 @@ impl<T: View> Ui<T> {
                 ElementKind::Button { disabled: true, .. }
                     | ElementKind::TextInput { disabled: true, .. }
             );
-        let mut paint = node.state_paints.as_ref().map_or(node.paint, |states| {
-            if disabled {
-                states[2]
-            } else if self.pressed == Some(id) || self.captured_pointer() == Some(id) {
-                states[1]
-            } else if self.hovered == Some(id) {
-                states[0]
-            } else {
-                node.paint
-            }
-        });
-        if let Some(owner) = node.button_owner
-            && node.control_color
-        {
-            let owner = &self.nodes[&owner];
-            let owner_id = node.button_owner.unwrap();
-            let is_disabled = matches!(
-                owner.element.kind,
-                ElementKind::Button { disabled: true, .. }
-            );
-            if let Some(states) = &owner.state_paints {
-                paint.color = if is_disabled {
-                    states[2].color
-                } else if self.pressed == Some(owner_id) {
-                    states[1].color
-                } else if self.hovered == Some(owner_id) {
-                    states[0].color
-                } else {
-                    owner.paint.color
-                };
-            }
-        }
+        let paint = self.state_paint(
+            id,
+            node,
+            disabled,
+            [self.hovered, self.pressed, self.captured_pointer()],
+        );
+        let paint = self.motion_paint(id, paint);
         Some(ElementInfo {
             viewport_overlay: self.is_overlay(id),
             id,
@@ -2344,6 +2356,49 @@ impl<T: View> Ui<T> {
             focusable: self.enabled(id),
             range: self.range_info(id),
         })
+    }
+    /// Target paint of `node` for the given hovered, pressed and captured elements,
+    /// before any transition.
+    fn state_paint(
+        &self,
+        id: ElementId,
+        node: &Node,
+        disabled: bool,
+        [hovered, pressed, captured]: [Option<ElementId>; 3],
+    ) -> ResolvedPaint {
+        let mut paint = node.state_paints.as_ref().map_or(node.paint, |states| {
+            if disabled {
+                states[2]
+            } else if pressed == Some(id) || captured == Some(id) {
+                states[1]
+            } else if hovered == Some(id) {
+                states[0]
+            } else {
+                node.paint
+            }
+        });
+        if let Some(owner) = node.button_owner
+            && node.control_color
+        {
+            let owner = &self.nodes[&owner];
+            let owner_id = node.button_owner.unwrap();
+            let is_disabled = matches!(
+                owner.element.kind,
+                ElementKind::Button { disabled: true, .. }
+            );
+            if let Some(states) = &owner.state_paints {
+                paint.color = if is_disabled {
+                    states[2].color
+                } else if pressed == Some(owner_id) {
+                    states[1].color
+                } else if hovered == Some(owner_id) {
+                    states[0].color
+                } else {
+                    owner.paint.color
+                };
+            }
+        }
+        paint
     }
     /// Topmost enabled focusable target within the logical viewport and ancestor clips,
     /// using the current retained scroll offsets.
@@ -3861,6 +3916,8 @@ impl<T: View> Ui<T> {
     }
 }
 
+#[path = "animation_dispatch.rs"]
+mod animation_dispatch;
 #[path = "command_dispatch.rs"]
 mod command_dispatch;
 #[path = "input_dispatch.rs"]

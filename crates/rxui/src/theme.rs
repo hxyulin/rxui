@@ -223,6 +223,8 @@ pub struct ThemeMetrics {
     pub radius: f32,
     /// Focus stroke width, inside the box; painting only.
     pub focus_width: f32,
+    /// Durations of implicit paint transitions and overlay motion.
+    pub motion: crate::ThemeMotion,
 }
 impl ThemeMetrics {
     /// Default desktop density: 14pt text and 36-unit controls.
@@ -239,6 +241,7 @@ impl ThemeMetrics {
             border_width: 1.,
             radius: 6.,
             focus_width: 2.,
+            motion: Default::default(),
         }
     }
     /// Dense preset for tool-heavy windows: 13pt text and 28-unit controls.
@@ -255,6 +258,7 @@ impl ThemeMetrics {
             border_width: 1.,
             radius: 4.,
             focus_width: 2.,
+            motion: Default::default(),
         }
     }
 }
@@ -317,11 +321,13 @@ impl Theme {
             .get_or_init(|| Self::preset(Preset::HighContrast))
             .clone()
     }
-    /// Switches to [`ThemeMetrics::compact`], keeping this theme's focus width.
+    /// Switches to [`ThemeMetrics::compact`], keeping this theme's focus width and
+    /// motion.
     pub fn compact(self) -> Self {
         self.metrics(|m| {
             *m = ThemeMetrics {
                 focus_width: m.focus_width,
+                motion: m.motion.clone(),
                 ..ThemeMetrics::compact()
             }
         })
@@ -538,6 +544,7 @@ impl Theme {
             ]
             .iter()
             .any(|v| !v.is_finite() || *v < 0.)
+            || !m.motion.overlay_offset.is_finite()
         {
             return Err(UiError::InvalidStyle);
         }

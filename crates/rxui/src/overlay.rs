@@ -108,6 +108,7 @@ pub(crate) struct Properties {
 pub struct Overlay {
     surface: Element,
     props: Properties,
+    transition: Option<crate::Transition>,
 }
 /// Creates a nonmodal anchored popover. Element anchors are window-local; point
 /// anchors use logical coordinates. Defaults to BottomStart with 4-unit gap/8-unit margin.
@@ -147,6 +148,7 @@ impl Overlay {
                 autofocus: true,
                 dismiss: None,
             },
+            transition: None,
         }
     }
     /// Receives controlled dismissal proposals. Without a listener outside presses
@@ -196,6 +198,15 @@ impl Overlay {
         self.surface = self.surface.padding(value);
         self
     }
+    /// Enter/exit motion. The default, [`crate::Transition::Theme`], fades in over
+    /// `ThemeMotion::overlay_enter` and out over `ThemeMotion::overlay_exit`, sliding
+    /// popovers by `ThemeMotion::overlay_offset`; `Transition::None` snaps. A closing
+    /// overlay releases focus, input and semantics immediately and only its visual
+    /// lingers while it fades out.
+    pub fn transition(mut self, transition: crate::Transition) -> Self {
+        self.transition = Some(transition);
+        self
+    }
     /// Accessible surface name, required for meaningful dialogs.
     pub fn accessibility_label(mut self, label: impl Into<String>) -> Self {
         self.surface = self.surface.accessibility_label(label.into());
@@ -213,6 +224,7 @@ impl IntoElement for Overlay {
             root = root.background([0., 0., 0., 0.4]);
         }
         root.key = key;
+        root.transition = self.transition.map(Box::new);
         root.input.get_or_insert_with(Default::default).overlay = Some(Box::new(self.props));
         root.child(self.surface)
     }

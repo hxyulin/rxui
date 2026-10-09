@@ -85,9 +85,12 @@ impl<T: View> TestUi<T> {
         self.size = size;
         self.ui.invalidate_geometry();
     }
-    /// Reconciles and lays out if the views or fonts changed since the last preparation.
+    /// Reconciles and lays out if the views or fonts changed since the last preparation,
+    /// or advances motion in flight. Drive animations with
+    /// `runtime().begin_frame(time)` before rendering each frame.
     pub fn prepare(&mut self) -> Result<(), UiError> {
         if !self.ui.is_prepared()
+            || self.ui.is_animating()
             || self.ui.needs_prepare(&self.runtime)?
             || self.ui.measurement_generation() != self.painter.generation()
         {

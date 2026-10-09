@@ -161,6 +161,12 @@ impl Harness {
             .find(|e| e.key == Some(&Key::from(key)))
             .map(|e| e.id)
     }
+    /// Live element with `key`, excluding the inert copy of a closing overlay that
+    /// lingers while it fades out.
+    fn shown(&self, key: &str) -> Option<ElementId> {
+        self.find(key)
+            .filter(|&id| !self.ui.element(id).is_some_and(|e| e.inert))
+    }
     fn id(&self, key: &str) -> ElementId {
         self.find(key).unwrap_or_else(|| panic!("no element {key}"))
     }
@@ -601,11 +607,11 @@ fn tooltips_appear_after_the_hover_delay_without_focus_or_blocking_input() {
     h.ui.focus(h.id("agree"));
     let focus = h.ui.focused_element();
     h.pointer(PointerEvent::Moved(h.center(save)));
-    assert!(h.find("tooltip").is_none());
+    assert!(h.shown("tooltip").is_none());
     assert!(h.r.animation_frame_requested());
     h.frame(1_000);
     h.frame(1_000 + TOOLTIP_DELAY.as_millis() as u64 / 2);
-    assert!(h.find("tooltip").is_none());
+    assert!(h.shown("tooltip").is_none());
     h.frame(1_000 + TOOLTIP_DELAY.as_millis() as u64);
     let tip = h.id("tooltip");
     let info = h.ui.element(tip).unwrap();
@@ -613,30 +619,33 @@ fn tooltips_appear_after_the_hover_delay_without_focus_or_blocking_input() {
     assert_eq!(info.pointer_events, PointerEvents::None);
     assert!(h.ui.semantic_node(tip).is_none());
     assert_eq!(h.ui.focused_element(), focus);
-    assert!(!h.r.animation_frame_requested());
+    // Its enter motion and the hover transition settle, then frames stop.
+    h.frame(1_000 + TOOLTIP_DELAY.as_millis() as u64 + 1_000);
+    assert!(h.shown("tooltip").is_some());
+    assert!(!h.r.animation_frame_requested() && !h.ui.is_animating());
 
     // The press reaches the button and hides the tooltip until the pointer returns.
     h.click(h.center(save));
     assert_eq!(h.read(|s| s.saves), 1);
-    assert!(h.find("tooltip").is_none());
+    assert!(h.shown("tooltip").is_none());
     h.frame(5_000);
-    assert!(h.find("tooltip").is_none());
+    assert!(h.shown("tooltip").is_none());
 
     h.pointer(PointerEvent::Moved([590., 790.]));
     h.pointer(PointerEvent::Moved(h.center(save)));
     h.frame(6_000);
     h.frame(7_000);
-    assert!(h.find("tooltip").is_some());
+    assert!(h.shown("tooltip").is_some());
     h.key(KeyboardKey::Escape);
-    assert!(h.find("tooltip").is_none());
+    assert!(h.shown("tooltip").is_none());
 
     h.pointer(PointerEvent::Moved([590., 790.]));
     h.pointer(PointerEvent::Moved(h.center(save)));
     h.frame(8_000);
     h.frame(9_000);
-    assert!(h.find("tooltip").is_some());
+    assert!(h.shown("tooltip").is_some());
     h.pointer(PointerEvent::Moved([590., 790.]));
-    assert!(h.find("tooltip").is_none());
+    assert!(h.shown("tooltip").is_none());
 }
 
 struct Wrapped;

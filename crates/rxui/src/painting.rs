@@ -926,8 +926,9 @@ impl UiPainter {
                 if let Some(layer) = isolated {
                     if let Some(bounds) = layer.bounds {
                         let destination = Bounds {
-                            x: bounds[0] as f32 / scale,
-                            y: bounds[1] as f32 / scale,
+                            // Whole physical pixels keep nearest sampling exact.
+                            x: (bounds[0] as f32 + (layer.offset[0] * scale).round()) / scale,
+                            y: (bounds[1] as f32 + (layer.offset[1] * scale).round()) / scale,
                             width: bounds[2] as f32 / scale,
                             height: bounds[3] as f32 / scale,
                         };
@@ -2784,3 +2785,7 @@ mod culling_gpu_tests;
 #[cfg(test)]
 #[path = "style_gpu_tests.rs"]
 mod style_gpu_tests;
+
+#[cfg(test)]
+#[path = "animation_gpu_tests.rs"]
+mod animation_gpu_tests;

@@ -473,6 +473,7 @@ impl fmt::Debug for WindowHandle {
 trait HostedUi {
     fn set_theme(&mut self, theme: Theme) -> Result<bool, UiError>;
     fn mounts(&self) -> Vec<crate::MountId>;
+    fn is_animating(&self) -> bool;
     fn prepare(
         &mut self,
         runtime: &mut Runtime,
@@ -573,6 +574,9 @@ impl<T: View> HostedUi for Ui<T> {
     }
     fn mounts(&self) -> Vec<crate::MountId> {
         self.mount_ids().collect()
+    }
+    fn is_animating(&self) -> bool {
+        self.is_animating()
     }
     fn prepare(
         &mut self,
@@ -2622,9 +2626,12 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 if !window.life.closing.get()
                     && cx.window(*native).is_some()
                     && window.ui.as_ref().is_some_and(|ui| {
-                        ui.mounts()
-                            .into_iter()
-                            .any(|mount| self.runtime.inner.frame_requested(mount))
+                        // Retained transitions redraw only their own window.
+                        ui.is_animating()
+                            || ui
+                                .mounts()
+                                .into_iter()
+                                .any(|mount| self.runtime.inner.frame_requested(mount))
                     })
                 {
                     cx.request_redraw(*native)

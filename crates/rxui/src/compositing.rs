@@ -29,10 +29,12 @@ pub(super) struct LayerSpec {
     end: usize,
     pub bounds: Option<[u32; 4]>,
     pub opacity: f32,
+    /// Logical displacement of the composite, for overlay enter/exit motion.
+    pub offset: [f32; 2],
     pub binding: Option<TextureBinding>,
 }
 pub(super) struct CompositionPlan {
-    key: [u64; 5],
+    key: [u64; 6],
     scale: f32,
     format: RenderFormat,
     nodes: Vec<ElementId>,
@@ -172,7 +174,7 @@ impl UiPainter {
                 .get(&ui.tree_id())
                 .cloned()
                 .ok_or(UiError::InvalidGeometry)?;
-            if plan.key != ui.composition_key() || plan.scale != scale {
+            if plan.key != ui.layer_key() || plan.scale != scale {
                 return Err(UiError::InvalidGeometry);
             }
             Some(plan)
@@ -235,9 +237,11 @@ impl UiPainter {
         }
         // A cached plan remains valid across blink/selection/pointer state changes;
         // reserve control boxes so those decorations cannot extend layer bounds.
-        if self.compositions.get(&ui.tree_id()).is_some_and(|p| {
-            p.key == ui.composition_key() && p.scale == scale && p.format == *format
-        }) {
+        if self
+            .compositions
+            .get(&ui.tree_id())
+            .is_some_and(|p| p.key == ui.layer_key() && p.scale == scale && p.format == *format)
+        {
             return Ok(());
         }
         let mut plan = self.composition_plan(ui, format, scale)?;
@@ -382,6 +386,7 @@ impl UiPainter {
                     end: ends[i],
                     bounds,
                     opacity,
+                    offset: ui.layer_offset(id),
                     binding: None,
                 });
                 if opacity == 0. || bounds.is_none() {
@@ -392,7 +397,7 @@ impl UiPainter {
             i += 1;
         }
         Ok(CompositionPlan {
-            key: ui.composition_key(),
+            key: ui.layer_key(),
             scale,
             format: format.clone(),
             nodes: entries.iter().map(|(id, _)| *id).collect(),

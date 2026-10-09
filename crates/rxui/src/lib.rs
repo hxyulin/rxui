@@ -116,6 +116,7 @@
 
 #[cfg(feature = "accessibility")]
 mod accessibility;
+mod animation;
 #[cfg(feature = "layout")]
 mod appearance;
 #[cfg(feature = "layout")]
@@ -177,6 +178,7 @@ mod virtual_list;
 pub use accessibility::{AccessKitStats, AccessKitTree};
 #[cfg(feature = "accessibility")]
 pub use accesskit;
+pub use animation::{Animated, Easing, Interpolate, Spring, ThemeMotion, Transition};
 #[cfg(feature = "layout")]
 pub use appearance::{ColorScheme, SystemPreferences, ThemeMode, ThemeSet};
 /// OS close-request policy used by Application's lifecycle hook.
@@ -311,6 +313,7 @@ pub mod prelude {
         CommandStatus, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement,
         Shortcut, menu, menu_item, modal, popover, standard_commands,
     };
+    pub use crate::{Animated, Easing, Interpolate, Spring, Transition};
     #[cfg(feature = "native")]
     pub use crate::{
         Application, ApplicationError, CloseResponse, FileDropEvent, WindowGeometry, WindowHandle,
@@ -411,3 +414,6 @@ mod virtual_list_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod platform_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod animation_tests;

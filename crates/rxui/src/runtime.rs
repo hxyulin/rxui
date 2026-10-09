@@ -68,6 +68,10 @@ pub(crate) struct RuntimeInner {
     pub(crate) native: RefCell<Option<std::rc::Rc<crate::native::Commands>>>,
     /// Mounts that asked to be evaluated on the next frame, and the current frame time.
     pub(crate) frames: RefCell<(HashSet<MountId>, std::time::Duration)>,
+    /// Frame clock and reduce-motion preference for animations.
+    pub(crate) motion: Cell<crate::animation::Clock>,
+    /// Ui placements with retained motion in flight; each needs further frames.
+    pub(crate) animating: Cell<usize>,
     /// Theme of the placement whose view is being evaluated, and whether it was read.
     #[cfg(feature = "layout")]
     pub(crate) view_theme: RefCell<Option<(crate::Theme, bool)>>,
@@ -110,6 +114,8 @@ impl Runtime {
                 #[cfg(feature = "native")]
                 native: RefCell::new(None),
                 frames: RefCell::new((HashSet::new(), std::time::Duration::ZERO)),
+                motion: Cell::new(Default::default()),
+                animating: Cell::new(0),
                 #[cfg(feature = "layout")]
                 view_theme: RefCell::new(None),
             }),
@@ -188,7 +194,14 @@ impl Runtime {
     /// since startup. Mounts whose views called `ViewContext::request_animation_frame`
     /// since the previous frame become dirty, so the next `Ui::prepare` evaluates them
     /// with this frame time. Returns whether any live mount was invalidated.
+    ///
+    /// Calling it also starts the animation clock: until the first call, implicit
+    /// transitions and `ViewContext::animate` complete immediately, so hosts that
+    /// never drive frames see final values.
     pub fn begin_frame(&mut self, time: std::time::Duration) -> bool {
+        let mut clock = self.inner.motion.get();
+        clock.started = true;
+        self.inner.motion.set(clock);
         let requested = {
             let mut frames = self.inner.frames.borrow_mut();
             frames.1 = time;
@@ -206,11 +219,25 @@ impl Runtime {
         }
         invalidated
     }
-    /// Whether a view asked for another frame since the last [`Self::begin_frame`].
+    /// Whether a view asked for another frame since the last [`Self::begin_frame`],
+    /// or a `Ui` placement has a transition in flight (`Ui::is_animating`).
     /// Hosts schedule a redraw when this is true after preparation, and stay idle
     /// otherwise.
     pub fn animation_frame_requested(&self) -> bool {
-        !self.inner.frames.borrow().0.is_empty()
+        !self.inner.frames.borrow().0.is_empty() || self.inner.animating.get() != 0
+    }
+    /// Selects the reduce-motion preference. While it is on, implicit transitions,
+    /// overlay enter/exit motion and `ViewContext::animate` complete immediately,
+    /// including any that are in flight at the next frame. Native hosts set it from
+    /// the operating system's accessibility setting; applications may override it.
+    pub fn set_reduce_motion(&self, reduce: bool) {
+        let mut clock = self.inner.motion.get();
+        clock.reduce_motion = reduce;
+        self.inner.motion.set(clock);
+    }
+    /// The reduce-motion preference; off by default.
+    pub fn reduce_motion(&self) -> bool {
+        self.inner.motion.get().reduce_motion
     }
     /// Checks a live mount's dirty flag in O(1), without allocating a collection.
     pub fn is_dirty<T>(&self, mount: &Mount<T>) -> Result<bool, AccessError> {

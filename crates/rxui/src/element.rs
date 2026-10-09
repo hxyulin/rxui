@@ -154,6 +154,8 @@ pub struct Element {
     pub(crate) scroll_handle: Option<crate::ScrollHandle>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
     pub(crate) input: Option<Box<crate::input::InputProperties>>,
+    /// Explicit paint/overlay transition; `None` uses the element kind's default.
+    pub(crate) transition: Option<Box<crate::Transition>>,
 }
 impl IntoElement for Element {
     fn into_element(self) -> Element {
@@ -207,6 +209,7 @@ impl Element {
             scroll_handle: None,
             semantics: None,
             input: None,
+            transition: None,
         }
     }
     fn control_defaults(&mut self, input: bool) {
@@ -386,6 +389,22 @@ impl Element {
     pub fn opacity(mut self, opacity: f32) -> Self {
         self.opacity = opacity;
         self
+    }
+    /// How this element's resolved paint moves to a new appearance: hover, pressed,
+    /// focus, disabled, explicit paint and theme changes interpolate colors, radii,
+    /// focus width and shadow instead of snapping. Layout and text never animate.
+    /// Buttons, text inputs and elements with state styles default to
+    /// [`crate::Transition::Theme`]; other elements animate only theme changes unless
+    /// set explicitly. On a popover or modal it also selects the enter/exit motion.
+    /// Requires a host that drives `Runtime::begin_frame`; see `docs/animation.md`.
+    pub fn transition(mut self, transition: crate::Transition) -> Self {
+        self.transition = Some(Box::new(transition));
+        self
+    }
+    /// Snaps paint changes immediately, as `.transition(Transition::None)`. Use it
+    /// when the view animates this element's paint itself.
+    pub fn no_transition(self) -> Self {
+        self.transition(crate::Transition::None)
     }
     /// Paint this complete subtree after lower-z siblings. Equal values preserve description order.
     /// Every parent scopes its children's order; z does not affect layout, Tab or semantics.

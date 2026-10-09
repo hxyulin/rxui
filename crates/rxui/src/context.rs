@@ -50,6 +50,17 @@ impl ReadContext for AppContext<'_> {
     fn track(&self, _entity: EntityId) {}
 }
 impl AppContext<'_> {
+    /// The runtime's reduce-motion preference; see `Runtime::set_reduce_motion`.
+    pub fn reduce_motion(&self) -> bool {
+        self.runtime.motion.get().reduce_motion
+    }
+    /// Overrides the reduce-motion preference, for example from an application
+    /// setting. Native hosts may set it again when the system setting changes.
+    pub fn set_reduce_motion(&mut self, reduce: bool) {
+        let mut clock = self.runtime.motion.get();
+        clock.reduce_motion = reduce;
+        self.runtime.motion.set(clock);
+    }
     /// Launches an application-scoped Send future. Retain its Task or detach explicitly.
     /// Panics if execution is not configured/rejected; try_spawn provides fallible setup.
     #[cfg(feature = "tasks")]
@@ -432,6 +443,85 @@ impl<'a, T> ViewContext<'a, T> {
     /// frame.
     pub fn frame_time(&self) -> std::time::Duration {
         self.runtime.frames.borrow().1
+    }
+    /// Whether motion is reduced (`Runtime::set_reduce_motion`). Views can pick a
+    /// gentler alternative; [`Self::animate`] already completes immediately then.
+    pub fn reduce_motion(&self) -> bool {
+        self.runtime.motion.get().reduce_motion
+    }
+    /// A value that moves toward `target` with `transition`, retained for this
+    /// placement per call site and `key`. The first evaluation returns `target`;
+    /// when a later evaluation passes a different target, the value moves there from
+    /// where it is, continuously even mid-flight. While it moves, this requests an
+    /// animation frame, so the view is evaluated again with the next
+    /// [`Self::frame_time`]; once settled it requests nothing. It completes
+    /// immediately with reduced motion, or when no host drives the frame clock.
+    /// [`crate::Transition::Theme`] uses the placement theme's state duration.
+    ///
+    /// ```
+    /// # #[cfg(feature = "layout")]
+    /// # {
+    /// use rxui::prelude::*;
+    /// struct Drawer { open: bool }
+    /// impl View for Drawer {
+    ///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+    ///         let width = cx.animate("width", if self.open { 240. } else { 48. }, Transition::Theme);
+    ///         column().width(width).fill_height().background(ThemeColor::Surface)
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    #[track_caller]
+    pub fn animate<V: crate::Interpolate + 'static>(
+        &self,
+        key: impl std::hash::Hash,
+        target: V,
+        transition: crate::Transition,
+    ) -> V {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let hash = BuildHasherDefault::<DefaultHasher>::default().hash_one(key);
+        let slot = (
+            std::panic::Location::caller(),
+            std::any::TypeId::of::<crate::Animated<V>>(),
+            hash,
+        );
+        let animates = self.runtime.motion.get().animates();
+        let now = self.frame_time();
+        let transition = match transition {
+            _ if !animates => crate::Transition::None,
+            // Peek at the placement theme without subscribing to it.
+            #[cfg(feature = "layout")]
+            crate::Transition::Theme => {
+                let theme = self.runtime.view_theme.borrow();
+                crate::Transition::ease(theme.as_ref().map_or_else(
+                    || crate::ThemeMotion::default().state,
+                    |(theme, _)| theme.sizes().motion.state,
+                ))
+            }
+            other => other,
+        };
+        let mut state = self.runtime.state.borrow_mut();
+        let Some(record) = state.mounts.get_mut(&self.id) else {
+            return target;
+        };
+        let animated = record
+            .local
+            .entry(slot)
+            .or_insert_with(|| Box::new(crate::Animated::new(target.clone())))
+            .downcast_mut::<crate::Animated<V>>()
+            .expect("animation slot type");
+        if animates {
+            animated.set(target, transition, now);
+        } else if animated.is_animating(now) || *animated.target() != target {
+            animated.jump_to(target);
+        }
+        let value = animated.value(now);
+        let moving = animated.is_animating(now);
+        drop(state);
+        if moving {
+            self.request_animation_frame();
+        }
+        value
     }
     /// Theme of this placement, including subtree overrides from `Element::theme`.
     /// A view that reads it is evaluated again when its theme changes. Outside a
