@@ -1,11 +1,13 @@
 //! Standalone controlled-input example. Values are shared; selection, horizontal
-//! scrolling and composition are independent in each window placement.
+//! scrolling and composition are independent in each window placement. Also shows
+//! placeholders, a masked password field and selectable read-only text.
 use rxui::prelude::*;
 
 struct Form {
     name: String,
     normalized: String,
     digits: String,
+    password: String,
     submitted: String,
     read_only: bool,
 }
@@ -16,6 +18,7 @@ impl View for Form {
             .child(label("Double-click words; triple-click the line. Undo/redo, word deletion, copy/paste and IME are supported."))
             .child(label("Shared value, independent caret/selection/history in each window; edits elsewhere reset local history"))
             .child(text_input(self.name.clone()).key("name").fill_width().accessibility_label("Name")
+                .placeholder("Your name")
                 .read_only(self.read_only)
                 .on_change(cx.listener(|this, edit: &TextChangeEvent, _| this.name = edit.value.clone()))
                 .on_submit(cx.listener(|this, event: &TextSubmitEvent, _| this.submitted = event.value.clone())))
@@ -29,6 +32,11 @@ impl View for Form {
                         this.digits = edit.value.clone();
                     }
                 })))
+            .child(label("Password: masked, no copy/cut, no IME composition"))
+            .child(text_input(self.password.clone()).key("password").fill_width().password(true)
+                .placeholder("Password").accessibility_label("Password")
+                .on_change(cx.listener(|this, edit: &TextChangeEvent, _| this.password = edit.value.clone())))
+            .child(label(format!("{} characters entered", self.password.chars().count())).color(ThemeColor::TextMuted))
             .child(row().gap(12.)
                 .child(button("Open shared window").on_click(cx.listener(|_, _, cx| {
                     let root = cx.entity().upgrade().unwrap();
@@ -37,9 +45,9 @@ impl View for Form {
                 .child(button("Toggle read-only name").on_click(cx.listener(|this, _, _| this.read_only = !this.read_only)))
                 .child(button("External reset").on_click(cx.listener(|this, _, _| {
                     this.name = "Reset from application state".into();
-                    this.normalized.clear(); this.digits.clear();
+                    this.normalized.clear(); this.digits.clear(); this.password.clear();
                 }))))
-            .child(label(format!("Submitted: {}", self.submitted)))
+            .child(label(format!("Submitted: {}", self.submitted)).selectable(true))
             .child(label("Try combining accents, emoji, mixed RTL/LTR text, or a native input method."))
     }
 }
@@ -49,6 +57,7 @@ fn main() -> Result<(), ApplicationError> {
             name: "Hello, RXUI 👋 — שלום — مرحبا".into(),
             normalized: "EDIT ME".into(),
             digits: "123".into(),
+            password: String::new(),
             submitted: String::new(),
             read_only: false,
         });

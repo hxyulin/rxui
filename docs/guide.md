@@ -17,7 +17,8 @@ translation independently of the native host. Optional `native-menus` adds Muda-
 macOS/Windows menu bars, scoped command presentation and vetoable Close/Quit
 requests; see [native menus](native-menus.md). `--no-default-features` retains the state-only runtime. Scrolling,
 clipping, focus traversal and button activation are implemented. Controlled
-single-line editing, bounded undo/redo, word/line selection, clipboard and IME are implemented.
+single-line and multiline editing, placeholders, password masking, selectable labels,
+bounded undo/redo, word/line selection, clipboard and IME are implemented.
 Optional `native-dialogs` provides parent-bound file/message dialogs;
 `desktop-services` adds asynchronous URL/file opening and file-manager reveal.
 See [native services](native-services.md) and the standalone
@@ -105,16 +106,22 @@ text_input(self.name.clone()).key("name").fill_width()
 
 The application owns the value and can accept, normalize or reject each proposal.
 Selection, composition and horizontal scrolling remain local to a placement.
-Ordered edits reconcile the application answer without waiting for a frame. The
-[text-input contract](text-input.md) documents Unicode geometry, controlled
-reconciliation, native IME, clipboard and the current single-line scope.
+Ordered edits reconcile the application answer without waiting for a frame.
+`text_area(value)` edits multiline values with the same contract; `.placeholder`,
+`.password(true)` and `label(...).selectable(true)` cover hints, secrets and
+copyable static text. The [text-input contract](text-input.md) documents Unicode
+geometry, controlled reconciliation, keys, native IME, clipboard and large-document
+limits.
 
 The [single-file editing example](../crates/rxui/examples/text_input_window.rs) includes
-shared windows, uppercase normalization, digit-only rejection, read-only state
-and external replacement:
+shared windows, uppercase normalization, digit-only rejection, read-only state,
+external replacement, a placeholder and a password field; the
+[text area example](../crates/rxui/examples/text_area_window.rs) edits a long
+scrolling document and a chat-style composer:
 
 ```sh
 cargo run -p rxui --example text_input_window --features native --locked
+cargo run -p rxui --example text_area_window --features native --locked
 ```
 
 ## Standard form controls

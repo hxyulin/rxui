@@ -190,3 +190,7 @@ required-features = ["rendering", "accessibility"]
 name = "text"
 harness = false
 required-features = ["rendering", "accessibility"]
+
+[[example]]
+name = "text_area_window"
+required-features = ["native"]

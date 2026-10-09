@@ -29,9 +29,12 @@ impl View for Form {
 }
 ```
 
-Labels, buttons and text inputs infer their roles from the control kind. A button
+Labels, buttons and text inputs infer their roles from the control kind; text
+areas are MultilineTextInput and password inputs PasswordInput. A button
 uses its caption as its name unless explicitly named. Text inputs require an
 explicit accessible name; adjacent visual labels are not automatically associated.
+An input's `.placeholder` is published as the AccessKit placeholder, separately
+from its name and value.
 `accessibility_description` supplies additional help separately from name/value.
 Containers can be marked Group, Form, List or ListItem. Heading is initially
 published at level one. A role override describes an element; it does not add
@@ -89,7 +92,7 @@ remain independent. Removed IDs are never reassigned to new elements.
 | --- | --- |
 | Focus | Focus the underlying control and reveal it through scroll ancestors. |
 | Activate | Dispatch the same button listener as pointer/keyboard activation. |
-| SetValue | Propose a complete single-line value through the existing on_change listener. |
+| SetValue | Propose a complete value through the existing on_change listener, normalized as typed input. |
 | SetSelection | Apply directional byte/grapheme endpoints to the expected text revision. |
 | Scroll | Clamp absolute logical offsets to reachable container ranges. |
 | ScrollIntoView | Reveal a retained element even when it is outside the current clip. |
@@ -134,8 +137,9 @@ A custom host should:
    removal drop the platform adapter before releasing its native window.
 
 AccessKitTree rejects reuse with another placement. Native structural IDs are
-stable, monotonically allocated and never reused. TextRun IDs change with text
-revision so stale native selections cannot address replacement text. Decoding
+stable, monotonically allocated and never reused. A TextRun ID changes whenever
+its paragraph's text changes, so stale native selections cannot address
+replacement text. Decoding
 rejects unknown/subtree IDs and unsupported actions, and validates text/value/scroll
 payloads. Native
 selection indices map through cached grapheme boundaries; SetScrollOffset converts
@@ -166,8 +170,16 @@ value without character-selection actions. Focus, read-only state and controlled
 SetValue still work. The fallback is retained by revision and retried when text
 changes.
 
-Per-character bounds/advances, text-range geometry, rich text attributes, multiline
-navigation, live regions, label relationships, table row/column indices and expand
+Text areas publish one TextRun per paragraph, each ending with its line break, so
+consumers derive line and paragraph boundaries; the parent's value comes from the
+runs. When text changes, runs of unchanged paragraphs keep their identity and
+encoding, and only edited paragraphs get new runs, so a queued native selection
+cannot address replaced text. Password inputs publish the mask, one bullet per
+grapheme, as their value; their selections address the mask. Selectable labels
+publish their selection through a text run.
+
+Per-character bounds/advances, text-range geometry, rich text attributes, runs per
+soft-wrapped visual line, live regions, label relationships, table row/column indices and expand
 or collapse actions are not implemented yet. Shaped pointer/caret/selection geometry used
 for rendering remains available through UiPainter, but it is not yet exported as
 AccessKit character geometry. Native value/selection support does not establish

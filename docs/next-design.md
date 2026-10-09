@@ -41,15 +41,15 @@ The optional UiPainter integrates retained Astrelis text/painting caches. The
 convenient native Application host runs over astrelis-winit and demonstrates two
 windows sharing one entity while retaining independent interaction state. Scoped
 tasks support custom execution adapters, weak live-state completions and cancellation.
-Scrolling/clipping, focus reveal and controlled single-line editing/selection/IME
-are implemented, along with portable semantics and lazy native AccessKit integration.
+Scrolling/clipping, focus reveal and controlled single-line and multiline
+editing/selection/IME are implemented, along with portable semantics and lazy native AccessKit integration.
 Themes, inherited text styling, isolated group opacity, general input/capture,
 scroll areas/handles/bars, controlled splits, focus groups/weak focus handles and
 controlled tab lifecycle, the controlled docking tree and pointer header drops with
 previews are implemented. Viewport popovers, controlled modal dialogs, popup menus,
 typed scoped commands and application fallback registrations are implemented;
 see [overlays-and-commands.md](overlays-and-commands.md).
-Native detach remains planned. Fixed-height virtual lists and bounded single-line
+Native detach remains planned. Fixed-height virtual lists and bounded field
 undo/redo are implemented; see [virtual lists](virtual-lists.md) and [editing](text-input.md).
 See [docking.md](docking.md), [focus-and-tabs.md](focus-and-tabs.md) and [interaction.md](interaction.md). See
 [the current README](../README.md), [application contract](application.md) and
@@ -478,15 +478,17 @@ snapshots; preparation and presentation are not rollback transactions.
    validate composition. The native Application host and scoped tasks are implemented;
    richer controls remain next.
 3. **Essential controls (partial):** labels/buttons, focus traversal, scrolling and
-   clipping and controlled single-line editing/selection/IME are implemented.
+   clipping and controlled single-line and multiline editing/selection/IME are
+   implemented, with placeholders, password masking and selectable labels.
    Initial portable semantics and AccessKit publication/actions are implemented.
-   Bounded field undo/redo is implemented; multiline editing remains next.
+   Bounded field undo/redo and styled rich text spans are implemented; rich text
+   links remain next.
 4. **Native host (initial slice implemented):** lifecycle over astrelis-winit,
    default fonts, close/exit hooks, button input and custom-loop embedding. Theme
    inheritance and live application/window theme switching are implemented. Lazy
    AccessKit adapters are implemented, including
    independent CPU preparation during surface unavailability. Clipboard/IME output
-   and caret blink deadlines are implemented for single-line inputs.
+   and caret blink deadlines are implemented for text inputs and areas.
 5. **Validation application (partial):** shared data in two windows, keyed buttons
    and background completion are implemented. A separate shared-window editing
    example exercises controlled values/selection/IME/history. A custom chart remains next.
@@ -523,8 +525,8 @@ are later work. They must build on the same state/identity/access contracts.
 - Element/listener representation, closures and reconciliation storage.
 - Stateful child props, mount hooks and scoped disposal APIs.
 - Broader typography inheritance, generic scoped providers and logical unit types.
-- Event propagation/default actions, multiline/undo editing and extensions to the
-  implemented synchronous controlled-value reconciliation policy.
+- Event propagation/default actions, document-level editing commands and
+  extensions to the implemented synchronous controlled-value reconciliation policy.
 - Mount-scoped/local tasks and async shutdown orchestration beyond implemented
   entity/application-scoped execution and completion ordering.
 - Exact embedded preparation/platform-output/custom-element interfaces.

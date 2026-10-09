@@ -95,8 +95,9 @@ fn encode_run(value: &str, start: usize, end: usize, id: NodeId) -> Option<Run> 
 }
 /// One placement's optional AccessKit translation/publication cache. Use alongside
 /// a platform adapter and call update only when accessibility is active. Stable
-/// element IDs survive compatible keys; text-run IDs change with text revision so
-/// queued selections cannot address a replacement value. No window/GPU is owned.
+/// element IDs survive compatible keys; a text run's ID changes whenever its
+/// paragraph's text does, so queued selections cannot address replacement text.
+/// No window/GPU is owned.
 ///
 /// Bounds and parent-relative transforms compose into physical window coordinates.
 /// Scrolling moves content containers without republishing every descendant's position.

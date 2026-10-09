@@ -53,7 +53,7 @@ fn main() -> Result<(), ApplicationError> {
 | State | Shared `Entity<T>` state, weak listeners, dependency tracking and explicit flush boundaries |
 | Composition | Element builders, keyed reconciliation, components and per-window placements |
 | Layout | Flex rows and columns, stacks, absolute overlays, scroll areas, split panes and virtual lists |
-| Controls | Buttons, controlled text input with IME and undo, tabs, menus, popovers, modals and docking |
+| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, tabs, menus, popovers, modals and docking |
 | Input | Pointer and keyboard routing, capture, focus scopes, Tab traversal and typed commands with shortcuts |
 | Styling | Light, dark and high-contrast themes, compact density, inherited text styles and state paints |
 | Accessibility | Roles, names and actions, published through AccessKit only while assistive technology is active |
@@ -100,6 +100,7 @@ Each example is one standalone file:
 cargo run -p rxui --example gallery --features native           # every built-in component
 cargo run -p rxui --example counter_window --features native    # the program above, plus a background task
 cargo run -p rxui --example text_input_window --features native # controlled editing
+cargo run -p rxui --example text_area_window --features native  # multiline editing
 cargo run -p rxui --example docking_window --features native    # tabs, splits and drag-to-dock
 cargo run -p rxui --example counter_state                       # the state runtime in a terminal
 ```
@@ -115,7 +116,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Declarative core](docs/declarative-core.md) | Hosting sequence, identity, reuse and input |
 | [Application](docs/application.md) and [async](docs/async.md) | Windows, close policy, custom hosts and tasks |
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |
-| [Text input](docs/text-input.md) and [semantics](docs/semantics.md) | Editing, IME and accessibility |
+| [Text input](docs/text-input.md), [fonts](docs/fonts.md) and [semantics](docs/semantics.md) | Editing, IME, font registration and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
 | [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves |
 | [Standard controls](docs/controls.md) | Check boxes, switches, radio groups, sliders, progress, selects and tooltips |

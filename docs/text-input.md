@@ -1,26 +1,43 @@
-# Controlled single-line text input
+# Controlled text input and text areas
 
 Status: implemented with the default layout feature, Astrelis geometry through
-`rendering`, and native keyboard/clipboard/IME wiring through `native`.
+`rendering`, and native keyboard/clipboard/IME wiring through `native`. This covers
+single-line inputs, multiline text areas, placeholders, password masking and
+selectable labels. [Fonts](fonts.md) covers font registration and fallback, and
+[rich text](rich-text.md) covers styled spans within one paragraph and the design
+for links.
 
 ## Application API
 
 ```rust
 use rxui::prelude::*;
 
-struct Form { name: String, submitted: String }
+struct Form { name: String, password: String, notes: String, submitted: String }
 impl View for Form {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         column().padding(24.).gap(12.)
             .child(text_input(self.name.clone()).key("name").fill_width()
                 .accessibility_label("Name")
+                .placeholder("Your name")
                 .on_change(cx.listener(|this, edit: &TextChangeEvent, _| {
                     this.name = edit.value.clone();
                 }))
                 .on_submit(cx.listener(|this, event: &TextSubmitEvent, _| {
                     this.submitted = event.value.clone();
                 })))
-            .child(label(self.submitted.clone()))
+            .child(text_input(self.password.clone()).key("password").fill_width()
+                .password(true)
+                .accessibility_label("Password")
+                .on_change(cx.listener(|this, edit: &TextChangeEvent, _| {
+                    this.password = edit.value.clone();
+                })))
+            .child(column().scroll_y().height(240.)
+                .child(text_area(self.notes.clone()).key("notes").fill_width()
+                    .accessibility_label("Notes")
+                    .on_change(cx.listener(|this, edit: &TextChangeEvent, _| {
+                        this.notes = edit.value.clone();
+                    }))))
+            .child(label(self.submitted.clone()).selectable(true))
     }
 }
 ```
@@ -50,12 +67,118 @@ deferred effects still wait for the host's normal flush after updates have ended
 Acceptance belongs in the synchronous on_change handler, rather than an eventual
 observer; an asynchronously supplied value is an external replacement.
 
-`text_input` defaults to 240×44 logical units with padding and a background, and
-supports the existing size/color/font builders. `.read_only(true)` permits focus,
-selection and copy while preventing edits/IME. A missing on_change behaves as
-read-only. `.disabled(true)` removes the input from hit testing/focus traversal.
-Application-provided values cannot contain control characters. User-inserted CRLF,
-line breaks and tabs normalize to spaces; other control characters are discarded.
+`text_input` takes the theme's input width and height (240×36 in the default theme)
+with padding and a background, and supports the existing size/color/font builders.
+`.read_only(true)` permits focus, selection and copy while preventing edits/IME. A
+missing on_change behaves as read-only. `.disabled(true)` removes the input from hit
+testing/focus traversal. Single-line values cannot contain control characters.
+User-inserted CRLF, line breaks and tabs normalize to spaces; other control
+characters are discarded.
+
+## Placeholders
+
+`.placeholder(text)` paints a hint in the theme's `TextMuted` color while the value
+is empty and no IME composition is active; the caret stays at the start. The hint is
+shaped and prepared separately from the value, only while it is shown, and does not
+affect the input's size. `ElementInfo::placeholder` and
+`TextInputInfo::placeholder_color` expose it to custom painters. Assistive
+technology receives it as the AccessKit placeholder, independent of the accessible
+name and the empty value. A placeholder is not a label: still name the input with
+`.accessibility_label`.
+
+## Password inputs
+
+`.password(true)` displays one bullet (U+2022) per grapheme. The value stays the
+application's plain text, and edits, undo and controlled acceptance work as usual.
+Masking also changes behavior:
+
+- `Ui::selected_text` returns None, so Copy and Cut are unavailable, including in
+  the native Edit menu. Paste works.
+- Word movement and word deletion act on the whole value, and double-click selects
+  everything, so neither reveals word boundaries.
+- IME composition is refused (`Ui::accepts_ime` is false), and the native host keeps
+  the platform IME disabled. Committed text from a custom host is still inserted.
+- Assistive technology sees a PasswordInput whose value and selection address the
+  mask, not the secret.
+
+`TextInputInfo::selection` stays in value offsets; `display_selection` addresses
+the mask for painting. Password masking requires a single-line input.
+
+## Text areas
+
+`text_area(value)` is a multiline input with the same controlled, history and IME
+contract. Values may contain `\n` and tabs but no other control characters; typed
+or pasted CRLF/CR become `\n`. Text wraps at the content width, and the area grows
+with its content from a minimum of four lines (override with `.min_height`). For
+long documents, place it in a scrolling container: caret movement, edits, pointer
+drags and IME preedit reveal the caret through scrolling ancestors once layout is
+current, so the caret stays visible as the document grows. An explicit height
+clips overflowing text without scrolling it. Wheel scrolling elsewhere is not
+undone later; only caret changes reveal.
+
+| Key | Text area | Single-line input |
+| --- | --- | --- |
+| Enter | Line break, or submit per `SubmitShortcut` | Submit |
+| Up/Down | Previous/next visual line, keeping the goal column; past the first/last line, the start/end | Start/End |
+| Page Up/Page Down | Move by the visible height less one line | Start/End |
+| Home/End | Visual line start/end (Windows/Linux); value start/end (macOS) | Start/End |
+| Command+Left/Right (macOS) | Visual line start/end | Start/End |
+| Command+Up/Down (macOS), Control+Home/End | Value start/end | Start/End |
+| Tab | Moves focus; type tabs by pasting | Moves focus |
+
+`.submit_shortcut(SubmitShortcut::PrimaryEnter)` (the default) submits on
+Command+Enter on macOS and Control+Enter elsewhere; `SubmitShortcut::Enter` submits
+on Enter and inserts a line break on Shift+Enter, as in chat composers;
+`SubmitShortcut::Never` never submits from the keyboard. Held Enter keeps inserting
+line breaks but never submits more than once.
+
+The goal column is the caret's X when the first of a run of vertical moves began;
+any other selection change resets it. Line start/end use the lower and higher
+offsets at the line's two edges, so right-to-left lines start at their logical
+start, and a line end at a soft wrap keeps upstream affinity on that visual line.
+Triple-click selects the paragraph including its line break. Word movement crosses
+line breaks. Undo groups, coalescing and the history budget are the same as for
+single-line inputs; line breaks start a new group like other whitespace.
+
+IME preedit spans lines like committed text: the candidate window follows the
+preedit caret, which may be on a later visual line than the composition start.
+
+Assistive technology sees a MultilineTextInput with one text run per paragraph,
+each ending with its line break. Runs are per paragraph rather than per visual
+line and carry no character geometry yet.
+
+### Large documents
+
+Long wrapped text (16 or more paragraphs, in text areas and labels alike) is laid
+out, prepared and drawn in chunks of about eight paragraphs, each with its own
+Astrelis buffer. An edit re-chunks and re-lays out only the paragraphs it touched,
+and painting records only chunks inside the clip. Caret movement does no text work.
+Measured per keystroke with a frame, typing takes 0.03–0.1 ms at 100–1,000 lines and
+0.14–0.18 ms at 5,000 lines of 61 bytes (0.24–0.28 ms with accessibility active);
+caret movement takes under 1 µs. See the [text area measurements](performance/text.md).
+
+Limits:
+
+- Every edit copies and compares the whole value a few times (proposal, accepted
+  copy, description, reconciliation, history); that part grows linearly and is most
+  of the remaining cost at several hundred kilobytes.
+- A single paragraph is the unit of layout. Very long lines without breaks (for
+  example minified text) re-lay out as a whole.
+- The first layout and any width or font change lay out every chunk.
+- With accessibility active, each edit republishes the list of paragraph runs; a
+  5,000-line selection change costs about 45 µs.
+- There is no find/replace, line numbering, code folding or syntax highlighting;
+  these are application or future-widget concerns.
+
+## Selectable labels
+
+`label(text).selectable(true)` lets pointer drags, double-click (word) and
+triple-click (paragraph) select static text, and Select All and Copy work while it
+is focused. The label takes pointer focus but stays out of Tab traversal; add
+`.tab_stop(true)` after `.selectable(true)` to include it. Shift+arrow keys extend
+its selection. It shows the text cursor on hover, no caret, and accepts no edits.
+Its selection collapses when focus moves elsewhere. The label keeps its alignment
+and wrapping. Assistive technology receives the selection through a text run.
 
 ## Editing and text geometry
 
@@ -64,24 +187,28 @@ selection replacement, grapheme backspace/delete, visual Left/Right, Shift exten
 word navigation/deletion, start/end and line deletion, Select All, copy/cut/paste,
 undo/redo and Enter submission. Double-click selects a Unicode word-boundary segment
 (including punctuation or whitespace); dragging extends by segments. Triple-click
-selects the single line. Shift-click remains ordinary caret extension. Platform
-primary shortcuts use Command on macOS and Control on Windows/Linux. Alt/Option word
-navigation is used on macOS; Control is used on Windows/Linux. Key repeats work for
-text/editing navigation, while submission/button activation does not repeat.
+selects the single line, or the paragraph in a text area. Shift-click remains
+ordinary caret extension. Platform primary shortcuts use Command on macOS and
+Control on Windows/Linux. Alt/Option word navigation is used on macOS; Control is
+used on Windows/Linux. Key repeats work for text/editing navigation and line
+breaks, while submission/button activation does not repeat.
 
 Offsets are whole-value UTF-8 bytes, validated at extended-grapheme boundaries.
 TextSelection retains directional anchor/focus and TextPosition includes affinity
-at bidirectional boundaries. Emoji sequences and combining accents are not split
-by ordinary deletion. Astrelis's shaped TextLayout supplies pointer hit tests,
-visual neighbors, caret geometry and selection rectangles. The same snapshot is
-used for drawing; mixed bidi selections can produce multiple highlight rectangles.
+at bidirectional boundaries and soft wraps. Emoji sequences and combining accents
+are not split by ordinary deletion. Grapheme and word boundaries are found by local
+segmentation around the offset (words within its paragraph), so their cost does not
+grow with the length of the value. Astrelis's shaped TextLayout supplies pointer hit
+tests, visual neighbors, caret geometry and selection rectangles; vertical movement
+hit-tests the goal X one line or page away. The same snapshot is used for drawing;
+mixed bidi selections can produce multiple highlight rectangles.
 
 The input clips text/selection/caret to its content box, intersected with ancestor
-and caller clips. Its horizontal offset follows the active caret. Focus traversal
-can reveal the input through scrolling ancestors. Selection/caret changes do not
-reshape text or upload glyph resources. On the warm path, interaction queries use
-retained revision/width/font metadata and the cached interaction index instead of
-copying the value or walking all text bytes.
+and caller clips. A single-line input's horizontal offset follows the active caret.
+Focus traversal can reveal the input through scrolling ancestors. Selection/caret
+changes do not reshape text or upload glyph resources. On the warm path, interaction
+queries use retained revision/width/font metadata and the cached interaction index
+instead of copying the value or walking all text bytes.
 
 The native host schedules a 500 ms caret blink through astrelis-winit redraw
 deadlines only while an active input is focused. Input resets the blink. It uses
@@ -109,9 +236,12 @@ ordinary backspace/delete events also coalesce. Navigation, pointer selection,
 focus/activation changes, composition and a different operation break the group.
 `Paste` and `Commit` are separate transactions; custom hosts should distinguish
 clipboard insertion from keyboard Insert. Grouping is deterministic, with no
-clock-based timeout. History retains at most 128 snapshots and 1 MiB of UTF-8
-across both stacks. Old/oversized snapshots are discarded without rejecting edits;
-the current application value is not restricted by that history budget.
+clock-based timeout. Each step stores only the changed byte range and the text
+that restores it, found from the common prefix and suffix of the old and new
+values, so a large document's history costs its edits rather than copies of the
+document. History retains at most 128 steps and 1 MiB of restoring UTF-8 across
+both stacks. Old/oversized steps are discarded without rejecting edits; the current
+application value is not restricted by that history budget.
 
 Native shortcuts use Command-Z / Command-Shift-Z on macOS and Control-Z /
 Control-Y (also Control-Shift-Z) on Windows/Linux. Option-backspace/delete uses
@@ -141,8 +271,9 @@ editing, removal or an external value replacement cancels composition. An extern
 replacement cancels only that placement's composition; other windows retain their
 own selections. `ime_reset_revision()` lets a native/custom host reset its IME
 session even when the focused identity did not change. Normal commits do not reset
-that session. Application enables IME only for an editable focused input and updates
-the native candidate area from the same shaped caret geometry as painting.
+that session. Application enables IME only for an editable, unmasked focused input
+(`Ui::accepts_ime`) and updates the native candidate area from the same shaped
+caret geometry as painting.
 
 The native wiring follows [winit's KeyEvent text/repeat contract](https://docs.rs/winit/0.30.13/winit/event/struct.KeyEvent.html)
 and [IME/candidate-area contract](https://docs.rs/winit/0.30.13/winit/window/struct.Window.html).
@@ -153,33 +284,47 @@ and GPU tests do not establish every platform's native composition behavior.
 ## Custom hosting and verification
 
 Custom hosts call Ui::text_input with TextInputEvent and a TextMeasure adapter;
-geometry queries are optional in a headless adapter. Without them, movement uses
-logical grapheme order and pointer caret placement falls back to the value end.
-UiPainter supplies the real shaped geometry. Use pointer_with_text for shaped
-caret placement, or pointer_with_text_clicks with a host-supplied click count for
-word/line selection. The native host uses a 500 ms / four-logical-pixel threshold
-and requires the same target; dragging or deactivation resets the click sequence. Use set_active for native focus changes, set_caret_visible for blink,
-selected_text for clipboard operations, and ime_cursor_area/ime_reset_revision for
-platform IME integration. After external changes, prepare before geometry-based
-input or clipboard inspection. Layout and GPU preparation remain separate.
+geometry queries are optional in a headless adapter. Without them, Left/Right use
+logical grapheme order, Up/Down move between paragraphs by grapheme column (ten
+paragraphs per page), line start/end use the paragraph, and pointer caret placement
+falls back to the value end. UiPainter supplies the real shaped geometry. Send
+`TextInputEvent::Enter { modifiers, repeat }` for the Enter key so text areas can
+apply their submit shortcut; `Submit` always submits and `Insert("\n")` inserts a
+line break in a text area. Use pointer_with_text for shaped caret placement, or
+pointer_with_text_clicks with a host-supplied click count for word/line selection.
+The native host uses a 500 ms / four-logical-pixel threshold and requires the same
+target; dragging or deactivation resets the click sequence. Use set_active for
+native focus changes, set_caret_visible for blink, selected_text for clipboard
+operations, and accepts_ime, ime_cursor_area and ime_reset_revision for platform IME
+integration. After external changes, prepare before geometry-based input or
+clipboard inspection. Layout and GPU preparation remain separate.
 
 ```sh
 cargo run -p rxui --example text_input_window --features native --locked
+cargo run -p rxui --example text_area_window --features native --locked
 cargo test -p rxui --all-features editing_tests --locked
 cargo test -p rxui --features rendering painting::tests --locked -- --ignored
 ```
 
-The standalone example demonstrates shared windows, ordinary acceptance, uppercase
-normalization, digit-only rejection, read-only state and external replacement.
+The single-line example demonstrates shared windows, ordinary acceptance, uppercase
+normalization, digit-only rejection, read-only state, external replacement,
+placeholders, a password field and selectable text. The text area example shows a
+long scrolling document, a composer that submits on Enter, selectable messages and
+runtime font registration.
+
 Headless tests cover successive edits without a frame/flush, Unicode deletion,
 drag/Shift selection, identity/reorder/removal, composition-clear/commit ordering,
-external shared changes and disabled/read-only behavior. The GPU test exercises
-mixed bidi text and combining preedit, checks stable shaped-layout identity and
-interaction storage, unchanged glyph geometry/uploads, and real draw validation.
+external shared changes, disabled/read-only behavior, line breaks and submit
+shortcuts, vertical/line/page movement with and without geometry, caret reveal in a
+scrolling ancestor, paragraph clicks, deep history in a 200 KB document, password
+masking and clipboard availability, placeholders and selectable labels. GPU tests
+exercise mixed bidi text and combining preedit with stable shaped-layout identity
+and unchanged glyph uploads, wrapped vertical movement and line ends at soft
+wraps, painted placeholders, and chunked long-text geometry against a single
+buffer through edits.
 
-Multiline editing, password masking, placeholder text, and advanced document
-editing commands remain future work. Accessible
-labels and the initial AccessKit tree are implemented: assistive SetValue follows
+Accessible labels and the AccessKit tree are implemented: assistive SetValue follows
 the same controlled proposal path, while selection requests validate the published
 text revision and grapheme boundaries. See [the semantics contract](semantics.md).
-Per-character accessibility geometry and rich text attributes remain future work.
+Per-character accessibility geometry, find/replace and other document-editing
+commands remain future work.
