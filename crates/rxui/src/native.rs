@@ -1630,8 +1630,14 @@ fn deliver_preferences(
     preferences: SystemPreferences,
     hook: &mut Option<Box<PreferencesHook>>,
 ) -> bool {
+    let reduce_motion = commands.preferences.borrow().reduce_motion;
     if commands.exited.get() || !commands.set_preferences(preferences.clone()) {
         return false;
+    }
+    // Only a changed OS setting replaces the runtime's, so an application override
+    // survives unrelated preference changes; the hook below can still override.
+    if preferences.reduce_motion != reduce_motion {
+        runtime.set_reduce_motion(preferences.reduce_motion);
     }
     if let Some(hook) = hook {
         runtime.update(|cx| hook(&preferences, cx));
@@ -3422,9 +3428,20 @@ mod tests {
             reduce_motion: true,
             ..light.clone()
         };
+        assert!(!runtime.reduce_motion());
         deliver_preferences(&mut runtime, &commands, contrast.clone(), &mut hook);
         assert_eq!(inherited.theme(), Theme::high_contrast());
-        assert_eq!(*seen.borrow(), vec![light.clone(), contrast]);
+        assert_eq!(*seen.borrow(), vec![light.clone(), contrast.clone()]);
+        // The OS reduce-motion setting drives animation; an application override
+        // survives preference changes that leave it alone.
+        assert!(runtime.reduce_motion());
+        runtime.update(|cx| cx.set_reduce_motion(false));
+        let accent = SystemPreferences {
+            accent_color: Some([0.2, 0.4, 0.8, 1.]),
+            ..contrast
+        };
+        deliver_preferences(&mut runtime, &commands, accent, &mut hook);
+        assert!(!runtime.reduce_motion());
 
         // An explicit application theme stops following the system.
         runtime.update(|cx| cx.set_theme(Theme::dark())).unwrap();

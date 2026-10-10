@@ -118,7 +118,8 @@ border and text colors, radii, the focus color and width, selection, caret and
 preedit colors, and the box shadow. These changes animate:
 
 - hover, pressed and pointer capture;
-- keyboard focus: the focus ring fades in, and disappears immediately on blur;
+- keyboard focus: the focus ring fades in when it becomes visible (including the
+  first keyboard input after pointer focus), and disappears immediately on blur;
 - disabled changes from a new description;
 - explicit paint changes (`.background(...)`, state styles, a selected tab's style);
 - theme switches, including palette-only switches.
@@ -196,9 +197,12 @@ next frame. No frames are requested for them. `Runtime::reduce_motion()`,
 that call `cx.request_animation_frame()` directly should check
 `cx.reduce_motion()` themselves.
 
-The native host owns the operating system preference. It calls
-`runtime.set_reduce_motion(value)` at startup and whenever the system setting
-changes; RXUI itself never queries the operating system.
+The native `Application` host applies `SystemPreferences::reduce_motion` at
+startup and whenever that operating system setting changes, before
+`system_preferences_changed` runs. A value set with `AppContext::set_reduce_motion`
+stays in effect until the operating system setting itself changes again. Custom
+hosts call `runtime.set_reduce_motion(value)` themselves; the runtime never queries
+the operating system.
 
 ## Costs and verification
 

@@ -73,10 +73,11 @@ Application::new().system_preferences_changed(|preferences, cx| {
 The hook receives only changed snapshots, after the first detection. Custom hosts
 call `SystemPreferences::detect(event_loop)` and `ThemeSet::resolve` themselves.
 
-**Reduce motion.** RXUI does not animate by itself. Animation code should read
-`SystemPreferences::reduce_motion`, shortening, cross-fading or skipping motion
-while it is set, and pick up changes from `system_preferences_changed`. It is a
-value, not a subscription, so a view that animates reads it from application state.
+**Reduce motion.** The host applies `reduce_motion` to the runtime, so built-in
+transitions, overlay motion and `cx.animate` values complete immediately while it
+is set; see [animation](animation.md#reduce-motion). An application can override it
+with `AppContext::set_reduce_motion`. Views that drive their own frames with
+`cx.request_animation_frame()` should check `cx.reduce_motion()`.
 
 ### When values refresh
 
