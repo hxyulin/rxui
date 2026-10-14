@@ -2174,6 +2174,7 @@ impl<T: View> Ui<T> {
         self.motion_order().unwrap_or_else(|| self.painting_order())
     }
     /// A live node, or one retained for an exiting overlay's visual.
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     fn painted_node(&self, id: ElementId) -> Option<&Node> {
         self.nodes.get(&id).or_else(|| self.ghost_node(id))
     }

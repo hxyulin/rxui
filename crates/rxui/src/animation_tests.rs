@@ -341,12 +341,14 @@ fn animated_values_evaluate_only_while_moving() {
     assert!(!r.animation_frame_requested());
 }
 
+#[cfg(feature = "rendering")]
 struct Menu {
     anchor: AnchorHandle,
     open: bool,
     modal: bool,
     transition: Option<Transition>,
 }
+#[cfg(feature = "rendering")]
 impl View for Menu {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         let mut page = column().size(400., 300.).child(
@@ -379,6 +381,7 @@ impl View for Menu {
         page
     }
 }
+#[cfg(feature = "rendering")]
 fn menu(modal: bool) -> (Runtime, Entity<Menu>, Ui<Menu>) {
     let mut r = Runtime::new();
     let root = r.update(|cx| {
@@ -394,6 +397,7 @@ fn menu(modal: bool) -> (Runtime, Entity<Menu>, Ui<Menu>) {
     (r, root, ui)
 }
 /// Composition opacity and layer offset of the overlay root containing `key`.
+#[cfg(feature = "rendering")]
 fn layer<T: View>(ui: &Ui<T>, key: &str) -> Option<(f32, [f32; 2])> {
     let mut id = find(ui, key);
     loop {
@@ -404,11 +408,13 @@ fn layer<T: View>(ui: &Ui<T>, key: &str) -> Option<(f32, [f32; 2])> {
         }
     }
 }
+#[cfg(feature = "rendering")]
 fn open_menu(r: &mut Runtime, ui: &mut Ui<Menu>, root: &Entity<Menu>, time: u64) {
     r.update(|cx| root.update(cx, |m, _| m.open = true));
     frame(r, ui, time);
 }
 #[test]
+#[cfg(feature = "rendering")]
 fn overlays_fade_and_slide_in_while_focus_and_semantics_are_immediate() {
     let (mut r, root, mut ui) = menu(false);
     let opener = find(&ui, "opener");
@@ -431,6 +437,7 @@ fn overlays_fade_and_slide_in_while_focus_and_semantics_are_immediate() {
     assert!(!ui.is_animating() && !ui.needs_composition());
 }
 #[test]
+#[cfg(feature = "rendering")]
 fn closing_overlays_keep_their_visual_but_release_focus_input_and_semantics() {
     let (mut r, root, mut ui) = menu(false);
     let opener = find(&ui, "opener");
@@ -477,6 +484,7 @@ fn closing_overlays_keep_their_visual_but_release_focus_input_and_semantics() {
     assert!(ui.elements().all(|e| e.key != Some(&Key::from("item"))));
 }
 #[test]
+#[cfg(feature = "rendering")]
 fn modal_exit_releases_the_modal_boundary_immediately() {
     let (mut r, root, mut ui) = menu(true);
     open_menu(&mut r, &mut ui, &root, 1016);
@@ -496,6 +504,7 @@ fn modal_exit_releases_the_modal_boundary_immediately() {
     assert!(!ui.is_animating());
 }
 #[test]
+#[cfg(feature = "rendering")]
 fn reopening_while_exiting_continues_from_the_fading_visual() {
     let (mut r, root, mut ui) = menu(false);
     open_menu(&mut r, &mut ui, &root, 1016);
@@ -519,6 +528,7 @@ fn reopening_while_exiting_continues_from_the_fading_visual() {
     assert!(!ui.is_animating());
 }
 #[test]
+#[cfg(feature = "rendering")]
 fn overlays_without_motion_open_and_close_immediately() {
     for (transition, reduce) in [(Some(Transition::None), false), (None, true)] {
         let (mut r, root, mut ui) = menu(false);

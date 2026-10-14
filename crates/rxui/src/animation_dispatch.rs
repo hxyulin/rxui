@@ -94,6 +94,7 @@ struct OverlayMotion {
     /// Opacity factor when entering began; nonzero when reopened while exiting.
     from: f32,
     /// Displacement when entering began, returning to zero.
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     offset: [f32; 2],
     progress: Progress,
 }
@@ -114,6 +115,7 @@ struct Ghost {
     nodes: IdMap<ElementId, Node>,
     /// Opacity factor when exiting began.
     from: f32,
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     offset: [f32; 2],
     progress: Progress,
 }
@@ -122,6 +124,7 @@ impl Ghost {
         let (t, _) = self.progress.at(now);
         (self.from * (1. - t)).clamp(0., 1.)
     }
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     fn offset(&self, now: Duration) -> [f32; 2] {
         let (t, _) = self.progress.at(now);
         [self.offset[0] * t, self.offset[1] * t]
@@ -261,10 +264,12 @@ impl<T: View> Ui<T> {
             .as_ref()
             .is_some_and(|a| !a.overlays.is_empty() || !a.ghosts.is_empty())
     }
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     pub(super) fn motion_revision(&self) -> u64 {
         self.motion.revision
     }
     /// Whether a paint transition of `id` started from a shadow.
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     pub(super) fn motion_shadow(&self, id: ElementId) -> bool {
         self.motion
             .active
@@ -291,6 +296,7 @@ impl<T: View> Ui<T> {
             .find_map(|g| g.nodes.get(&id))
     }
     /// Composition parent and opacity of a ghost node; roots fade out.
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     pub(super) fn ghost_composition_node(&self, id: ElementId) -> Option<(Option<ElementId>, f32)> {
         let active = self.motion.active.as_ref()?;
         let ghost = active.ghosts.iter().find(|g| g.nodes.contains_key(&id))?;
@@ -310,6 +316,7 @@ impl<T: View> Ui<T> {
         })
     }
     /// Displacement of an entering or exiting overlay layer.
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
     pub(crate) fn layer_offset(&self, id: ElementId) -> [f32; 2] {
         let Some(active) = &self.motion.active else {
             return [0.; 2];
