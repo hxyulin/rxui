@@ -35,7 +35,7 @@ selection and scrolling are implemented. Themes, inherited text styling, control
 state paints, dark/light/high-contrast presets and a compact density are
 implemented. Shared RGBA/GPU images, live framebuffer output, composed buttons and
 application graphics hooks are implemented. Optional `image-decoding` adds
-PNG/JPEG decoding. Fixed-height virtual lists build only nearby rows; see [virtual lists](virtual-lists.md)
+PNG/JPEG decoding. Fixed- and variable-height virtual lists build only nearby rows; see [virtual lists](virtual-lists.md)
 and [scaling measurements](performance/virtual-lists.md).
 
 ## Declarative views and a window

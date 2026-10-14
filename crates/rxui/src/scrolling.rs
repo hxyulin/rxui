@@ -54,6 +54,8 @@ struct Binding {
 struct Data {
     bindings: HashMap<u64, Binding>,
     readers: HashSet<MountId>,
+    /// Scroll anchor of a variable-height list, per UI tree.
+    anchors: HashMap<u64, crate::virtual_rows::Anchor>,
 }
 /// Cloneable viewport reference. Bind once per UI with `.scroll_handle(...)`.
 /// The same handle can appear in distinct windows; resolution uses the listener/view
@@ -109,6 +111,29 @@ impl ScrollHandle {
     pub fn scroll_by(&self, cx: &mut AppContext<'_>, delta: [f32; 2]) -> Result<(), ScrollError> {
         self.placement(cx)?.scroll_by(cx, delta)
     }
+    /// Reveals the vertical content span `start..start + extent` in the source
+    /// placement, moving the minimum distance: a span above the viewport aligns with
+    /// its top, one below with its bottom, and one taller than the viewport with its
+    /// top. Negative or nonfinite values return InvalidOffset.
+    pub fn reveal_span(
+        &self,
+        cx: &mut AppContext<'_>,
+        start: f32,
+        extent: f32,
+    ) -> Result<(), ScrollError> {
+        self.placement(cx)?.reveal_span(cx, start, extent)
+    }
+    /// Reveals row `index` of a variable-height list in the source placement, moving
+    /// the minimum distance. An index past the end or rows the list would reject
+    /// (see [`crate::VirtualRows::is_valid`]) return InvalidOffset. O(log n).
+    pub fn reveal_list_row(
+        &self,
+        cx: &mut AppContext<'_>,
+        rows: &crate::VirtualRows,
+        index: usize,
+    ) -> Result<(), ScrollError> {
+        self.placement(cx)?.reveal_list_row(cx, rows, index)
+    }
     /// Reveals a fixed-height row in the source placement, moving the minimum distance.
     /// The index is application-owned; offsets clamp to the current scroll range.
     /// Invalid height or an extent beyond 2^24 logical pixels returns InvalidOffset.
@@ -122,6 +147,49 @@ impl ScrollHandle {
     }
     pub(crate) fn state_in(&self, tree: u64) -> Option<ScrollState> {
         self.0.borrow().bindings.get(&tree).map(|b| b.state)
+    }
+    /// The UI tree of the source placement, as [`Self::state`] resolves it.
+    pub(crate) fn source_tree(&self, cx: &impl ReadContext) -> Option<u64> {
+        let scope = cx.placement_scope()?;
+        let data = self.0.borrow();
+        data.bindings
+            .iter()
+            .find(|(_, b)| b.life.strong_count() != 0 && b.scopes.contains(&scope))
+            .map(|(&tree, _)| tree)
+    }
+    /// Runs `f` with the anchor slot of `tree` and whether commands are queued for
+    /// its viewport. Returns `None` without running `f` when `tree` is unbound.
+    pub(crate) fn with_anchor<R>(
+        &self,
+        tree: u64,
+        f: impl FnOnce(&mut Option<crate::virtual_rows::Anchor>, bool) -> R,
+    ) -> Option<R> {
+        let mut data = self.0.borrow_mut();
+        let binding = data.bindings.get(&tree)?;
+        let element = binding.element;
+        let pending = binding
+            .commands
+            .upgrade()
+            .is_some_and(|c| c.borrow().iter().any(|c| c.target == element));
+        let mut slot = data.anchors.remove(&tree);
+        let result = f(&mut slot, pending);
+        if let Some(anchor) = slot {
+            data.anchors.insert(tree, anchor);
+        }
+        Some(result)
+    }
+    /// Queues an anchoring correction to absolute `offset`.
+    pub(crate) fn anchor_to(&self, tree: u64, offset: [f32; 2]) {
+        let data = self.0.borrow();
+        if let Some(b) = data.bindings.get(&tree)
+            && let Some(commands) = b.commands.upgrade()
+        {
+            commands.borrow_mut().push(Command {
+                target: b.element,
+                offset,
+                mode: CommandMode::Anchor,
+            });
+        }
     }
     pub(crate) fn element_in(&self, tree: u64) -> Option<ElementId> {
         self.0.borrow().bindings.get(&tree).map(|b| b.element)
@@ -167,11 +235,45 @@ impl ScrollPlacement {
     }
     /// Queue an absolute position through an explicit source, including outside listeners.
     pub fn scroll_to(&self, cx: &mut AppContext<'_>, offset: [f32; 2]) -> Result<(), ScrollError> {
-        self.command(cx, offset, false)
+        self.command(cx, offset, CommandMode::To)
     }
     /// Queue relative motion through an explicit source.
     pub fn scroll_by(&self, cx: &mut AppContext<'_>, delta: [f32; 2]) -> Result<(), ScrollError> {
-        self.command(cx, delta, true)
+        self.command(cx, delta, CommandMode::By)
+    }
+    /// Reveals the vertical span `start..start + extent` through this placement,
+    /// moving the minimum distance from the current offset.
+    pub fn reveal_span(
+        &self,
+        cx: &mut AppContext<'_>,
+        start: f32,
+        extent: f32,
+    ) -> Result<(), ScrollError> {
+        if !(start.is_finite() && extent.is_finite() && start >= 0. && extent >= 0.) {
+            return Err(ScrollError::InvalidOffset);
+        }
+        let state = self.state()?;
+        let end = start + extent;
+        let y = if start < state.offset[1] || extent > state.viewport[1] {
+            start
+        } else if end > state.offset[1] + state.viewport[1] {
+            end - state.viewport[1]
+        } else {
+            state.offset[1]
+        };
+        self.scroll_to(cx, [state.offset[0], y])
+    }
+    /// Reveals row `index` of a variable-height list through this placement.
+    pub fn reveal_list_row(
+        &self,
+        cx: &mut AppContext<'_>,
+        rows: &crate::VirtualRows,
+        index: usize,
+    ) -> Result<(), ScrollError> {
+        let Some(height) = rows.height(index).filter(|_| rows.is_valid()) else {
+            return Err(ScrollError::InvalidOffset);
+        };
+        self.reveal_span(cx, rows.offset(index), height)
     }
     /// Reveals a fixed-height row through this explicit weak placement.
     /// The index must describe application data; actual offsets clamp at application.
@@ -185,22 +287,14 @@ impl ScrollPlacement {
         if !row_height.is_finite() || row_height <= 0. || end > 16_777_216. {
             return Err(ScrollError::InvalidOffset);
         }
-        let state = self.state()?;
         let start = (index as f64 * f64::from(row_height)) as f32;
-        let y = if start < state.offset[1] || row_height > state.viewport[1] {
-            start
-        } else if end as f32 > state.offset[1] + state.viewport[1] {
-            end as f32 - state.viewport[1]
-        } else {
-            state.offset[1]
-        };
-        self.scroll_to(cx, [state.offset[0], y])
+        self.reveal_span(cx, start, end as f32 - start)
     }
     fn command(
         &self,
         cx: &mut AppContext<'_>,
         offset: [f32; 2],
-        relative: bool,
+        mode: CommandMode,
     ) -> Result<(), ScrollError> {
         if offset.iter().any(|v| !v.is_finite()) {
             return Err(ScrollError::InvalidOffset);
@@ -221,7 +315,7 @@ impl ScrollPlacement {
             .push(Command {
                 target: self.element,
                 offset,
-                relative,
+                mode,
             });
         Ok(())
     }
@@ -229,7 +323,16 @@ impl ScrollPlacement {
 pub(crate) struct Command {
     pub target: ElementId,
     pub offset: [f32; 2],
-    pub relative: bool,
+    pub mode: CommandMode,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CommandMode {
+    /// Absolute, following the viewport's behavior.
+    To,
+    /// Relative to the current offset.
+    By,
+    /// Absolute and immediate: a scroll-anchoring correction.
+    Anchor,
 }
 pub(crate) struct Scrolling {
     life: Rc<()>,
@@ -256,6 +359,7 @@ impl Drop for Scrolling {
         for handle in self.bound.values() {
             let mut data = handle.0.borrow_mut();
             data.bindings.remove(&self.tree);
+            data.anchors.remove(&self.tree);
             for scope in self.scopes.iter() {
                 data.readers.remove(scope);
             }
@@ -318,6 +422,7 @@ impl<T: View> Ui<T> {
         scrolling.bound.retain(|key, h| {
             if !seen.contains(key) {
                 let mut data = h.0.borrow_mut();
+                data.anchors.remove(&self.tree);
                 if data.bindings.remove(&self.tree).is_some() {
                     for &reader in &data.readers {
                         if scrolling.scopes.contains(&reader) {
@@ -388,24 +493,35 @@ impl<T: View> Ui<T> {
             .unwrap_or_default();
         let mut changed = false;
         for c in commands {
-            if let Some(n) = self.nodes.get_mut(&c.target) {
-                for axis in 0..2 {
-                    let next = (c.offset[axis]
-                        + if c.relative {
-                            n.scroll_offset[axis]
-                        } else {
-                            0.
-                        })
-                    .clamp(0., n.scroll_range[axis]);
-                    changed |= next != n.scroll_offset[axis];
-                    n.scroll_offset[axis] = next;
-                }
-            }
+            changed |= self.apply_scroll_command(c.target, c.offset, c.mode);
         }
         if changed {
             self.refresh_geometry()?;
         }
         Ok(changed)
+    }
+    /// Applies one queued command, clamped to the current scroll range.
+    fn apply_scroll_command(
+        &mut self,
+        target: ElementId,
+        offset: [f32; 2],
+        mode: CommandMode,
+    ) -> bool {
+        let Some(n) = self.nodes.get_mut(&target) else {
+            return false;
+        };
+        let mut changed = false;
+        for (axis, current) in n.scroll_offset.iter_mut().enumerate() {
+            let base = if mode == CommandMode::By {
+                *current
+            } else {
+                0.
+            };
+            let next = (offset[axis] + base).clamp(0., n.scroll_range[axis]);
+            changed |= next != *current;
+            *current = next;
+        }
+        changed
     }
     pub(crate) fn set_scroll_offset(
         &mut self,

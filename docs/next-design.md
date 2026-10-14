@@ -49,7 +49,7 @@ controlled tab lifecycle, the controlled docking tree and pointer header drops w
 previews are implemented. Viewport popovers, controlled modal dialogs, popup menus,
 typed scoped commands and application fallback registrations are implemented;
 see [overlays-and-commands.md](overlays-and-commands.md).
-Native detach remains planned. Fixed-height virtual lists and bounded field
+Native detach remains planned. Fixed- and variable-height virtual lists and bounded field
 undo/redo are implemented; see [virtual lists](virtual-lists.md) and [editing](text-input.md).
 See [docking.md](docking.md), [focus-and-tabs.md](focus-and-tabs.md) and [interaction.md](interaction.md). See
 [the current README](../README.md), [application contract](application.md) and

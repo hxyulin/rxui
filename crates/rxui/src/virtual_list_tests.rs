@@ -273,3 +273,254 @@ fn accesskit_virtual_set_metadata_and_removed_rows_form_a_valid_bounded_tree() {
     );
     consumer.update_and_process_changes(delta, &mut Changes);
 }
+
+struct Variable {
+    rows: VirtualRows,
+    handle: ScrollHandle,
+    builds: Rc<Cell<usize>>,
+    anchoring: bool,
+    reveal: usize,
+    revealed: Option<Result<(), ScrollError>>,
+}
+impl View for Variable {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        variable_list(&self.rows, &self.handle, cx, |index| {
+            self.builds.set(self.builds.get() + 1);
+            let Some(Key::Integer(key)) = self.rows.key(index) else {
+                unreachable!()
+            };
+            button(format!("item{key}"))
+                .padding(0.)
+                .on_click(cx.listener(|s, _, cx| {
+                    s.revealed = Some(s.handle.reveal_list_row(cx, &s.rows, s.reveal));
+                }))
+        })
+        .anchoring(self.anchoring)
+        .fill_width()
+        .fill_height()
+    }
+}
+/// Heights 10, 20, 30, 40, 10, 20, ... keyed by index: 100 px per four rows.
+fn variable_rows(count: usize) -> VirtualRows {
+    (0..count).map(|i| (i, 10. * (i % 4 + 1) as f32)).collect()
+}
+fn setup_variable(rows: VirtualRows) -> (Runtime, Entity<Variable>, Ui<Variable>) {
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| Variable {
+            rows,
+            handle: ScrollHandle::new(),
+            builds: Rc::new(Cell::new(0)),
+            anchoring: true,
+            reveal: 0,
+            revealed: None,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    (runtime, root, ui)
+}
+fn variable_viewport(ui: &Ui<Variable>) -> ElementId {
+    ui.semantics().find(|n| n.scroll_range[1] > 0.).unwrap().id
+}
+fn scroll_variable(runtime: &mut Runtime, ui: &mut Ui<Variable>, y: f32) {
+    let target = variable_viewport(ui);
+    ui.semantic_action(
+        runtime,
+        SemanticAction::Scroll {
+            target,
+            offset: [0., y],
+        },
+        &mut Measure,
+    )
+    .unwrap();
+    ui.prepare(runtime, [200., 100.], &mut Measure).unwrap();
+}
+fn item_id(ui: &Ui<Variable>, key: usize) -> Option<ElementId> {
+    let label = format!("item{key}");
+    ui.semantics()
+        .find(|n| n.role == SemanticRole::Button && n.label == Some(label.as_str()))
+        .map(|n| n.id)
+}
+fn item(ui: &Ui<Variable>, key: usize) -> Option<Bounds> {
+    let id = item_id(ui, key)?;
+    ui.elements().find(|n| n.id == id).map(|n| n.bounds)
+}
+fn offset_y(ui: &Ui<Variable>) -> f32 {
+    ui.semantic_node(variable_viewport(ui))
+        .unwrap()
+        .scroll_offset[1]
+}
+fn mounted(ui: &Ui<Variable>) -> Vec<usize> {
+    ui.semantics().filter_map(|n| n.position_in_set).collect()
+}
+fn edit(runtime: &mut Runtime, root: &Entity<Variable>, f: impl FnOnce(&mut Variable)) {
+    runtime.update(|cx| root.update(cx, |s, _| f(s)));
+}
+/// Clicks the row under the viewport's top edge, running its reveal listener.
+fn click_reveal(runtime: &mut Runtime, ui: &mut Ui<Variable>) {
+    ui.pointer(runtime, PointerEvent::Pressed([10., 1.]))
+        .unwrap();
+    ui.pointer(runtime, PointerEvent::Released([10., 1.]))
+        .unwrap();
+    ui.prepare(runtime, [200., 100.], &mut Measure).unwrap();
+}
+#[test]
+fn variable_rows_mount_only_the_viewport_at_their_offsets() {
+    let (mut runtime, root, mut ui) = setup_variable(variable_rows(100_000));
+    assert_eq!(
+        ui.semantic_node(variable_viewport(&ui))
+            .unwrap()
+            .scroll_range[1],
+        2_500_000. - 100.
+    );
+    assert_eq!(mounted(&ui), (0..7).collect::<Vec<_>>());
+    runtime.update(|cx| assert_eq!(root.read(cx).builds.get(), 7));
+    // Row 40_001 spans 1_000_010..1_000_030.
+    scroll_variable(&mut runtime, &mut ui, 1_000_015.);
+    assert_eq!(item(&ui, 40_001).unwrap().y, -5.);
+    assert_eq!(item(&ui, 40_001).unwrap().height, 20.);
+    assert_eq!(item(&ui, 40_002).unwrap().y, 15.);
+    assert_eq!(mounted(&ui), (39_999..40_008).collect::<Vec<_>>());
+    assert!(ui.elements().count() < 40);
+    scroll_variable(&mut runtime, &mut ui, 3_000_000.);
+    assert_eq!(item(&ui, 99_999).unwrap().y, 60.);
+    assert_eq!(*mounted(&ui).last().unwrap(), 99_999);
+}
+#[test]
+fn single_height_changes_move_only_later_rows() {
+    let (mut runtime, root, mut ui) = setup_variable(variable_rows(1000));
+    edit(&mut runtime, &root, |s| s.rows.set_height(1, 50.));
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(item(&ui, 0).unwrap().y, 0.);
+    assert_eq!(item(&ui, 1).unwrap().height, 50.);
+    assert_eq!(item(&ui, 2).unwrap().y, 60.);
+    assert_eq!(offset_y(&ui), 0.);
+}
+#[test]
+fn inserting_removing_and_resizing_above_keep_the_first_visible_row_in_place() {
+    let (mut runtime, root, mut ui) = setup_variable(variable_rows(1000));
+    // Row 40 starts at 1000; show it 7 px above the viewport top.
+    scroll_variable(&mut runtime, &mut ui, 1007.);
+    let before = item(&ui, 40).unwrap();
+    assert_eq!(before.y, -7.);
+    let id = item_id(&ui, 40).unwrap();
+    edit(&mut runtime, &root, |s| {
+        s.rows.splice(0..0, (5000..5003).map(|k| (k, 15.)));
+    });
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 1052.);
+    assert_eq!(item(&ui, 40).unwrap(), before);
+    assert_eq!(item_id(&ui, 40), Some(id));
+    // Index 4 is now the original row 1, 20 px tall.
+    edit(&mut runtime, &root, |s| {
+        s.rows.remove(4);
+    });
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 1032.);
+    assert_eq!(item(&ui, 40).unwrap(), before);
+    edit(&mut runtime, &root, |s| s.rows.set_height(0, 70.));
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 1087.);
+    assert_eq!(item(&ui, 40).unwrap(), before);
+    assert_eq!(item_id(&ui, 40), Some(id));
+    // Changes to the anchor row's height and below it do not move the viewport.
+    let index = runtime.update(|cx| root.read(cx).rows.index_of(&40.into()).unwrap());
+    edit(&mut runtime, &root, |s| {
+        s.rows.set_height(index, 90.);
+        s.rows.insert(index + 1, 6000, 25.);
+    });
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 1087.);
+    assert_eq!(item(&ui, 40).unwrap().y, -7.);
+    assert_eq!(item(&ui, 6000).unwrap().y, 83.);
+    // Removing the anchor row keeps the next recorded row in place.
+    edit(&mut runtime, &root, |s| {
+        s.rows.remove(index);
+    });
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 997.);
+    assert_eq!(item(&ui, 6000).unwrap().y, 83.);
+}
+#[test]
+fn anchoring_is_skipped_at_the_top_when_disabled_and_for_queued_commands() {
+    let (mut runtime, root, mut ui) = setup_variable(variable_rows(1000));
+    edit(&mut runtime, &root, |s| s.rows.insert(0, 5000, 10.));
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 0.);
+    assert_eq!(item(&ui, 5000).unwrap().y, 0.);
+
+    scroll_variable(&mut runtime, &mut ui, 500.);
+    edit(&mut runtime, &root, |s| {
+        s.anchoring = false;
+        s.rows.insert(0, 5001, 10.);
+    });
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 500.);
+    // Re-enabling records a fresh anchor rather than replaying old changes.
+    edit(&mut runtime, &root, |s| s.anchoring = true);
+    ui.prepare(&mut runtime, [200., 100.], &mut Measure)
+        .unwrap();
+    assert_eq!(offset_y(&ui), 500.);
+
+    // A reveal queued with an insertion wins over anchoring.
+    edit(&mut runtime, &root, |s| {
+        s.rows.insert(0, 5002, 10.);
+        s.reveal = 0;
+    });
+    click_reveal(&mut runtime, &mut ui);
+    assert_eq!(offset_y(&ui), 0.);
+    assert_eq!(item(&ui, 5002).unwrap().y, 0.);
+}
+#[test]
+fn reveal_list_row_moves_the_minimum_distance() {
+    let (mut runtime, root, mut ui) = setup_variable(variable_rows(1000));
+    // Row 500 spans 12_500..12_510, below the viewport: its bottom aligns.
+    edit(&mut runtime, &root, |s| s.reveal = 500);
+    click_reveal(&mut runtime, &mut ui);
+    assert_eq!(offset_y(&ui), 12_410.);
+    assert_eq!(item(&ui, 500).unwrap().y, 90.);
+    // Row 499 spans 12_460..12_500 and is already visible.
+    edit(&mut runtime, &root, |s| s.reveal = 499);
+    click_reveal(&mut runtime, &mut ui);
+    assert_eq!(offset_y(&ui), 12_410.);
+    // Row 3 spans 60..100, above the viewport: its top aligns.
+    edit(&mut runtime, &root, |s| s.reveal = 3);
+    click_reveal(&mut runtime, &mut ui);
+    assert_eq!(offset_y(&ui), 60.);
+    assert_eq!(item(&ui, 3).unwrap().y, 0.);
+    edit(&mut runtime, &root, |s| s.reveal = 1000);
+    click_reveal(&mut runtime, &mut ui);
+    runtime.update(|cx| {
+        assert_eq!(
+            root.read(cx).revealed,
+            Some(Err(ScrollError::InvalidOffset))
+        )
+    });
+}
+#[test]
+fn invalid_variable_heights_never_invoke_the_row_builder() {
+    for rows in [
+        [(0, 10.), (1, 0.)].into_iter().collect::<VirtualRows>(),
+        [(0, f32::NAN)].into_iter().collect(),
+        [(0, -1.)].into_iter().collect(),
+        [(0, 16_777_216.), (1, 1.)].into_iter().collect(),
+    ] {
+        let (mut runtime, root, mut ui) = setup_variable(VirtualRows::new());
+        edit(&mut runtime, &root, |s| s.rows = rows);
+        assert!(matches!(
+            ui.prepare(&mut runtime, [200., 100.], &mut Measure),
+            Err(UiError::InvalidStyle)
+        ));
+        runtime.update(|cx| assert_eq!(root.read(cx).builds.get(), 0));
+    }
+}

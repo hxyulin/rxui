@@ -1,10 +1,12 @@
-# Fixed-height virtual lists
+# Virtual lists
 
 `virtual_list(count, row_height, &handle, cx, render_row)` creates a vertical scroll
 area with a persistent scrollbar gutter. It reads placement-specific ScrollHandle
 metrics and calls the row builder only for viewport rows plus overscan (two rows
 on each side by default). Row closures can borrow application data and the view
 context. Descriptions are converted synchronously; painting does not invoke them.
+`variable_list(&rows, &handle, cx, render_row)` does the same for rows of differing
+heights; see [variable heights](#variable-heights).
 
 ```rust
 struct Files { scroll: ScrollHandle, names: Vec<String>, selected: usize }
@@ -38,17 +40,93 @@ origin/rebasing design.
 show a row in the listener's source placement. A ScrollPlacement exposes the same
 operation for explicit weak sources. The caller owns the data index; offsets clamp
 to current content geometry. These commands do not create a row before preparation.
-Sharing a handle across windows preserves each placement's separate viewport and
-offset. A handle can bind only once within one Ui.
+`handle.reveal_span(cx, start, extent)` is the same operation for any vertical
+content span. Sharing a handle across windows preserves each placement's separate
+viewport and offset. A handle can bind only once within one Ui.
 
 Overlapping keyed rows keep identity, focus, local editor state and prepared
 resources. Rows leaving overscan unmount; removed focus/capture is released and
 stale semantic identities are rejected. Scrolling back creates a new placement for
 that row. Persistent row state, selection and data belong in application entities.
 Offscreen editors are not pinned and pending capture is not kept indefinitely.
-This first version does not implement variable heights, virtual tables, automatic
-keyboard navigation to unmounted rows, or scroll-anchor preservation when items
-are inserted above the viewport.
+Virtual tables and automatic keyboard navigation to unmounted rows are not
+implemented: keep the selection in application state and call a reveal method when
+it moves.
+
+## Variable heights
+
+`VirtualRows` holds a stable key and a logical height per row. Keep it in
+application state beside the row data and change both together:
+
+```rust
+struct Results { scroll: ScrollHandle, rows: VirtualRows, hits: Vec<Hit> }
+impl View for Results {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        variable_list(&self.rows, &self.scroll, cx, |index| {
+            let hit = &self.hits[index];
+            if hit.is_file { label(hit.path.clone()) } else { label(hit.line.clone()) }
+        }).fill_height()
+    }
+}
+// When a file's matches arrive:
+// this.rows.splice(at..at, matches.iter().map(|m| (m.id, 22.)));
+// this.hits.splice(at..at, matches);
+```
+
+Row `index` occupies `rows.height(index)` logical pixels, including spacing, and is
+clipped to that slot. Its slot is keyed by `rows.key(index)`, so a mounted row keeps
+its identity, focus and local state when rows are inserted, removed or reordered
+around it; a key set on the returned row element stays on that element inside the
+slot. Keys must be unique among the rows.
+
+A Fenwick (binary indexed) tree over the heights answers `offset(index)`,
+`index_at(offset)` and `total()` in O(log n). `set_height` and `push` are O(log n);
+`insert`, `remove`, `splice` and collecting are O(n). `index_of(key)` uses a key
+map that the first lookup after an insertion or removal rebuilds in O(n). Describing
+the list finds the first and last visible rows with two O(log n) lookups, then sums
+the heights of the mounted rows. Heights are summed in f64. The extent rules match
+the fixed list: a nonfinite, zero or negative height, or a total beyond 2^24 logical
+pixels, makes preparation fail with UiError::InvalidStyle before any row is
+described; `rows.is_valid()` reports whether the list would accept the rows. Such
+heights are stored and count as zero in offsets until corrected.
+
+**Scroll anchoring.** When the rows change, the list keeps the first visible row
+where it was on screen. Each description of a placement records the keys and tops
+of up to eight rows from the viewport top. When a later description sees changed
+rows, it finds the first recorded key that still exists and moves the scroll offset
+by however far that row's top moved. Rows inserted or removed above, and heights
+changed above, therefore leave the content under the viewport still; changes to the
+anchor row's own height and below it do not move the offset. If the anchor row was
+removed, the next recorded row that survives is kept in place. Finding the key is
+O(1) when rows changed only below, or only by insertions or removals above;
+otherwise it uses `index_of`. The correction is an ordinary queued scroll command
+applied in the same preparation, so nothing paints at the intermediate offset, and
+the result clamps to the new extent.
+
+Anchoring is skipped:
+
+- while the viewport is at offset zero, so rows inserted at the start stay visible,
+  as with CSS scroll anchoring;
+- when a scroll command for the viewport was queued in the same update, such as
+  `reveal_list_row` after inserting rows; the explicit command wins;
+- when no recorded row survives, for example after replacing every key;
+- with `.anchoring(false)`. Turning it back on records a fresh anchor rather than
+  replaying earlier changes.
+
+`handle.reveal_list_row(cx, &rows, index)` queues the smallest movement that shows
+the row, as `reveal_row` does for fixed heights, in O(log n). An index past the end
+or rows the list would reject return `ScrollError::InvalidOffset`.
+
+Heights are supplied by the caller rather than measured. Measuring rows after
+layout would need a second layout pass whenever a newly mounted row's estimate was
+wrong, and a large jump can mount a whole viewport of estimated rows; the
+preparation loop is bounded to four passes. The measurements would also have to live
+per placement, because `VirtualRows` is application state shared by windows, which
+would let two windows disagree about offsets. An application that needs content
+heights, such as wrapped text, computes them with its own measurer and calls
+`set_height`; anchoring keeps the viewport still while such corrections arrive.
+
+## Accessibility and costs
 
 The mounted List container publishes the complete set size; each ListItem has a
 zero-based position. Unmounted rows have no assistive Focus/ScrollIntoView target.
@@ -66,7 +144,8 @@ mock-layout CPU costs from native rendering latency.
 
 ```sh
 cargo run -p rxui --example virtual_list_window --features native --locked
+cargo run -p rxui --example variable_list_window --features native --locked
 cargo run -p rxui --example workspace_window --features native --locked
-cargo test -p rxui --all-features virtual_list_tests --locked
+cargo test -p rxui --all-features virtual --locked
 cargo bench -p rxui --bench virtual_list --locked
 ```

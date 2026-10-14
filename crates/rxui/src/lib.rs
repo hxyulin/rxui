@@ -30,9 +30,9 @@
 //! preferences, draws focus rings after keyboard navigation and supports custom
 //! title bars through window drag regions.
 //! Portable semantics are part of layout; the optional accessibility feature adds
-//! AccessKit translation for custom hosts. Fixed-height virtual lists describe only
+//! AccessKit translation for custom hosts. Fixed- and variable-height virtual lists describe only
 //! viewport rows plus overscan; shared windows retain independent scroll offsets.
-//! Multiline editing and variable-height virtualization remain following milestones.
+//! Variable-height lists keep the first visible row in place when rows above it change.
 //!
 //! Declarative components own their descriptions and bind live-state listeners:
 //!
@@ -173,6 +173,8 @@ mod typography;
 mod ui;
 #[cfg(feature = "layout")]
 mod virtual_list;
+#[cfg(feature = "layout")]
+mod virtual_rows;
 
 #[cfg(feature = "accessibility")]
 pub use accessibility::{AccessKitStats, AccessKitTree};
@@ -297,7 +299,9 @@ pub use ui::{
     TextRequest, TextWidth, Ui, UiError, UiStats,
 };
 #[cfg(feature = "layout")]
-pub use virtual_list::{VirtualList, virtual_list};
+pub use virtual_list::{VariableList, VirtualList, variable_list, virtual_list};
+#[cfg(feature = "layout")]
+pub use virtual_rows::VirtualRows;
 
 #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
 pub use native::{
@@ -324,8 +328,9 @@ pub mod prelude {
     };
     pub use crate::{
         Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollError,
-        ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, VirtualList, scroll_area,
-        scrollbar, split_column, split_row, virtual_list,
+        ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, VariableList,
+        VirtualList, VirtualRows, scroll_area, scrollbar, split_column, split_row, variable_list,
+        virtual_list,
     };
     pub use crate::{
         BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor, Entity, FontFamily,

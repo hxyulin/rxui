@@ -181,6 +181,10 @@ name = "virtual_list_window"
 required-features = ["native"]
 
 [[example]]
+name = "variable_list_window"
+required-features = ["native"]
+
+[[example]]
 name = "animation_window"
 required-features = ["native"]
 
