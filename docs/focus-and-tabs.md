@@ -53,6 +53,10 @@ its container focusable. Cycle constrains keyboard traversal only: pointer,
 programmatic and assistive focus can still leave it. The [controlled modal builder](overlays-and-commands.md) adds activation/restoration,
 background input confinement and dialog semantics.
 
+Rich text [links](rich-text.md#keyboard-focus) are the one case of several Tab stops
+in one element: focus stays on the element while `Ui::focused_link` moves through
+its links, and the element counts as one participant in scopes and groups.
+
 `.tab_stop(false)` excludes a focusable control from Tab navigation while retaining
 pointer, explicit and assistive focus/activation. `.focusable(false)` disables
 focus eligibility itself. Non-tab-stop targets advance relative to their current

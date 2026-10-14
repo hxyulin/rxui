@@ -132,6 +132,17 @@ custom element with `.text_input_client(true)` and handles `on_text_insert` and
 [text input clients](custom-elements.md#text-input-clients) and the
 [client example](../crates/rxui/examples/custom_text_client_window.rs).
 
+`rich_text([span("Build "), span("failed").bold(), ...])` styles spans within one
+wrapped paragraph, and `link(text, listener)` makes a span a link: a Tab stop that
+a click, Enter or assistive Click activates, with hover feedback and a Link node
+for assistive technology. The [rich text contract](rich-text.md) covers spans and
+links; the [links example](../crates/rxui/examples/rich_text_links.rs) is shaped
+like IDE hover documentation and diagnostics:
+
+```sh
+cargo run -p rxui --example rich_text_links --features native --locked
+```
+
 ## Standard form controls
 
 ```rust

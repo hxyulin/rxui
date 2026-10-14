@@ -178,6 +178,8 @@ cannot address replaced text. Password inputs publish the mask, one bullet per
 grapheme, as their value; their selections address the mask. Selectable labels
 publish their selection through a text run.
 
+Rich text links publish Link children of their label, with names, bounds, URLs and
+Focus/Click actions; see [rich text](rich-text.md#semantics).
 Per-character bounds/advances, text-range geometry, rich text attributes, runs per
 soft-wrapped visual line, live regions, label relationships, table row/column indices and expand
 or collapse actions are not implemented yet. Shaped pointer/caret/selection geometry used

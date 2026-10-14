@@ -202,3 +202,7 @@ required-features = ["rendering", "accessibility"]
 [[example]]
 name = "text_area_window"
 required-features = ["native"]
+
+[[example]]
+name = "rich_text_links"
+required-features = ["native"]

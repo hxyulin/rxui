@@ -481,8 +481,8 @@ snapshots; preparation and presentation are not rollback transactions.
    clipping and controlled single-line and multiline editing/selection/IME are
    implemented, with placeholders, password masking and selectable labels.
    Initial portable semantics and AccessKit publication/actions are implemented.
-   Bounded field undo/redo and styled rich text spans are implemented; rich text
-   links remain next.
+   Bounded field undo/redo and styled rich text spans and links are implemented;
+   see [rich text](rich-text.md). Inline elements and editable rich text remain.
 4. **Native host (initial slice implemented):** lifecycle over astrelis-winit,
    default fonts, close/exit hooks, button input and custom-loop embedding. Theme
    inheritance and live application/window theme switching are implemented. Lazy

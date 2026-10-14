@@ -53,7 +53,7 @@ fn main() -> Result<(), ApplicationError> {
 | State | Shared `Entity<T>` state, weak listeners, dependency tracking and explicit flush boundaries |
 | Composition | Element builders, keyed reconciliation, components and per-window placements |
 | Layout | Flex rows and columns, stacks, absolute overlays, scroll areas, split panes and virtual lists |
-| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, tabs, menus, popovers, modals and docking |
+| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, rich text with links, tabs, menus, popovers, modals and docking |
 | Input | Pointer and keyboard routing, capture, focus scopes, Tab traversal and typed commands with shortcuts |
 | Styling | Light, dark and high-contrast themes, compact density, inherited text styles and state paints |
 | Animation | Implicit state and theme transitions, overlay enter/exit, springs and animated values, reduce motion |
