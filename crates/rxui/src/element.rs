@@ -1013,17 +1013,20 @@ impl Element {
     /// focus but stays out of Tab traversal unless `.tab_stop(true)` follows this
     /// call. Its selection collapses when focus moves elsewhere, and hovering shows
     /// the text cursor. Labels otherwise keep their alignment and wrapping, show no
-    /// caret and accept no edits.
+    /// caret and accept no edits. Rich text with [links](crate::link) keeps its links
+    /// in Tab traversal and shows the pointer cursor over them.
     pub fn selectable(mut self, value: bool) -> Self {
         assert!(
             matches!(self.kind, ElementKind::Label(_) | ElementKind::RichText(_)),
             "selectable requires a label"
         );
+        let links = matches!(&self.kind, ElementKind::RichText(rich) if rich.has_links());
         let input = self.input.get_or_insert_with(Default::default);
         input.selectable = value;
-        input.focusable = Some(value);
+        // Links make the element focusable on their own.
+        input.focusable = (value || !links).then_some(value);
         input.cursor = value.then_some(crate::Cursor::Text);
-        if value {
+        if value && !links {
             self = self.tab_stop(false);
         }
         self
@@ -1302,6 +1305,9 @@ pub fn label(text: impl Into<String>) -> Element {
 /// and theme-bound span colors follow theme switches. It measures, wraps, aligns,
 /// selects (with `.selectable(true)`) and publishes its plain text exactly like
 /// [`label`]; assistive technology receives the text without attributes.
+///
+/// Spans made with [`crate::link`] or [`crate::TextSpan::link`] are links: Tab
+/// stops activated by click, Enter or assistive Click, published as Link nodes.
 ///
 /// ```
 /// use rxui::prelude::*;

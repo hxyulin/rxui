@@ -35,6 +35,11 @@ impl<E> fmt::Debug for Listener<E> {
     }
 }
 impl<E> Listener<E> {
+    /// Whether both listeners share one callback, as clones of one binding do.
+    #[cfg(feature = "layout")]
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.callback, &other.callback)
+    }
     #[cfg(feature = "layout")]
     pub(crate) fn from_callback(
         callback: impl Fn(&E, &mut AppContext<'_>) -> Result<Dispatch, AccessError> + 'static,

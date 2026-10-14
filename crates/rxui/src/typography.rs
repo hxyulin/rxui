@@ -155,6 +155,7 @@ impl Overrides {
 
 /// One styled run of a [`crate::rich_text`] paragraph. Unset attributes inherit the
 /// element's resolved text style and color; theme colors follow theme switches.
+/// A span with [`TextSpan::link`] is also an activatable link; see [`link`].
 ///
 /// ```
 /// use rxui::prelude::*;
@@ -165,10 +166,17 @@ impl Overrides {
 ///     span("~/notes").monospace().color(ThemeColor::Accent),
 /// ]);
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TextSpan {
     pub(crate) text: String,
     pub(crate) style: SpanStyle,
+    pub(crate) link: Option<Box<LinkTarget>>,
+}
+/// Link spans are equal when they share one listener and the same metadata.
+impl PartialEq for TextSpan {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text && self.style == other.style && self.link == other.link
+    }
 }
 /// Attribute overrides of one span; see [`TextSpan`].
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -178,15 +186,72 @@ pub(crate) struct SpanStyle {
     pub style: Option<FontStyle>,
     pub font_size: Option<f32>,
     pub color: Option<crate::StyleColor>,
-    pub underline: bool,
+    /// Explicit underline; unset means underlined only for links.
+    pub underline: Option<bool>,
     pub strikethrough: bool,
+    /// Link spans default to the accent color and an underline.
+    pub link: bool,
+}
+/// Activation target of a link span: its listener and published metadata.
+#[derive(Clone, Debug)]
+pub(crate) struct LinkTarget {
+    pub listener: crate::Listener<LinkEvent>,
+    pub url: Option<String>,
+    pub description: Option<String>,
+}
+impl PartialEq for LinkTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.listener.same(&other.listener)
+            && self.url == other.url
+            && self.description == other.description
+    }
+}
+/// Activation of a link span in a [`crate::rich_text`] element, delivered by a
+/// primary click, Enter on the focused link, or an assistive Click action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkEvent {
+    /// Zero-based position of the link among the element's link spans, in text
+    /// order, so one listener can serve generated links.
+    pub index: usize,
 }
 /// A span of text for [`crate::rich_text`], inheriting every attribute until set.
 pub fn span(text: impl Into<String>) -> TextSpan {
     TextSpan {
         text: text.into(),
         style: SpanStyle::default(),
+        link: None,
     }
+}
+/// A link span for [`crate::rich_text`], the same as `span(text).link(listener)`.
+/// It defaults to the theme's accent color and an underline, both overridable like
+/// any span attribute.
+///
+/// Each link is a Tab stop in text order. A primary click, Enter on the focused
+/// link or an assistive Click action dispatches its listener. Hovering a link
+/// shows the pointer cursor, and assistive technology sees a Link node named by
+/// its text. The element stays one text leaf: only elements with links pay for
+/// link hit testing and semantics.
+///
+/// ```
+/// use rxui::prelude::*;
+/// struct Hover { opened: Option<usize> }
+/// impl View for Hover {
+///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+///         let open = cx.listener(|this, event: &LinkEvent, _| this.opened = Some(event.index));
+///         rich_text([
+///             span("expected "),
+///             span("Vec<u8>").monospace(),
+///             span(", see "),
+///             link("Vec", open.clone())
+///                 .link_url("https://doc.rust-lang.org/std/vec/struct.Vec.html"),
+///             span(" and "),
+///             span("u8").monospace().link(open),
+///         ])
+///     }
+/// }
+/// ```
+pub fn link(text: impl Into<String>, listener: crate::Listener<LinkEvent>) -> TextSpan {
+    span(text).link(listener)
 }
 impl TextSpan {
     /// Preferred family, such as `FontFamily::Monospace` for inline code.
@@ -227,13 +292,60 @@ impl TextSpan {
         self
     }
     /// Draws a single underline in the span's color.
-    pub fn underline(mut self) -> Self {
-        self.style.underline = true;
+    pub fn underline(self) -> Self {
+        self.underlined(true)
+    }
+    /// Sets or clears the underline. Links are underlined unless this clears it.
+    pub fn underlined(mut self, value: bool) -> Self {
+        self.style.underline = Some(value);
         self
     }
     /// Draws a line through the text in the span's color.
     pub fn strikethrough(mut self) -> Self {
         self.style.strikethrough = true;
+        self
+    }
+    /// Makes this span a link that dispatches `listener` with its [`LinkEvent`];
+    /// see [`link`]. Unless set, the span takes the theme's accent color and an
+    /// underline.
+    pub fn link(mut self, listener: crate::Listener<LinkEvent>) -> Self {
+        self.style.link = true;
+        match &mut self.link {
+            Some(target) => target.listener = listener,
+            None => {
+                self.link = Some(Box::new(LinkTarget {
+                    listener,
+                    url: None,
+                    description: None,
+                }))
+            }
+        }
+        self
+    }
+    /// Destination published to assistive technology as the link's URL. RXUI never
+    /// opens it; the link listener decides what activation does.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless [`Self::link`] was called first.
+    pub fn link_url(mut self, url: impl Into<String>) -> Self {
+        self.link
+            .as_mut()
+            .expect("link_url requires a link span")
+            .url = Some(url.into());
+        self
+    }
+    /// Additional help published to assistive technology, separate from the
+    /// link's name (its text), such as "Opens the definition of Vec".
+    ///
+    /// # Panics
+    ///
+    /// Panics unless [`Self::link`] was called first.
+    pub fn link_description(mut self, description: impl Into<String>) -> Self {
+        self.link
+            .as_mut()
+            .expect("link_description requires a link span")
+            .description = Some(description.into());
         self
     }
 }
@@ -255,31 +367,56 @@ impl SpanStyle {
             && !matches!(&self.family, Some(FontFamily::Named(name)) if name.is_empty())
     }
     pub fn resolve(&self, range: std::ops::Range<usize>, theme: &crate::Theme) -> ResolvedSpan {
+        // Links without their own color take the accent.
+        let color = self.color.or(self
+            .link
+            .then_some(crate::StyleColor::Theme(crate::ThemeColor::Accent)));
         ResolvedSpan {
             range,
             family: self.family.clone(),
             weight: self.weight,
             style: self.style,
             font_size: self.font_size,
-            color: self.color.map(|c| c.resolve(theme)),
-            underline: self.underline,
+            color: color.map(|c| c.resolve(theme)),
+            underline: self.underline.unwrap_or(self.link),
             strikethrough: self.strikethrough,
         }
     }
 }
-/// Rich text content: the concatenated text and each styled span's byte range.
-#[derive(Clone, Debug, PartialEq)]
+/// One link span of a rich text element.
+#[derive(Clone, Debug)]
+pub(crate) struct Link {
+    pub target: LinkTarget,
+    /// Whether the span uses the default accent color, so hover and press can
+    /// recolor it with the accent's interaction states.
+    pub accent: bool,
+}
+/// Rich text content: the concatenated text, each styled span's byte range, and
+/// the link spans in text order.
+#[derive(Clone, Debug)]
 pub(crate) struct RichText {
     pub text: String,
     pub spans: Vec<(std::ops::Range<usize>, SpanStyle)>,
+    /// Byte ranges of link spans, indexed like [`LinkEvent::index`].
+    pub link_ranges: Vec<std::ops::Range<usize>>,
+    pub links: Vec<Link>,
 }
 impl RichText {
     pub fn new(spans: impl IntoIterator<Item = TextSpan>) -> Self {
         let mut text = String::new();
         let mut styled = Vec::new();
+        let mut link_ranges = Vec::new();
+        let mut links = Vec::new();
         for span in spans {
             let start = text.len();
             text.push_str(&span.text);
+            if let Some(target) = span.link {
+                link_ranges.push(start..text.len());
+                links.push(Link {
+                    target: *target,
+                    accent: span.style.color.is_none(),
+                });
+            }
             if span.style != SpanStyle::default() && !span.text.is_empty() {
                 styled.push((start..text.len(), span.style));
             }
@@ -287,7 +424,13 @@ impl RichText {
         Self {
             text,
             spans: styled,
+            link_ranges,
+            links,
         }
+    }
+    /// Whether any link can take focus or a click; empty links cannot.
+    pub fn has_links(&self) -> bool {
+        self.link_ranges.iter().any(|r| !r.is_empty())
     }
 }
 /// A styled byte range with theme colors resolved, as passed to text measurement.

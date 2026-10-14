@@ -275,6 +275,19 @@ pub trait TextMeasure {
     ) -> Result<Option<TextPosition>, UiError> {
         Ok(None)
     }
+    /// Optional shaped selection rectangles covering a byte range, in local text
+    /// units: one per visual line fragment, as a selection highlight would draw.
+    /// RXUI uses them for rich text link hit testing, focus reveal and assistive
+    /// bounds. None means links have no geometry: keyboard and assistive focus and
+    /// activation still work, pointer input does not reach them.
+    fn text_range_rects(
+        &mut self,
+        _id: ElementId,
+        _request: TextRequest<'_>,
+        _range: std::ops::Range<usize>,
+    ) -> Result<Option<Vec<Bounds>>, UiError> {
+        Ok(None)
+    }
     /// Changes when fonts or other external measurement inputs change.
     /// A new generation invalidates all text leaves; default zero means stable inputs.
     fn generation(&self) -> u64 {
@@ -381,6 +394,8 @@ pub struct ElementInfo<'a> {
     pub focusable: bool,
     /// Numeric control geometry, when this element is a scrollbar/divider.
     pub range: Option<crate::RangeInfo>,
+    /// Link spans and their hover, press and focus state, for rich text with links.
+    pub links: Option<LinkInfo<'a>>,
 }
 /// Cumulative preparation counters, excluding host text/GPU work inside callbacks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -399,6 +414,9 @@ pub struct UiStats {
     pub measurements: u64,
     /// Taffy layout computations requested.
     pub layout_passes: u64,
+    /// Rich text elements whose link rectangles were requested from the measurer,
+    /// after their text, spans, width or fonts changed.
+    pub link_measurements: u64,
 }
 /// Logical mouse input. Legacy short variants represent an unmodified primary mouse.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -715,6 +733,7 @@ pub struct Ui<T: View> {
     keyboard_modality: bool,
     focus_ring: crate::FocusRingPolicy,
     focus_state: Option<Box<focus::State>>,
+    links: Option<Box<link_dispatch::State>>,
     dock_drag: Option<Box<dock_dispatch::Drag>>,
     overlays: Option<Box<overlay_dispatch::State>>,
     stats: UiStats,
@@ -766,6 +785,7 @@ impl<T: View> Ui<T> {
             keyboard_modality: true,
             focus_ring: crate::FocusRingPolicy::default(),
             focus_state: None,
+            links: None,
             dock_drag: None,
             overlays: None,
             stats: UiStats::default(),
@@ -1053,6 +1073,7 @@ impl<T: View> Ui<T> {
         for index in 0..self.editor_nodes.len() {
             self.update_text_scroll(self.editor_nodes[index], measurer)?;
         }
+        self.refresh_links(measurer)?;
         self.geometry_ready = true;
         self.needs_evaluation = false;
         Ok(())
@@ -1493,6 +1514,7 @@ impl<T: View> Ui<T> {
             self.root = Some(id);
         }
         self.register_focus_node(id);
+        self.register_link_node(id);
         self.register_overlay_node(id);
         if self.nodes[&id].mounted.is_some() {
             self.refresh_component(runtime, id)?;
@@ -2206,7 +2228,9 @@ impl<T: View> Ui<T> {
                         | ElementKind::Scrollbar(_)
                         | ElementKind::Splitter(_)
                 ) || n.element.pointer_events == crate::PointerEvents::Block
-                    || n.element.input.as_ref().is_some_and(|p| p.pointer_target()))
+                    || n.element.input.as_ref().is_some_and(|p| p.pointer_target())
+                    // Rich text is a target only over its links.
+                    || self.link_at(*id, point).is_some())
                 && self.pointer_allowed(*id)
         })
     }
@@ -2223,13 +2247,14 @@ impl<T: View> Ui<T> {
         if self.range_unavailable(id) {
             return false;
         }
-        let control = matches!(
-            node.element.kind,
+        let control = match &node.element.kind {
             ElementKind::Button { .. }
-                | ElementKind::TextInput { .. }
-                | ElementKind::Scrollbar(_)
-                | ElementKind::Splitter(_)
-        );
+            | ElementKind::TextInput { .. }
+            | ElementKind::Scrollbar(_)
+            | ElementKind::Splitter(_) => true,
+            ElementKind::RichText(rich) => rich.has_links(),
+            _ => false,
+        };
         if !node.visible
             || node.inert
             || matches!(
@@ -2362,6 +2387,7 @@ impl<T: View> Ui<T> {
             focus_visible: self.focus_visible(id),
             focusable: self.enabled(id),
             range: self.range_info(id),
+            links: self.link_info(id),
         })
     }
     /// Target paint of `node` for the given hovered, pressed and captured elements,
@@ -2577,7 +2603,9 @@ impl<T: View> Ui<T> {
         self.focused == Some(id)
             && (self.focus_ring == crate::FocusRingPolicy::Always
                 || self.keyboard_modality
-                || self.nodes.get(&id).is_some_and(|n| n.editor.is_some()))
+                // A focused link follows the modality, even in selectable text.
+                || (self.focused_link().is_none()
+                    && self.nodes.get(&id).is_some_and(|n| n.editor.is_some())))
     }
     /// Records the input modality; returns whether a visible ring changed.
     pub(crate) fn set_keyboard_modality(&mut self, keyboard: bool) -> bool {
@@ -2631,6 +2659,7 @@ impl<T: View> Ui<T> {
             }
             self.focused = next;
             self.validate_client_composition();
+            self.reset_link_focus();
             self.remember_focus(next);
             self.caret_visible = true;
         }
@@ -2781,6 +2810,7 @@ impl<T: View> Ui<T> {
             self.hovered = None;
             self.prune_hover(true);
             self.pressed = None;
+            self.clear_link_pointer(true);
             if let Some(id) = self.focused {
                 if let Some(editor) = self.nodes.get_mut(&id).and_then(|n| n.editor.as_mut()) {
                     editor.break_group();
@@ -3650,7 +3680,9 @@ impl<T: View> Ui<T> {
                 ..
             } | ElementKind::TextInput { change: None, .. }
         );
-        let focusable = self.enabled(id);
+        // Rich text that is focusable only through its links publishes focus on
+        // the link nodes rather than the label.
+        let focusable = self.enabled(id) && !self.link_only_focus(id);
         let action = properties.is_some_and(|p| p.action.is_some());
         let activatable = !disabled
             && (action
@@ -3721,6 +3753,7 @@ impl<T: View> Ui<T> {
                 _ => None,
             },
             range: self.range_info(id),
+            links: self.semantic_link_count(id),
         })
     }
     /// Logical focus in the semantic tree, retained across native activation changes.
@@ -3758,6 +3791,7 @@ impl<T: View> Ui<T> {
             layouts: self.stats.layout_passes,
             geometry: self.geometry_revision,
             focus: self.semantic_focus(),
+            link_focus: self.semantic_focus().and(self.focused_link()),
             text_revision: focused.map(|n| n.text_revision),
             selection: editor.map(|e| e.selection),
             composing: editor.is_some_and(|e| e.composition.is_some()),
@@ -3927,6 +3961,12 @@ impl<T: View> Ui<T> {
                 self.range_value(runtime, id, value, crate::ResizePhase::Accessibility)
             }
             crate::SemanticAction::ScrollIntoView(_) => Ok(self.geometry_ready && self.reveal(id)),
+            crate::SemanticAction::FocusLink { link, .. } => {
+                self.semantic_link_action(runtime, id, link, false)
+            }
+            crate::SemanticAction::ActivateLink { link, .. } => {
+                self.semantic_link_action(runtime, id, link, true)
+            }
         }
     }
     fn activate(&self, runtime: &mut Runtime, id: ElementId) -> Result<bool, UiError> {
@@ -3950,6 +3990,9 @@ mod animation_dispatch;
 mod command_dispatch;
 #[path = "input_dispatch.rs"]
 mod input_dispatch;
+#[path = "link_dispatch.rs"]
+mod link_dispatch;
+pub use link_dispatch::LinkInfo;
 #[path = "overlay_dispatch.rs"]
 mod overlay_dispatch;
 #[path = "text_client_dispatch.rs"]

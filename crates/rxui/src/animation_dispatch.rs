@@ -393,6 +393,7 @@ impl<T: View> Ui<T> {
             focus_visible: false,
             focusable: false,
             range: None,
+            links: None,
         })
     }
     /// Starts retaining the visual of overlay root `id`, which is being removed.

@@ -198,6 +198,35 @@ pub struct SemanticNode<'a> {
     pub text_scroll_x: f32,
     /// Current adjustable control value/range/orientation.
     pub range: Option<crate::RangeInfo>,
+    /// Number of Link children of rich text; see [`crate::Ui::semantic_links`].
+    pub links: usize,
+}
+/// One link span of a rich text element, published to assistive technology as a
+/// Link child of the element's Label node. Links are not elements: address them
+/// with the element and index through [`SemanticAction::FocusLink`] and
+/// [`SemanticAction::ActivateLink`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticLink<'a> {
+    /// Rich text element containing the link.
+    pub element: ElementId,
+    /// Link index, as in [`crate::LinkEvent::index`].
+    pub index: usize,
+    /// Accessible name: the link's text.
+    pub name: &'a str,
+    /// Byte range of the link in the element's text.
+    pub range: std::ops::Range<usize>,
+    /// Application-supplied destination, see [`crate::TextSpan::link_url`].
+    pub url: Option<&'a str>,
+    /// Application-supplied help, see [`crate::TextSpan::link_description`].
+    pub description: Option<&'a str>,
+    /// Logical window bounds covering the link's text, or the element's content
+    /// box when the measurer supplies no text geometry.
+    pub bounds: Bounds,
+    /// Whether this link holds focus in the semantic tree.
+    pub focused: bool,
+    /// Whether the element accepts focus and activation, for example outside an
+    /// inert subtree.
+    pub available: bool,
 }
 /// Backend-independent assistive action. Unsupported, disabled, hidden, removed,
 /// foreign-placement and stale text targets are ignored with Ok(false).
@@ -241,6 +270,20 @@ pub enum SemanticAction {
         /// Desired logical pixel value.
         value: f32,
     },
+    /// Focus one link of a rich text element and reveal it.
+    FocusLink {
+        /// Rich text element.
+        target: ElementId,
+        /// Link index within the element.
+        link: usize,
+    },
+    /// Dispatch one link's listener, as a click or Enter would.
+    ActivateLink {
+        /// Rich text element.
+        target: ElementId,
+        /// Link index within the element.
+        link: usize,
+    },
 }
 impl SemanticAction {
     pub(crate) fn target(&self) -> ElementId {
@@ -249,7 +292,9 @@ impl SemanticAction {
             Self::SetValue { target, .. }
             | Self::SetSelection { target, .. }
             | Self::Scroll { target, .. }
-            | Self::SetNumericValue { target, .. } => target,
+            | Self::SetNumericValue { target, .. }
+            | Self::FocusLink { target, .. }
+            | Self::ActivateLink { target, .. } => target,
         }
     }
 }
@@ -262,6 +307,7 @@ pub(crate) struct Key {
     pub layouts: u64,
     pub geometry: u64,
     pub focus: Option<ElementId>,
+    pub link_focus: Option<usize>,
     pub text_revision: Option<u64>,
     pub selection: Option<TextSelection>,
     pub composing: bool,

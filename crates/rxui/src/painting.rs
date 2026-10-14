@@ -1205,6 +1205,52 @@ impl UiPainter {
                         )?;
                     }
                 }
+                // The pressed or hovered link redraws its glyphs and decorations in
+                // the accent interaction color, clipped to its shaped rectangles:
+                // paint only, without reshaping, like the selection foreground.
+                if let Some(links) = &element.links
+                    && let Some(color) = links.active_color
+                    && let Some(range) = links.pressed.or(links.hovered).map(|i| &links.ranges[i])
+                    && let Some(resource) = self.texts.get(&element.id)
+                {
+                    let origin = [element.content_bounds.x, element.content_bounds.y];
+                    for (rect, part) in resource.selection_rects(range.clone())? {
+                        let link_bounds = Bounds {
+                            x: origin[0] + rect.x,
+                            y: origin[1] + rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        };
+                        let link_clip = physical_clip(
+                            link_bounds
+                                .intersection(element.clip_bounds)
+                                .intersection(element.content_bounds),
+                            scale,
+                            [viewport[0] + shift[0], viewport[1] + shift[1]],
+                            original_scissor,
+                        );
+                        if link_clip[2] > 0
+                            && link_clip[3] > 0
+                            && let Some((prepared, offset)) = resource.part(part)
+                        {
+                            paint.pass().set_scissor_rect(
+                                link_clip[0],
+                                link_clip[1],
+                                link_clip[2],
+                                link_clip[3],
+                            )?;
+                            paint.draw_text(
+                                prepared,
+                                TextDraw::new([origin[0], origin[1] + offset])
+                                    .color(color)
+                                    .span_colors(false),
+                            )?;
+                        }
+                    }
+                    paint
+                        .pass()
+                        .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
+                }
                 if let Some(editing) = &element.editing {
                     let resource = &self.texts[&element.id];
                     let origin = [
@@ -1310,7 +1356,34 @@ impl UiPainter {
                         .pass()
                         .set_scissor_rect(clip[0], clip[1], clip[2], clip[3])?;
                 }
+                let focused_link = element
+                    .links
+                    .and_then(|links| Some(links.ranges[links.focused?].clone()));
                 if element.focus_visible
+                    && appearance.focus_width > 0.
+                    && let Some(range) = focused_link
+                {
+                    // A focused link's ring surrounds each line fragment of its text,
+                    // outset by the ring width so it does not cover the glyphs.
+                    if let Some(resource) = self.texts.get(&element.id) {
+                        let width = appearance.focus_width;
+                        for (rect, _) in resource.selection_rects(range)? {
+                            paint.draw_shape(
+                                ShapeDraw::rounded_rect(
+                                    Rect::new(
+                                        element.content_bounds.x + rect.x - width,
+                                        element.content_bounds.y + rect.y - width,
+                                        rect.width + 2. * width,
+                                        rect.height + 2. * width,
+                                    ),
+                                    2.,
+                                    appearance.focus_color,
+                                )
+                                .stroke(Stroke::new(width).inside()),
+                            )?;
+                        }
+                    }
+                } else if element.focus_visible
                     && appearance.focus_width > 0.
                     && bounds.width > 0.
                     && bounds.height > 0.
@@ -1471,6 +1544,16 @@ impl Query<'_> {
             Self::Chunked(chunks) => chunks.neighbor(position, right),
         }
     }
+    fn selection_rects(&self, range: std::ops::Range<usize>) -> Result<Vec<Rect>, UiError> {
+        Ok(match self {
+            Self::Single(layout) => layout.selection_rects(range)?.collect(),
+            Self::Chunked(chunks) => chunks
+                .selection_rects(range)?
+                .into_iter()
+                .map(|(r, _)| r)
+                .collect(),
+        })
+    }
 }
 impl UiPainter {
     fn interaction_layout(
@@ -1540,6 +1623,25 @@ impl TextMeasure for UiPainter {
             .interaction_layout(id, request)?
             .neighbor(ast_position(position), right)
             .map(ui_position))
+    }
+    fn text_range_rects(
+        &mut self,
+        id: ElementId,
+        request: TextRequest<'_>,
+        range: std::ops::Range<usize>,
+    ) -> Result<Option<Vec<crate::Bounds>>, UiError> {
+        Ok(Some(
+            self.interaction_layout(id, request)?
+                .selection_rects(range)?
+                .into_iter()
+                .map(|r| crate::Bounds {
+                    x: r.x,
+                    y: r.y,
+                    width: r.width,
+                    height: r.height,
+                })
+                .collect(),
+        ))
     }
     fn measure(&mut self, id: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError> {
         self.texts.entry(id).or_default().measure_text(

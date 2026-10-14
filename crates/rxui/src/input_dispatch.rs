@@ -410,6 +410,9 @@ impl<T: View> Ui<T> {
         if let Some(cursor) = self.dock_cursor() {
             return cursor;
         }
+        if self.link_cursor() {
+            return Cursor::Pointer;
+        }
         let mut current = self.captured_pointer().or(self.hovered);
         while let Some(id) = current {
             let Some(n) = self.nodes.get(&id) else {
@@ -552,14 +555,20 @@ impl<T: View> Ui<T> {
             self.captured_pointer(),
             self.cursor(),
         );
+        let links_before = self.link_snapshot();
         if kind == 3 {
             self.cancel_capture(PointerCancelReason::Host);
             self.input.buttons = PointerButtons::default();
             self.hovered = None;
             self.pressed = None;
+            self.clear_link_pointer(true);
             let changed =
                 self.update_hover(runtime, None)? | self.flush_input_cancellations(runtime)?;
-            return Ok(changed || before.0.is_some() || before.1.is_some() || before.3.is_some());
+            return Ok(changed
+                || before.0.is_some()
+                || before.1.is_some()
+                || before.3.is_some()
+                || links_before != self.link_snapshot());
         }
         if !self.geometry_ready || !self.active {
             return Ok(false);
@@ -570,8 +579,12 @@ impl<T: View> Ui<T> {
                 drag.preview.take().is_some()
             });
             self.hovered = None;
+            self.leave_links();
             let left = self.update_hover(runtime, None)?;
-            return Ok(cleared || left || before.0.is_some());
+            return Ok(cleared
+                || left
+                || before.0.is_some()
+                || links_before != self.link_snapshot());
         }
         self.input.position = position.unwrap();
         self.input.modifiers = modifiers;
@@ -581,6 +594,7 @@ impl<T: View> Ui<T> {
         }
         let hit = self.pointer_target(self.input.position);
         self.hovered = hit.filter(|id| self.input_available(*id));
+        self.update_link_hover(hit, self.input.position);
         let hover_changed = self.update_hover(runtime, hit)?;
         let target = self
             .captured_pointer()
@@ -626,13 +640,16 @@ impl<T: View> Ui<T> {
         }
         if !result.default_prevented {
             if kind == 0 && button == Some(PointerButton::Primary) {
+                let link = self.press_link(target, self.input.position);
                 self.change_focus(target.filter(|id| self.enabled(*id)));
+                self.focus_pressed_link(target, link);
                 self.pressed = target.filter(|id| {
                     self.input_available(*id)
                         && (matches!(
                             self.nodes[id].element.kind,
                             ElementKind::Button { .. } | ElementKind::TextInput { .. }
-                        ) || self.nodes[id].editor.is_some())
+                        ) || self.nodes[id].editor.is_some()
+                            || link.is_some())
                 });
             } else if kind == 2 && button == Some(PointerButton::Primary) {
                 let pressed = self.pressed.take();
@@ -642,9 +659,11 @@ impl<T: View> Ui<T> {
                 {
                     result.changed |= self.activate(runtime, id)?;
                 }
+                result.changed |= self.release_link(runtime)?;
             }
         } else if kind == 2 && button == Some(PointerButton::Primary) {
             self.pressed = None;
+            self.clear_link_pointer(false);
         }
         if kind == 2 && self.input.capture.is_some_and(|c| button == Some(c.button)) {
             self.input.capture = None;
@@ -652,6 +671,7 @@ impl<T: View> Ui<T> {
         result.changed |= self.flush_input_cancellations(runtime)?;
         Ok(result.changed
             || ring_changed
+            || links_before != self.link_snapshot()
             || before
                 != (
                     self.hovered,
@@ -745,6 +765,13 @@ impl<T: View> Ui<T> {
             if event.pressed
                 && !result.default_prevented
                 && let Some(changed) = self.range_key(runtime, target, &event.key)?
+            {
+                result.changed |= changed;
+                result.default_prevented = true;
+            }
+            if event.pressed
+                && !result.default_prevented
+                && let Some(changed) = self.link_key(runtime, &event)?
             {
                 result.changed |= changed;
                 result.default_prevented = true;

@@ -257,7 +257,9 @@ pub use runtime::{Mount, Runtime, Subscription};
 #[cfg(feature = "layout")]
 pub use scrolling::{ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
-pub use semantics::{Checked, NumericValue, SemanticAction, SemanticNode, SemanticRole};
+pub use semantics::{
+    Checked, NumericValue, SemanticAction, SemanticLink, SemanticNode, SemanticRole,
+};
 #[cfg(feature = "layout")]
 pub use standard::{
     Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
@@ -282,7 +284,7 @@ pub use theme::{
     ThemeColors, ThemeMetrics, rgb8, rgba8,
 };
 #[cfg(feature = "layout")]
-pub use typography::{FontFace, ResolvedSpan, TextSpan, span};
+pub use typography::{FontFace, LinkEvent, ResolvedSpan, TextSpan, link, span};
 #[cfg(feature = "layout")]
 pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
 #[cfg(feature = "layout")]
@@ -291,7 +293,7 @@ pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
 pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
 #[cfg(feature = "layout")]
 pub use ui::{
-    Bounds, ElementId, ElementInfo, ElementType, PointerEvent, RoundedClip, TextMeasure,
+    Bounds, ElementId, ElementInfo, ElementType, LinkInfo, PointerEvent, RoundedClip, TextMeasure,
     TextRequest, TextWidth, Ui, UiError, UiStats,
 };
 #[cfg(feature = "layout")]
@@ -358,7 +360,9 @@ pub mod prelude {
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
         TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
     };
-    pub use crate::{FontFace, SubmitShortcut, TextSpan, rich_text, span, text_area};
+    pub use crate::{
+        FontFace, LinkEvent, SubmitShortcut, TextSpan, link, rich_text, span, text_area,
+    };
     pub use crate::{ImeCancelReason, ImeEvent, ImeInput, TextInsertInput, TextInsertSource};
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};

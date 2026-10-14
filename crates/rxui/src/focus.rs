@@ -321,6 +321,10 @@ impl<T: View> Ui<T> {
         if !self.is_prepared() {
             return false;
         }
+        // Each link of focused rich text is a stop before traversal leaves it.
+        if let Some(changed) = self.step_link_focus(reverse) {
+            return changed;
+        }
         let mut current = self.focused;
         let mut cycle = None;
         while let Some(id) = current {
@@ -369,6 +373,11 @@ impl<T: View> Ui<T> {
         }
         let changed = self.focused != next;
         self.change_focus(next);
+        // Entering rich text focuses and reveals its first link, or its last
+        // moving backward.
+        if next.is_some_and(|id| self.rich_links(id).is_some()) {
+            return self.enter_links(reverse) | changed;
+        }
         changed | next.is_some_and(|id| self.reveal(id))
     }
     pub(super) fn publish_focus(&mut self) -> Result<(), UiError> {

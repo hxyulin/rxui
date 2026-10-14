@@ -103,11 +103,17 @@ fn encode_run(value: &str, start: usize, end: usize, id: NodeId) -> Option<Run> 
 /// Scrolling moves content containers without republishing every descendant's position.
 /// Text runs expose grapheme selection units, one run per paragraph; character
 /// geometry, soft-wrapped visual lines and rich text attributes are not yet exposed.
+/// Rich text links are Link children of their label, named by their text, with
+/// Focus and Click actions decoded to [`SemanticAction::FocusLink`] and
+/// [`SemanticAction::ActivateLink`].
 pub struct AccessKitTree {
     placement: Option<u64>,
     next_id: u64,
     ids: IdMap<ElementId, NodeId>,
     reverse: IdMap<NodeId, ElementId>,
+    /// Link node identities of rich text elements, by link index.
+    link_ids: IdMap<ElementId, Vec<NodeId>>,
+    link_reverse: IdMap<NodeId, (ElementId, usize)>,
     runs: IdMap<ElementId, TextRun>,
     value_only_revisions: IdMap<ElementId, u64>,
     nodes: IdMap<NodeId, Arc<Node>>,
@@ -130,6 +136,8 @@ impl AccessKitTree {
             next_id: 1,
             ids: IdMap::default(),
             reverse: IdMap::default(),
+            link_ids: IdMap::default(),
+            link_reverse: IdMap::default(),
             runs: IdMap::default(),
             value_only_revisions: IdMap::default(),
             nodes: IdMap::default(),
@@ -157,6 +165,7 @@ impl AccessKitTree {
         self.runs.clear();
         self.value_only_revisions.clear();
         self.reverse.clear();
+        self.link_reverse.clear();
     }
     /// Splits a value into paragraph runs, each ending with its line break; a
     /// trailing break leaves an empty final run. Paragraphs unchanged since `old`
@@ -244,6 +253,7 @@ impl AccessKitTree {
         }
         let full = self.key.is_none();
         self.ids.retain(|id, _| ui.contains_element(*id));
+        self.link_ids.retain(|id, _| ui.contains_element(*id));
         self.runs.retain(|id, _| ui.contains_element(*id));
         self.value_only_revisions
             .retain(|id, _| ui.contains_element(*id));
@@ -257,6 +267,8 @@ impl AccessKitTree {
         }
         let mut next = IdMap::with_capacity_and_hasher(semantics.len() + 1, Default::default());
         let mut reverse = IdMap::with_capacity_and_hasher(semantics.len(), Default::default());
+        let mut link_reverse = IdMap::default();
+        let mut focused_link = None;
         let root_id = NodeId(0);
         let mut root = Node::new(Role::Window);
         root.set_label(title);
@@ -491,12 +503,53 @@ impl AccessKitTree {
                     node.set_value(value);
                 }
             }
+            if semantic.links > 0 {
+                // Link children follow any text runs; their bounds are relative to
+                // this node, whose transform positions them.
+                let mut children = node.children().to_vec();
+                for link in ui.semantic_links(semantic.id) {
+                    let known = self.link_ids.get(&semantic.id).map_or(0, Vec::len);
+                    for _ in known..=link.index {
+                        let id = self.allocate();
+                        self.link_ids.entry(semantic.id).or_default().push(id);
+                    }
+                    let link_id = self.link_ids[&semantic.id][link.index];
+                    link_reverse.insert(link_id, (semantic.id, link.index));
+                    let mut link_node = Node::new(Role::Link);
+                    link_node.set_label(link.name);
+                    link_node.set_bounds(rect(
+                        crate::Bounds {
+                            x: link.bounds.x - semantic.bounds.x,
+                            y: link.bounds.y - semantic.bounds.y,
+                            ..link.bounds
+                        },
+                        scale,
+                    ));
+                    if let Some(url) = link.url {
+                        link_node.set_url(url);
+                    }
+                    if let Some(description) = link.description {
+                        link_node.set_description(description);
+                    }
+                    if link.available {
+                        link_node.add_action(Action::Focus);
+                        link_node.add_action(Action::Click);
+                    }
+                    if link.focused {
+                        focused_link = Some(link_id);
+                    }
+                    insert(&self.nodes, &mut next, link_id, link_node);
+                    children.push(link_id);
+                }
+                node.set_children(children);
+            }
             insert(&self.nodes, &mut next, id, node);
         }
-        let focus = ui
-            .semantic_focus()
-            .filter(|id| visible.contains(id))
-            .map_or(root_id, |id| self.ids[&id]);
+        let focus = focused_link.unwrap_or_else(|| {
+            ui.semantic_focus()
+                .filter(|id| visible.contains(id))
+                .map_or(root_id, |id| self.ids[&id])
+        });
         let mut changed: Vec<_> = next
             .iter()
             .filter(|(id, node)| {
@@ -508,6 +561,7 @@ impl AccessKitTree {
         changed.sort_by_key(|(id, _)| id.0);
         let publish = full || !changed.is_empty() || focus != self.focus;
         self.reverse = reverse;
+        self.link_reverse = link_reverse;
         self.nodes = next;
         self.key = Some(key);
         self.title.clear();
@@ -541,6 +595,17 @@ impl AccessKitTree {
     pub fn action(&self, request: ActionRequest) -> Option<SemanticAction> {
         if request.target_tree != TreeId::ROOT {
             return None;
+        }
+        if let Some(&(target, link)) = self.link_reverse.get(&request.target_node) {
+            let node = self.nodes.get(&request.target_node)?;
+            if !node.supports_action(request.action) {
+                return None;
+            }
+            return match request.action {
+                Action::Focus => Some(SemanticAction::FocusLink { target, link }),
+                Action::Click => Some(SemanticAction::ActivateLink { target, link }),
+                _ => None,
+            };
         }
         let target = *self.reverse.get(&request.target_node)?;
         let node = self.nodes.get(&request.target_node)?;
