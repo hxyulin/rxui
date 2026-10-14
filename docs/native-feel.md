@@ -146,6 +146,13 @@ default to `Classic` on every platform so layouts match everywhere;
 `ScrollbarStyle::platform()` returns Overlay on macOS. Overlay bars stay visible;
 fading them while idle needs the animation work.
 
+**Smooth scrolling.** Scroll containers default to `ScrollBehavior::platform()`:
+mouse-wheel steps and programmatic scrolls ease over 150 ms on macOS and Windows,
+as their system scroll views and browsers do, and jump on Linux, as GTK and Qt
+scroll views do. Trackpad deltas always scroll directly, and reduce motion turns
+the animation off. Unlike scrollbar style, behavior does not change layout, so it
+follows the platform by default. See [animation](animation.md#smooth-scrolling).
+
 **Interface font.** With system font discovery on (the default), the native host
 substitutes the platform interface font for the generic sans-serif family: SF Pro
 on macOS (the hidden `.SF NS` face), Segoe UI Variable or Segoe UI on Windows, and

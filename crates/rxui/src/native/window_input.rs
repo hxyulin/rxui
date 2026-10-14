@@ -253,13 +253,18 @@ impl WindowInput {
                 changed = ui.pointer(runtime, event, painter, extend, count)?;
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let delta = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => [-x * 40., -y * 40.],
-                    MouseScrollDelta::PixelDelta(p) => {
-                        [-(p.x / scale) as f32, -(p.y / scale) as f32]
+                // Wheel steps may animate; trackpad pixel deltas are already smooth.
+                let (delta, source) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        ([-x * 40., -y * 40.], crate::WheelSource::Lines)
                     }
+                    MouseScrollDelta::PixelDelta(p) => (
+                        [-(p.x / scale) as f32, -(p.y / scale) as f32],
+                        crate::WheelSource::Precise,
+                    ),
                 };
-                changed = ui.wheel(runtime, self.cursor_position(scale), delta, modifiers)?;
+                let position = self.cursor_position(scale);
+                changed = ui.wheel(runtime, position, delta, modifiers, source)?;
             }
             WindowEvent::Focused(active) => {
                 if !active {

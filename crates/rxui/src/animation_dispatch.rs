@@ -47,9 +47,9 @@ struct Active {
     _frame: FrameRequest,
 }
 /// Counts this placement in `Runtime::animation_frame_requested` while alive.
-struct FrameRequest(std::rc::Weak<crate::runtime::RuntimeInner>);
+pub(super) struct FrameRequest(std::rc::Weak<crate::runtime::RuntimeInner>);
 impl FrameRequest {
-    fn new(runtime: &std::rc::Weak<crate::runtime::RuntimeInner>) -> Self {
+    pub(super) fn new(runtime: &std::rc::Weak<crate::runtime::RuntimeInner>) -> Self {
         if let Some(runtime) = runtime.upgrade() {
             runtime.animating.set(runtime.animating.get() + 1);
         }
@@ -135,12 +135,17 @@ fn transition(element: &Element) -> Option<Transition> {
     element.states.as_ref().and_then(|s| s.transition)
 }
 impl<T: View> Ui<T> {
-    /// Whether retained motion is in flight: a paint transition, a focus ring fade
-    /// or an overlay entering or exiting. Hosts keep scheduling frames, calling
+    /// Whether retained motion is in flight: a paint transition, a focus ring fade,
+    /// an overlay entering or exiting, or a smooth scroll. Hosts keep scheduling frames, calling
     /// `Runtime::begin_frame` and preparing, while this holds; it becomes false
     /// once everything has settled. `Runtime::animation_frame_requested` includes it.
     pub fn is_animating(&self) -> bool {
-        self.motion.active.is_some()
+        self.motion.active.is_some() || self.scroll_motion.is_some()
+    }
+    /// Whether transitions animate, whether the frame time is fresh, and the frame
+    /// time, as read by the latest `begin_motion`.
+    pub(super) fn motion_clock(&self) -> (bool, bool, Duration) {
+        (self.motion.animates, self.motion.in_frame, self.motion.now)
     }
     /// Reads the runtime clock before preparation captures any paint.
     pub(super) fn begin_motion(&mut self, runtime: &Runtime) {

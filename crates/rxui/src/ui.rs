@@ -752,6 +752,7 @@ pub struct Ui<T: View> {
     root_theme_read: Option<Theme>,
     style_roots: IdSet<ElementId>,
     motion: animation_dispatch::Motion,
+    scroll_motion: Option<Box<scroll_motion::ScrollMotion>>,
 }
 impl<T: View> Ui<T> {
     /// Mounts a root view. Preparing evaluates it for the first time.
@@ -803,6 +804,7 @@ impl<T: View> Ui<T> {
             root_theme_read: None,
             style_roots: IdSet::default(),
             motion: Default::default(),
+            scroll_motion: None,
         })
     }
     /// Root theme for this placement; subtree overrides remain independent.
@@ -943,6 +945,8 @@ impl<T: View> Ui<T> {
         if self.partial_tree {
             self.clean_partial_tree();
         }
+        // Smooth scroll offsets for this frame, before views read scroll metrics.
+        self.advance_scroll_motion()?;
         self.geometry_ready = false;
         let force_evaluation = self.needs_evaluation;
         // Retain retry intent even if a user view or measurer unwinds.
@@ -2462,15 +2466,7 @@ impl<T: View> Ui<T> {
         if !self.geometry_ready {
             return Ok(false);
         }
-        let mut current =
-            self.painting_order().iter().rev().copied().find(|id| {
-                Self::node_contains(&self.nodes[id], point) && self.pointer_allowed(*id)
-            });
-        if let Some(id) = current
-            && let ElementKind::Scrollbar(p) = &self.nodes[&id].element.kind
-        {
-            current = p.handle.element_in(self.tree);
-        }
+        let mut current = self.wheel_target(point);
         let mut changed = false;
         while let Some(id) = current {
             let node = self.nodes.get_mut(&id).unwrap();
@@ -2495,6 +2491,20 @@ impl<T: View> Ui<T> {
                 .filter(|id| self.input_available(*id));
         }
         Ok(changed)
+    }
+    /// The element wheel motion starts from: the topmost pointer target, or the
+    /// viewport bound to a scrollbar under the pointer.
+    fn wheel_target(&self, point: [f32; 2]) -> Option<ElementId> {
+        let current =
+            self.painting_order().iter().rev().copied().find(|id| {
+                Self::node_contains(&self.nodes[id], point) && self.pointer_allowed(*id)
+            });
+        if let Some(id) = current
+            && let ElementKind::Scrollbar(p) = &self.nodes[&id].element.kind
+        {
+            return p.handle.element_in(self.tree);
+        }
+        current
     }
     pub(crate) fn scroll_revision(&self) -> (u64, u64, u64) {
         (
@@ -4000,6 +4010,8 @@ mod text_client_dispatch;
 
 #[path = "range_dispatch.rs"]
 mod range_dispatch;
+#[path = "scroll_motion.rs"]
+mod scroll_motion;
 
 #[path = "dock_dispatch.rs"]
 pub(crate) mod dock_dispatch;

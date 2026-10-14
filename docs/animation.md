@@ -1,9 +1,9 @@
 # Animation
 
 Status: implemented with the default layout feature. Implicit paint transitions,
-overlay enter/exit motion and `cx.animate` need a host that drives the frame clock;
-the native `Application` does. The primitives (`Easing`, `Spring`, `Transition`,
-`Interpolate`, `Animated`) are available in every build.
+overlay enter/exit motion, smooth scrolling and `cx.animate` need a host that
+drives the frame clock; the native `Application` does. The primitives (`Easing`,
+`Spring`, `Transition`, `Interpolate`, `Animated`) are available in every build.
 
 Motion is a function of the host's frame time, never of a clock RXUI reads. The
 same inputs produce the same frames, so headless tests step time explicitly. When
@@ -187,11 +187,59 @@ painters see the fade in the overlay root's `ElementInfo::opacity`, with
 `viewport_overlay` set on both open and exiting roots; the slide is applied only by
 `UiPainter`.
 
+## Smooth scrolling
+
+A scroll container's `ScrollBehavior` selects how it moves for discrete mouse-wheel
+steps and programmatic commands. `Smooth` eases the offset to its new value over
+`ThemeMotion::scroll` (150 ms in every preset) with `Easing::EaseOut`; `Instant`
+jumps. Containers default to `ScrollBehavior::platform()`: Smooth on macOS and
+Windows, whose system scroll views and browsers animate wheel steps, and Instant on
+other platforms, where GTK and Qt scroll views move by whole steps. Set it with
+`.scroll_behavior(...)` on an element with `.scroll_y()` and friends, on
+`scroll_area`, or on a virtual list. A zero `ThemeMotion::scroll` makes every
+container instant.
+
+What animates on a Smooth container:
+
+- `Ui::wheel_with_source` with `WheelSource::Lines`. The native host sends winit's
+  line deltas this way, 40 logical units per line. A step taken while a smooth
+  scroll moves adds to its target, so quick steps accumulate, and motion past the
+  container's end chains to scrolling ancestors as before.
+- `scroll_to`, `scroll_by` (relative to the target in flight), `reveal_row`,
+  `reveal_span` and `reveal_list_row` on a `ScrollHandle` or `ScrollPlacement`.
+
+What always moves directly:
+
+- Precise deltas: `Ui::wheel`, `Ui::scroll`, and `WheelSource::Precise`, which the
+  native host uses for trackpad pixel deltas. They are already smooth, and
+  animating them would add latency.
+- `jump_to`, scrollbar dragging, track clicks and range keys, assistive Scroll
+  actions, focus reveal and caret reveal in text areas and inputs.
+- Scroll anchoring corrections in [variable-height lists](virtual-lists.md).
+
+A direct change to a container ends its smooth scroll and keeps the new offset, so
+typing in a text area mid-scroll reveals the caret and stays there, and a trackpad
+gesture takes over from a wheel animation. An anchoring correction instead moves
+the scroll in flight with the content: its start and target shift by the same
+amount, so it still ends on the content it was heading to.
+
+Each `Ui::prepare` first writes the offsets at the frame time, then evaluates views,
+lays out and publishes scroll metrics. `ScrollHandle::state` reports the offset
+being displayed, so a virtual list mounts the rows of each intermediate offset as
+the motion proceeds. A command applied during the first preparation of a frame
+starts its move at that frame; wheel input between frames starts at the next one,
+as other motion does. Moves end at their target or when the container is removed.
+While a smooth scroll moves, `Ui::is_animating` holds and the hover target follows
+the content under a still pointer; hover listeners update at the next pointer
+motion, as after `Ui::scroll`. Each moving frame refreshes geometry and
+re-evaluates views that read the container's metrics, the same work as a direct
+scroll per frame.
+
 ## Reduce motion
 
 `Runtime::set_reduce_motion(true)` makes all of the above complete immediately:
-transitions, overlay enter/exit and `cx.animate`, including motion in flight at the
-next frame. No frames are requested for them. `Runtime::reduce_motion()`,
+transitions, overlay enter/exit, smooth scrolling and `cx.animate`, including motion
+in flight at the next frame. No frames are requested for them. `Runtime::reduce_motion()`,
 `AppContext::reduce_motion()` and `cx.reduce_motion()` read the preference, and
 `AppContext::set_reduce_motion` lets an application offer its own setting. Views
 that call `cx.request_animation_frame()` directly should check
@@ -223,21 +271,24 @@ velocity, hover/pressed/disabled/focus/theme transitions, retargeting without ju
 settling and stopping frame requests, idle frames without work, reduce motion and
 unclocked hosts, `cx.animate` re-evaluation, and overlay enter/exit, including
 immediate focus restoration, semantic removal, hit testing through a fading modal
-and reopening. An opt-in GPU test reads back an overlay's pixels while it fades in
-and while its visual lingers after closing:
+and reopening. Smooth scrolling tests step frame times through programmatic
+scrolls, accumulating wheel steps, trackpad deltas that stay direct, reduce motion,
+`jump_to`, caret reveal ending a scroll, anchoring during a scroll and virtual list
+rows mounting along the way. An opt-in GPU test reads back an overlay's pixels
+while it fades in and while its visual lingers after closing:
 
 ```sh
 cargo test -p rxui --all-features animation
+cargo test -p rxui --all-features scroll_motion
 cargo test -p rxui --features rendering animation_gpu -- --ignored
 cargo run -p rxui --example animation_window --features native --locked
 ```
 
 ## Limitations and follow-ups
 
-- Smooth scrolling is not implemented. Wheel and programmatic scrolling still jump
-  to the new offset; precision touchpads already deliver fine-grained deltas.
-  Animating offsets would add a geometry pass per frame and needs care with scroll
-  anchoring and `ScrollHandle` reads, so it is left as a follow-up.
+- Smooth scrolling uses a fixed duration whatever the distance, so long reveals
+  move fast. Scrollbar range keys (arrows, PageUp/PageDown, Home/End) and text
+  editing page movement scroll directly; there is no momentum or overscroll bounce.
 - Implicit transitions never change layout; animate sizes and positions explicitly
   with `cx.animate`.
 - The focus ring fades in but disappears immediately when focus moves.

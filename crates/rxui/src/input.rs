@@ -186,9 +186,21 @@ pub struct WheelInput {
     pub position: [f32; 2],
     /// Logical content motion; positive values move toward later content.
     pub delta: [f32; 2],
+    /// Whether `delta` is precise motion or converted wheel steps.
+    pub source: WheelSource,
     /// Source-window modifier state.
     pub modifiers: Modifiers,
     pub(crate) requests: Cell<Requests>,
+}
+/// How a wheel event's delta was produced. Default container scrolling applies
+/// precise motion directly and may animate wheel steps; see `ScrollBehavior`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WheelSource {
+    /// Pixel deltas from a trackpad or other precise device, already smooth.
+    #[default]
+    Precise,
+    /// Discrete mouse-wheel steps converted to logical pixels by the host.
+    Lines,
 }
 impl WheelInput {
     /// Ends the remaining route without suppressing default scrolling.

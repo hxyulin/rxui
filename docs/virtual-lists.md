@@ -44,6 +44,12 @@ to current content geometry. These commands do not create a row before preparati
 content span. Sharing a handle across windows preserves each placement's separate
 viewport and offset. A handle can bind only once within one Ui.
 
+Reveals and mouse-wheel steps follow the list's `.scroll_behavior(...)`. With
+`ScrollBehavior::Smooth` (the default on macOS and Windows) they ease to the new
+offset, and each frame mounts the rows of the offset it displays, so a long reveal
+mounts a viewport of rows per frame rather than every row in between. `jump_to`
+moves without animation; see [smooth scrolling](animation.md#smooth-scrolling).
+
 Overlapping keyed rows keep identity, focus, local editor state and prepared
 resources. Rows leaving overscan unmount; removed focus/capture is released and
 stale semantic identities are rejected. Scrolling back creates a new placement for
@@ -101,7 +107,8 @@ removed, the next recorded row that survives is kept in place. Finding the key i
 O(1) when rows changed only below, or only by insertions or removals above;
 otherwise it uses `index_of`. The correction is an ordinary queued scroll command
 applied in the same preparation, so nothing paints at the intermediate offset, and
-the result clamps to the new extent.
+the result clamps to the new extent. It is never animated; a smooth scroll in
+flight moves along with it and still ends on the content it was heading to.
 
 Anchoring is skipped:
 

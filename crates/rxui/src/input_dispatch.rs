@@ -2,6 +2,7 @@ use super::*;
 use crate::input::{
     Cursor, EventPhase, HoverEvent, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers,
     PointerButton, PointerButtons, PointerCancelReason, PointerInput, Requests, WheelInput,
+    WheelSource,
 };
 use std::cell::Cell;
 
@@ -290,13 +291,28 @@ impl<T: View> Ui<T> {
         }
     }
     /// Routes a wheel event from the element under the pointer to the root, then
-    /// scrolls containers unless a listener prevented the default.
+    /// scrolls containers unless a listener prevented the default. The delta is
+    /// precise motion, applied directly; see [`Self::wheel_with_source`].
     pub fn wheel(
         &mut self,
         runtime: &mut Runtime,
         position: [f32; 2],
         delta: [f32; 2],
         modifiers: Modifiers,
+    ) -> Result<InputResult, UiError> {
+        self.wheel_with_source(runtime, position, delta, modifiers, WheelSource::Precise)
+    }
+    /// Routes a wheel event as [`Self::wheel`] does. With [`WheelSource::Lines`],
+    /// default scrolling animates containers whose behavior is
+    /// [`crate::ScrollBehavior::Smooth`] toward their target plus the delta; the
+    /// result reports a change so the host draws the frames that move them.
+    pub fn wheel_with_source(
+        &mut self,
+        runtime: &mut Runtime,
+        position: [f32; 2],
+        delta: [f32; 2],
+        modifiers: Modifiers,
+        source: WheelSource,
     ) -> Result<InputResult, UiError> {
         if position.iter().chain(delta.iter()).any(|v| !v.is_finite()) {
             return Err(UiError::InvalidGeometry);
@@ -336,6 +352,7 @@ impl<T: View> Ui<T> {
                         },
                         position,
                         delta,
+                        source,
                         modifiers,
                         requests: Cell::new(Requests::default()),
                     };
@@ -352,7 +369,12 @@ impl<T: View> Ui<T> {
             self.input.route = path;
             routed?;
         }
-        if !result.default_prevented && self.scroll(position, delta)? {
+        let scrolled = !result.default_prevented
+            && match source {
+                WheelSource::Precise => self.scroll(position, delta)?,
+                WheelSource::Lines => self.scroll_lines(position, delta)?,
+            };
+        if scrolled {
             result.changed = true;
             if self.active {
                 let hit = self.pointer_target(position);

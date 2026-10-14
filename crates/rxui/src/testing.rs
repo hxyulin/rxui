@@ -158,11 +158,27 @@ impl<T: View> TestUi<T> {
         self.ui
             .pointer_with_text(&mut self.runtime, event, &mut self.painter, false)
     }
-    /// Routes a wheel event at a logical position.
+    /// Routes a precise (trackpad) wheel event at a logical position.
     pub fn wheel(&mut self, position: [f32; 2], delta: [f32; 2]) -> Result<InputResult, UiError> {
         self.prepare()?;
         self.ui
             .wheel(&mut self.runtime, position, delta, Modifiers::default())
+    }
+    /// Routes a wheel event whose delta came from `source`, such as mouse-wheel steps.
+    pub fn wheel_with_source(
+        &mut self,
+        position: [f32; 2],
+        delta: [f32; 2],
+        source: crate::WheelSource,
+    ) -> Result<InputResult, UiError> {
+        self.prepare()?;
+        self.ui.wheel_with_source(
+            &mut self.runtime,
+            position,
+            delta,
+            Modifiers::default(),
+            source,
+        )
     }
     /// Routes a key event to the focused element's listeners. Focus traversal and
     /// text editing keys are separate: use [`Self::text_input`] and `Ui::focus_next`.

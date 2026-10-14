@@ -92,7 +92,11 @@ makes the element a pointer target. For paint-only feedback on controls,
 under the pointer up to the root (target and bubble phases, no capture phase), with
 logical content motion and modifiers. Default container scrolling follows unless a
 listener calls `prevent_default()`, for example to zoom a canvas on Ctrl+wheel.
-Custom hosts call `Ui::wheel`; `Ui::scroll` remains the default scrolling alone.
+`WheelInput::source` says whether the delta is precise (`WheelSource::Precise`,
+trackpads) or converted mouse-wheel steps (`WheelSource::Lines`); smooth scroll
+containers animate only steps. Custom hosts call `Ui::wheel` for precise deltas and
+`Ui::wheel_with_source` for steps; `Ui::scroll` remains the direct default
+scrolling alone.
 
 Capture is per UI and covers one mouse gesture with primary, secondary or middle
 buttons. It routes events delivered by the host; it is not an OS-wide drag session,
@@ -169,6 +173,15 @@ and does not keep a removed viewport/window alive. Removal/replacement/closure
 makes it `Disposed`. Commands queue until UI preparation, apply in order against
 current geometry, and clamp then. A stale queued target cannot scroll its replacement.
 Nonfinite offsets/deltas are rejected. `needs_prepare()` includes queued commands.
+
+`.scroll_behavior(ScrollBehavior::Smooth | Instant)` on a scroll element,
+`scroll_area` or virtual list selects whether mouse-wheel steps and `scroll_to`,
+`scroll_by` and the reveal commands animate; the default,
+`ScrollBehavior::platform()`, is Smooth on macOS and Windows and Instant elsewhere.
+`jump_to` always applies immediately. Trackpad deltas, scrollbar and keyboard range
+input, assistive actions and focus or caret reveal stay direct and end a smooth
+scroll in flight. Smooth motion needs a frame clock and honors reduce motion; see
+[animation](animation.md#smooth-scrolling).
 
 ## Controlled splits
 

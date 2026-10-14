@@ -550,6 +550,7 @@ trait HostedUi {
         point: [f32; 2],
         delta: [f32; 2],
         modifiers: crate::Modifiers,
+        source: crate::WheelSource,
     ) -> Result<bool, UiError>;
     fn focus_next(&mut self, reverse: bool) -> bool;
     fn activate(&mut self, runtime: &mut Runtime) -> Result<bool, UiError>;
@@ -711,8 +712,11 @@ impl<T: View> HostedUi for Ui<T> {
         point: [f32; 2],
         delta: [f32; 2],
         modifiers: crate::Modifiers,
+        source: crate::WheelSource,
     ) -> Result<bool, UiError> {
-        Ok(self.wheel(runtime, point, delta, modifiers)?.changed)
+        Ok(self
+            .wheel_with_source(runtime, point, delta, modifiers, source)?
+            .changed)
     }
     fn focus_next(&mut self, reverse: bool) -> bool {
         self.focus_next(reverse)

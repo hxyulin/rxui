@@ -308,15 +308,20 @@ pub struct ThemeMotion {
     /// Logical distance an anchored popover slides toward its anchor side while
     /// entering and exiting. Modal dialogs only fade.
     pub overlay_offset: f32,
+    /// Smooth scrolling of discrete wheel steps and programmatic scroll commands,
+    /// with [`Easing::EaseOut`]; see `ScrollBehavior`.
+    pub scroll: Duration,
 }
 impl Default for ThemeMotion {
-    /// 120 ms state changes, 150 ms overlay entrance, 100 ms exit and a 4-unit slide.
+    /// 120 ms state changes, 150 ms overlay entrance, 100 ms exit, a 4-unit slide and
+    /// 150 ms smooth scrolling.
     fn default() -> Self {
         Self {
             state: Duration::from_millis(120),
             overlay_enter: Duration::from_millis(150),
             overlay_exit: Duration::from_millis(100),
             overlay_offset: 4.,
+            scroll: Duration::from_millis(150),
         }
     }
 }

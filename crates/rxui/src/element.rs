@@ -151,6 +151,7 @@ pub struct Element {
     pub(crate) opacity: f32,
     pub(crate) clip: bool,
     pub(crate) scroll: Option<ScrollAxes>,
+    pub(crate) scroll_behavior: crate::ScrollBehavior,
     pub(crate) scroll_handle: Option<crate::ScrollHandle>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
     pub(crate) input: Option<Box<crate::input::InputProperties>>,
@@ -204,6 +205,7 @@ impl Element {
             opacity: 1.,
             clip: false,
             scroll: None,
+            scroll_behavior: crate::ScrollBehavior::platform(),
             scroll_handle: None,
             semantics: None,
             input: None,
@@ -823,6 +825,12 @@ impl Element {
     /// Use one binding per handle per UI; distinct windows may share the handle.
     pub fn scroll_handle(mut self, handle: crate::ScrollHandle) -> Self {
         self.scroll_handle = Some(handle);
+        self
+    }
+    /// How this scroll container moves for discrete wheel steps and programmatic
+    /// commands; [`crate::ScrollBehavior::platform`] by default.
+    pub fn scroll_behavior(mut self, behavior: crate::ScrollBehavior) -> Self {
+        self.scroll_behavior = behavior;
         self
     }
     /// Retained vertical scrolling. Give the container a bounded height.

@@ -1,0 +1,13 @@
+operation,total_rows,live_elements,median_us,p95_us
+initial_prepare,100,52,46.723,50.102
+idle_prepare,100,52,0.077,0.079
+row_crossing,100,52,25.988,26.350
+within_row,100,52,19.979,20.663
+initial_prepare,10000,52,46.292,47.819
+idle_prepare,10000,52,0.077,0.079
+row_crossing,10000,52,25.588,27.073
+within_row,10000,52,19.965,20.677
+initial_prepare,100000,52,45.854,49.908
+idle_prepare,100000,52,0.077,0.079
+row_crossing,100000,52,25.681,26.929
+within_row,100000,52,19.992,23.204

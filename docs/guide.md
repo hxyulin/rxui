@@ -433,6 +433,9 @@ cargo run -p rxui --example opacity_window --features native --locked
 provides an explicit weak reference for later app/async work. `split_row` and
 `split_column` expose controlled fraction/pixel sizes through `on_resize`. General
 pointer/key listeners support propagation, cancellation, focus and explicit capture.
+Mouse-wheel steps and programmatic scrolls ease smoothly on macOS and Windows by
+default; `.scroll_behavior(ScrollBehavior::Instant)` opts out and trackpads always
+scroll directly ([smooth scrolling](animation.md#smooth-scrolling)).
 See [the interaction contract](interaction.md) and
 [CPU measurements](performance/interaction.md).
 

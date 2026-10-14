@@ -1,5 +1,6 @@
 //! A file tree with variable row heights: folders expand and collapse in place,
-//! and changes above the viewport keep the visible rows still.
+//! and changes above the viewport keep the visible rows still. Mouse-wheel steps
+//! and reveals scroll smoothly until a button turns that off.
 use rxui::prelude::*;
 const FOLDERS: usize = 2_000;
 const FOLDER_HEIGHT: f32 = 34.;
@@ -36,6 +37,8 @@ struct Tree {
     items: Vec<Item>,
     expanded: Vec<bool>,
     jump: String,
+    /// Wheel steps and reveals animate; trackpads always scroll directly.
+    smooth: bool,
 }
 impl Tree {
     fn new() -> Self {
@@ -53,6 +56,7 @@ impl Tree {
             items,
             expanded,
             jump: "src1500".into(),
+            smooth: true,
         }
     }
     /// Inserts or removes a folder's files after its row.
@@ -103,7 +107,15 @@ impl View for Tree {
                                 .expect("live list");
                         }
                     })))
-                    .child(button("Toggle src0").on_click(cx.listener(|s, _, _| s.toggle(0)))),
+                    .child(button("Toggle src0").on_click(cx.listener(|s, _, _| s.toggle(0))))
+                    .child(
+                        button(if self.smooth {
+                            "Smooth scrolling: on"
+                        } else {
+                            "Smooth scrolling: off"
+                        })
+                        .on_click(cx.listener(|s, _, _| s.smooth = !s.smooth)),
+                    ),
             )
             .child(
                 variable_list(&self.rows, &self.scroll, cx, |index| {
@@ -129,6 +141,11 @@ impl View for Tree {
                             content.padding_y(3.).padding_x(28.)
                         }
                     }
+                })
+                .scroll_behavior(if self.smooth {
+                    ScrollBehavior::Smooth
+                } else {
+                    ScrollBehavior::Instant
                 })
                 .overscan(3),
             )

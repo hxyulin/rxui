@@ -39,6 +39,27 @@ baseline, within the spread between runs on this machine; a rerun of the
 baseline benchmark source against the candidate library showed the same overlap.
 The first 100-row initial_prepare run of each binary is an outlier.
 
+### With smooth scrolling
+
+Smooth scrolling adds a check for moves in flight at the start of each
+preparation, a one-byte scroll-behavior field per element and a branch per queued
+scroll command. The benchmark never starts the animation clock and scrolls with
+precise deltas, so no motion runs; this measures what the feature costs while
+unused. The same baseline binary and the final branch ran alternately, three runs each
+(`baseline-smooth-run-N.csv`, `smooth-run-N.csv`):
+
+| Total rows | Initial prepare base / current | Row crossing base / current | Within row base / current | Idle base / current |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 46.72–46.92 / 47.20–63.24 | 25.78–26.19 / 25.99–27.30 | 19.92–20.35 / 20.15–20.93 | 0.077 / 0.071–0.077 |
+| 10,000 | 46.27–46.32 / 45.85–46.83 | 25.59–26.20 / 25.86–26.30 | 19.88–20.00 / 20.30–20.41 | 0.075–0.079 / 0.071 |
+| 100,000 | 45.85–46.68 / 46.06–46.66 | 25.67–26.17 / 25.97–26.51 | 19.93–20.06 / 20.23–20.47 | 0.077 / 0.071 |
+
+Ranges overlap except within_row, which is 1–2% (about 0.3 µs) higher; that is
+within the variation seen between sessions above. The variable-height operations
+in `smooth-run-N.csv` match the table below. A frame of smooth motion costs what a
+direct scroll by the same distance costs: a geometry refresh and, for a virtual
+list, its re-evaluation.
+
 ## Variable heights
 
 | Total rows | Initial prepare | Row crossing | Within row | Idle | Resize above | Insert above |

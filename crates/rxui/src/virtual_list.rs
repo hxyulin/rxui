@@ -142,6 +142,12 @@ macro_rules! list_builders {
             self.area = self.area.fill_width();
             self
         }
+        /// How the list moves for discrete wheel steps and programmatic commands such
+        /// as reveals; [`crate::ScrollBehavior::platform`] by default.
+        pub fn scroll_behavior(mut self, behavior: crate::ScrollBehavior) -> Self {
+            self.area = self.area.scroll_behavior(behavior);
+            self
+        }
     };
 }
 impl<F> VirtualList<F> {
@@ -293,15 +299,16 @@ impl<F> VariableList<'_, F> {
             self.handle.with_anchor(tree, |slot, _| *slot = None);
             return current;
         }
-        let offset = self
+        let (offset, moved) = self
             .handle
             .with_anchor(tree, |slot, pending| {
-                let mut offset = current;
+                let (mut offset, mut moved) = (current, 0.);
                 if !pending
                     && let Some(shift) = slot.as_ref().and_then(|a| a.shift(rows))
                     && shift != 0.
                 {
                     offset = (f64::from(state.offset[1]) + shift).clamp(0., f64::from(max)) as f32;
+                    moved = shift as f32;
                 }
                 if offset > 0.
                     && let Some(first) = rows.index_at(offset)
@@ -311,11 +318,13 @@ impl<F> VariableList<'_, F> {
                 } else {
                     *slot = None;
                 }
-                offset
+                (offset, moved)
             })
-            .unwrap_or(current);
+            .unwrap_or((current, 0.));
         if offset != current {
-            self.handle.anchor_to(tree, [state.offset[0], offset]);
+            // A smooth scroll in flight keeps its target relative to the content.
+            self.handle
+                .anchor_to(tree, [state.offset[0], offset], [0., moved]);
         }
         offset
     }

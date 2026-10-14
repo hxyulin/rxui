@@ -237,7 +237,7 @@ pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
 pub use input::{
     Cursor, EventPhase, HoverEvent, ImeCancelReason, ImeEvent, ImeInput, InputResult, KeyEvent,
     KeyInput, KeyboardKey, Modifiers, PointerButton, PointerButtons, PointerCancelReason,
-    PointerInput, TextInsertInput, TextInsertSource, WheelInput,
+    PointerInput, TextInsertInput, TextInsertSource, WheelInput, WheelSource,
 };
 pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
@@ -257,7 +257,7 @@ pub use overlay::{
 pub use painting::{ComposedUi, ImageStats, LayerStats, UiPainter};
 pub use runtime::{Mount, Runtime, Subscription};
 #[cfg(feature = "layout")]
-pub use scrolling::{ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
+pub use scrolling::{ScrollBehavior, ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
 pub use semantics::{
     Checked, NumericValue, SemanticAction, SemanticLink, SemanticNode, SemanticRole,
@@ -327,10 +327,10 @@ pub mod prelude {
         WindowOptions,
     };
     pub use crate::{
-        Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollError,
-        ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, VariableList,
-        VirtualList, VirtualRows, scroll_area, scrollbar, split_column, split_row, variable_list,
-        virtual_list,
+        Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollBehavior,
+        ScrollError, ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition,
+        VariableList, VirtualList, VirtualRows, scroll_area, scrollbar, split_column, split_row,
+        variable_list, virtual_list,
     };
     pub use crate::{
         BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor, Entity, FontFamily,
@@ -338,7 +338,8 @@ pub mod prelude {
         IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle,
         PointerButton, PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime,
         SemanticRole, TextAlign, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View,
-        ViewContext, WheelInput, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+        ViewContext, WheelInput, WheelSource, button, column, image, label, rgb8, rgba8, row,
+        stack, text_input,
     };
     pub use crate::{
         Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
@@ -430,3 +431,6 @@ mod platform_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod animation_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod scroll_motion_tests;

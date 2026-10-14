@@ -198,6 +198,7 @@ pub struct ScrollArea {
     bars: bool,
     thickness: Option<f32>,
     style: ScrollbarStyle,
+    behavior: crate::ScrollBehavior,
 }
 /// Scrollable viewport with vertical scrollbar. Give it bounded space through its
 /// parent or size; bars reserve gutters and do not change layout on overflow changes.
@@ -215,6 +216,7 @@ pub fn scroll_area(content: impl IntoElement) -> ScrollArea {
         bars: true,
         thickness: None,
         style: ScrollbarStyle::Classic,
+        behavior: crate::ScrollBehavior::platform(),
     }
 }
 impl ScrollArea {
@@ -245,6 +247,12 @@ impl ScrollArea {
     /// Gutter or overlay placement; see [`ScrollbarStyle`]. Classic by default.
     pub fn scrollbar_style(mut self, style: ScrollbarStyle) -> Self {
         self.style = style;
+        self
+    }
+    /// How the viewport moves for discrete wheel steps and programmatic commands;
+    /// [`crate::ScrollBehavior::platform`] by default.
+    pub fn scroll_behavior(mut self, behavior: crate::ScrollBehavior) -> Self {
+        self.behavior = behavior;
         self
     }
 }
@@ -289,7 +297,10 @@ impl IntoElement for ScrollArea {
             ScrollAxes::Horizontal => viewport.scroll_x(),
             ScrollAxes::Both => viewport.scroll(),
         };
-        viewport = viewport.scroll_handle(self.handle.clone()).layout(|s| {
+        viewport = viewport
+            .scroll_behavior(self.behavior)
+            .scroll_handle(self.handle.clone());
+        viewport = viewport.layout(|s| {
             s.grid_column = line(1);
             s.grid_row = line(1);
         });

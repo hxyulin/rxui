@@ -57,6 +57,39 @@ struct Data {
     /// Scroll anchor of a variable-height list, per UI tree.
     anchors: HashMap<u64, crate::virtual_rows::Anchor>,
 }
+/// How a scroll container moves for discrete mouse-wheel steps and programmatic
+/// commands ([`ScrollHandle::scroll_to`], [`ScrollHandle::scroll_by`] and the reveal
+/// methods). Precise trackpad deltas, scrollbar dragging, keyboard range keys,
+/// assistive actions, scroll anchoring and focus or caret reveal always move
+/// directly; see `docs/animation.md`.
+///
+/// Smooth motion needs a host that drives the frame clock (`Runtime::begin_frame`)
+/// and is skipped while reduce motion is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ScrollBehavior {
+    /// Animate toward the new offset over [`crate::ThemeMotion::scroll`].
+    Smooth,
+    /// Jump to the new offset.
+    Instant,
+}
+impl ScrollBehavior {
+    /// Smooth on macOS and Windows, whose system scroll views and browsers animate
+    /// wheel steps; Instant elsewhere, where GTK and Qt scroll views move by whole
+    /// steps. Scroll containers use this by default.
+    pub const fn platform() -> Self {
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            Self::Smooth
+        } else {
+            Self::Instant
+        }
+    }
+}
+impl Default for ScrollBehavior {
+    /// [`ScrollBehavior::platform`].
+    fn default() -> Self {
+        Self::platform()
+    }
+}
 /// Cloneable viewport reference. Bind once per UI with `.scroll_handle(...)`.
 /// The same handle can appear in distinct windows; resolution uses the listener/view
 /// mount's placement. Reading state in a ViewContext subscribes that mount to metrics.
@@ -103,13 +136,20 @@ impl ScrollHandle {
             runtime: scope.runtime,
         })
     }
-    /// Queues absolute logical offsets in the current listener's placement.
+    /// Queues absolute logical offsets in the current listener's placement, moving as
+    /// the viewport's [`ScrollBehavior`] selects.
     pub fn scroll_to(&self, cx: &mut AppContext<'_>, offset: [f32; 2]) -> Result<(), ScrollError> {
         self.placement(cx)?.scroll_to(cx, offset)
     }
     /// Queues relative motion; clamping occurs when applied to current content geometry.
+    /// While a smooth scroll is in flight, the motion adds to its target.
     pub fn scroll_by(&self, cx: &mut AppContext<'_>, delta: [f32; 2]) -> Result<(), ScrollError> {
         self.placement(cx)?.scroll_by(cx, delta)
+    }
+    /// Queues absolute logical offsets that apply without animation, whatever the
+    /// viewport's [`ScrollBehavior`], ending a smooth scroll in flight.
+    pub fn jump_to(&self, cx: &mut AppContext<'_>, offset: [f32; 2]) -> Result<(), ScrollError> {
+        self.placement(cx)?.jump_to(cx, offset)
     }
     /// Reveals the vertical content span `start..start + extent` in the source
     /// placement, moving the minimum distance: a span above the viewport aligns with
@@ -178,8 +218,9 @@ impl ScrollHandle {
         }
         Some(result)
     }
-    /// Queues an anchoring correction to absolute `offset`.
-    pub(crate) fn anchor_to(&self, tree: u64, offset: [f32; 2]) {
+    /// Queues an anchoring correction to absolute `offset`; a smooth scroll in flight
+    /// moves by `shift` along with it.
+    pub(crate) fn anchor_to(&self, tree: u64, offset: [f32; 2], shift: [f32; 2]) {
         let data = self.0.borrow();
         if let Some(b) = data.bindings.get(&tree)
             && let Some(commands) = b.commands.upgrade()
@@ -187,7 +228,7 @@ impl ScrollHandle {
             commands.borrow_mut().push(Command {
                 target: b.element,
                 offset,
-                mode: CommandMode::Anchor,
+                mode: CommandMode::Anchor(shift),
             });
         }
     }
@@ -234,12 +275,18 @@ impl ScrollPlacement {
         Ok(b.state)
     }
     /// Queue an absolute position through an explicit source, including outside listeners.
+    /// It follows the viewport's [`ScrollBehavior`].
     pub fn scroll_to(&self, cx: &mut AppContext<'_>, offset: [f32; 2]) -> Result<(), ScrollError> {
         self.command(cx, offset, CommandMode::To)
     }
-    /// Queue relative motion through an explicit source.
+    /// Queue relative motion through an explicit source. While a smooth scroll is in
+    /// flight, the motion adds to its target.
     pub fn scroll_by(&self, cx: &mut AppContext<'_>, delta: [f32; 2]) -> Result<(), ScrollError> {
         self.command(cx, delta, CommandMode::By)
+    }
+    /// Queue an absolute position that applies without animation.
+    pub fn jump_to(&self, cx: &mut AppContext<'_>, offset: [f32; 2]) -> Result<(), ScrollError> {
+        self.command(cx, offset, CommandMode::Jump)
     }
     /// Reveals the vertical span `start..start + extent` through this placement,
     /// moving the minimum distance from the current offset.
@@ -329,10 +376,13 @@ pub(crate) struct Command {
 pub(crate) enum CommandMode {
     /// Absolute, following the viewport's behavior.
     To,
-    /// Relative to the current offset.
+    /// Relative to the current offset, or to a smooth scroll's target.
     By,
-    /// Absolute and immediate: a scroll-anchoring correction.
-    Anchor,
+    /// Absolute and immediate.
+    Jump,
+    /// Absolute and immediate: a scroll-anchoring correction. A smooth scroll in
+    /// flight moves by this amount with it.
+    Anchor([f32; 2]),
 }
 pub(crate) struct Scrolling {
     life: Rc<()>,
@@ -499,29 +549,6 @@ impl<T: View> Ui<T> {
             self.refresh_geometry()?;
         }
         Ok(changed)
-    }
-    /// Applies one queued command, clamped to the current scroll range.
-    fn apply_scroll_command(
-        &mut self,
-        target: ElementId,
-        offset: [f32; 2],
-        mode: CommandMode,
-    ) -> bool {
-        let Some(n) = self.nodes.get_mut(&target) else {
-            return false;
-        };
-        let mut changed = false;
-        for (axis, current) in n.scroll_offset.iter_mut().enumerate() {
-            let base = if mode == CommandMode::By {
-                *current
-            } else {
-                0.
-            };
-            let next = (offset[axis] + base).clamp(0., n.scroll_range[axis]);
-            changed |= next != *current;
-            *current = next;
-        }
-        changed
     }
     pub(crate) fn set_scroll_offset(
         &mut self,
