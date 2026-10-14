@@ -16,6 +16,13 @@ astrelis-winit = { git = "https://github.com/hxyulin/astrelis", rev = "d8ac1d1b5
 taffy = { version = "0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 profiling = { version = "1.0.18", default-features = false }
 
+# Each test view type instantiates its own Ui<T>, and with full debug info one
+# object file of the lib test binary outgrows Mach-O's 4 GiB relocation limit on
+# macOS ("object file too large"). Line tables keep file:line in test panics
+# and bring the largest object to about 2.7 GB.
+[profile.test]
+debug = "line-tables-only"
+
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"
