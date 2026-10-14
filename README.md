@@ -120,7 +120,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Text input](docs/text-input.md), [fonts](docs/fonts.md) and [semantics](docs/semantics.md) | Editing, IME, font registration and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
 | [Animation](docs/animation.md) | Transitions, overlay motion, animated values and reduce motion |
-| [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves |
+| [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves, and text input clients for custom editors |
 | [Standard controls](docs/controls.md) | Check boxes, switches, radio groups, sliders, progress, selects and tooltips |
 | [Overlays and commands](docs/overlays-and-commands.md) and [docking](docs/docking.md) | Menus, dialogs, shortcuts and dock layouts |
 | [Native menus](docs/native-menus.md), [services](docs/native-services.md), [window state](docs/window-state-and-files.md) and [native feel](docs/native-feel.md) | Desktop integration |

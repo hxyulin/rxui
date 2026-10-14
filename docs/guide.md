@@ -18,7 +18,9 @@ macOS/Windows menu bars, scoped command presentation and vetoable Close/Quit
 requests; see [native menus](native-menus.md). `--no-default-features` retains the state-only runtime. Scrolling,
 clipping, focus traversal and button activation are implemented. Controlled
 single-line and multiline editing, placeholders, password masking, selectable labels,
-bounded undo/redo, word/line selection, clipboard and IME are implemented.
+bounded undo/redo, word/line selection, clipboard and IME are implemented, and
+custom elements can act as [text input clients](custom-elements.md#text-input-clients)
+that receive typed text and IME composition for application-owned editors.
 Optional `native-dialogs` provides parent-bound file/message dialogs;
 `desktop-services` adds asynchronous URL/file opening and file-manager reveal.
 See [native services](native-services.md) and the standalone
@@ -123,6 +125,12 @@ scrolling document and a chat-style composer:
 cargo run -p rxui --example text_input_window --features native --locked
 cargo run -p rxui --example text_area_window --features native --locked
 ```
+
+An application that owns its document, such as a code editor, marks a focusable
+custom element with `.text_input_client(true)` and handles `on_text_insert` and
+`on_ime` itself; key listeners still run first. See
+[text input clients](custom-elements.md#text-input-clients) and the
+[client example](../crates/rxui/examples/custom_text_client_window.rs).
 
 ## Standard form controls
 

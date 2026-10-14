@@ -5,7 +5,10 @@ Status: implemented with the default layout feature, Astrelis geometry through
 single-line inputs, multiline text areas, placeholders, password masking and
 selectable labels. [Fonts](fonts.md) covers font registration and fallback, and
 [rich text](rich-text.md) covers styled spans within one paragraph and the design
-for links.
+for links. Applications that own their editor, such as a code editor with its own
+document model, make a custom element a
+[text input client](custom-elements.md#text-input-clients) instead: it receives the
+same committed text and IME composition through listeners.
 
 ## Application API
 
@@ -273,7 +276,10 @@ own selections. `ime_reset_revision()` lets a native/custom host reset its IME
 session even when the focused identity did not change. Normal commits do not reset
 that session. Application enables IME only for an editable, unmasked focused input
 (`Ui::accepts_ime`) and updates the native candidate area from the same shaped
-caret geometry as painting.
+caret geometry as painting. A focused
+[text input client](custom-elements.md#text-input-clients) also enables IME; its
+composition follows the same cancellation rules and is delivered to its listeners,
+with the candidate area it reports.
 
 The native wiring follows [winit's KeyEvent text/repeat contract](https://docs.rs/winit/0.30.13/winit/event/struct.KeyEvent.html)
 and [IME/candidate-area contract](https://docs.rs/winit/0.30.13/winit/window/struct.Window.html).
@@ -297,7 +303,10 @@ target; dragging or deactivation resets the click sequence. Use set_active for
 native focus changes, set_caret_visible for blink, selected_text for clipboard
 operations, and accepts_ime, ime_cursor_area and ime_reset_revision for platform IME
 integration. After external changes, prepare before geometry-based input or
-clipboard inspection. Layout and GPU preparation remain separate.
+clipboard inspection. Layout and GPU preparation remain separate. While
+`Ui::focused_text_client` is `Some`, `text_input` routes `Insert`, `Paste`, `Commit`,
+`Preedit` and `CancelComposition` to that client's listeners and ignores the other
+events; see [custom hosts](custom-elements.md#custom-hosts).
 
 ```sh
 cargo run -p rxui --example text_input_window --features native --locked

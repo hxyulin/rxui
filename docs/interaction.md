@@ -51,7 +51,9 @@ and the original captured position/bounds. `target` is the routed target;
 `current_target` is the executing listener; `hit_target` independently reports the
 element under the pointer. Keyboard callbacks carry logical key identity,
 pressed/released state, repeat and modifiers. Character keys are distinct from
-IME/committed text insertion.
+IME/committed text insertion, which reaches built-in inputs or a
+[text input client](custom-elements.md#text-input-clients) after the key's listeners;
+`prevent_default()` on the key-down suppresses that text.
 
 Requests apply after each callback. `stop_propagation()` ends the remaining route
 without cancelling the default action. `prevent_default()` cancels that dispatch's

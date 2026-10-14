@@ -91,6 +91,10 @@ required-features = ["native"]
 name = "counter_custom_host"
 required-features = ["native"]
 
+[[example]]
+name = "custom_text_client_window"
+required-features = ["native"]
+
 [[bench]]
 name = "elements"
 harness = false
