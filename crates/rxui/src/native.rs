@@ -535,6 +535,7 @@ trait HostedUi {
         painter: &mut UiPainter,
     ) -> Result<bool, UiError>;
     fn has_text_focus(&self) -> bool;
+    fn has_text_client_focus(&self) -> bool;
     fn accepts_ime(&self) -> bool;
     fn focused_element(&self) -> Option<ElementId>;
     fn ime_reset_revision(&self) -> u64;
@@ -678,6 +679,9 @@ impl<T: View> HostedUi for Ui<T> {
     }
     fn has_text_focus(&self) -> bool {
         self.has_text_focus()
+    }
+    fn has_text_client_focus(&self) -> bool {
+        self.focused_text_client().is_some()
     }
     fn accepts_ime(&self) -> bool {
         self.accepts_ime()

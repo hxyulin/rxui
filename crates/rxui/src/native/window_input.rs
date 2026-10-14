@@ -24,8 +24,8 @@ use std::time::Instant;
 /// It is the translation `Application` uses: physical cursor positions become logical
 /// pointer events, presses get platform-style click counts, modifiers are tracked,
 /// keys reach listeners first, then standard shortcuts reach command handlers, then
-/// focus traversal, activation and text editing. Wheel, focus and IME events are
-/// translated too. Keep one per window and pass every event of that window.
+/// focus traversal, activation and text editing, or the produced text for a focused
+/// text input client. Wheel, focus and IME events are translated too. Keep one per window and pass every event of that window.
 ///
 /// ```no_run
 /// # use rxui::{UiError, UiPainter, WindowInput, prelude::*};
@@ -368,6 +368,21 @@ impl WindowInput {
                     if let Some(input) = input {
                         changed |= ui.text_input(runtime, input, painter)?;
                     }
+                } else if ui.has_text_client_focus() {
+                    // A text input client handles editing keys in its key listeners;
+                    // only the produced text and Escape's IME cancellation remain.
+                    let input = match &event.logical_key {
+                        Key::Named(NamedKey::Escape) => Some(TextInputEvent::CancelComposition),
+                        _ if !primary && (!modifiers.control_key() || modifiers.alt_key()) => event
+                            .text
+                            .as_ref()
+                            .filter(|text| text.chars().any(|c| !c.is_control()))
+                            .map(|text| TextInputEvent::Insert(text.to_string())),
+                        _ => None,
+                    };
+                    if let Some(input) = input {
+                        changed |= ui.text_input(runtime, input, painter)?;
+                    }
                 } else if !event.repeat
                     && matches!(
                         event.logical_key,
@@ -408,7 +423,8 @@ impl WindowInput {
             }
             self.cursor_icon = Some(cursor);
         }
-        // Password inputs keep IME disabled; they take committed text only.
+        // Password inputs keep IME disabled; they take committed text only. Text
+        // input clients enable it like editable inputs.
         let focus = ui.accepts_ime().then(|| ui.focused_element()).flatten();
         let reset_revision = ui.ime_reset_revision();
         if focus != self.ime_focus || reset_revision != self.ime_reset_revision {
@@ -468,5 +484,72 @@ mod tests {
         assert!(send(&mut input, WindowEvent::Focused(false)).changed);
         assert_eq!(input.cursor_position(2.), [0., 0.]);
         assert_eq!(test.read(|form| form.name.clone()), "Ada");
+    }
+
+    #[test]
+    #[ignore = "requires a native GPU; run with --features native -- --ignored"]
+    fn routes_ime_to_a_focused_text_input_client() {
+        use crate::{
+            CustomElement, ImeEvent, ImeInput, IntoElement, TextInsertInput, View, ViewContext,
+            column, custom,
+        };
+        #[derive(PartialEq)]
+        struct Surface;
+        impl CustomElement for Surface {
+            type State = ();
+        }
+        #[derive(Default)]
+        struct Client {
+            log: Vec<String>,
+        }
+        impl View for Client {
+            fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                column().child(
+                    custom(Surface)
+                        .key("client")
+                        .size(200., 40.)
+                        .text_input_client(true)
+                        .on_pointer_down(cx.listener(|_, e: &crate::PointerInput, _| e.focus()))
+                        .on_text_insert(cx.listener(|s, e: &TextInsertInput, _| {
+                            s.log.push(format!("{:?} {}", e.source, e.text))
+                        }))
+                        .on_ime(cx.listener(|s, e: &ImeInput, _| {
+                            s.log.push(match &e.event {
+                                ImeEvent::Preedit { text, .. } => format!("preedit {text}"),
+                                ImeEvent::Cancel(reason) => format!("cancel {reason:?}"),
+                            })
+                        })),
+                )
+            }
+        }
+        let graphics = pollster::block_on(GraphicsContext::headless()).unwrap();
+        let mut test = crate::TestUi::new(&graphics, [320, 240], Client::default()).unwrap();
+        test.click("client").unwrap();
+        let metrics = WindowMetrics::new(PhysicalSize::new(640, 480), 2.).unwrap();
+        let (runtime, ui, painter) = test.parts();
+        assert!(ui.accepts_ime());
+        let mut input = WindowInput::new();
+        let mut send = |input: &mut WindowInput, event: WindowEvent| {
+            input.handle(runtime, ui, painter, metrics, &event).unwrap()
+        };
+        let preedit = WindowEvent::Ime(Ime::Preedit("か".into(), Some((0, 3))));
+        assert!(send(&mut input, preedit).changed);
+        assert!(send(&mut input, WindowEvent::Ime(Ime::Commit("可".into()))).changed);
+        assert!(send(&mut input, WindowEvent::Ime(Ime::Preedit("x".into(), None))).changed);
+        assert!(send(&mut input, WindowEvent::Ime(Ime::Disabled)).changed);
+        assert!(send(&mut input, WindowEvent::Ime(Ime::Preedit("y".into(), None))).changed);
+        assert!(send(&mut input, WindowEvent::Focused(false)).changed);
+        test.prepare().unwrap();
+        assert_eq!(
+            test.read(|c| c.log.clone()),
+            [
+                "preedit か",
+                "Ime 可",
+                "preedit x",
+                "cancel Host",
+                "preedit y",
+                "cancel Deactivated"
+            ]
+        );
     }
 }
