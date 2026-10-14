@@ -705,6 +705,7 @@ pub struct Ui<T: View> {
     geometry_revision: u64,
     needs_evaluation: bool,
     input: input_dispatch::State,
+    text_client: text_client_dispatch::State,
     pub(crate) scrolling: Option<Box<crate::scrolling::Scrolling>>,
     runtime: std::rc::Weak<crate::runtime::RuntimeInner>,
     hovered: Option<ElementId>,
@@ -756,6 +757,7 @@ impl<T: View> Ui<T> {
             geometry_revision: 0,
             needs_evaluation: true,
             input: input_dispatch::State::default(),
+            text_client: text_client_dispatch::State::default(),
             scrolling: None,
             runtime: std::rc::Rc::downgrade(&runtime.inner),
             hovered: None,
@@ -863,6 +865,7 @@ impl<T: View> Ui<T> {
         if self.scroll_commands_pending()
             || self.overlay_pending()
             || self.input.pending()
+            || self.text_client.pending()
             || self.focus_state.as_ref().is_some_and(|s| s.pending())
         {
             return Ok(true);
@@ -2265,6 +2268,8 @@ impl<T: View> Ui<T> {
         {
             self.pressed = None;
         }
+        // Before focus clears, so a removed or disabled client reports why.
+        self.validate_client_composition();
         if self.focused.is_some_and(|id| !self.enabled(id)) {
             self.change_focus(None);
         }
@@ -2624,6 +2629,7 @@ impl<T: View> Ui<T> {
                 self.cancel_composition(old);
             }
             self.focused = next;
+            self.validate_client_composition();
             self.remember_focus(next);
             self.caret_visible = true;
         }
@@ -2721,12 +2727,16 @@ impl<T: View> Ui<T> {
     /// replacement. Native hosts use it to reset the platform IME session even when
     /// the focused element remains the same. A normal IME commit does not reset it.
     pub fn ime_reset_revision(&self) -> u64 {
+        if self.focused.is_some_and(|id| self.is_text_client(id)) {
+            return self.client_ime_revision();
+        }
         self.focused
             .and_then(|id| self.nodes.get(&id))
             .and_then(|n| n.editor.as_ref())
             .map_or(0, |e| e.ime_reset_revision)
     }
-    /// Whether a live, focused single-line input is accepting committed text/IME.
+    /// Whether the focus accepts committed text/IME: a live, editable text input or
+    /// text area, or a [`Self::focused_text_client`].
     pub fn accepts_text_input(&self) -> bool {
         self.active
             && self.focused.is_some_and(|id| {
@@ -2741,9 +2751,10 @@ impl<T: View> Ui<T> {
                         }
                     )
             })
+            || self.focused_text_client().is_some()
     }
-    /// Whether the focused input accepts platform IME composition: an editable input
-    /// that is not masked. Password inputs take committed text only.
+    /// Whether the focus accepts platform IME composition: an editable input that is
+    /// not masked, or a text input client. Password inputs take committed text only.
     pub fn accepts_ime(&self) -> bool {
         self.accepts_text_input() && self.focused.is_some_and(|id| !self.nodes[&id].masked())
     }
@@ -2776,6 +2787,7 @@ impl<T: View> Ui<T> {
                 }
                 self.cancel_composition(id);
             }
+            self.cancel_client_composition(crate::ImeCancelReason::Deactivated);
         }
         changed
     }
@@ -2856,10 +2868,16 @@ impl<T: View> Ui<T> {
     }
     /// Logical native IME candidate rectangle for the active editor, using the same
     /// shaping snapshot as painting. A custom host applies DPI/platform conversion.
+    /// For a text input client it is the element's `ime_cursor_area` translated to
+    /// window coordinates, or its content box, from the prepared geometry; an area
+    /// with non-finite values or negative size is `UiError::InvalidGeometry`.
     pub fn ime_cursor_area(
         &mut self,
         measure: &mut impl TextMeasure,
     ) -> Result<Option<Bounds>, UiError> {
+        if let Some(id) = self.focused_text_client() {
+            return self.client_ime_area(id);
+        }
         if !self.accepts_ime() {
             return Ok(None);
         }
@@ -2883,6 +2901,11 @@ impl<T: View> Ui<T> {
     /// acceptance/normalization/rejection is authoritative for the next event.
     /// Selection/preedit do not dispatch model changes or rerun Taffy here.
     /// A focused selectable label accepts selection, navigation and copy only.
+    ///
+    /// When the focus is a [text input client](Self::focused_text_client), `Insert`,
+    /// `Paste` and `Commit` route to its `on_text_insert` listeners, `Preedit` and
+    /// `CancelComposition` to its `on_ime` listeners, and other events are ignored:
+    /// clients handle editing keys through key listeners.
     pub fn text_input(
         &mut self,
         runtime: &mut Runtime,
@@ -2890,6 +2913,9 @@ impl<T: View> Ui<T> {
         measure: &mut impl TextMeasure,
     ) -> Result<bool, UiError> {
         self.sync_edit_views(runtime)?;
+        if let Some(id) = self.focused_text_client() {
+            return self.client_text_input(runtime, id, event);
+        }
         let Some(id) = self
             .focused
             .filter(|id| self.enabled(*id) && self.nodes[id].editor.is_some())
@@ -3925,6 +3951,8 @@ mod command_dispatch;
 mod input_dispatch;
 #[path = "overlay_dispatch.rs"]
 mod overlay_dispatch;
+#[path = "text_client_dispatch.rs"]
+mod text_client_dispatch;
 
 #[path = "range_dispatch.rs"]
 mod range_dispatch;

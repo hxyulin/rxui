@@ -144,6 +144,9 @@ impl<T: View> Ui<T> {
                     }
                 )
             });
+        // A text input client takes the default Paste as committed text. Its own
+        // command handlers, found above, provide copy, cut, undo and select all.
+        let editable = editable || self.focused.is_some_and(|id| self.is_text_client(id));
         crate::commands::standard_info(
             id,
             true,

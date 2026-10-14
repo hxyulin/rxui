@@ -274,10 +274,108 @@ impl KeyInput {
             r
         });
     }
-    /// Suppresses native-host control/text defaults for this event.
+    /// Suppresses native-host control/text defaults for this event: activation, Tab
+    /// focus traversal, built-in editing, and the text a key press would insert
+    /// into a text input client.
     pub fn prevent_default(&self) {
         self.requests.update(|mut r| {
             r.prevent = true;
+            r
+        });
+    }
+}
+/// Where committed text for a [text input client](crate::Element::text_input_client)
+/// came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextInsertSource {
+    /// Text produced by a key press after keyboard layout and dead-key processing.
+    Keyboard,
+    /// Text committed by an input method, replacing the client's preedit.
+    Ime,
+    /// Clipboard text from the standard Paste command's host default.
+    Paste,
+}
+/// Committed text routed to the focused text input client and its ancestors.
+///
+/// Keyboard text arrives only after the key that produced it was routed to key
+/// listeners without `prevent_default`. The text is passed through as the platform
+/// produced it, so it may contain line breaks or other characters; the client
+/// normalizes it.
+pub struct TextInsertInput {
+    /// Focused text input client.
+    pub target: ElementId,
+    /// Element whose listener is executing.
+    pub current_target: ElementId,
+    /// Target or bubble stage; text has no capture stage.
+    pub phase: EventPhase,
+    /// Committed text. Empty only for an IME commit that ends composition without
+    /// text, which still replaces the preedit.
+    pub text: String,
+    /// Keyboard, IME commit or paste.
+    pub source: TextInsertSource,
+    pub(crate) requests: Cell<Requests>,
+}
+impl TextInsertInput {
+    /// Ends the remaining route.
+    pub fn stop_propagation(&self) {
+        self.requests.update(|mut r| {
+            r.stop = true;
+            r
+        });
+    }
+}
+/// Why a text input client's IME composition ended without a commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImeCancelReason {
+    /// The host cancelled composition: Escape, or the platform disabled the IME.
+    Host,
+    /// Focus moved to another element or left the placement.
+    FocusChanged,
+    /// The window lost native activation.
+    Deactivated,
+    /// A primary pointer press on the composing client, which normally moves its caret.
+    Pointer,
+    /// The client stopped accepting text: `text_input_client(false)`, hidden, inert,
+    /// outside an open modal, or no longer focusable.
+    Unavailable,
+    /// The client was removed from the placement.
+    Removed,
+}
+/// IME composition change for a text input client.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImeEvent {
+    /// The composing (preedit) text changed. Display it at the client's caret, in
+    /// place of its selection, without changing the document. Empty text clears the
+    /// display while composition continues, as before a commit.
+    Preedit {
+        /// Composing text.
+        text: String,
+        /// UTF-8 byte range of the IME's selection or caret within `text`; `None`
+        /// hides the composition caret.
+        cursor: Option<(usize, usize)>,
+    },
+    /// Composition ended without committing; discard the preedit display. A commit
+    /// ends composition through [`TextInsertInput`] instead, with
+    /// [`TextInsertSource::Ime`], and sends no cancellation.
+    Cancel(ImeCancelReason),
+}
+/// IME listener payload, routed to the composing text input client and its ancestors.
+pub struct ImeInput {
+    /// Composing text input client.
+    pub target: ElementId,
+    /// Element whose listener is executing.
+    pub current_target: ElementId,
+    /// Target or bubble stage; IME input has no capture stage.
+    pub phase: EventPhase,
+    /// Preedit change or cancellation.
+    pub event: ImeEvent,
+    pub(crate) requests: Cell<Requests>,
+}
+impl ImeInput {
+    /// Ends the remaining route.
+    pub fn stop_propagation(&self) {
+        self.requests.update(|mut r| {
+            r.stop = true;
             r
         });
     }
@@ -366,6 +464,8 @@ pub(crate) struct InputProperties {
     pub key: [Option<Listener<KeyInput>>; 4],
     pub hover: Option<Listener<HoverEvent>>,
     pub wheel: Option<Listener<WheelInput>>,
+    /// Text input client opt-in, listeners and IME area; see `Element::text_input_client`.
+    pub text: Option<Box<TextClient>>,
     pub focusable: Option<bool>,
     pub cursor: Option<Cursor>,
     pub window_drag_region: bool,
@@ -380,4 +480,13 @@ impl InputProperties {
             || self.window_drag_region
             || self.focusable == Some(true)
     }
+}
+/// Text input client configuration, allocated only on elements that use it.
+#[derive(Clone, Default)]
+pub(crate) struct TextClient {
+    pub enabled: bool,
+    pub insert: Option<Listener<TextInsertInput>>,
+    pub ime: Option<Listener<ImeInput>>,
+    /// IME candidate anchor relative to the element's border box.
+    pub ime_area: Option<crate::Bounds>,
 }

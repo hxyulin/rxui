@@ -377,6 +377,52 @@ impl Element {
         self.input.get_or_insert_with(Default::default).key[3] = Some(listener);
         self
     }
+    fn text_client(&mut self) -> &mut crate::input::TextClient {
+        self.input
+            .get_or_insert_with(Default::default)
+            .text
+            .get_or_insert_with(Default::default)
+    }
+    /// Makes this element a text input client: while it is focused, committed text
+    /// (typed characters after layout and dead-key processing, IME commits and the
+    /// default Paste) reaches [`Self::on_text_insert`] listeners, IME composition
+    /// reaches [`Self::on_ime`] listeners, and the native host enables the platform
+    /// IME with its candidate window at [`Self::ime_cursor_area`].
+    ///
+    /// Either value also makes the element focusable unless `.focusable(...)` was
+    /// already called, so a view can toggle the flag, for example for a read-only
+    /// editor, without losing focus. Key events still route first: a key-down
+    /// listener that calls `prevent_default` suppresses the text that key would
+    /// insert, and on Tab suppresses focus traversal. Text inputs, text areas and
+    /// selectable labels ignore this flag. See `docs/custom-elements.md`.
+    pub fn text_input_client(mut self, value: bool) -> Self {
+        self.text_client().enabled = value;
+        let input = self.input.as_mut().expect("text client properties");
+        input.focusable.get_or_insert(true);
+        self
+    }
+    /// Registers a committed-text listener in the target/bubble route from the
+    /// focused text input client. It runs once per typed character sequence, IME
+    /// commit or paste; see [`crate::TextInsertInput`].
+    pub fn on_text_insert(mut self, listener: Listener<crate::TextInsertInput>) -> Self {
+        self.text_client().insert = Some(listener);
+        self
+    }
+    /// Registers an IME composition listener in the target/bubble route from the
+    /// composing text input client: preedit updates and cancellations, see
+    /// [`crate::ImeEvent`].
+    pub fn on_ime(mut self, listener: Listener<crate::ImeInput>) -> Self {
+        self.text_client().ime = Some(listener);
+        self
+    }
+    /// The text input client's caret rectangle, in logical units relative to this
+    /// element's border box, where the platform IME places its candidate window.
+    /// Update it from the view as the caret moves. Without it, the content box is
+    /// used. Values must be finite with non-negative size.
+    pub fn ime_cursor_area(mut self, area: crate::Bounds) -> Self {
+        self.text_client().ime_area = Some(area);
+        self
+    }
     /// Applies opacity once to this element's complete painted subtree, including its
     /// background, border, text and descendants. Values must be finite in 0..=1.
     /// Partial opacity uses an isolated offscreen layer; 1 is the ordinary direct path,

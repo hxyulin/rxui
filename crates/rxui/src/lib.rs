@@ -233,8 +233,9 @@ pub use id::{EntityId, MountId};
 pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
 #[cfg(feature = "layout")]
 pub use input::{
-    Cursor, EventPhase, HoverEvent, InputResult, KeyEvent, KeyInput, KeyboardKey, Modifiers,
-    PointerButton, PointerButtons, PointerCancelReason, PointerInput, WheelInput,
+    Cursor, EventPhase, HoverEvent, ImeCancelReason, ImeEvent, ImeInput, InputResult, KeyEvent,
+    KeyInput, KeyboardKey, Modifiers, PointerButton, PointerButtons, PointerCancelReason,
+    PointerInput, TextInsertInput, TextInsertSource, WheelInput,
 };
 pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
@@ -358,6 +359,7 @@ pub mod prelude {
         TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
     };
     pub use crate::{FontFace, SubmitShortcut, TextSpan, rich_text, span, text_area};
+    pub use crate::{ImeCancelReason, ImeEvent, ImeInput, TextInsertInput, TextInsertSource};
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
     #[cfg(feature = "tasks")]
@@ -400,6 +402,8 @@ mod layout_tests;
 mod input_tests;
 #[cfg(all(test, feature = "layout"))]
 mod overlay_command_tests;
+#[cfg(all(test, feature = "layout"))]
+mod text_client_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod control_tests;

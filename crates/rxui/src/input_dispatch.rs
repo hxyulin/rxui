@@ -365,7 +365,7 @@ impl<T: View> Ui<T> {
         &mut self,
         runtime: &mut Runtime,
     ) -> Result<bool, UiError> {
-        let mut changed = false;
+        let mut changed = self.flush_text_client(runtime)?;
         for (listener, event) in std::mem::take(&mut self.input.pending_hover) {
             changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
         }
@@ -592,12 +592,17 @@ impl<T: View> Ui<T> {
                 }
             })
             .or(hit);
+        // A press on a composing client ends composition before its listeners run,
+        // even when they prevent the default to place their own caret.
+        let ime_cancelled = kind == 0
+            && button == Some(PointerButton::Primary)
+            && self.cancel_client_composition_for_press(runtime, target)?;
         let mut result = if let Some(target) = target {
             self.dispatch_pointer(runtime, target, hit, kind, button)?
         } else {
             InputResult::default()
         };
-        result.changed |= hover_changed;
+        result.changed |= hover_changed | ime_cancelled;
         self.input.prevented = result.default_prevented;
         let overlay = self.overlay_pointer(runtime, kind, result.default_prevented)?;
         result.changed |= overlay.changed;
