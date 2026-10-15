@@ -1358,6 +1358,8 @@ pub fn rich_text(spans: impl IntoIterator<Item = impl Into<crate::TextSpan>>) ->
 /// accessible name; name icon-only buttons with `accessibility_label`. Descendant
 /// text inherits the button's current state foreground unless explicitly colored.
 /// A caption button is a leaf and rejects additional children during preparation.
+/// Its caption stays vertically centered when the button is taller than the text,
+/// for example with a fixed `height`; composed content follows flex alignment.
 ///
 /// ```
 /// use rxui::prelude::*;

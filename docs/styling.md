@@ -203,7 +203,10 @@ keeping its focus width; `ThemeMetrics::compact()` and `ThemeMetrics::balanced()
 are the raw presets. Text lines are `font_size × line_height` tall, with
 `ThemeMetrics::line_height` 1.4 in every preset, so the preset paddings make buttons
 and inputs the same height. A theme with a different line height should adjust the
-button padding to keep that alignment. Font loading remains the painter's policy.
+button padding to keep that alignment. A caption button given a fixed height or
+less padding keeps its caption vertically centered in the space it has. Composed
+content (`button(row()...)`) is laid out by flexbox alignment instead. Font loading
+remains the painter's policy.
 
 Primary buttons use the accent fill. Inputs use their own fill and a stronger
 border than buttons. Popovers use the raised fill.

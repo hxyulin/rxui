@@ -616,6 +616,9 @@ pub(crate) struct Node {
     border: [f32; 4],
     layout_dirty: bool,
     image_size: [f32; 2],
+    /// Measured caption height of a text button, for vertical centering.
+    #[cfg_attr(not(feature = "rendering"), allow(dead_code))]
+    caption_height: f32,
     image_tint: Color,
     button_owner: Option<ElementId>,
     control_color: bool,
@@ -1092,6 +1095,7 @@ impl<T: View> Ui<T> {
         let nodes = &self.nodes;
         let mut error = None;
         let measurements = &mut self.stats.measurements;
+        let mut captions = Vec::new();
         self.taffy.compute_layout_with_measure(
             layout_root,
             Size {
@@ -1147,10 +1151,15 @@ impl<T: View> Ui<T> {
                         let Some(text) = node.displayed_text() else {
                             return Size::ZERO;
                         };
+                        // A caption still needs its height to sit centered in a
+                        // fixed-size button.
+                        let caption =
+                            matches!(node.element.kind, ElementKind::Button { text: Some(_), .. });
                         if let Size {
                             width: Some(width),
                             height: Some(height),
                         } = known
+                            && !caption
                         {
                             return Size { width, height };
                         }
@@ -1180,10 +1189,15 @@ impl<T: View> Ui<T> {
                                 revision: node.text_revision,
                             },
                         ) {
-                            Ok(size) if size.iter().all(|v| v.is_finite() && *v >= 0.) => Size {
-                                width: known.width.unwrap_or(size[0]),
-                                height: known.height.unwrap_or(size[1]),
-                            },
+                            Ok(size) if size.iter().all(|v| v.is_finite() && *v >= 0.) => {
+                                if caption {
+                                    captions.push((*id, size[1]));
+                                }
+                                Size {
+                                    width: known.width.unwrap_or(size[0]),
+                                    height: known.height.unwrap_or(size[1]),
+                                }
+                            }
                             Ok(_) => {
                                 error.get_or_insert(UiError::InvalidGeometry);
                                 Size::ZERO
@@ -1197,6 +1211,11 @@ impl<T: View> Ui<T> {
                 )
             },
         )?;
+        for (id, height) in captions {
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.caption_height = height;
+            }
+        }
         self.stats.layout_passes += 1;
         if let Some(error) = error {
             self.taffy.mark_dirty(layout_root)?;
@@ -1499,6 +1518,7 @@ impl<T: View> Ui<T> {
                     border: [0.; 4],
                     layout_dirty: true,
                     image_size: [0.; 2],
+                    caption_height: 0.,
                     image_tint: [1.; 4],
                     button_owner: None,
                     control_color: false,
@@ -2157,7 +2177,14 @@ impl<T: View> Ui<T> {
                 } else {
                     node.editor.as_ref().map_or(0., |e| e.scroll_x)
                 },
-            node.content_bounds.y,
+            // Like native buttons, a caption sits centered in a taller button.
+            node.content_bounds.y
+                + match node.element.kind {
+                    ElementKind::Button { text: Some(_), .. } => {
+                        ((node.content_bounds.height - node.caption_height) / 2.).max(0.)
+                    }
+                    _ => 0.,
+                },
         ])
     }
     /// Measurement request for a visible empty input's placeholder, sharing the

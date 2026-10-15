@@ -651,3 +651,44 @@ fn scroll_metric_layout_cycles_are_diagnosed_and_corrected_views_retry() {
     assert!(ui.is_prepared());
     assert!(!ui.needs_prepare(&r).unwrap());
 }
+
+#[cfg(feature = "rendering")]
+#[test]
+fn text_buttons_center_their_caption_vertically() {
+    struct Buttons;
+    impl View for Buttons {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .child(button("Tall").key("tall").height(60.).padding_y(0.))
+                // Fixed width and height: layout never needs the text size.
+                .child(button("Both").key("both").size(120., 60.).padding_y(0.))
+                .child(button("Intrinsic").key("intrinsic"))
+        }
+    }
+    let mut r = Runtime::new();
+    let e = r.update(|cx| cx.new(|_| Buttons));
+    let mut ui = Ui::new(&mut r, e).unwrap();
+    ui.prepare(&mut r, [400., 300.], &mut Measure).unwrap();
+    let caption = |key: &str| {
+        let info = ui
+            .elements()
+            .find(|i| i.key == Some(&Key::from(key)))
+            .unwrap();
+        (
+            info.bounds,
+            info.content_bounds,
+            ui.text_origin(info.id, false).unwrap(),
+        )
+    };
+    for key in ["tall", "both"] {
+        let (bounds, _, origin) = caption(key);
+        let center = origin[1] + 10.;
+        assert!(
+            (center - (bounds.y + bounds.height / 2.)).abs() < 0.01,
+            "{key}: caption at {origin:?} in {bounds:?}"
+        );
+    }
+    // A button sized by its caption keeps the caption at its content origin.
+    let (_, content, origin) = caption("intrinsic");
+    assert_eq!(origin, [content.x, content.y]);
+}
