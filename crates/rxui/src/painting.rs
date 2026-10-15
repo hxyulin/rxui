@@ -870,6 +870,7 @@ impl UiPainter {
     fn has_visible_ink(
         texts: &IdMap<ElementId, TextResource>,
         element: &crate::ElementInfo<'_>,
+        text_origin: [f32; 2],
         scale: f32,
         origin: [f32; 2],
         scissor: [u32; 4],
@@ -926,8 +927,8 @@ impl UiPainter {
             .and_then(|t| t.ink_bounds())
             .is_some_and(|ink| {
                 visible(Bounds {
-                    x: element.content_bounds.x + ink.x,
-                    y: element.content_bounds.y + ink.y,
+                    x: text_origin[0] + ink.x,
+                    y: text_origin[1] + ink.y,
                     width: ink.width,
                     height: ink.height,
                 })
@@ -1028,9 +1029,14 @@ impl UiPainter {
                 // overflow and absolute children can escape a parent's layout box.
                 // Keep the original clip for actual draws and conservatively include
                 // the shape shader's antialiasing fringe and prepared glyph quads.
+                // Prepared text, culling and drawing share one origin.
+                let text_origin = ui
+                    .text_origin(element.id, false)
+                    .ok_or(UiError::InvalidGeometry)?;
                 if !Self::has_visible_ink(
                     &self.texts,
                     &element,
+                    text_origin,
                     scale,
                     [viewport[0] + shift[0], viewport[1] + shift[1]],
                     original_scissor,
@@ -1236,11 +1242,7 @@ impl UiPainter {
                     // pass bindings survive mixed-renderer/opacity transitions.
                     // Reapply text state; retain shaping, atlas and geometry caches.
                     let _ = paint.pass().as_wgpu();
-                    let origin = [
-                        element.content_bounds.x
-                            - element.editing.as_ref().map_or(0., |e| e.scroll_x),
-                        element.content_bounds.y,
-                    ];
+                    let origin = text_origin;
                     if let Some(prepared) = &resource.prepared {
                         paint.draw_text(prepared, TextDraw::new(origin).color(color))?;
                     } else {
@@ -2355,6 +2357,118 @@ mod tests {
                 }
                 frame.finish().unwrap();
             }
+            assert!(errors.pop().await.is_none());
+        });
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn fixed_height_caption_buttons_draw_their_caption_centered() {
+        use crate::button;
+        struct Tall;
+        impl View for Tall {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                column().child(
+                    button("MMMM")
+                        .key("tall")
+                        .height(80.)
+                        .padding_y(0.)
+                        .color([1., 1., 1., 1.]),
+                )
+            }
+        }
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let errors = graphics
+                .device()
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let mut target =
+                graphics
+                    .create_framebuffer(FramebufferOptions::new(320, 128).usage(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    ))
+                    .unwrap();
+            let mut runtime = Runtime::new();
+            let root = runtime.update(|cx| cx.new(|_| Tall));
+            let mut ui = Ui::new(&mut runtime, root).unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
+                .unwrap();
+            ui.prepare(&mut runtime, [320., 128.], &mut painter)
+                .unwrap();
+            painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+            let key = crate::Key::from("tall");
+            let info = ui.elements().find(|e| e.key == Some(&key)).unwrap();
+            let (bounds, content) = (info.bounds, info.content_bounds);
+            let texture = target.color_texture().unwrap().clone();
+            let buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("RXUI caption readback"),
+                size: 320 * 4 * 128,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut frame = target.begin_frame().unwrap();
+            {
+                let mut pass = frame
+                    .render_pass()
+                    .clear_color(wgpu::Color::BLACK)
+                    .begin()
+                    .unwrap();
+                painter.paint(&ui, &mut pass, 1.).unwrap();
+            }
+            frame.encoder().copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: Default::default(),
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(320 * 4),
+                        rows_per_image: Some(128),
+                    },
+                },
+                texture.size(),
+            );
+            let submission = frame.finish().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+            graphics
+                .device()
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                })
+                .unwrap();
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .unwrap();
+            let pixels = buffer.slice(..).get_mapped_range().unwrap();
+            // Rows inside the content box holding bright glyph ink.
+            let ink: Vec<usize> = (content.y as usize..(content.y + content.height) as usize)
+                .filter(|&y| {
+                    (content.x as usize..(content.x + content.width) as usize).any(|x| {
+                        let p = &pixels[y * 1280 + x * 4..y * 1280 + x * 4 + 4];
+                        p[0] > 200 && p[1] > 200 && p[2] > 200
+                    })
+                })
+                .collect();
+            let (top, bottom) = (
+                *ink.first().unwrap() as f32,
+                *ink.last().unwrap() as f32 + 1.,
+            );
+            let center = bounds.y + bounds.height / 2.;
+            assert!(
+                ((top + bottom) / 2. - center).abs() < 3.,
+                "caption ink {top}..{bottom} in button {bounds:?}"
+            );
+            drop(pixels);
+            buffer.unmap();
             assert!(errors.pop().await.is_none());
         });
     }
