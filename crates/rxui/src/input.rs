@@ -501,4 +501,6 @@ pub(crate) struct TextClient {
     pub ime: Option<Listener<ImeInput>>,
     /// IME candidate anchor relative to the element's border box.
     pub ime_area: Option<crate::Bounds>,
+    /// Deferred candidate geometry, read after custom preparation by native hosts.
+    pub ime_area_provider: Option<std::rc::Rc<dyn Fn() -> Option<crate::Bounds>>>,
 }

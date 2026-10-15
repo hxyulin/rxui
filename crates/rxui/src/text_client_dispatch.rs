@@ -210,7 +210,10 @@ impl<T: View> Ui<T> {
         if !node.visible {
             return Ok(None);
         }
-        let Some(area) = self.text_client_properties(id).and_then(|t| t.ime_area) else {
+        let Some(area) = self
+            .text_client_properties(id)
+            .and_then(|t| t.ime_area_provider.as_ref().map_or(t.ime_area, |get| get()))
+        else {
             return Ok(Some(node.content_bounds));
         };
         if [area.x, area.y, area.width, area.height]
@@ -221,11 +224,16 @@ impl<T: View> Ui<T> {
         {
             return Err(UiError::InvalidGeometry);
         }
-        Ok(Some(Bounds {
+        let area = Bounds {
             x: node.bounds.x + area.x,
             y: node.bounds.y + area.y,
             ..area
-        }))
+        };
+        // Translation can overflow even when the local rectangle is finite.
+        if !area.x.is_finite() || !area.y.is_finite() {
+            return Err(UiError::InvalidGeometry);
+        }
+        Ok(Some(area))
     }
     /// Routes one host text event to the focused client `id`; see `Ui::text_input`.
     pub(super) fn client_text_input(

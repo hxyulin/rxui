@@ -422,7 +422,28 @@ impl Element {
     /// Update it from the view as the caret moves. Without it, the content box is
     /// used. Values must be finite with non-negative size.
     pub fn ime_cursor_area(mut self, area: crate::Bounds) -> Self {
-        self.text_client().ime_area = Some(area);
+        let client = self.text_client();
+        client.ime_area = Some(area);
+        client.ime_area_provider = None;
+        self
+    }
+    /// Reads a text input client's measured caret rectangle when the host queries
+    /// IME geometry, including after custom preparation in the current frame.
+    /// This avoids rebuilding a view or requesting another frame solely to publish
+    /// a caret measured by [`crate::CustomElement::prepare`]. The callback reads
+    /// application-owned geometry; it must not mutate the UI or request a frame.
+    ///
+    /// Rectangles use logical units relative to this element's border box, like
+    /// [`Self::ime_cursor_area`]. `None` uses the content box. Values must be finite
+    /// with non-negative size. The last area setter wins. Hosts may query before
+    /// custom preparation too, so retain the latest available rectangle.
+    pub fn ime_cursor_area_with(
+        mut self,
+        provider: impl Fn() -> Option<crate::Bounds> + 'static,
+    ) -> Self {
+        let client = self.text_client();
+        client.ime_area = None;
+        client.ime_area_provider = Some(std::rc::Rc::new(provider));
         self
     }
     /// Applies opacity once to this element's complete painted subtree, including its

@@ -161,6 +161,13 @@ element, but a custom element painting its own text is the intended client.
   the prepared geometry, and the native host forwards changes to the platform.
   Without it, the content box is used. Non-finite values or a negative size make
   `Ui::ime_cursor_area` fail with `UiError::InvalidGeometry`.
+  A custom editor that measures its caret during `CustomElement::prepare` can use
+  `.ime_cursor_area_with(move || Some(geometry.borrow().caret))` instead. The
+  provider reads retained application geometry when queried; the native host
+  queries again after custom preparation, before submitting that same frame.
+  No follow-up animation frame is needed just to publish the measured rectangle.
+  The callback must only read geometry, and may also be called before preparation.
+  Returning `None` uses the content box; the last static/deferred setter wins.
 - **Tab.** Tab and Shift+Tab reach key listeners before the host moves focus.
   Calling `prevent_default()` on the key-down keeps focus in the client, so it can
   indent or insert a tab. Leave a way out of the editor for keyboard users, for

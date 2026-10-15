@@ -476,3 +476,94 @@ fn ime_cursor_area_follows_the_reported_caret() {
         Err(UiError::InvalidGeometry)
     ));
 }
+
+#[test]
+fn deferred_ime_geometry_updates_without_reconciling_or_requesting_a_frame() {
+    use std::{cell::Cell, rc::Rc};
+    struct Client(Rc<Cell<Option<Bounds>>>);
+    impl View for Client {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let area = self.0.clone();
+            column().padding(10.).child(
+                custom(Surface).key("client").text_input_client(true)
+                    // A deferred setter replaces the earlier static area.
+                    .ime_cursor_area(Bounds { x: 99., y: 0., width: 1., height: 20. })
+                    .ime_cursor_area_with(move || area.get()),
+            )
+        }
+    }
+    let area = Rc::new(Cell::new(None));
+    let mut runtime = Runtime::new();
+    let entity = runtime.update(|cx| cx.new(|_| Client(area.clone())));
+    let mut ui = Ui::new(&mut runtime, entity).unwrap();
+    ui.prepare(&mut runtime, [400., 300.], &mut Measure)
+        .unwrap();
+    let node = ui
+        .elements()
+        .find(|e| e.key == Some(&Key::from("client")))
+        .unwrap();
+    let (id, bounds, content) = (node.id, node.bounds, node.content_bounds);
+    ui.focus(id);
+    assert_eq!(ui.ime_cursor_area(&mut Measure).unwrap(), Some(content));
+    for x in [24., 48., 5.] {
+        area.set(Some(Bounds {
+            x,
+            y: 4.,
+            width: 1.,
+            height: 16.,
+        }));
+        assert_eq!(
+            ui.ime_cursor_area(&mut Measure).unwrap(),
+            Some(Bounds {
+                x: bounds.x + x,
+                y: bounds.y + 4.,
+                width: 1.,
+                height: 16.
+            })
+        );
+        assert!(!ui.needs_prepare(&runtime).unwrap());
+        assert!(!runtime.animation_frame_requested());
+    }
+    for bad in [f32::NAN, f32::INFINITY, -1.] {
+        area.set(Some(Bounds {
+            x: 0.,
+            y: 0.,
+            width: bad,
+            height: 16.,
+        }));
+        assert!(matches!(
+            ui.ime_cursor_area(&mut Measure),
+            Err(UiError::InvalidGeometry)
+        ));
+    }
+    area.set(None);
+    assert_eq!(ui.ime_cursor_area(&mut Measure).unwrap(), Some(content));
+    ui.set_active(false);
+    assert_eq!(ui.ime_cursor_area(&mut Measure).unwrap(), None);
+}
+
+#[test]
+fn static_ime_area_replaces_a_deferred_provider() {
+    struct Client;
+    impl View for Client {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            custom(Surface)
+                .text_input_client(true)
+                .ime_cursor_area_with(|| panic!("replaced provider must not run"))
+                .ime_cursor_area(Bounds {
+                    x: 7.,
+                    y: 4.,
+                    width: 1.,
+                    height: 16.,
+                })
+        }
+    }
+    let mut runtime = Runtime::new();
+    let entity = runtime.update(|cx| cx.new(|_| Client));
+    let mut ui = Ui::new(&mut runtime, entity).unwrap();
+    ui.prepare(&mut runtime, [400., 300.], &mut Measure)
+        .unwrap();
+    let id = ui.elements().next().unwrap().id;
+    ui.focus(id);
+    assert_eq!(ui.ime_cursor_area(&mut Measure).unwrap().unwrap().x, 7.);
+}
