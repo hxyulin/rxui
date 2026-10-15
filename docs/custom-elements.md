@@ -215,3 +215,23 @@ and commit, every cancellation reason, Tab capture, the candidate area and that
 non-clients and built-in inputs are unaffected. A GPU test drives the native
 `WindowInput` with winit IME events. Native composition with each platform's input
 methods is not covered by these tests.
+
+### Crisp coverage text
+
+For text drawn directly in the logical window coordinate system, prepare with
+`cx.text_raster_options(origin)` and draw at that same `origin`. Compute the origin
+only after clamping scrolling or revealing a caret. For a virtualized line it
+includes the line's top, any horizontal window offset, editor insets and current
+scroll. Separate overlays need their own origins.
+
+Retain the shaped layout and prepare new GPU text only when layout, density, or
+fractional physical origin changes; whole physical-pixel translations reuse the
+same prepared resource. The phase key can be computed with
+`origin.map(|v| (v * cx.raster_scale).rem_euclid(1.))`. Do not round only the origin
+to a quarter-pixel bin for the cache key: each glyph's fractional local position
+can cross a different bin boundary. The Astrelis glyph cache bounds the actual
+quarter-pixel raster variants.
+
+The helper assumes RXUI's positive uniform draw scale. If custom painting adds
+rotation, shear or nonuniform scaling, select Astrelis's ordinary filtered text
+preparation or use its explicit placement contract for a suitable final transform.

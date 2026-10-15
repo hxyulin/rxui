@@ -40,6 +40,7 @@ struct TextResource {
     prepared: Option<PreparedText>,
     prepared_layout: Option<Arc<TextLayout>>,
     raster_scale: f32,
+    raster_phase: Option<[f32; 2]>,
     prepared_width: f32,
     prepared_revision: u64,
     font_generation: u64,
@@ -285,6 +286,45 @@ impl PlaceholderResource {
             && self.resource.raster_scale == raster_scale
     }
 }
+/// Cache only fractional physical placement: whole pixel translations keep
+/// prepared texels aligned, including integer shifts into cropped opacity layers.
+fn raster_phase(origin: [f32; 2], scale: f32) -> [f32; 2] {
+    origin.map(|v| (v * scale).rem_euclid(1.))
+}
+/// Phase-only movement must not upload every retained offscreen row. Keep its
+/// old prepared phase until its ink can reach the clip; allow a pixel of fringe
+/// for phase quantization and the coverage filter. Layout changes still prepare.
+fn text_ink_visible<T: View>(
+    ui: &Ui<T>,
+    id: ElementId,
+    resource: &TextResource,
+    origin: [f32; 2],
+    scale: f32,
+) -> bool {
+    let Some(ink) = resource.ink_bounds() else {
+        return false;
+    };
+    let Some(extent) = ui.ink_extent(id) else {
+        return false;
+    };
+    ink_intersects(ink, origin, extent.clip, scale)
+}
+fn ink_intersects(ink: Rect, origin: [f32; 2], clip: Bounds, scale: f32) -> bool {
+    let fringe = 1. / scale;
+    let bounds = Bounds {
+        x: origin[0] + ink.x - fringe,
+        y: origin[1] + ink.y - fringe,
+        width: ink.width + 2. * fringe,
+        height: ink.height + 2. * fringe,
+    }
+    .intersection(clip);
+    bounds.width > 0. && bounds.height > 0.
+}
+fn raster_options(origin: [f32; 2], scale: f32) -> TextRasterOptions {
+    TextRasterOptions::new()
+        .raster_scale(scale)
+        .physical_origin(origin.map(|v| v * scale))
+}
 fn text_width(width: TextWidth) -> Option<f32> {
     match width {
         TextWidth::MinContent => Some(0.),
@@ -459,8 +499,8 @@ impl UiPainter {
         &mut self.painter
     }
     /// Prepares pipelines and changed text resources for this layout/device/DPI.
-    /// Placement, color, hover and focus changes retain existing prepared text.
-    /// A changed layout or raster density prepares a replacement explicitly.
+    /// Whole physical-pixel placement, color, hover and focus changes retain text.
+    /// A changed layout, raster density or fractional pixel origin prepares a replacement.
     /// Also prepares cropped opacity layers for this destination format/scale.
     /// Layer storage is reused; contents are recorded by [`Self::compose`].
     pub fn prepare<T: View>(
@@ -525,23 +565,39 @@ impl UiPainter {
                 }
             };
             let width = text_width(request.width).unwrap_or_default();
+            let origin = ui.text_origin(id, false).ok_or(UiError::InvalidGeometry)?;
+            let phase = raster_phase(origin, raster_scale);
             // Only an empty input shows a placeholder.
             if request.text.is_empty()
                 && let Some(placeholder) = ui.placeholder_request(id)
             {
                 let entry = self.placeholders.entry(id).or_default();
-                if !entry.current(&placeholder, self.generation, raster_scale) {
+                let placeholder_origin =
+                    ui.text_origin(id, true).ok_or(UiError::InvalidGeometry)?;
+                let placeholder_phase = raster_phase(placeholder_origin, raster_scale);
+                if !entry.current(&placeholder, self.generation, raster_scale)
+                    || (entry.resource.raster_phase != Some(placeholder_phase)
+                        && text_ink_visible(
+                            ui,
+                            id,
+                            &entry.resource,
+                            placeholder_origin,
+                            raster_scale,
+                        ))
+                {
                     let layout =
                         entry
                             .resource
                             .layout(&mut self.fonts, &self.families, placeholder)?;
                     entry.resource.prepared = None;
-                    entry.resource.prepared = Some(self.painter.prepare_text(
-                        &layout,
-                        TextRasterOptions::new().raster_scale(raster_scale),
-                    )?);
+                    entry.resource.prepared =
+                        Some(self.painter.prepare_text(
+                            &layout,
+                            raster_options(placeholder_origin, raster_scale),
+                        )?);
                     entry.resource.prepared_layout = Some(layout);
                     entry.resource.raster_scale = raster_scale;
+                    entry.resource.raster_phase = Some(placeholder_phase);
                     entry.resource.prepared_width = width;
                     entry.resource.prepared_revision = placeholder.revision;
                     entry.resource.font_generation = self.generation;
@@ -550,26 +606,28 @@ impl UiPainter {
                 }
             }
             let resource = self.texts.entry(id).or_default();
+            let phase_current = resource.raster_phase == Some(phase)
+                || !text_ink_visible(ui, id, resource, origin, raster_scale);
             let current = resource.prepared_revision == request.revision
                 && resource.prepared_width == width
                 && resource.font_generation == self.generation
-                && resource.raster_scale == raster_scale;
+                && resource.raster_scale == raster_scale
+                && phase_current;
             // The common unchanged case reads only these fields; chunked text never
             // holds whole-text geometry.
             if current && resource.prepared.is_some() {
                 continue;
             }
             if resource.chunked(&request) {
-                if current && resource.ready() {
-                    continue;
-                }
+                let clip = ui.ink_extent(id).ok_or(UiError::InvalidGeometry)?.clip;
                 let chunks = resource.chunks.as_mut().unwrap();
                 chunks.layout(&mut self.fonts, &self.families, request, self.generation)?;
-                chunks.prepare(&mut self.painter, raster_scale)?;
+                chunks.prepare(&mut self.painter, raster_scale, origin, clip)?;
                 resource.prepared_revision = request.revision;
                 resource.prepared_width = width;
                 resource.font_generation = self.generation;
                 resource.raster_scale = raster_scale;
+                resource.raster_phase = Some(phase);
                 continue;
             }
             let layout = resource.layout(&mut self.fonts, &self.families, request)?;
@@ -581,16 +639,18 @@ impl UiPainter {
                 .as_ref()
                 .is_none_or(|old| !Arc::ptr_eq(old, &layout))
                 || resource.raster_scale != raster_scale
+                || !phase_current
                 || resource.prepared.is_none()
             {
                 resource.prepared = None;
                 resource.prepared_layout = None;
                 let prepared = self
                     .painter
-                    .prepare_text(&layout, TextRasterOptions::new().raster_scale(raster_scale))?;
+                    .prepare_text(&layout, raster_options(origin, raster_scale))?;
                 resource.prepared = Some(prepared);
                 resource.prepared_layout = Some(layout);
                 resource.raster_scale = raster_scale;
+                resource.raster_phase = Some(phase);
                 resource.prepared_width = width;
             }
             resource.prepared_revision = request.revision;
@@ -2897,3 +2957,7 @@ mod style_gpu_tests;
 #[cfg(test)]
 #[path = "animation_gpu_tests.rs"]
 mod animation_gpu_tests;
+
+#[cfg(test)]
+#[path = "coverage_gpu_tests.rs"]
+mod coverage_gpu_tests;

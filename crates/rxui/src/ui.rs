@@ -2146,6 +2146,20 @@ impl<T: View> Ui<T> {
             _ => VisibleContent::Other,
         })
     }
+    /// Final logical text origin, including an input's horizontal scroll.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn text_origin(&self, id: ElementId, placeholder: bool) -> Option<[f32; 2]> {
+        let node = self.painted_node(id).filter(|n| n.visible)?;
+        Some([
+            node.content_bounds.x
+                - if placeholder {
+                    0.
+                } else {
+                    node.editor.as_ref().map_or(0., |e| e.scroll_x)
+                },
+            node.content_bounds.y,
+        ])
+    }
     /// Measurement request for a visible empty input's placeholder, sharing the
     /// input's font, width and text revision.
     #[cfg(feature = "rendering")]
@@ -2898,6 +2912,7 @@ impl<T: View> Ui<T> {
         let width = node.content_bounds.width;
         let editor = node.editor.as_mut().unwrap();
         editor.reveal = false;
+        let old_scroll = editor.scroll_x;
         if caret.x < editor.scroll_x {
             editor.scroll_x = caret.x.max(0.);
         } else if caret.x + 1. > editor.scroll_x + width {
@@ -2905,6 +2920,12 @@ impl<T: View> Ui<T> {
         }
         // A shorter externally supplied value should not retain an obsolete offset.
         editor.scroll_x = editor.scroll_x.min(caret.x.max(0.));
+        if old_scroll != editor.scroll_x {
+            self.geometry_revision = self
+                .geometry_revision
+                .checked_add(1)
+                .expect("RXUI geometry revision exhausted");
+        }
         Ok(())
     }
     /// Logical native IME candidate rectangle for the active editor, using the same

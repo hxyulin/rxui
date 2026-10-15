@@ -105,3 +105,38 @@ from the pinned cosmic-text version through Astrelis, and the locale is `en-US`.
 - Fonts cannot be unloaded. `unmap_family` removes a mapping only.
 - Variable fonts expose only their weight axis; other axes keep their defaults.
 - Emoji and other color glyphs render when a color font is loaded.
+
+## Coverage text placement
+
+The Astrelis adapter prepares built-in labels, rich text, placeholders and text
+inputs for their final physical origin using `TextRasterOptions::physical_origin`.
+The origin includes input horizontal scrolling and, for wrapped paragraph chunks,
+each chunk's vertical offset. Font layout, advances, selection and hit testing
+remain fractional and unchanged. Outline masks use Astrelis's quarter-pixel phase
+bins; ink can move by at most 1/8 physical pixel per axis relative to the ideal
+position. Color/bitmap artwork and MTSDF retain their existing behavior.
+
+Prepared text is reused for color, selection and whole physical-pixel movement.
+A fractional physical-origin change explicitly prepares replacement glyph geometry
+for ink that can reach the clip, retaining the shaped layout. Offscreen resources
+keep their old phase until revealed; wrapped chunks check visibility individually,
+including when the clip moves without changing the base phase. Display-density
+changes also prepare replacement geometry. Only fractional origin
+is part of the placement cache key: a whole-pixel translation does not require
+another raster/upload. Single-line input caret scrolling invalidates the retained
+preparation pass even when the value, selection's text revision and layout stay
+the same. Paragraph chunks compare their own final origins when an earlier
+chunk's height changes.
+
+RXUI uses a positive uniform display transform. Cropped opacity layers shift by
+whole physical pixels, and animated layer destinations are pixel-aligned, so they
+preserve the same raster phase. Call `UiPainter::prepare` after geometry changes
+and use the corresponding scale for normal painting/composition.
+
+Custom elements opt in through
+`CustomPrepare::text_raster_options(final_logical_origin)`. Include all custom
+line offsets, scrolling and text insets in that origin, and retain/reprepare by
+fractional physical origin and raster density. Additional custom rotation,
+nonuniform scale or transforms require explicit Astrelis options for that draw;
+the default filtered preparation remains available. See
+[custom-elements.md](custom-elements.md) for the preparation and paint contract.

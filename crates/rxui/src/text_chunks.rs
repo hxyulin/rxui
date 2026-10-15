@@ -222,25 +222,34 @@ impl Chunks {
         &mut self,
         painter: &mut astrelis::Painter,
         raster_scale: f32,
+        origin: [f32; 2],
+        clip: crate::Bounds,
     ) -> Result<(), UiError> {
         let mut ink: Option<Rect> = None;
         for chunk in &mut self.list {
             let layout = chunk.layout.as_ref().ok_or(UiError::InvalidGeometry)?;
             let resource = &mut chunk.resource;
+            let origin = [origin[0], origin[1] + chunk.top];
+            let phase = super::raster_phase(origin, raster_scale);
+            let phase_changed = resource.raster_phase != Some(phase)
+                && resource
+                    .ink_bounds()
+                    .is_some_and(|ink| super::ink_intersects(ink, origin, clip, raster_scale));
             if resource
                 .prepared_layout
                 .as_ref()
                 .is_none_or(|old| !Arc::ptr_eq(old, layout))
                 || resource.raster_scale != raster_scale
+                || phase_changed
                 || resource.prepared.is_none()
             {
                 resource.prepared = None;
-                resource.prepared = Some(painter.prepare_text(
-                    layout,
-                    astrelis::TextRasterOptions::new().raster_scale(raster_scale),
-                )?);
+                resource.prepared = Some(
+                    painter.prepare_text(layout, super::raster_options(origin, raster_scale))?,
+                );
                 resource.prepared_layout = Some(layout.clone());
                 resource.raster_scale = raster_scale;
+                resource.raster_phase = Some(phase);
             }
             if let Some(i) = resource.prepared.as_ref().and_then(|p| p.ink_bounds()) {
                 let i = Rect::new(i.x, i.y + chunk.top, i.width, i.height);

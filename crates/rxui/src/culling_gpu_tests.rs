@@ -558,8 +558,19 @@ fn scroll_culling_retains_glyphs_overflow_and_independent_descendants() {
                 (6..=8).contains(&(stats.draw_calls - before)),
                 "only visible text should draw"
             );
-            assert_eq!(stats.geometry_bytes, text_stats.geometry_bytes);
-            assert_eq!(stats.uploaded_bytes, text_stats.uploaded_bytes);
+            if scrolled {
+                // Fractional movement needs new phases only for the handful of
+                // visible rows, never all 1,000 retained row resources.
+                let bytes = stats.geometry_bytes - text_stats.geometry_bytes;
+                assert!(
+                    bytes > 0 && bytes <= 8 * 3 * 48,
+                    "phase uploads were not culled: {bytes}"
+                );
+                assert!(stats.uploaded_bytes >= text_stats.uploaded_bytes);
+            } else {
+                assert_eq!(stats.geometry_bytes, text_stats.geometry_bytes);
+                assert_eq!(stats.uploaded_bytes, text_stats.uploaded_bytes);
+            }
             assert_eq!(ui.stats(), ui_stats);
             let has_ink = |left: usize, right: usize| {
                 (8..28).any(|y| (left..right).any(|x| bytes[y * 256 + x * 4] > 0))

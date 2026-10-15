@@ -108,6 +108,21 @@ pub struct CustomPrepare<'a> {
     pub raster_scale: f32,
 }
 
+#[cfg(feature = "rendering")]
+impl CustomPrepare<'_> {
+    /// Coverage options for text drawn at `origin` in logical window units.
+    /// Includes display density; integer physical shifts into RXUI opacity layers
+    /// preserve the phase. Include custom scrolling/line/overlay offsets in the
+    /// origin, and reprepare when its fractional physical phase or density changes.
+    /// This assumes RXUI's uniform scale. If `paint` adds another transform, use
+    /// explicit Astrelis raster options appropriate to that final transform instead.
+    pub fn text_raster_options(&self, origin: [f32; 2]) -> astrelis::TextRasterOptions {
+        astrelis::TextRasterOptions::new()
+            .raster_scale(self.raster_scale)
+            .physical_origin(origin.map(|v| v * self.raster_scale))
+    }
+}
+
 /// Wraps a custom element in an ordinary leaf [`crate::Element`].
 pub fn custom(element: impl CustomElement) -> crate::Element {
     crate::Element::new(crate::element::ElementKind::Custom(std::rc::Rc::new(
