@@ -11,8 +11,8 @@ authors = ["hxyulin <hxyulin@proton.me>"]
 repository = "https://github.com/hxyulin/rxui"
 
 [workspace.dependencies]
-astrelis = { git = "https://github.com/hxyulin/astrelis", rev = "d8ac1d1b5fd0c57d5ae0811abb3a004f6e3f6923", version = "0.4.0-dev.0" }
-astrelis-winit = { git = "https://github.com/hxyulin/astrelis", rev = "d8ac1d1b5fd0c57d5ae0811abb3a004f6e3f6923", version = "0.4.0-dev.0" }
+astrelis = { git = "https://github.com/hxyulin/astrelis", rev = "4801b66d77d00726c12b318a709544488970c7c5", version = "0.4.0-dev.0" }
+astrelis-winit = { git = "https://github.com/hxyulin/astrelis", rev = "4801b66d77d00726c12b318a709544488970c7c5", version = "0.4.0-dev.0" }
 taffy = { version = "0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 profiling = { version = "1.0.18", default-features = false }
 
