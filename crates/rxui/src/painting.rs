@@ -477,7 +477,10 @@ impl UiPainter {
         {
             return Err(UiError::InvalidGeometry);
         }
-        self.painter.prepare(format)?;
+        {
+            profiling::scope!("rxui::prepare_pipelines");
+            self.painter.prepare(format)?;
+        }
         let key = ui.composition_key();
         let pass = match self
             .passes
@@ -498,6 +501,7 @@ impl UiPainter {
         ui: &Ui<T>,
         raster_scale: f32,
     ) -> Result<TextPass, UiError> {
+        profiling::scope!("rxui::prepare_texts");
         self.texts
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
         self.placeholders
@@ -606,6 +610,7 @@ impl UiPainter {
         raster_scale: f32,
         ids: &[ElementId],
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::prepare_customs");
         self.customs
             .retain(|id, _| !ui.owns_element(*id) || ui.custom_element(*id).is_some());
         for element in ids.iter().filter_map(|id| ui.element(*id)) {
@@ -639,6 +644,7 @@ impl UiPainter {
         format: &RenderFormat,
         ids: &[ElementId],
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::prepare_images");
         self.image_placements
             .retain(|id, _| !ui.owns_element(*id) || ui.contains_element(*id));
         let mut seen = HashSet::new();

@@ -230,6 +230,7 @@ impl UiPainter {
         format: &RenderFormat,
         scale: f32,
     ) -> Result<(), UiError> {
+        profiling::scope!("rxui::prepare_composition");
         if !ui.needs_composition() {
             self.layers.retain(|id, _| !ui.owns_element(*id));
             self.compositions.remove(&ui.tree_id());
@@ -264,6 +265,7 @@ impl UiPainter {
                         || t.sample_count() != format.sample_count
                 });
             if changed {
+                profiling::scope!("rxui::allocate_composition_layer");
                 let target = self.graphics.create_framebuffer(
                     FramebufferOptions::new(size[0], size[1])
                         .format(layer_color)
@@ -321,6 +323,7 @@ impl UiPainter {
         format: &RenderFormat,
         scale: f32,
     ) -> Result<CompositionPlan, UiError> {
+        profiling::scope!("rxui::composition_plan");
         // Visible nodes in paint order with their parent index and opacity.
         let entries: Vec<_> = ui
             .painting_ids()
