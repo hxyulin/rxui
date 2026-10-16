@@ -31,9 +31,9 @@ fn literal(text: &str) -> String {
     text.replace('&', "&&")
 }
 struct Item {
-    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     parent: Submenu,
-    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     position: usize,
     #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
     native_edit: Option<PredefinedMenuItem>,
@@ -64,13 +64,13 @@ impl Backend {
             match entry {
                 Entry::Command(command, fallback) => {
                     let native = MenuItem::new(literal(fallback), false, None);
-                    #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                    #[cfg(target_os = "macos")]
                     let position = menu.items().len();
                     menu.append(&native).map_err(native_error)?;
                     self.items.push(Item {
-                        #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                        #[cfg(target_os = "macos")]
                         parent: menu.clone(),
-                        #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
+                        #[cfg(target_os = "macos")]
                         position,
                         #[cfg(all(feature = "native-dialogs", target_os = "macos"))]
                         native_edit: None,
@@ -131,6 +131,23 @@ impl Backend {
             }
             let next = (info, shortcut);
             if item.current.as_ref() != Some(&next) {
+                #[cfg(target_os = "macos")]
+                if next.1.is_none() && item.current.as_ref().is_some_and(|c| c.1.is_some()) {
+                    // Muda 0.20 leaves the AppKit key equivalent installed when
+                    // set_key_accelerator(None) is called. Replace the native item.
+                    let replacement = MenuItem::new(literal(&next.0.label), next.0.enabled, None);
+                    #[cfg(feature = "native-dialogs")]
+                    let visible = item.native_edit.is_none();
+                    #[cfg(not(feature = "native-dialogs"))]
+                    let visible = true;
+                    if visible {
+                        item.parent.remove(&item.native).map_err(native_error)?;
+                        item.parent
+                            .insert(&replacement, item.position)
+                            .map_err(native_error)?;
+                    }
+                    item.native = replacement;
+                }
                 if item
                     .current
                     .as_ref()
