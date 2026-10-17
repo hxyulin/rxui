@@ -91,6 +91,16 @@ pub enum TextAlign {
     /// Justified, except each paragraph's last line.
     Justified,
 }
+/// How labels and button captions fit their available content width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextOverflow {
+    /// Wrap at word boundaries and preserve paragraph breaks.
+    #[default]
+    Wrap,
+    /// Show one line, replacing hidden text with an ellipsis. Explicit paragraph
+    /// breaks end the visible line. Inputs and selectable labels keep their editing behavior.
+    Ellipsis,
+}
 /// Resolved text attributes of one element, besides its size and color.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
@@ -104,6 +114,8 @@ pub struct TextStyle {
     pub line_height: f32,
     /// Line alignment. Single-line text inputs always start-align.
     pub align: TextAlign,
+    /// Wrapping or single-line truncation.
+    pub overflow: TextOverflow,
 }
 impl Default for TextStyle {
     fn default() -> Self {
@@ -113,6 +125,7 @@ impl Default for TextStyle {
             style: FontStyle::default(),
             line_height: 1.4,
             align: TextAlign::default(),
+            overflow: TextOverflow::default(),
         }
     }
 }
@@ -124,6 +137,7 @@ pub(crate) struct Overrides {
     pub style: Option<FontStyle>,
     pub line_height: Option<f32>,
     pub align: Option<TextAlign>,
+    pub overflow: Option<TextOverflow>,
 }
 impl Overrides {
     /// This element's overrides layered over inherited ones.
@@ -134,6 +148,7 @@ impl Overrides {
             style: self.style.or(inherited.style),
             line_height: self.line_height.or(inherited.line_height),
             align: self.align.or(inherited.align),
+            overflow: self.overflow.or(inherited.overflow),
         }
     }
     /// Fills unset fields with defaults; line height defaults to the theme's.
@@ -144,6 +159,7 @@ impl Overrides {
             style: self.style.unwrap_or_default(),
             line_height: self.line_height.unwrap_or(theme.sizes().line_height),
             align: self.align.unwrap_or_default(),
+            overflow: self.overflow.unwrap_or_default(),
         }
     }
     pub fn valid(&self) -> bool {

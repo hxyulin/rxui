@@ -1717,12 +1717,15 @@ impl<T: View> Ui<T> {
             .text_style
             .as_deref()
             .map_or_else(|| parent_text.clone(), |own| own.over(parent_text));
-        let text_style = text_binding.resolve(&theme);
+        let mut text_style = text_binding.resolve(&theme);
         let control = matches!(
             element.kind,
             ElementKind::Button { .. } | ElementKind::TextInput { .. }
         );
         let input = matches!(element.kind, ElementKind::TextInput { .. });
+        if has_editor(element) {
+            text_style.overflow = crate::TextOverflow::Wrap;
+        }
         let metrics = theme.sizes();
         let layout = if node.layout_dirty || (control && metrics != node.resolved_theme.sizes()) {
             let mut layout = element.style.clone();

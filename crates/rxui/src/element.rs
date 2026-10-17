@@ -564,6 +564,18 @@ impl Element {
         self.style.padding.right = length(value);
         self
     }
+    /// Left padding; all other sides remain unchanged.
+    pub fn padding_left(mut self, value: f32) -> Self {
+        self.layout_overrides |= 1;
+        self.style.padding.left = length(value);
+        self
+    }
+    /// Right padding; all other sides remain unchanged.
+    pub fn padding_right(mut self, value: f32) -> Self {
+        self.layout_overrides |= 1;
+        self.style.padding.right = length(value);
+        self
+    }
     /// Vertical padding; horizontal padding remains unchanged.
     pub fn padding_y(mut self, value: f32) -> Self {
         self.layout_overrides |= 1;
@@ -720,6 +732,14 @@ impl Element {
     /// when the leaf is wider than its text, for example with `fill_width`.
     pub fn text_align(mut self, align: crate::TextAlign) -> Self {
         self.text_overrides().align = Some(align);
+        self
+    }
+    /// Inherited text overflow policy for labels and button captions. Ellipsis
+    /// uses a single line at the content width; set `min_width(0.)` on flex items
+    /// that must shrink below their intrinsic text width. Inputs and selectable labels
+    /// keep their editing behavior.
+    pub fn text_overflow(mut self, overflow: crate::TextOverflow) -> Self {
+        self.text_overrides().overflow = Some(overflow);
         self
     }
     fn text_overrides(&mut self) -> &mut crate::typography::Overrides {

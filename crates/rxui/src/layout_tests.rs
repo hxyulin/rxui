@@ -515,3 +515,48 @@ fn invalid_opacity_is_rejected_and_can_be_corrected() {
         assert!(ui.needs_composition());
     }
 }
+
+#[test]
+fn overflow_inherits_updates_text_revision_and_preserves_editing_geometry() {
+    let content = |overflow| {
+        column()
+            .text_overflow(overflow)
+            .child(
+                button("long caption")
+                    .key("caption")
+                    .padding_left(28.)
+                    .padding_right(4.),
+            )
+            .child(text_input("editable").key("input"))
+            .child(label("selectable").key("selectable").selectable(true))
+    };
+    let (mut runtime, root, mut ui) = setup(content(TextOverflow::Ellipsis));
+    let caption = keyed(&ui, "caption");
+    let revision = caption.text_revision;
+    assert_eq!(caption.text_style.overflow, TextOverflow::Ellipsis);
+    assert_eq!(
+        caption.content_bounds.x - caption.bounds.x - caption.border[0],
+        28.
+    );
+    assert_eq!(
+        caption.bounds.width
+            - caption.content_bounds.width
+            - 28.
+            - caption.border[0]
+            - caption.border[2],
+        4.
+    );
+    assert_eq!(keyed(&ui, "input").text_style.overflow, TextOverflow::Wrap);
+    assert_eq!(
+        keyed(&ui, "selectable").text_style.overflow,
+        TextOverflow::Wrap
+    );
+    runtime.update(|cx| root.update(cx, |s, _| s.0 = content(TextOverflow::Wrap)));
+    ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+        .unwrap();
+    assert_eq!(
+        keyed(&ui, "caption").text_style.overflow,
+        TextOverflow::Wrap
+    );
+    assert!(keyed(&ui, "caption").text_revision > revision);
+}

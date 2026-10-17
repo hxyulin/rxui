@@ -524,3 +524,108 @@ fn invalid_variable_heights_never_invoke_the_row_builder() {
         runtime.update(|cx| assert_eq!(root.read(cx).builds.get(), 0));
     }
 }
+
+struct NarrowTree {
+    scroll: ScrollHandle,
+    selected: usize,
+}
+impl View for NarrowTree {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column().padding(7.).fill_width().fill_height().child(
+            virtual_list(100, 24., &self.scroll, cx, |index| {
+                button(format!("node {index}: a long undo-history description"))
+                    .key(index)
+                    .height(24.)
+                    .padding_y(0.)
+                    .padding_left(48.)
+                    .padding_right(12.)
+                    .text_overflow(TextOverflow::Ellipsis)
+                    .on_click(cx.listener(move |s, _, _| s.selected = index))
+            })
+            .overscan(0)
+            .fill_width()
+            .fill_height(),
+        )
+    }
+}
+#[test]
+fn narrow_tree_rows_keep_slots_clips_hit_areas_and_scroll_ends_on_resize() {
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| {
+        cx.new(|_| NarrowTree {
+            scroll: ScrollHandle::new(),
+            selected: usize::MAX,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+    for size in [[180., 115.], [320., 163.], [100., 91.]] {
+        ui.prepare(&mut runtime, size, &mut Measure).unwrap();
+        let target = ui.semantics().find(|s| s.scroll_range[1] > 0.).unwrap().id;
+        for y in [0., 11.5, 100_000., 0.] {
+            ui.semantic_action(
+                &mut runtime,
+                SemanticAction::Scroll {
+                    target,
+                    offset: [0., y],
+                },
+                &mut Measure,
+            )
+            .unwrap();
+            ui.prepare(&mut runtime, size, &mut Measure).unwrap();
+            let state = ui.semantic_node(target).unwrap();
+            let offset = state.scroll_offset[1];
+            let range = state.scroll_range[1];
+            assert_eq!(range, 2400. - (size[1] - 14.));
+            let first = (offset / 24.).floor() as usize;
+            let buttons: Vec<_> = ui
+                .elements()
+                .filter(|e| e.kind == ElementType::Button)
+                .collect();
+            for e in &buttons {
+                let index = ui
+                    .semantic_node(e.parent.unwrap())
+                    .unwrap()
+                    .position_in_set
+                    .unwrap();
+                assert_eq!(e.bounds.height, 24.);
+                assert_eq!(e.bounds.y, 7. + index as f32 * 24. - offset);
+                assert_eq!(e.text_style.overflow, TextOverflow::Ellipsis);
+                assert_eq!(e.clip_bounds.y, e.bounds.y.max(7.));
+                assert_eq!(
+                    e.clip_bounds.y + e.clip_bounds.height,
+                    (e.bounds.y + 24.).min(size[1] - 7.)
+                );
+            }
+            if offset == 0. {
+                assert_eq!(buttons[0].bounds.y, 7.);
+            }
+            if offset == range {
+                let last = buttons.last().unwrap();
+                assert_eq!(
+                    ui.semantic_node(last.parent.unwrap())
+                        .unwrap()
+                        .position_in_set,
+                    Some(99)
+                );
+                assert_eq!(last.bounds.y + last.bounds.height, size[1] - 7.);
+            }
+            drop(buttons);
+            // The leading indentation remains part of the full-row hit target.
+            for event in [
+                PointerEvent::Pressed([8., 8.]),
+                PointerEvent::Released([8., 8.]),
+            ] {
+                ui.pointer(&mut runtime, event).unwrap();
+            }
+            runtime.update(|cx| assert_eq!(root.read(cx).selected, first));
+            runtime.update(|cx| root.update(cx, |s, _| s.selected = usize::MAX));
+            for event in [
+                PointerEvent::Pressed([8., 6.]),
+                PointerEvent::Released([8., 6.]),
+            ] {
+                ui.pointer(&mut runtime, event).unwrap();
+            }
+            runtime.update(|cx| assert_eq!(root.read(cx).selected, usize::MAX));
+        }
+    }
+}

@@ -27,6 +27,27 @@ Rows fill the slot and clip overflowing content. Give the list bounded height vi
 its parent or `.height(...)`, just as for a normal scroll area. `.scrollbars(false)`
 hides the gutter while preserving wheel/programmatic scrolling.
 
+Fixed-height rows do not measure their content to choose a height. Wrapped captions
+can therefore be taller than the row slot and get clipped. Use
+`.text_overflow(TextOverflow::Ellipsis)` on row buttons to show a single line,
+including when a label contains paragraph breaks. Measurement and painting use the
+same grapheme-safe truncation; semantics retain the full label. Inputs and
+selectable labels preserve their editing geometry instead of truncating. Custom
+`TextMeasure` implementations should honor `request.style.overflow` as the built-in
+`UiPainter` does.
+
+For trees, indent only the leading side with `.padding_left(...)`, leaving a small
+constant `.padding_right(...)`. Cap indentation relative to
+`handle.state(cx).viewport[0]` so deep nodes retain usable label space after a resize.
+Keep selection and expansion on the full-width button, rather than an indented
+wrapper, to preserve the row's hit target. Do not use symmetric `.padding_x(depth)`
+for indentation. The native `tree_panel_window` example demonstrates narrow rows
+with long labels and deep indentation:
+
+```sh
+cargo run -p rxui --example tree_panel_window --features native --locked
+```
+
 Initial preparation publishes viewport metrics, then describes the visible range
 in the existing bounded preparation loop. Resizes, count changes, offset clamping
 and large jumps settle before painting. The virtual content reserves the complete

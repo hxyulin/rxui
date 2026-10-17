@@ -466,6 +466,7 @@ fn typography_inherits_and_relayouts_when_line_height_changes() {
             style: FontStyle::Normal,
             line_height: 2.,
             align: TextAlign::Start,
+            overflow: TextOverflow::Wrap,
         }
     );
     assert_eq!(inherited.bounds.height, inherited.font_size * 2.);

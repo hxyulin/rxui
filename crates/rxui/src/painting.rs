@@ -144,11 +144,13 @@ impl TextResource {
             crate::TextAlign::Center => TextAlign::Center,
             crate::TextAlign::Justified => TextAlign::Justified,
         });
-        self.buffer.set_wrap(if request.single_line {
-            TextWrap::None
-        } else {
-            TextWrap::Word
-        });
+        self.buffer.set_wrap(
+            if request.single_line || request.style.overflow == crate::TextOverflow::Ellipsis {
+                TextWrap::None
+            } else {
+                TextWrap::Word
+            },
+        );
         Ok(())
     }
     fn layout(
@@ -167,14 +169,102 @@ impl TextResource {
         request: TextRequest<'_>,
         offset: usize,
     ) -> Result<Arc<TextLayout>, UiError> {
+        let truncated = self.ellipsized(fonts, families, request, offset)?;
+        let request = TextRequest {
+            text: truncated.as_ref().map_or(request.text, |t| t.0.as_str()),
+            spans: truncated.as_ref().map_or(request.spans, |t| t.1.as_slice()),
+            ..request
+        };
         self.configure(request, families, offset)?;
         self.buffer.set_width(text_width(request.width))?;
         Ok(self.buffer.layout(fonts)?)
     }
+    /// Choose the same grapheme-safe display text for measurement and painting.
+    fn ellipsized(
+        &mut self,
+        fonts: &mut TextSystem,
+        families: &FamilyMap,
+        request: TextRequest<'_>,
+        offset: usize,
+    ) -> Result<Option<(String, Vec<crate::ResolvedSpan>)>, UiError> {
+        if request.single_line || request.style.overflow != crate::TextOverflow::Ellipsis {
+            return Ok(None);
+        }
+        use unicode_segmentation::UnicodeSegmentation;
+        let end = request
+            .text
+            .find(['\n', '\r', '\u{2028}', '\u{2029}'])
+            .unwrap_or(request.text.len());
+        let line = &request.text[..end];
+        let width = text_width(request.width).unwrap_or(f32::INFINITY);
+        // Probe without alignment or a wrapping constraint; the final layout still
+        // uses the requested alignment and width.
+        self.configure(
+            TextRequest {
+                text: line,
+                ..request
+            },
+            families,
+            offset,
+        )?;
+        if end == request.text.len() && self.buffer.measure(fonts, None)?[0] <= width {
+            return Ok(None);
+        }
+        let boundaries: Vec<_> = line
+            .grapheme_indices(true)
+            .map(|(i, _)| i)
+            .chain(std::iter::once(line.len()))
+            .collect();
+        let candidate = |end: usize| format!("{}…", &line[..end]);
+        let finish = |text: String, end: usize| {
+            let spans = request
+                .spans
+                .iter()
+                .filter_map(|span| {
+                    let mut span = span.clone();
+                    span.range.end = span.range.end.min(offset + end);
+                    (span.range.start < span.range.end).then_some(span)
+                })
+                .collect();
+            Some((text, spans))
+        };
+        self.configure(
+            TextRequest {
+                text: "…",
+                spans: &[],
+                ..request
+            },
+            families,
+            offset,
+        )?;
+        if self.buffer.measure(fonts, None)?[0] > width {
+            return Ok(finish(String::new(), 0));
+        }
+        let (mut low, mut high) = (0, boundaries.len());
+        while low + 1 < high {
+            let mid = low + (high - low) / 2;
+            let (text, spans) = finish(candidate(boundaries[mid]), boundaries[mid]).unwrap();
+            self.configure(
+                TextRequest {
+                    text: &text,
+                    spans: &spans,
+                    ..request
+                },
+                families,
+                offset,
+            )?;
+            if self.buffer.measure(fonts, None)?[0] <= width {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        Ok(finish(candidate(boundaries[low]), boundaries[low]))
+    }
     /// Whether this text uses paragraph chunks, deciding again when its revision
     /// changes. Single-line text never does.
     fn chunked(&mut self, request: &TextRequest<'_>) -> bool {
-        if request.single_line {
+        if request.single_line || request.style.overflow == crate::TextOverflow::Ellipsis {
             self.chunks = None;
             return false;
         }
@@ -249,6 +339,12 @@ impl TextResource {
         request: TextRequest<'_>,
         offset: usize,
     ) -> Result<[f32; 2], UiError> {
+        let truncated = self.ellipsized(fonts, families, request, offset)?;
+        let request = TextRequest {
+            text: truncated.as_ref().map_or(request.text, |t| t.0.as_str()),
+            spans: truncated.as_ref().map_or(request.spans, |t| t.1.as_slice()),
+            ..request
+        };
         self.configure(request, families, offset)?;
         Ok(self.buffer.measure(fonts, text_width(request.width))?)
     }
@@ -1726,6 +1822,226 @@ impl TextMeasure for UiPainter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn narrow_tree_paints_one_line_and_clips_fractional_scroll_at_both_edges() {
+        use super::image_gpu_tests::pixels;
+        use crate::*;
+        struct Tree(ScrollHandle);
+        impl View for Tree {
+            fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                column().fill_width().fill_height().padding(7.).child(
+                    virtual_list(100, 24., &self.0, cx, |index| {
+                        button(format!("▾ {index}: a long undo history description"))
+                            .font_size(12.5)
+                            .padding_y(0.)
+                            .padding_left(48.)
+                            .padding_right(12.)
+                            .text_overflow(TextOverflow::Ellipsis)
+                    })
+                    .fill_width()
+                    .fill_height(),
+                )
+            }
+        }
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let mut painter = UiPainter::new(&graphics);
+            painter
+                .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
+                .unwrap();
+            let mut runtime = Runtime::new();
+            let root = runtime.update(|cx| cx.new(|_| Tree(ScrollHandle::new())));
+            let mut ui = Ui::new(&mut runtime, root).unwrap();
+            for [width, height] in [[180, 116], [320, 164], [100, 92]] {
+                let mut target = graphics
+                    .create_framebuffer(FramebufferOptions::new(width, height).usage(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    ))
+                    .unwrap();
+                let size = [width as f32, height as f32];
+                ui.prepare(&mut runtime, size, &mut painter).unwrap();
+                let viewport = ui.semantics().find(|n| n.scroll_range[1] > 0.).unwrap().id;
+                for y in [0., 11.5, 100_000.] {
+                    ui.semantic_action(
+                        &mut runtime,
+                        SemanticAction::Scroll {
+                            target: viewport,
+                            offset: [0., y],
+                        },
+                        &mut painter,
+                    )
+                    .unwrap();
+                    ui.prepare(&mut runtime, size, &mut painter).unwrap();
+                    painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+                    for e in ui.elements().filter(|e| e.kind == ElementType::Button) {
+                        let layout = painter.texts[&e.id].prepared_layout.as_ref().unwrap();
+                        assert_eq!(layout.lines().len(), 1);
+                        assert!(
+                            layout.text().ends_with('…')
+                                || layout.text() == e.text.unwrap()
+                                || layout.text().is_empty()
+                        );
+                        assert!(layout.size()[0] <= e.content_bounds.width + 0.01);
+                        assert!(layout.size()[1] <= e.content_bounds.height);
+                    }
+                    let texture = target.color_texture().unwrap().clone();
+                    let mut frame = target.begin_frame().unwrap();
+                    {
+                        let mut pass = frame
+                            .render_pass()
+                            .clear_color(wgpu::Color::BLACK)
+                            .begin()
+                            .unwrap();
+                        painter.paint(&ui, &mut pass, 1.).unwrap();
+                    }
+                    let stride = (width * 4).div_ceil(256) * 256;
+                    let buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("tree readback"),
+                        size: u64::from(stride * height),
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    frame.encoder().copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: 0,
+                            origin: Default::default(),
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: &buffer,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(stride),
+                                rows_per_image: Some(height),
+                            },
+                        },
+                        texture.size(),
+                    );
+                    let bytes = pixels(&graphics, &buffer, frame.finish().unwrap());
+                    for py in 0..height {
+                        for px in 0..width {
+                            if py < 7 || py >= height - 7 || px < 7 || px >= width - 7 {
+                                let at = (py * stride + px * 4) as usize;
+                                assert_eq!(
+                                    &bytes[at..at + 4],
+                                    &[0, 0, 0, 255],
+                                    "outside viewport at {px},{py}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    #[test]
+    fn ellipsis_uses_one_grapheme_safe_line_and_matching_measurement() {
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut fonts = TextSystem::new();
+        fonts
+            .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
+            .unwrap();
+        let families = FamilyMap::default();
+        let style = crate::TextStyle {
+            overflow: crate::TextOverflow::Ellipsis,
+            ..Default::default()
+        };
+        let mut resource = TextResource::default();
+        for text in [
+            "long undo history with many words",
+            "e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}",
+            "first\nsecond",
+            "first\r\nsecond",
+        ] {
+            for width in [0., 5., 24., 60., 300.] {
+                let request = TextRequest {
+                    text,
+                    font_size: 14.,
+                    width: TextWidth::Available(width),
+                    single_line: false,
+                    style: &style,
+                    spans: &[],
+                    revision: 1,
+                };
+                let size = resource.measure(&mut fonts, &families, request).unwrap();
+                let layout = resource.layout(&mut fonts, &families, request).unwrap();
+                assert_eq!(size, layout.size());
+                assert!(layout.lines().len() <= 1, "{:?}", layout.text());
+                assert!(size[0] <= width + 0.01, "{size:?} at {width}");
+                let shown = layout.text();
+                if shown != text && !shown.is_empty() {
+                    assert!(shown.ends_with('…'));
+                    let prefix = shown.strip_suffix('…').unwrap();
+                    assert!(
+                        text.grapheme_indices(true)
+                            .map(|(i, _)| i)
+                            .chain(std::iter::once(text.len()))
+                            .any(|i| i == prefix.len())
+                    );
+                }
+            }
+        }
+        let text = "e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}";
+        let spans = [crate::ResolvedSpan {
+            range: 0..text.len(),
+            family: None,
+            weight: Some(crate::FontWeight::BOLD),
+            style: None,
+            font_size: Some(16.),
+            color: None,
+            underline: false,
+            strikethrough: false,
+        }];
+        let request = TextRequest {
+            text,
+            font_size: 14.,
+            width: TextWidth::Available(30.),
+            single_line: false,
+            style: &style,
+            spans: &spans,
+            revision: 1,
+        };
+        let layout = resource.layout(&mut fonts, &families, request).unwrap();
+        assert!(layout.text().ends_with('…'));
+        assert!(layout.size()[0] <= 30.);
+        let request = TextRequest {
+            text: "a long wrapped caption",
+            font_size: 14.,
+            width: TextWidth::Available(40.),
+            single_line: false,
+            style: &style,
+            spans: &[],
+            revision: 1,
+        };
+        let short = resource.layout(&mut fonts, &families, request).unwrap();
+        assert!(short.text().ends_with('…'));
+        let wide = resource
+            .layout(
+                &mut fonts,
+                &families,
+                TextRequest {
+                    width: TextWidth::Available(400.),
+                    ..request
+                },
+            )
+            .unwrap();
+        assert_eq!(wide.text(), request.text);
+        let wrapped = crate::TextStyle::default();
+        let layout = resource
+            .layout(
+                &mut fonts,
+                &families,
+                TextRequest {
+                    style: &wrapped,
+                    ..request
+                },
+            )
+            .unwrap();
+        assert!(layout.lines().len() > 1);
+    }
+
     use super::*;
     use crate::{IntoElement, Runtime, ViewContext, column, label};
     use astrelis::{FramebufferOptions, wgpu};

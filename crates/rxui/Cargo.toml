@@ -210,3 +210,7 @@ required-features = ["native"]
 [[example]]
 name = "rich_text_links"
 required-features = ["native"]
+
+[[example]]
+name = "tree_panel_window"
+required-features = ["native"]

@@ -288,7 +288,7 @@ pub use theme::{
 #[cfg(feature = "layout")]
 pub use typography::{FontFace, LinkEvent, ResolvedSpan, TextSpan, link, span};
 #[cfg(feature = "layout")]
-pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
+pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow, TextStyle};
 #[cfg(feature = "layout")]
 pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
 #[cfg(feature = "layout")]
@@ -337,9 +337,9 @@ pub mod prelude {
         FontStyle, FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter, ImageFit, InputResult,
         IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle,
         PointerButton, PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime,
-        SemanticRole, TextAlign, TextChangeEvent, TextSubmitEvent, Theme, ThemeColor, Ui, View,
-        ViewContext, WheelInput, WheelSource, button, column, image, label, rgb8, rgba8, row,
-        stack, text_input,
+        SemanticRole, TextAlign, TextChangeEvent, TextOverflow, TextSubmitEvent, Theme, ThemeColor,
+        Ui, View, ViewContext, WheelInput, WheelSource, button, column, image, label, rgb8, rgba8,
+        row, stack, text_input,
     };
     pub use crate::{
         Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
