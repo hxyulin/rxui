@@ -232,11 +232,12 @@ dependencies = [
 [[package]]
 name = "astrelis"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=5e5ea9df12f3539661b8d487a83b907e63641bfa#5e5ea9df12f3539661b8d487a83b907e63641bfa"
+source = "git+https://github.com/hxyulin/astrelis?rev=4b0d3c54a5c7b00c08bef3a3dea484bc27a909be#4b0d3c54a5c7b00c08bef3a3dea484bc27a909be"
 dependencies = [
  "bymsdfgen-core",
  "bytemuck",
  "cosmic-text",
+ "log",
  "lyon_tessellation",
  "profiling",
  "swash",
@@ -247,9 +248,10 @@ dependencies = [
 [[package]]
 name = "astrelis-winit"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=5e5ea9df12f3539661b8d487a83b907e63641bfa#5e5ea9df12f3539661b8d487a83b907e63641bfa"
+source = "git+https://github.com/hxyulin/astrelis?rev=4b0d3c54a5c7b00c08bef3a3dea484bc27a909be#4b0d3c54a5c7b00c08bef3a3dea484bc27a909be"
 dependencies = [
  "astrelis",
+ "log",
  "pollster",
  "profiling",
  "winit",
@@ -2516,7 +2518,6 @@ dependencies = [
  "rfd",
  "taffy",
  "unicode-segmentation",
- "wgpu",
  "windows-registry",
  "windows-sys 0.61.2",
  "zbus",
