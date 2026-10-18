@@ -374,11 +374,18 @@ impl WindowInput {
                 changed = ui.wheel(runtime, position, delta, modifiers, source)?;
             }
             WindowEvent::Focused(active) => {
+                let mut first_error = None;
                 if !active {
                     // Clear host state before dispatch, even if a listener fails.
                     let (keys, buttons) = self.deactivate();
+                    let mut released = |result: Result<bool, UiError>| match result {
+                        Ok(updated) => changed |= updated,
+                        Err(error) => {
+                            first_error.get_or_insert(error);
+                        }
+                    };
                     for key in keys {
-                        changed |= ui.key(runtime, key)?.changed;
+                        released(ui.key(runtime, key).map(|result| result.changed));
                     }
                     for button in [
                         PointerButton::Primary,
@@ -386,7 +393,7 @@ impl WindowInput {
                         PointerButton::Middle,
                     ] {
                         if buttons.contains(button) {
-                            changed |= ui.pointer(
+                            released(ui.pointer(
                                 runtime,
                                 PointerEvent::CancelledUp {
                                     position: self.cursor_position(scale),
@@ -396,13 +403,16 @@ impl WindowInput {
                                 painter,
                                 false,
                                 1,
-                            )?;
+                            ));
                         }
                     }
-                    changed |= ui.pointer(runtime, PointerEvent::Cancelled, painter, false, 1)?;
+                    released(ui.pointer(runtime, PointerEvent::Cancelled, painter, false, 1));
                 }
                 self.active = *active;
                 changed |= ui.active(*active);
+                if let Some(error) = first_error {
+                    return Err(error);
+                }
             }
             WindowEvent::Ime(Ime::Preedit(text, cursor)) if !ui.raw_keyboard() && self.active => {
                 let event = TextInputEvent::Preedit {
@@ -600,6 +610,82 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features native -- --ignored"]
+    fn resilience_focus_loss_dispatches_every_release_after_listener_errors() {
+        use crate::{Dispatch, IntoElement, KeyInput, Listener, PointerInput, ViewContext, column};
+        #[derive(Default)]
+        struct Controls {
+            releases: Rc<RefCell<Vec<String>>>,
+        }
+        impl View for Controls {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                let keys = self.releases.clone();
+                let pointers = self.releases.clone();
+                column()
+                    .size(100., 100.)
+                    .on_key_up(Listener::from_callback(move |event: &KeyInput, _| {
+                        keys.borrow_mut()
+                            .push(format!("{:?}", event.event.physical_key));
+                        Err(crate::AccessError::WrongRuntime)
+                    }))
+                    .on_pointer_up(Listener::from_callback(move |event: &PointerInput, _| {
+                        pointers.borrow_mut().push(format!("{:?}", event.button));
+                        // A second failure must not replace the first one.
+                        if event.button == Some(PointerButton::Primary) {
+                            Err(crate::AccessError::Borrowed)
+                        } else {
+                            Ok(Dispatch::Unchanged)
+                        }
+                    }))
+            }
+        }
+        let graphics = pollster::block_on(GraphicsContext::headless()).unwrap();
+        let controls = Controls::default();
+        let releases = controls.releases.clone();
+        let mut test = crate::TestUi::new(&graphics, [100, 100], controls).unwrap();
+        let (runtime, ui, painter) = test.parts();
+        let mut input = WindowInput::new();
+        input.track_key(press(), false);
+        input.track_key(
+            KeyEvent {
+                physical_key: crate::PhysicalKey::KeyA,
+                ..press()
+            },
+            false,
+        );
+        for button in [
+            PointerButton::Primary,
+            PointerButton::Secondary,
+            PointerButton::Middle,
+        ] {
+            input.buttons.set(button, true);
+        }
+        assert!(matches!(
+            input.handle(
+                runtime,
+                ui,
+                painter,
+                WindowMetrics::new(PhysicalSize::new(100, 100), 1.).unwrap(),
+                &WindowEvent::Focused(false),
+            ),
+            Err(UiError::Access(crate::AccessError::WrongRuntime))
+        ));
+        assert_eq!(
+            *releases.borrow(),
+            [
+                "KeyW",
+                "KeyA",
+                "Some(Primary)",
+                "Some(Secondary)",
+                "Some(Middle)"
+            ]
+        );
+        assert!(!input.active);
+        assert!(input.pressed_keys.is_empty());
+        assert!(!input.buttons.any());
+        assert!(!ui.active(false));
     }
     #[test]
     fn held_inputs_release_once_and_synthetic_presses_do_not_rearm() {
