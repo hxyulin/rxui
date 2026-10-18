@@ -3491,3 +3491,7 @@ mod animation_gpu_tests;
 #[cfg(test)]
 #[path = "coverage_gpu_tests.rs"]
 mod coverage_gpu_tests;
+
+#[cfg(test)]
+#[path = "retained_text_gpu_tests.rs"]
+mod retained_text_gpu_tests;
