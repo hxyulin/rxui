@@ -21,8 +21,8 @@ mod desktop;
 use crate::{CommandId, CommandInfo, CommandStatus};
 use astrelis::{Frame, GraphicsContext, wgpu};
 use astrelis_winit::{
-    AppContext as NativeContext, Handler, PrepareAction, Runner, RunnerOptions, SurfaceSettings,
-    WindowInfo, WindowMetrics,
+    AppContext as NativeContext, Callback, ErrorAction, Handler, PrepareAction, RunError, Runner,
+    RunnerOptions, SurfaceSettings, WindowInfo, WindowMetrics,
     winit::{
         dpi::{LogicalSize, Size},
         event::{DeviceEvent, DeviceId, MouseButton, WindowEvent},
@@ -253,7 +253,8 @@ impl WindowOptions {
         self.theme = Some(theme);
         self
     }
-    /// Surface-owned MSAA/depth configuration, validated by Astrelis at creation.
+    /// Surface-owned MSAA/depth, present mode and desired maximum frame latency,
+    /// validated by Astrelis at creation. Latency defaults to two queued frames.
     #[must_use]
     pub fn surface(mut self, settings: SurfaceSettings) -> Self {
         self.surface = settings;
@@ -529,6 +530,7 @@ trait HostedUi {
     fn set_theme(&mut self, theme: Theme) -> Result<bool, UiError>;
     fn mounts(&self) -> Vec<crate::MountId>;
     fn is_animating(&self) -> bool;
+    fn text_atlas_full(&self, painter: &UiPainter) -> bool;
     fn prepare(
         &mut self,
         runtime: &mut Runtime,
@@ -635,6 +637,9 @@ impl<T: View> HostedUi for Ui<T> {
     }
     fn is_animating(&self) -> bool {
         self.is_animating()
+    }
+    fn text_atlas_full(&self, painter: &UiPainter) -> bool {
+        painter.text_atlas_full(self)
     }
     fn prepare(
         &mut self,
@@ -1261,6 +1266,42 @@ type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
 type QuitHook = dyn FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type ExitHook = dyn FnOnce(&mut AppContext<'_>);
+type ErrorHook = dyn FnMut(&RunError, &mut AppContext<'_>) -> ErrorAction;
+
+fn default_error_action(error: &RunError) -> ErrorAction {
+    if error.can_continue()
+        && matches!(
+            error,
+            RunError::Handler {
+                callback: Callback::Prepare | Callback::Render | Callback::Submitted,
+                ..
+            } | RunError::Acquisition { .. }
+                | RunError::SurfaceRecovery { .. }
+                | RunError::Submission { .. }
+                | RunError::Graphics { .. }
+        )
+    {
+        ErrorAction::Continue
+    } else {
+        ErrorAction::Exit
+    }
+}
+
+fn error_action(
+    runtime: &mut Runtime,
+    hook: &mut Option<Box<ErrorHook>>,
+    error: &RunError,
+) -> ErrorAction {
+    let action = hook.as_mut().map_or_else(
+        || default_error_action(error),
+        |hook| runtime.update(|cx| hook(error, cx)),
+    );
+    if error.can_continue() {
+        action
+    } else {
+        ErrorAction::Exit
+    }
+}
 /// Desktop host over astrelis-winit. It owns native wiring and on-demand scheduling;
 /// Runtime/Ui/UiPainter remain usable in custom hosts. Initialization runs once,
 /// model/task progression continues independently of surface availability.
@@ -1280,6 +1321,7 @@ pub struct Application {
     executor: Option<Arc<dyn TaskExecutor>>,
     graphics: Option<GraphicsContext>,
     runner_options: RunnerOptions,
+    error: Option<Box<ErrorHook>>,
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
     render_graphics: Option<Box<GraphicsRenderHook>>,
     device_event: Option<Box<DeviceEventHook>>,
@@ -1316,6 +1358,7 @@ impl Application {
             executor: None,
             graphics: None,
             runner_options: RunnerOptions::default(),
+            error: None,
             prepare_graphics: None,
             render_graphics: None,
             device_event: None,
@@ -1377,6 +1420,19 @@ impl Application {
     #[must_use]
     pub fn system_ui_font(mut self, enabled: bool) -> Self {
         self.system_ui_font = enabled;
+        self
+    }
+    /// Observes native failures and chooses whether to skip failed work or exit.
+    /// Defaults to continuing recoverable frame/surface/GPU errors and exiting
+    /// lifecycle/input errors. Astrelis logs failures through the log facade.
+    /// Runs in a fresh update without an implicit source window; mutations are not
+    /// rolled back. Device loss and out-of-memory always exit, even on Continue.
+    #[must_use]
+    pub fn error(
+        mut self,
+        hook: impl FnMut(&RunError, &mut AppContext<'_>) -> ErrorAction + 'static,
+    ) -> Self {
+        self.error = Some(Box::new(hook));
         self
     }
     /// Runs GPU resource preparation before acquisition and before UiPainter's GPU
@@ -1651,6 +1707,7 @@ impl Application {
             families: self.families,
             system_fonts: self.system_fonts,
             active: false,
+            error: self.error,
             prepare_graphics: self.prepare_graphics,
             render_graphics: self.render_graphics,
             device_event: self.device_event,
@@ -1816,6 +1873,7 @@ struct Host<F> {
     families: Vec<(crate::FontFamily, Arc<str>)>,
     system_fonts: bool,
     active: bool,
+    error: Option<Box<ErrorHook>>,
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
     render_graphics: Option<Box<GraphicsRenderHook>>,
     device_event: Option<Box<DeviceEventHook>>,
@@ -2388,6 +2446,11 @@ impl<F> Host<F> {
 impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for Host<F> {
     type Message = Wake;
     type Error = ApplicationError;
+    fn error(&mut self, _cx: &mut NativeContext<'_, Wake>, error: &RunError) -> ErrorAction {
+        // The runner logs failures and drains shared-device diagnostics before
+        // invoking this hook; draining here would hide events from that policy.
+        error_action(&mut self.runtime, &mut self.error, error)
+    }
     fn resumed(&mut self, cx: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
         self.active = true;
         if !self.preferences_started {
@@ -2826,6 +2889,17 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             self.painter.as_mut().unwrap(),
             native.render_format().unwrap(),
         )?;
+        if window
+            .ui
+            .as_ref()
+            .unwrap()
+            .text_atlas_full(self.painter.as_ref().unwrap())
+        {
+            // Retained incomplete glyphs need another preparation after leases
+            // can retire. Permanent pressure must not create an on-demand spin.
+            cx.request_redraw_at(id, Instant::now() + Duration::from_millis(100))
+                .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+        }
         self.sync_mounts(id);
         self.sync_text_platform(cx, id)?;
         self.publish_accessibility(cx, id)?;
@@ -3291,6 +3365,81 @@ mod tests {
         commands
     }
 
+    #[test]
+    fn resilience_error_policy_retries_frames_and_observes_fatal_diagnostics() {
+        let mut runtime = Runtime::new();
+        let mut hook = None;
+        for callback in [Callback::Prepare, Callback::Render, Callback::Submitted] {
+            let error = RunError::Handler {
+                callback,
+                window: None,
+                source: Box::new(ApplicationError::Ui(UiError::InvalidGeometry)),
+            };
+            assert_eq!(
+                error_action(&mut runtime, &mut hook, &error),
+                ErrorAction::Continue
+            );
+        }
+        let lifecycle = RunError::Handler {
+            callback: Callback::Resumed,
+            window: None,
+            source: Box::new(ApplicationError::InvalidWindowOptions),
+        };
+        assert_eq!(
+            error_action(&mut runtime, &mut hook, &lifecycle),
+            ErrorAction::Exit
+        );
+        let window = NativeWindowId::from(1);
+        for source in [
+            astrelis::GpuEvent::Validation("bad frame".into()),
+            astrelis::GpuEvent::Internal("transient".into()),
+        ] {
+            assert_eq!(
+                error_action(
+                    &mut runtime,
+                    &mut hook,
+                    &RunError::Graphics { window, source }
+                ),
+                ErrorAction::Continue
+            );
+        }
+        let observed = Rc::new(Cell::new(0));
+        let count = observed.clone();
+        hook = Some(Box::new(move |_, cx| {
+            assert!(cx.window().is_none());
+            count.set(count.get() + 1);
+            ErrorAction::Continue
+        }));
+        for source in [
+            astrelis::GpuEvent::OutOfMemory("allocation".into()),
+            astrelis::GpuEvent::DeviceLost {
+                reason: wgpu::DeviceLostReason::Unknown,
+                message: "lost device".into(),
+            },
+        ] {
+            assert_eq!(
+                error_action(
+                    &mut runtime,
+                    &mut hook,
+                    &RunError::Graphics { window, source }
+                ),
+                ErrorAction::Exit
+            );
+        }
+        assert_eq!(observed.get(), 2);
+        hook = Some(Box::new(|_, _| ErrorAction::Exit));
+        assert_eq!(
+            error_action(
+                &mut runtime,
+                &mut hook,
+                &RunError::Acquisition {
+                    window,
+                    source: astrelis::FrameError::Retry
+                },
+            ),
+            ErrorAction::Exit
+        );
+    }
     #[test]
     fn external_wake_handle_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}

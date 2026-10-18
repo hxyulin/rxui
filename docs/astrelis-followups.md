@@ -1,74 +1,45 @@
 # Astrelis follow-ups for production native hosts
 
-RXUI remains pinned to Astrelis `5e5ea9df12f3539661b8d487a83b907e63641bfa`.
-No Astrelis source or workspace revision is changed by the input/hosting work.
-References below use paths and lines in that pinned checkout, readable at
-`~/.cargo/git/checkouts/astrelis-7a2542a700c0f8e3/5e5ea9d`.
+RXUI is pinned to Astrelis `4b0d3c54a5c7b00c08bef3a3dea484bc27a909be`.
+The dependency work from the input/hosting thread is complete and adopted:
 
-## GLES initialization and backend selection
+- GPU diagnostics and native backend controls (`fa18e46`): device-loss and
+  uncaptured-error callbacks, bounded `GpuEvent` queue, runner delivery through
+  RXUI's `Application::error`, and logging through the `log` facade. RXUI does not
+  drain the runner's queue a second time.
+- Native GLES initialization (`fa18e46`): RXUI forwards `gles` to Astrelis and
+  astrelis-winit, replacing the temporary direct-wgpu feature bridge. Runner-created
+  instances carry winit's owned display handle and read supported `WGPU_*` settings.
+- Surface latency (`fa18e46`): `WindowOptions::surface(SurfaceSettings)` exposes
+  `desired_maximum_frame_latency` next to present mode, retaining it across surface
+  recreation. The default is 2 queued frames.
+- Failed-frame policy and surface recovery (`efcb186`): RXUI continues recoverable
+  frame errors, exposes an application policy/observer, and uses runner retry pacing
+  and capped surface-loss backoff. Device loss and out-of-memory still exit cleanly.
+- Leased text atlas pages (`4b0d3c5`): partial preparation succeeds; RXUI retries
+  incomplete retained text, placeholders and chunks. Native retries request a redraw
+  after 100 ms while atlas pressure remains.
 
-RXUI's optional `gles` feature adds `wgpu = "30.0.1"` with default features disabled
-and `features = ["gles"]`. Cargo feature unification enables GLES in the same wgpu
-used by Astrelis. It does not itself change graphics initialization or guarantee
-Linux GL presentation at this pin. Compile with:
+See [application hosting](application.md#runtime-errors-and-gpu-diagnostics) for
+policy, backend selection, surface latency and custom-host retry contracts.
+Astrelis documents the underlying contracts in `docs/winit.md` and `docs/text.md`.
 
-```sh
-cargo check -p rxui --features native,gles
-```
+## Remaining production work
 
-Astrelis `crates/astrelis/src/context.rs:94` and `:113` create
-`wgpu::Instance::default()` for surface and headless paths respectively. In wgpu
-30.0.1, `src/api/instance.rs` implements that default with
-`InstanceDescriptor::new_without_display_handle()`. The registry source
-`wgpu-types-30.0.1/src/instance.rs:51` explicitly requires a display handle for
-GLES presentation, especially Wayland, and recommends winit's
-`EventLoop::owned_display_handle()`.
+- Automatic device/resource rebuild after device loss is not provided. The error
+  hook receives the fatal diagnostic before clean shutdown. Restart with a fresh
+  GraphicsContext and rebuild surfaces, UiPainter/text atlases, prepared text/draw
+  geometry and all custom GPU resources. CPU models, layouts and font data can be
+  retained. Recreating an event loop in-process depends on the platform.
+- Verify GLES at runtime on offline Linux with the target NVIDIA/Intel drivers,
+  including EGL display selection and presentation on both X11 and Wayland.
+  A macOS build cannot verify those paths. Custom hosts must supply an appropriate
+  owned display handle; adopting a caller-created GraphicsContext does not repair
+  its instance configuration.
+- Exercise real device loss, out-of-memory, repeated surface loss/recreation,
+  compositor transitions and atlas lease pressure on the competition hardware.
+  Verify fullscreen video/HUD behavior and the application's 75 Hz input service
+  during failed frames, minimization, focus changes and recovery. Automated policy
+  tests do not establish hardware/driver behavior or match-duration reliability.
 
-`wgpu-hal-30.0.1/src/gles/egl.rs:774` chooses the EGL Wayland/X11/XCB platform from
-the instance descriptor's display handle. At `:850`, the missing-display path can
-select a Mesa surfaceless display, which is unsuitable as a general windowed GL
-fallback. Passing the window to `create_surface` afterward does not repair the
-instance's EGL display selection. This matters on X11 as well as Wayland.
-
-Required dependency work: carry an owned display handle from the runner into
-surface-aware context creation, use
-`InstanceDescriptor::new_with_display_handle(...).with_env()`, and expose a native
-Astrelis `gles` feature. `.with_env()` is the explicit opt-in for `WGPU_BACKEND` and
-other supported `WGPU_*` settings; `Instance::default()` does not read them.
-Keep the headless initialization path distinct. The relevant native call chain is
-`crates/astrelis-winit/src/runner.rs:126`,
-`crates/astrelis-winit/src/window.rs:52` and
-`crates/astrelis/src/context.rs:90`.
-
-This work is covered by the parallel Astrelis thread at `~/dev/projects/astrelis`,
-branch `fix/runtime-resilience`. RXUI deliberately does not duplicate it. Once that
-work lands and a separately authorized re-pin is made, replace the temporary
-direct-wgpu feature bridge with forwarding to `astrelis/gles`. Applications that
-already own suitable wgpu handles can use `GraphicsContext::from_wgpu`
-(`crates/astrelis/src/context.rs:245`) and `Application::graphics`; RXUI does not
-create an additional instance or silently override that application's settings.
-
-Runtime GLES on Linux, EGL driver selection on NVIDIA/Intel, and X11/Wayland
-presentation are not verified by a macOS compilation check.
-
-## Runtime resilience and latency
-
-These are outside the RXUI input changes and are covered by the same parallel
-Astrelis thread. The pinned behavior still applies until a later re-pin:
-
-- `crates/astrelis-winit/src/runner.rs:290`: `Runner::fail` stores a fatal error and
-  exits the loop. Acquisition failures at `:475` and callback failures need a
-  recoverable/fatal policy, useful logging and surface/device-loss recovery.
-- `crates/astrelis/src/context.rs:230`: device creation installs no explicit
-  device-lost or uncaptured-error callbacks. Recovery and error reporting belong
-  with the graphics context and runner lifecycle.
-- `crates/astrelis/src/text/renderer.rs:1575`: atlas budget exhaustion can return
-  `TextRenderError::AtlasFull`. Budget trimming already exists at `:810`; eviction,
-  retry and runner policy must cooperate so transient exhaustion does not quit an
-  application.
-- `crates/astrelis/src/target.rs:158` takes wgpu's default surface configuration;
-  `crates/astrelis-winit/src/policy.rs:85` exposes no
-  `desired_maximum_frame_latency` setting. Expose and validate it through the
-  existing surface options/settings rather than changing it from RXUI.
-
-Text outlines, tabular digits and element rotation remain outside this thread.
+Text outlines, tabular digits and element rotation remain outside this work.

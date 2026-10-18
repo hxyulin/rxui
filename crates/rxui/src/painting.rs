@@ -293,6 +293,10 @@ impl TextResource {
     fn ready(&self) -> bool {
         self.prepared.is_some() || self.chunks.as_ref().is_some_and(|c| c.prepared())
     }
+    fn atlas_full(&self) -> bool {
+        self.prepared.as_ref().is_some_and(|p| p.atlas_full())
+            || self.chunks.as_ref().is_some_and(|c| c.atlas_full())
+    }
     /// Selection rectangles with the index of the drawable part each lies in.
     fn selection_rects(
         &self,
@@ -479,7 +483,7 @@ pub struct UiPainter {
     layer_stats: LayerStats,
     customs: IdMap<ElementId, Box<dyn std::any::Any>>,
     placeholders: IdMap<ElementId, PlaceholderResource>,
-    /// Last complete text pass per placement, by tree.
+    /// Last text pass per placement, by tree, including atlas pressure.
     passes: HashMap<u64, TextPass>,
 }
 /// What a text pass over one placement saw. While the placement's composition key
@@ -490,6 +494,7 @@ struct TextPass {
     raster_scale: f32,
     images: Vec<ElementId>,
     customs: Vec<ElementId>,
+    atlas_full: bool,
 }
 impl UiPainter {
     /// Creates empty fonts and renderer caches for this graphics device.
@@ -594,6 +599,12 @@ impl UiPainter {
     pub fn painter(&mut self) -> &mut Painter {
         &mut self.painter
     }
+    /// Whether the placement's last preparation omitted glyphs under atlas pressure.
+    /// Partial text remains drawable. Custom hosts should pace another preparation
+    /// and redraw while this is true, allowing obsolete texts/GPU leases to retire.
+    pub fn text_atlas_full<T: View>(&self, ui: &Ui<T>) -> bool {
+        self.passes.get(&ui.tree_id()).is_some_and(|p| p.atlas_full)
+    }
     /// Prepares pipelines and changed text resources for this layout/device/DPI.
     /// Whole physical-pixel placement, color, hover and focus changes retain text.
     /// A changed layout, raster density or fractional pixel origin prepares a replacement.
@@ -621,7 +632,7 @@ impl UiPainter {
         let pass = match self
             .passes
             .remove(&ui.tree_id())
-            .filter(|p| p.key == key && p.raster_scale == raster_scale)
+            .filter(|p| p.key == key && p.raster_scale == raster_scale && !p.atlas_full)
         {
             Some(pass) => pass,
             None => self.prepare_texts(ui, raster_scale)?,
@@ -646,6 +657,7 @@ impl UiPainter {
         // images and custom elements are rare and prepared from their full info.
         let mut images = Vec::new();
         let mut customs = Vec::new();
+        let mut atlas_full = false;
         for &id in ui.painting_ids() {
             let request = match ui.visible_content(id) {
                 None => continue,
@@ -672,6 +684,7 @@ impl UiPainter {
                     ui.text_origin(id, true).ok_or(UiError::InvalidGeometry)?;
                 let placeholder_phase = raster_phase(placeholder_origin, raster_scale);
                 if !entry.current(&placeholder, self.generation, raster_scale)
+                    || entry.resource.atlas_full()
                     || (entry.resource.raster_phase != Some(placeholder_phase)
                         && text_ink_visible(
                             ui,
@@ -700,6 +713,7 @@ impl UiPainter {
                     entry.text.clear();
                     entry.text.push_str(placeholder.text);
                 }
+                atlas_full |= entry.resource.atlas_full();
             }
             let resource = self.texts.entry(id).or_default();
             let phase_current = resource.raster_phase == Some(phase)
@@ -711,7 +725,7 @@ impl UiPainter {
                 && phase_current;
             // The common unchanged case reads only these fields; chunked text never
             // holds whole-text geometry.
-            if current && resource.prepared.is_some() {
+            if current && resource.prepared.as_ref().is_some_and(|p| !p.atlas_full()) {
                 continue;
             }
             if resource.chunked(&request) {
@@ -719,6 +733,7 @@ impl UiPainter {
                 let chunks = resource.chunks.as_mut().unwrap();
                 chunks.layout(&mut self.fonts, &self.families, request, self.generation)?;
                 chunks.prepare(&mut self.painter, raster_scale, origin, clip)?;
+                atlas_full |= chunks.atlas_full();
                 resource.prepared_revision = request.revision;
                 resource.prepared_width = width;
                 resource.font_generation = self.generation;
@@ -736,7 +751,7 @@ impl UiPainter {
                 .is_none_or(|old| !Arc::ptr_eq(old, &layout))
                 || resource.raster_scale != raster_scale
                 || !phase_current
-                || resource.prepared.is_none()
+                || resource.prepared.as_ref().is_none_or(|p| p.atlas_full())
             {
                 resource.prepared = None;
                 resource.prepared_layout = None;
@@ -751,12 +766,14 @@ impl UiPainter {
             }
             resource.prepared_revision = request.revision;
             resource.font_generation = self.generation;
+            atlas_full |= resource.atlas_full();
         }
         Ok(TextPass {
             key: ui.composition_key(),
             raster_scale,
             images,
             customs,
+            atlas_full,
         })
     }
     fn prepare_customs<T: View>(
@@ -2054,6 +2071,89 @@ mod tests {
         fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
             label(self.text.clone()).color(self.color).padding(10.)
         }
+    }
+    #[test]
+    #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+    fn resilience_atlas_pressure_retries_retained_text_placeholders_and_chunks() {
+        struct Pressure {
+            kind: u8,
+            text: String,
+        }
+        impl View for Pressure {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                match self.kind {
+                    0 => label(self.text.clone()).into_element(),
+                    1 => crate::text_input("")
+                        .placeholder(self.text.clone())
+                        .into_element(),
+                    _ => crate::text_area(self.text.clone()).into_element(),
+                }
+            }
+        }
+        pollster::block_on(async {
+            let graphics = GraphicsContext::headless().await.unwrap();
+            let errors = graphics
+                .device()
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            let mut target = graphics
+                .create_framebuffer(FramebufferOptions::new(1000, 600))
+                .unwrap();
+            for kind in 0..3 {
+                let text: String = ('!'..='~').collect();
+                let text = if kind == 2 {
+                    format!("{text}\n").repeat(20)
+                } else {
+                    text
+                };
+                let mut runtime = Runtime::new();
+                let root = runtime.update(|cx| cx.new(|_| Pressure { kind, text }));
+                let mut ui = Ui::new(&mut runtime, root).unwrap();
+                let mut painter = UiPainter::new(&graphics);
+                *painter.painter().text() = astrelis::TextRenderer::with_options(
+                    &graphics,
+                    astrelis::TextRendererOptions {
+                        page_size: 32,
+                        max_pages: 1,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                painter
+                    .fonts_mut()
+                    .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
+                    .unwrap();
+                ui.prepare(&mut runtime, [1000., 600.], &mut painter)
+                    .unwrap();
+                painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+                assert!(painter.text_atlas_full(&ui), "kind {kind}");
+                // Omitted glyphs still paint; readiness must not reject partial text.
+                {
+                    let mut frame = target.begin_frame().unwrap();
+                    {
+                        let mut pass = frame.render_pass().begin().unwrap();
+                        painter.paint(&ui, &mut pass, 1.).unwrap();
+                    }
+                    frame.finish().unwrap();
+                }
+                let key = ui.composition_key();
+                let before = painter.painter().text().stats().geometry_bytes;
+                painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+                assert!(painter.text_atlas_full(&ui));
+                assert!(painter.painter().text().stats().geometry_bytes > before);
+                // Make space without changing the UI or invalidating its pass key.
+                painter.painter().text().set_max_pages(128).unwrap();
+                painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+                assert_eq!(ui.composition_key(), key);
+                assert!(!painter.text_atlas_full(&ui), "kind {kind}");
+                let recovered = painter.painter().text().stats().geometry_bytes;
+                painter.prepare(&ui, &target.render_format(), 1.).unwrap();
+                assert_eq!(painter.painter().text().stats().geometry_bytes, recovered);
+                if kind == 2 {
+                    assert!(painter.texts.values().any(|r| r.chunks.is_some()));
+                }
+            }
+            assert!(errors.pop().await.is_none());
+        });
     }
     #[test]
     #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
