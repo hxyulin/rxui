@@ -86,6 +86,7 @@ rxui = { git = "https://github.com/hxyulin/rxui", features = ["native"] }
 | --- | --- |
 | `layout` (default) | Elements, layout and input, headless with host-supplied text measurement |
 | `rendering` | `UiPainter` over Astrelis, for embedding in your own render loop |
+| `gles` | Opt-in wgpu GLES backend; see [Linux initialization limits](docs/astrelis-followups.md) at the current Astrelis pin |
 | `native` | The desktop `Application` host, AccessKit, clipboard and background tasks |
 | `native-menus` | Menu bars and Close/Quit handling on macOS and Windows |
 | `native-dialogs` | Parent-bound file and message dialogs |
