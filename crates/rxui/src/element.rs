@@ -359,6 +359,14 @@ impl Element {
         self.input.get_or_insert_with(Default::default).wheel = Some(listener);
         self
     }
+    /// Routes keys normally but suppresses keyboard defaults while focus is in
+    /// this subtree (or this is the root with no focus). This includes shortcuts,
+    /// control activation, focus traversal, Escape cancellation and text/IME input.
+    /// Use key capture listeners to collect input independently of the focused child.
+    pub fn raw_keyboard(mut self, raw: bool) -> Self {
+        self.input.get_or_insert_with(Default::default).raw_keyboard = raw;
+        self
+    }
     /// Registers a key down listener in the target/bubble route.
     pub fn on_key_down(mut self, listener: Listener<crate::KeyInput>) -> Self {
         self.input.get_or_insert_with(Default::default).key[0] = Some(listener);

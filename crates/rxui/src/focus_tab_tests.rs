@@ -27,6 +27,7 @@ fn key<T: View>(r: &mut Runtime, ui: &mut Ui<T>, key: KeyboardKey) -> InputResul
     ui.key(
         r,
         KeyEvent {
+            physical_key: Default::default(),
             key,
             pressed: true,
             repeat: false,

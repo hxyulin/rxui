@@ -162,6 +162,7 @@ fn key_down(r: &mut Runtime, ui: &mut Ui<Editor>, key: KeyboardKey) -> InputResu
     ui.key(
         r,
         KeyEvent {
+            physical_key: Default::default(),
             key,
             pressed: true,
             repeat: false,

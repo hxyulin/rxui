@@ -253,3 +253,67 @@ placement-local focus, keyboard cycling, selection/close proposals and retained
 or selected-only panels. The [controlled docking tree](docking.md) composes those
 controls and adds pointer header drops with previews. Cross-native-window detach
 remains separate work.
+
+## Raw keyboard input and deactivation
+
+`Element::raw_keyboard(true)` suppresses keyboard defaults while the focused
+route includes that element. Put it on the root to cover the whole window, or
+on a focusable view for a local control mode. With no focused element the root
+route applies. Listeners still receive capture, target and bubble events, including
+Tab, Escape, Enter/Space, modifiers, repeats and releases. Commands, focus traversal,
+control activation, gesture Escape cancellation and native text/IME defaults do
+not run. `Ui::raw_keyboard()` exposes the current policy to custom hosts; native
+hosting also disables IME while that route is raw. Explicit pointer and command
+operations retain their usual behavior.
+
+A root `on_key_down_capture` listener can already call `prevent_default()` to
+suppress defaults for selected keys, including standard shortcuts. It does not
+stop propagation; call `stop_propagation()` separately if children should not see
+the key. Raw mode applies the same prevention automatically for every key in its
+route and also suppresses native IME commits. Capture listeners are a useful place
+to collect held input independently of the focused child:
+
+```rust
+column()
+    .raw_keyboard(self.control_mode)
+    .on_key_down_capture(cx.listener(|this, input: &KeyInput, _| {
+        if this.control_mode && input.event.physical_key == PhysicalKey::KeyW {
+            this.forward = true;
+        }
+    }))
+    .on_key_up_capture(cx.listener(|this, input: &KeyInput, _| {
+        if input.event.physical_key == PhysicalKey::KeyW {
+            this.forward = false;
+        }
+    }))
+```
+
+`KeyEvent::key` remains the layout-dependent logical identity. `physical_key`
+identifies a position independently of the active layout: for example, a French
+layout can produce logical `"z"` at `PhysicalKey::KeyW`. Common positions have typed
+variants, function keys use `Function(number)`, and other identified positions use
+`Code(String)` with winit KeyCode spelling. `Native(String)` preserves native
+unidentified codes; `Unidentified` is available to custom hosts without physical
+information. Logical Shift, Control, Alt, Super, lock keys, Insert, Pause,
+PrintScreen, ContextMenu and function keys now have typed `KeyboardKey` variants
+instead of `Other` strings. Existing `KeyEvent` literals must supply `physical_key`;
+use `Default::default()` when the host has no physical identity.
+
+`WindowInput` tracks physical keys and RXUI's supported primary, secondary and
+middle pointer buttons. Native deactivation drains the held state, sends key-up
+and `PointerEvent::CancelledUp` for held buttons, cancels pointer gestures and then
+calls `Ui::set_active(false)`. Cancelled button releases reach the capture owner
+without clicking controls or committing a gesture; the following cancellation
+ends capture. Key releases retain the press's logical and physical identities,
+have `repeat: false` and cleared modifiers. Repeats do not add held keys. Late
+native releases are deduplicated, and synthetic focus-gain presses never re-arm
+controls. `Ui::key` accepts releases while inactive so custom hosts can safely
+release after deactivating too; inactive presses remain suppressed.
+
+`Application::window_active_changed` runs after these releases and pointer unlock,
+with a `WindowHandle` and a fresh `AppContext` for updating view state.
+`WindowHandle::is_active` provides a snapshot. Clear application control mode on
+loss and require an explicit action to re-enter it. A key-up follows the current
+focus route; the framework cannot release state in a removed listener. Applications
+collecting held input should use a stable root capture listener and clear their
+input snapshot on the activation callback as well.

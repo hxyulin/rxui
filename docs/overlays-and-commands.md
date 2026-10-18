@@ -208,3 +208,10 @@ functional checks, not frame-pacing measurements or full screen-reader certifica
 Native menu bars reuse these same typed actions and scope rules. See
 [native menus and desktop requests](native-menus.md) for the optional Muda adapter,
 command queries, standard editing and vetoable Close/Quit.
+
+`Element::raw_keyboard(true)` suppresses shortcut defaults throughout its focused
+subtree, including registered application shortcuts. Root key capture listeners
+can also prevent individual keys. The native standard desktop table is separately
+configurable with `WindowOptions::standard_shortcuts(false)` (custom hosts use
+`WindowInput::set_standard_shortcuts`). Explicit command invocation and menu
+selection keep their existing behavior. See [raw keyboard input](interaction.md#raw-keyboard-input-and-deactivation).

@@ -191,3 +191,65 @@ siblings only. `parts()` lends the runtime, placement and painter together for
 anything else, such as `Ui::focus_next`. Effects keep their host boundary: call
 `test.runtime().flush()` where a test depends on them. `render` reads back through
 `Framebuffer::read_rgba8`, and a zero size fails with `UiError::InvalidGeometry`.
+
+## Input policy and native event observers
+
+Desktop defaults are unchanged. `WindowOptions::standard_shortcuts(false)` disables
+the built-in primary+W/Q/Z/Y/C/X/V/A table for one window, including close and quit.
+Registered application shortcuts and explicit commands/menu actions still work.
+Custom hosts use `WindowInput::set_standard_shortcuts(false)`. For a control view
+that must also suppress registered shortcuts, Tab, activation and text input, use
+`Element::raw_keyboard(true)`; see [interaction](interaction.md#raw-keyboard-input-and-deactivation).
+These policies do not veto OS close requests. `close_requested` and
+`quit_requested` remain the lifecycle veto hooks.
+
+`Application::device_event` receives winit `DeviceId` and a borrowed `DeviceEvent`,
+including `MouseMotion { delta }` for relative mouse input. Device events have no
+implicit source window and follow winit's default focused-window delivery policy.
+Filter by your application's active window and control mode. `window_event`
+receives an explicit `WindowHandle` and a borrowed raw `WindowEvent` before RXUI
+routes it. These observers run in fresh application updates with no implicit
+`cx.window()` and cannot consume or replace RXUI handling. They may update models
+or queue the usual application operations. `window_active_changed` runs after the
+window's held inputs are released and its pointer is unlocked, so views can clear
+control state without losing release notifications. The hooks do not establish
+a fixed-rate input publisher; schedule that work in the application's service
+runtime and transfer owned snapshots across the thread boundary.
+
+`cx.wake_handle()` returns an `ApplicationWakeHandle`, which is cloneable,
+`Send + Sync` and holds no entities or windows. External services send owned data
+through a channel and call `wake()`. `Application::woken` then drains the channel
+and updates entities on the UI thread, followed by normal effects, window commands
+and redraw scheduling. Calls after event-loop shutdown return
+`ApplicationError::Exited`. Each successful wake schedules a callback; producers
+should batch or coalesce a stream rather than accumulate unbounded work.
+See [streaming updates](async.md#streaming-updates-from-external-runtimes) for a
+50 Hz example using an application-owned Tokio runtime.
+
+## Pointer locking and visibility
+
+`WindowHandle::set_pointer_lock(true)` requests `CursorGrabMode::Locked`, falls
+back to `Confined` when locking fails, and hides the cursor. The native window
+must exist and have focus. The result reports `Some(PointerLock::Locked)` or
+`Some(PointerLock::Confined)`; if both fail it returns `ApplicationError::Native`
+and preserves logical state. Handle errors in the application rather than
+propagating them out of initialization. `set_pointer_lock(false)` releases it;
+`pointer_lock()` reports the selected mode. `set_cursor_hidden(bool)` separately
+controls visibility, including before native creation. Hovered cursor changes
+respect both the window's hidden state and its active grab.
+
+Focus loss automatically releases the grab and never re-locks it on focus gain.
+The cursor becomes visible again unless explicitly hidden or over a hidden-cursor
+element. An automatic release failure is available through
+`take_pointer_lock_error()`; it does not become a fatal runner error. Custom hosts
+have equivalent `WindowInput::set_pointer_lock`, `set_cursor_hidden` and
+`take_pointer_lock_error` operations and must call `sync_window` after focus events.
+They receive winit's `ExternalError` directly for explicit lock requests.
+
+X11 does not implement Locked, so RXUI selects Confined. Confinement is bounded by
+the window and does not promise unbounded relative movement; use the device-event
+observer and account for the returned mode. Wayland supports locking when the
+compositor permits it, but does not permit arbitrary cursor warping; this API does
+not warp the cursor. macOS supports Locked and does not implement Confined.
+Native grab failures remain possible on every platform. Runtime locking and
+relative motion require testing on the target desktop/compositor.

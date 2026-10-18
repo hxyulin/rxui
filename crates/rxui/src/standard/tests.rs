@@ -212,6 +212,7 @@ impl Harness {
             .key(
                 &mut self.r,
                 KeyEvent {
+                    physical_key: Default::default(),
                     key,
                     pressed: true,
                     repeat: false,

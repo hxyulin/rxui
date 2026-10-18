@@ -70,6 +70,11 @@ impl PointerEvent {
                 position,
                 button,
                 modifiers,
+            }
+            | Self::CancelledUp {
+                position,
+                button,
+                modifiers,
             } => (2, Some(position), Some(button), modifiers),
             Self::Cancelled => (3, None, None, Modifiers::default()),
             Self::Left => (4, None, None, Modifiers::default()),
@@ -627,7 +632,12 @@ impl<T: View> Ui<T> {
                     None
                 }
             })
-            .or(hit);
+            .or(hit)
+            .or(if matches!(event, PointerEvent::CancelledUp { .. }) {
+                self.root
+            } else {
+                None
+            });
         // A press on a composing client ends composition before its listeners run,
         // even when they prevent the default to place their own caret.
         let ime_cancelled = kind == 0
@@ -638,6 +648,7 @@ impl<T: View> Ui<T> {
         } else {
             InputResult::default()
         };
+        result.default_prevented |= matches!(event, PointerEvent::CancelledUp { .. });
         result.changed |= hover_changed | ime_cancelled;
         self.input.prevented = result.default_prevented;
         let overlay = self.overlay_pointer(runtime, kind, result.default_prevented)?;
@@ -687,7 +698,10 @@ impl<T: View> Ui<T> {
             self.pressed = None;
             self.clear_link_pointer(false);
         }
-        if kind == 2 && self.input.capture.is_some_and(|c| button == Some(c.button)) {
+        if kind == 2
+            && !matches!(event, PointerEvent::CancelledUp { .. })
+            && self.input.capture.is_some_and(|c| button == Some(c.button))
+        {
             self.input.capture = None;
         }
         result.changed |= self.flush_input_cancellations(runtime)?;
@@ -709,7 +723,7 @@ impl<T: View> Ui<T> {
     pub fn key(&mut self, runtime: &mut Runtime, event: KeyEvent) -> Result<InputResult, UiError> {
         profiling::scope!("rxui::dispatch_key");
         runtime.is_dirty(&self.owner)?;
-        if !self.is_prepared() || !self.active {
+        if !self.is_prepared() || (!self.active && event.pressed) {
             return Ok(InputResult::default());
         }
         let Some(target) = self.focused.or(self.root) else {
@@ -718,14 +732,28 @@ impl<T: View> Ui<T> {
         // Typing or navigating shows the focus ring; shortcuts and bare modifiers do not.
         let ring_changed = event.pressed
             && !(event.modifiers.control || event.modifiers.alt || event.modifiers.meta)
-            && !matches!(event.key, KeyboardKey::Other(_))
+            && !matches!(
+                event.key,
+                KeyboardKey::Other(_)
+                    | KeyboardKey::Shift
+                    | KeyboardKey::Control
+                    | KeyboardKey::Alt
+                    | KeyboardKey::Super
+                    | KeyboardKey::AltGraph
+                    | KeyboardKey::Fn
+                    | KeyboardKey::FnLock
+                    | KeyboardKey::Meta
+                    | KeyboardKey::Hyper
+                    | KeyboardKey::Symbol
+                    | KeyboardKey::SymbolLock
+            )
             && self.set_keyboard_modality(true);
         let mut path = std::mem::take(&mut self.input.route);
         self.input_path(target, &mut path);
         let result = (|| {
             let mut result = InputResult {
                 changed: ring_changed,
-                ..Default::default()
+                default_prevented: self.raw_keyboard(),
             };
             for (id, capturing) in path
                 .iter()
