@@ -149,6 +149,11 @@ macro_rules! root_builders {
                 self.root = self.root.accessibility_label(label);
                 self
             }
+            /// Uses another semantic element as this control's accessible name.
+            pub fn accessibility_labelled_by(mut self, label: crate::AccessibilityHandle) -> Self {
+                self.root = self.root.accessibility_labelled_by(label);
+                self
+            }
             /// Supplemental accessibility help, such as a tooltip's text.
             pub fn accessibility_description(
                 mut self,

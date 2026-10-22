@@ -7,13 +7,16 @@ use crate::{
     ViewContext, button, column, label, popover, row,
 };
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use taffy::prelude::AlignItems;
 
 /// Placement-local open state and keyboard highlight.
 #[derive(Default)]
 pub(crate) struct SelectState {
     open: bool,
-    highlight: Option<usize>,
+    highlight: Option<Key>,
+    prefix: String,
+    typed_at: Option<Instant>,
 }
 
 /// Controlled select builder: a ComboBox button showing the current option that
@@ -21,7 +24,9 @@ pub(crate) struct SelectState {
 /// open, as in the platform combo box pattern; Up/Down, Home/End and type-ahead
 /// move the highlight, Enter or Space chooses it and Escape, Tab or an outside
 /// press closes the list. While closed, Up/Down open the list and a letter chooses
-/// the next option starting with it. A selected key that names no option shows
+/// the next option starting with it. Typing within one second extends the prefix;
+/// repeated letters cycle matches. Highlights follow option keys through changes
+/// and scroll into view. A selected key that names no option shows
 /// the placeholder.
 ///
 /// ```
@@ -43,7 +48,7 @@ pub struct Select {
     root: Element,
     state: Entity<SelectState>,
     open: bool,
-    highlight: Option<usize>,
+    highlight: Option<Key>,
     selected: Option<Key>,
     options: Vec<Choice>,
     change: Option<Listener<ChoiceEvent>>,
@@ -65,7 +70,7 @@ pub fn select_keyed<T>(cx: &ViewContext<'_, T>, key: impl std::hash::Hash) -> Se
     let state: Entity<SelectState> = local(cx, key);
     let (open, highlight) = {
         let read = state.read(cx);
-        (read.open, read.highlight)
+        (read.open, read.highlight.clone())
     };
     Select {
         root: column().width(200.),
@@ -138,7 +143,7 @@ impl Options {
     /// Highlight shown when the list opens: the selection, else the first option.
     fn initial(&self) -> Option<usize> {
         self.selected
-            .filter(|i| self.enabled[*i])
+            .filter(|i| self.enabled.get(*i) == Some(&true))
             .or_else(|| self.first())
     }
     /// Nearest enabled option after (or before) `from`, without wrapping.
@@ -168,16 +173,64 @@ fn set(
     state: &Entity<SelectState>,
     cx: &mut crate::AppContext<'_>,
     open: bool,
-    highlight: Option<usize>,
+    highlight: Option<Key>,
 ) -> Result<Dispatch, crate::AccessError> {
     state.try_update(cx, |s, cx| {
         if s.open == open && s.highlight == highlight {
             cx.unchanged();
             return Dispatch::Unchanged;
         }
+        if s.open != open {
+            s.prefix.clear();
+            s.typed_at = None;
+        }
         s.open = open;
         s.highlight = highlight;
         Dispatch::Handled
+    })
+}
+
+/// Accumulate a prefix for one second; repeated single letters cycle. If the
+/// prefix has no match, start a new search with the latest input.
+fn type_ahead(
+    state: &Entity<SelectState>,
+    options: &Options,
+    from: Option<usize>,
+    text: &str,
+    cx: &mut crate::AppContext<'_>,
+) -> Result<Option<usize>, crate::AccessError> {
+    state.try_update(cx, |s, _| {
+        let now = Instant::now();
+        if s.typed_at
+            .is_none_or(|last| now.duration_since(last) > Duration::from_secs(1))
+        {
+            s.prefix.clear();
+        }
+        let text = text.to_lowercase();
+        let cycle = s.prefix == text;
+        if !cycle {
+            s.prefix.push_str(&text);
+        }
+        s.typed_at = Some(now);
+        // Continuing a prefix includes the current match; single letters cycle.
+        let start = if !cycle && s.prefix != text {
+            from.map(|i| {
+                if i == 0 {
+                    options.keys.len() - 1
+                } else {
+                    i - 1
+                }
+            })
+        } else {
+            from
+        };
+        let found = options.type_ahead(start, &s.prefix);
+        if found.is_some() {
+            found
+        } else {
+            s.prefix = text;
+            options.type_ahead(from, &s.prefix)
+        }
     })
 }
 
@@ -213,6 +266,14 @@ impl IntoElement for Select {
             selected,
         });
         let open = self.open && !self.disabled;
+        let highlight = self
+            .highlight
+            .as_ref()
+            .and_then(|key| options.keys.iter().position(|k| k == key))
+            .filter(|i| options.enabled[*i])
+            .or_else(|| options.initial());
+        let active = crate::AccessibilityHandle::new();
+        let list_handle = crate::AccessibilityHandle::new();
         let width = self.root.style.size.width.into_raw();
         let list_width =
             self.list_width
@@ -247,23 +308,39 @@ impl IntoElement for Select {
         .accessibility_role(SemanticRole::ComboBox)
         .accessibility_expanded(open)
         .accessibility_value(current.unwrap_or_default());
+        if open && highlight.is_some() {
+            trigger = trigger.accessibility_active_descendant(active.clone());
+        }
+        if open {
+            trigger = trigger.accessibility_controls(list_handle.clone());
+        }
+        let labelled_by = naming.as_ref().and_then(|n| n.labelled_by.clone());
         let name = naming.as_ref().and_then(|n| n.label.clone());
         if let Some(naming) = naming {
             let semantics = trigger.semantics.get_or_insert_with(Default::default);
             semantics.label = naming.label;
             semantics.description = naming.description;
+            semantics.labelled_by = naming.labelled_by;
         }
         {
             let (state, options) = (state.clone(), options.clone());
             trigger = trigger.on_click(callback(move |_: &ClickEvent, cx| {
-                set(&state, cx, !open, options.initial())
+                set(
+                    &state,
+                    cx,
+                    !open,
+                    options.initial().map(|i| options.keys[i].clone()),
+                )
             }));
         }
         let (key_state, key_options, key_change) =
             (state.clone(), options.clone(), self.change.clone());
-        let highlight = self.highlight;
+        let disabled = self.disabled;
         root = root.on_key_down(callback(move |input: &KeyInput, cx| {
             let (state, options, change) = (&key_state, &key_options, key_change.as_ref());
+            if disabled {
+                return Ok(Dispatch::Unchanged);
+            }
             let m = input.event.modifiers;
             if m.control || m.meta {
                 return Ok(Dispatch::Unchanged);
@@ -276,11 +353,16 @@ impl IntoElement for Select {
                 return match (&input.event.key, typed) {
                     (KeyboardKey::ArrowDown | KeyboardKey::ArrowUp, _) => {
                         input.prevent_default();
-                        set(state, cx, true, options.initial())
+                        set(
+                            state,
+                            cx,
+                            true,
+                            options.initial().map(|i| options.keys[i].clone()),
+                        )
                     }
                     (_, Some(text)) => {
                         input.prevent_default();
-                        match options.type_ahead(options.selected, text) {
+                        match type_ahead(state, options, options.selected, text, cx)? {
                             Some(next) if Some(next) != options.selected => propose(
                                 change,
                                 &ChoiceEvent {
@@ -307,17 +389,21 @@ impl IntoElement for Select {
                     };
                 }
                 (KeyboardKey::Tab, _) => return set(state, cx, false, None),
-                (_, Some(text)) => options.type_ahead(highlight, text).or(highlight),
+                (_, Some(text)) => type_ahead(state, options, highlight, text, cx)?.or(highlight),
                 _ => return Ok(Dispatch::Unchanged),
             };
             input.prevent_default();
-            set(state, cx, true, next)
+            set(state, cx, true, next.map(|i| options.keys[i].clone()))
         }));
         root = root.child(trigger);
         if open {
             let mut list = column()
                 .fill_width()
-                .accessibility_role(SemanticRole::ListBox);
+                .accessibility_role(SemanticRole::ListBox)
+                .accessibility_handle(list_handle);
+            if let Some(labelled_by) = labelled_by {
+                list = list.accessibility_labelled_by(labelled_by);
+            }
             if let Some(name) = name {
                 list = list.accessibility_label(name);
             }
@@ -331,6 +417,7 @@ impl IntoElement for Select {
                 let mut item = row()
                     .key(option.key.clone())
                     .fill_width()
+                    .flex_shrink(0.)
                     .gap(6.)
                     .padding_x(8.)
                     .padding_y(6.)
@@ -344,7 +431,11 @@ impl IntoElement for Select {
                 let semantics = item.semantics.get_or_insert_with(Default::default);
                 semantics.set_size = Some(self.options.len());
                 semantics.position_in_set = Some(index);
+                if lit {
+                    item = item.accessibility_handle(active.clone());
+                }
                 if option.disabled {
+                    item = item.accessibility_disabled(true);
                     item = item.color(ThemeColor::TextDisabled);
                 } else {
                     if lit {
@@ -353,9 +444,10 @@ impl IntoElement for Select {
                             .color(ThemeColor::SelectionText);
                     }
                     let hover_state = state.clone();
+                    let hover_key = option.key.clone();
                     item = item.on_hover(callback(move |event: &HoverEvent, cx| {
                         if event.hovered {
-                            set(&hover_state, cx, true, Some(index))
+                            set(&hover_state, cx, true, Some(hover_key.clone()))
                         } else {
                             Ok(Dispatch::Unchanged)
                         }

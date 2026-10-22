@@ -743,6 +743,7 @@ pub struct Ui<T: View> {
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
     editor_nodes: Vec<ElementId>,
+    active_reveals: IdMap<ElementId, ElementId>,
     image_nodes: Vec<ElementId>,
     live_image_nodes: Vec<ElementId>,
     pub(crate) scroll_handle_nodes: Vec<ElementId>,
@@ -796,6 +797,7 @@ impl<T: View> Ui<T> {
             active_views: Vec::new(),
             component_nodes: Vec::new(),
             editor_nodes: Vec::new(),
+            active_reveals: IdMap::default(),
             image_nodes: Vec::new(),
             live_image_nodes: Vec::new(),
             scroll_handle_nodes: Vec::new(),
@@ -1081,6 +1083,33 @@ impl<T: View> Ui<T> {
             self.update_text_scroll(self.editor_nodes[index], measurer)?;
         }
         self.refresh_links(measurer)?;
+        if evaluated != self.stats.component_evaluations {
+            let active: IdMap<_, _> = self
+                .order
+                .iter()
+                .filter_map(|id| {
+                    let handle = self.nodes[id]
+                        .element
+                        .semantics
+                        .as_ref()?
+                        .active_descendant
+                        .as_ref()?;
+                    if !self.semantic_visible(*id) {
+                        return None;
+                    }
+                    let target = self
+                        .accessibility_target(handle)
+                        .filter(|target| !self.semantic_disabled(*target))?;
+                    Some((*id, target))
+                })
+                .collect();
+            for (&source, &target) in &active {
+                if self.active_reveals.get(&source) != Some(&target) {
+                    self.reveal(target);
+                }
+            }
+            self.active_reveals = active;
+        }
         self.geometry_ready = true;
         self.needs_evaluation = false;
         Ok(())
@@ -3728,12 +3757,7 @@ impl<T: View> Ui<T> {
                     }
                     _ => None,
                 });
-        let disabled = self.range_unavailable(id)
-            || matches!(
-                node.element.kind,
-                ElementKind::Button { disabled: true, .. }
-                    | ElementKind::TextInput { disabled: true, .. }
-            );
+        let disabled = self.semantic_disabled(id);
         let read_only = matches!(
             node.element.kind,
             ElementKind::TextInput {
@@ -3807,8 +3831,19 @@ impl<T: View> Ui<T> {
             level: properties.and_then(|p| p.level),
             numeric_value: properties.and_then(|p| p.numeric),
             adjustable: action && !disabled && properties.is_some_and(|p| p.numeric.is_some()),
-            labelled_by: self.tab_relations(id).0,
-            controls: self.tab_relations(id).1,
+            labelled_by: properties
+                .and_then(|p| p.labelled_by.as_ref())
+                .and_then(|h| self.accessibility_target(h))
+                .or_else(|| self.tab_relations(id).0),
+            active_descendant: properties
+                .and_then(|p| p.active_descendant.as_ref())
+                .and_then(|h| self.accessibility_target(h))
+                .filter(|target| !self.semantic_disabled(*target)),
+            live: properties.and_then(|p| p.live),
+            controls: properties
+                .and_then(|p| p.controls.as_ref())
+                .and_then(|h| self.accessibility_target(h))
+                .or_else(|| self.tab_relations(id).1),
             orientation: match self.tab_properties(id) {
                 Some(crate::tabs::Properties::List { axis, .. }) => Some(*axis),
                 _ => None,
@@ -3816,6 +3851,29 @@ impl<T: View> Ui<T> {
             range: self.range_info(id),
             links: self.semantic_link_count(id),
         })
+    }
+    fn semantic_disabled(&self, id: ElementId) -> bool {
+        let node = &self.nodes[&id];
+        self.range_unavailable(id)
+            || node.element.semantics.as_ref().is_some_and(|p| p.disabled)
+            || matches!(
+                node.element.kind,
+                ElementKind::Button { disabled: true, .. }
+                    | ElementKind::TextInput { disabled: true, .. }
+            )
+    }
+    fn accessibility_target(&self, handle: &crate::AccessibilityHandle) -> Option<ElementId> {
+        let mut targets = self.order.iter().copied().filter(|id| {
+            self.nodes[id]
+                .element
+                .semantics
+                .as_ref()
+                .and_then(|p| p.handle.as_ref())
+                .is_some_and(|h| h.matches(handle))
+                && self.semantic_visible(*id)
+        });
+        let target = targets.next()?;
+        targets.next().is_none().then_some(target)
     }
     /// Logical focus in the semantic tree, retained across native activation changes.
     /// Platform adapters separately track whether the native window has focus.
@@ -3871,6 +3929,14 @@ impl<T: View> Ui<T> {
         self.sync_edit_views(runtime)?;
         let id = action.target();
         if !self.semantic_visible(id) {
+            return Ok(false);
+        }
+        if self.semantic_disabled(id)
+            && !matches!(
+                action,
+                crate::SemanticAction::Scroll { .. } | crate::SemanticAction::ScrollIntoView(_)
+            )
+        {
             return Ok(false);
         }
         if let crate::SemanticAction::Activate(_) | crate::SemanticAction::SetNumericValue { .. } =

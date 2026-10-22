@@ -1,6 +1,31 @@
 use crate::{Bounds, ElementId, TextSelection};
 use std::sync::Arc;
 
+/// Cloneable reference to one semantic element per UI placement. Bind with
+/// [`crate::Element::accessibility_handle`]; references resolve only to a unique,
+/// visible semantic target in the same placement. Missing or ambiguous bindings
+/// publish no relationship. Sharing a handle between windows is safe.
+#[derive(Clone, Debug, Default)]
+pub struct AccessibilityHandle(std::rc::Rc<()>);
+impl AccessibilityHandle {
+    /// Creates an unbound reference.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub(crate) fn matches(&self, other: &Self) -> bool {
+        std::rc::Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+/// How assistive technology should announce changes to a live region. Keep the
+/// region mounted and change its text/value; delivery depends on the platform
+/// adapter and assistive technology. This does not move keyboard focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LivePoliteness {
+    /// Announce when the user is idle.
+    Polite,
+    /// Interrupt the current announcement for urgent information.
+    Assertive,
+}
 /// Meaning of an element independent of its visual layout kind.
 /// Overriding a role changes metadata; it does not create new interaction behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,11 +129,17 @@ pub struct NumericValue {
 }
 #[derive(Clone, Default)]
 pub(crate) struct Properties {
+    pub handle: Option<AccessibilityHandle>,
+    pub labelled_by: Option<AccessibilityHandle>,
+    pub active_descendant: Option<AccessibilityHandle>,
+    pub controls: Option<AccessibilityHandle>,
+    pub live: Option<LivePoliteness>,
     pub label: Option<Arc<str>>,
     pub description: Option<Arc<str>>,
     pub value: Option<Arc<str>>,
     pub role: Option<SemanticRole>,
     pub hidden: bool,
+    pub disabled: bool,
     pub selected: Option<bool>,
     pub checked: Option<Checked>,
     pub expanded: Option<bool>,
@@ -146,6 +177,10 @@ pub struct SemanticNode<'a> {
     pub adjustable: bool,
     /// Live semantic label source, such as the active panel's tab header.
     pub labelled_by: Option<ElementId>,
+    /// Highlighted enabled semantic target of a composite control.
+    pub active_descendant: Option<ElementId>,
+    /// Announcement priority for changes to this region.
+    pub live: Option<LivePoliteness>,
     /// Live associated content, such as the selected tab's panel.
     pub controls: Option<ElementId>,
     /// Composite navigation orientation.

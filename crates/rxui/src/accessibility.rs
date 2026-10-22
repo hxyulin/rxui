@@ -338,6 +338,20 @@ impl AccessKitTree {
             {
                 node.set_controls(vec![*target]);
             }
+            if let Some(target) = semantic
+                .active_descendant
+                .filter(|id| visible.contains(id))
+                .and_then(|id| self.ids.get(&id))
+            {
+                node.set_active_descendant(*target);
+            }
+            if let Some(priority) = semantic.live {
+                node.set_live(match priority {
+                    crate::LivePoliteness::Polite => accesskit::Live::Polite,
+                    crate::LivePoliteness::Assertive => accesskit::Live::Assertive,
+                });
+                node.set_live_atomic();
+            }
             if let Some(axis) = semantic.orientation {
                 node.set_orientation(if axis == crate::Axis::Horizontal {
                     accesskit::Orientation::Horizontal

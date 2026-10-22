@@ -19,6 +19,7 @@ struct Form {
     animate: bool,
     spinner: bool,
     language: Option<Key>,
+    language_options: Option<Vec<Choice>>,
     toggles: Vec<ToggleEvent>,
     choices: Vec<Key>,
     slides: Vec<SliderEvent>,
@@ -37,6 +38,7 @@ impl Default for Form {
             animate: false,
             spinner: false,
             language: None,
+            language_options: None,
             toggles: Vec::new(),
             choices: Vec::new(),
             slides: Vec::new(),
@@ -63,12 +65,14 @@ impl View for Form {
             .key("language")
             .accessibility_label("Language")
             .placeholder("Choose")
-            .options([
-                choice("apple", "Apple"),
-                choice("banana", "Banana"),
-                choice("blueberry", "Blueberry").disabled(true),
-                choice("cherry", "Cherry"),
-            ])
+            .options(self.language_options.clone().unwrap_or_else(|| {
+                vec![
+                    choice("apple", "Apple"),
+                    choice("banana", "Banana"),
+                    choice("blueberry", "Blueberry").disabled(true),
+                    choice("cherry", "Cherry"),
+                ]
+            }))
             .on_change(cx.listener(|s, e: &ChoiceEvent, _| {
                 s.language = Some(e.key.clone());
                 s.choices.push(e.key.clone());
@@ -784,4 +788,172 @@ fn standard_controls_publish_accesskit_roles_states_and_actions() {
         h.action(action);
     }
     assert_eq!(h.read(|s| (s.volume, s.agree)), (55., Checked::True));
+}
+
+#[test]
+fn select_reveals_selected_and_keyboard_highlights_and_tracks_keys_through_mutation() {
+    let mut h = Harness::new(Form {
+        language: Some(Key::from("item-35")),
+        language_options: Some(
+            (0..40)
+                .map(|i| choice(format!("item-{i}"), format!("Item {i}")))
+                .collect(),
+        ),
+        ..Form::default()
+    });
+    let trigger = h.within("language", "button");
+    h.click(h.center(trigger));
+    let visible = |h: &Harness, key: &str| {
+        let node = h.ui.semantic_node(h.id(key)).unwrap();
+        assert!(
+            node.bounds.y >= node.clip_bounds.y - 0.01,
+            "{key}: {node:?}"
+        );
+        assert!(
+            node.bounds.y + node.bounds.height
+                <= node.clip_bounds.y + node.clip_bounds.height + 0.01,
+            "{key}: {node:?}"
+        );
+        assert_eq!(
+            h.ui.semantic_node(trigger).unwrap().active_descendant,
+            Some(node.id)
+        );
+    };
+    visible(&h, "item-35");
+    #[cfg(feature = "accessibility")]
+    let mut native = AccessKitTree::new();
+    #[cfg(feature = "accessibility")]
+    let native_trigger = {
+        let first = native.update(&h.ui, "Select", 1.).unwrap().unwrap();
+        let (id, trigger) = first
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::ComboBox)
+            .unwrap();
+        let active = trigger.active_descendant().unwrap();
+        assert_eq!(
+            first
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == active)
+                .unwrap()
+                .1
+                .label(),
+            Some("Item 35")
+        );
+        let list = trigger.controls()[0];
+        let popup = &first.nodes.iter().find(|(id, _)| *id == list).unwrap().1;
+        assert_eq!(popup.role(), accesskit::Role::ListBox);
+        assert!(popup.children().contains(&active));
+        let result = *id;
+        let _consumer = accesskit_consumer::Tree::new(first, true);
+        result
+    };
+    h.key(KeyboardKey::End);
+    visible(&h, "item-39");
+    #[cfg(feature = "accessibility")]
+    {
+        let delta = native.update(&h.ui, "Select", 1.).unwrap().unwrap();
+        let trigger = &delta
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == native_trigger)
+            .unwrap()
+            .1;
+        assert!(trigger.active_descendant().is_some());
+    }
+    let popup = h.ui.semantic_node(h.id("list")).unwrap().children[0];
+    assert!(h.action(SemanticAction::Scroll {
+        target: popup,
+        offset: [0., 0.]
+    }));
+    assert_eq!(h.ui.semantic_node(popup).unwrap().scroll_offset[1], 0.);
+    h.prepare();
+    assert_eq!(h.ui.semantic_node(popup).unwrap().scroll_offset[1], 0.);
+    h.key(KeyboardKey::Home);
+    visible(&h, "item-0");
+    for _ in 0..28 {
+        h.key(KeyboardKey::ArrowDown);
+    }
+    visible(&h, "item-28");
+    assert_eq!(h.ui.focused_element(), Some(trigger));
+    h.update(|s| s.language_options.as_mut().unwrap().reverse());
+    assert_eq!(
+        h.ui.semantic_node(trigger).unwrap().active_descendant,
+        Some(h.id("item-28"))
+    );
+    h.update(|s| {
+        s.language_options
+            .as_mut()
+            .unwrap()
+            .retain(|o| o.key != Key::from("item-28"))
+    });
+    visible(&h, "item-35");
+    h.update(|s| {
+        let option = s
+            .language_options
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|o| o.key == Key::from("item-35"))
+            .unwrap();
+        option.disabled = true;
+    });
+    assert!(h.ui.semantic_node(h.id("item-35")).unwrap().disabled);
+    visible(&h, "item-39");
+    h.update(|s| {
+        for option in s.language_options.as_mut().unwrap() {
+            option.disabled = true;
+        }
+    });
+    assert_eq!(h.ui.semantic_node(trigger).unwrap().active_descendant, None);
+    h.update(|s| s.language_options = Some(vec![]));
+    assert_eq!(h.ui.semantic_node(trigger).unwrap().active_descendant, None);
+    h.key(KeyboardKey::ArrowUp);
+    h.key(KeyboardKey::Enter);
+    assert_eq!(h.ui.semantic_node(trigger).unwrap().active_descendant, None);
+    #[cfg(feature = "accessibility")]
+    {
+        let delta = native.update(&h.ui, "Select", 1.).unwrap().unwrap();
+        let trigger = &delta
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == native_trigger)
+            .unwrap()
+            .1;
+        assert_eq!(trigger.active_descendant(), None);
+        assert!(trigger.controls().is_empty());
+    }
+}
+
+#[test]
+fn select_timed_prefix_search_continues_current_match_and_repeated_letters_cycle() {
+    let mut h = Harness::new(Form {
+        language_options: Some(vec![
+            choice("a", "Apple"),
+            choice("ap", "Apricot"),
+            choice("b", "Banana"),
+            choice("bl", "Blueberry"),
+            choice("p", "Pear"),
+        ]),
+        ..Form::default()
+    });
+    let trigger = h.within("language", "button");
+    h.click(h.center(trigger));
+    h.key(KeyboardKey::Character("b".into()));
+    h.key(KeyboardKey::Character("l".into()));
+    assert_eq!(
+        h.ui.semantic_node(trigger).unwrap().active_descendant,
+        Some(h.id("bl"))
+    );
+    h.key(KeyboardKey::Enter);
+    assert_eq!(h.read(|s| s.language.clone()), Some(Key::from("bl")));
+    h.key(KeyboardKey::Character("a".into()));
+    h.key(KeyboardKey::Character("a".into()));
+    assert_eq!(h.read(|s| s.language.clone()), Some(Key::from("ap")));
+    // The next character must start a fresh prefix after the timeout. With a
+    // stale "a" prefix, "p" would keep Apricot; a fresh "p" chooses Pear.
+    std::thread::sleep(Duration::from_millis(1050));
+    h.key(KeyboardKey::Character("p".into()));
+    assert_eq!(h.read(|s| s.language.clone()), Some(Key::from("p")));
 }

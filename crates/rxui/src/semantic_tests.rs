@@ -1050,3 +1050,207 @@ mod accesskit_tests {
         assert!(!published.1.supports_action(Action::SetValue));
     }
 }
+
+#[test]
+fn live_regions_and_label_references_follow_updates_visibility_and_placement() {
+    struct Relationships {
+        label: AccessibilityHandle,
+        status: String,
+        present: bool,
+        hidden: bool,
+        duplicate: bool,
+    }
+    impl View for Relationships {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let mut root = column()
+                .child(
+                    text_input("")
+                        .key("input")
+                        .accessibility_labelled_by(self.label.clone()),
+                )
+                .child(
+                    label(self.status.clone())
+                        .key("status")
+                        .accessibility_live(LivePoliteness::Polite),
+                );
+            if self.present {
+                root = root.child(
+                    label("Account name")
+                        .key("caption")
+                        .accessibility_handle(self.label.clone())
+                        .accessibility_hidden(self.hidden),
+                );
+            }
+            if self.duplicate {
+                root = root.child(label("Other").accessibility_handle(self.label.clone()));
+            }
+            root
+        }
+    }
+    let mut runtime = Runtime::new();
+    let entity = runtime.update(|cx| {
+        cx.new(|_| Relationships {
+            label: AccessibilityHandle::new(),
+            status: "Ready".into(),
+            present: true,
+            hidden: false,
+            duplicate: false,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
+    ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+        .unwrap();
+    let id = |ui: &Ui<Relationships>, key: &str| {
+        ui.elements()
+            .find(|e| e.key == Some(&Key::from(key)))
+            .unwrap()
+            .id
+    };
+    let input = id(&ui, "input");
+    let caption = id(&ui, "caption");
+    assert_eq!(ui.semantic_node(input).unwrap().labelled_by, Some(caption));
+    let mut second = Ui::new(&mut runtime, entity.clone()).unwrap();
+    second
+        .prepare(&mut runtime, [400., 400.], &mut Measure)
+        .unwrap();
+    assert_ne!(caption, id(&second, "caption"));
+    assert_eq!(
+        second
+            .semantic_node(id(&second, "input"))
+            .unwrap()
+            .labelled_by,
+        Some(id(&second, "caption"))
+    );
+
+    #[cfg(feature = "accessibility")]
+    let mut tree = AccessKitTree::new();
+    #[cfg(feature = "accessibility")]
+    let (native_input, native_status) = {
+        let first = tree.update(&ui, "Test", 1.).unwrap().unwrap();
+        let native_input = first
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::TextInput)
+            .unwrap();
+        assert_eq!(native_input.1.labelled_by().len(), 1);
+        let native_label = native_input.1.labelled_by()[0];
+        assert_eq!(
+            first
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == native_label)
+                .unwrap()
+                .1
+                .value(),
+            Some("Account name")
+        );
+        let status = first
+            .nodes
+            .iter()
+            .find(|(_, n)| n.live() == Some(accesskit::Live::Polite))
+            .unwrap();
+        assert!(status.1.is_live_atomic());
+        assert_eq!(status.1.value(), Some("Ready"));
+        let result = (native_input.0, status.0);
+        let consumer = accesskit_consumer::Tree::new(first, true);
+        assert_eq!(
+            consumer
+                .state()
+                .node_by_tree_local_id(result.0, accesskit::TreeId::ROOT)
+                .unwrap()
+                .label()
+                .as_deref(),
+            Some("Account name")
+        );
+        result
+    };
+    runtime.update(|cx| {
+        entity.update(cx, |s, _| {
+            s.status = "Saved".into();
+            s.hidden = true;
+        })
+    });
+    ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+        .unwrap();
+    assert_eq!(ui.semantic_node(input).unwrap().labelled_by, None);
+    assert_eq!(ui.focused_element(), None);
+    #[cfg(feature = "accessibility")]
+    {
+        let delta = tree.update(&ui, "Test", 1.).unwrap().unwrap();
+        assert!(
+            delta
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == native_input)
+                .unwrap()
+                .1
+                .labelled_by()
+                .is_empty()
+        );
+        let status = &delta
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == native_status)
+            .unwrap()
+            .1;
+        assert_eq!(status.value(), Some("Saved"));
+        assert_eq!(status.live(), Some(accesskit::Live::Polite));
+        assert!(tree.update(&ui, "Test", 1.).unwrap().is_none());
+    }
+    for (present, duplicate) in [(false, false), (true, true), (true, false)] {
+        runtime.update(|cx| {
+            entity.update(cx, |s, _| {
+                s.present = present;
+                s.hidden = false;
+                s.duplicate = duplicate;
+            })
+        });
+        ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+            .unwrap();
+        assert_eq!(
+            ui.semantic_node(input).unwrap().labelled_by,
+            (present && !duplicate).then(|| id(&ui, "caption"))
+        );
+    }
+}
+
+#[test]
+fn custom_disabled_semantics_reject_assistive_actions_until_enabled() {
+    struct Widget {
+        disabled: bool,
+        activations: usize,
+    }
+    impl View for Widget {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .accessibility_role(SemanticRole::ListBoxOption)
+                .accessibility_disabled(self.disabled)
+                .on_semantic_action(cx.listener(|s, _, _| s.activations += 1))
+        }
+    }
+    let mut runtime = Runtime::new();
+    let owner = runtime.update(|cx| {
+        cx.new(|_| Widget {
+            disabled: true,
+            activations: 0,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, owner.clone()).unwrap();
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    let target = ui.elements().next().unwrap().id;
+    assert!(ui.semantic_node(target).unwrap().disabled);
+    assert!(
+        !ui.semantic_action(&mut runtime, SemanticAction::Activate(target), &mut Measure)
+            .unwrap()
+    );
+    runtime.update(|cx| assert_eq!(owner.read(cx).activations, 0));
+    runtime.update(|cx| owner.update(cx, |s, _| s.disabled = false));
+    ui.prepare(&mut runtime, [200., 200.], &mut Measure)
+        .unwrap();
+    assert!(
+        ui.semantic_action(&mut runtime, SemanticAction::Activate(target), &mut Measure)
+            .unwrap()
+    );
+    runtime.update(|cx| assert_eq!(owner.read(cx).activations, 1));
+}

@@ -40,6 +40,34 @@ Containers can be marked Group, Form, List or ListItem. Heading is initially
 published at level one. A role override describes an element; it does not add
 button handlers, editing or focus behavior to an ordinary container.
 
+## Labels, composite highlights and announcements
+
+Create an `AccessibilityHandle`, bind it with `.accessibility_handle(handle.clone())`
+and refer to it with `.accessibility_labelled_by(handle)`. This supports an adjacent
+visual label without duplicating its text. Handles resolve independently in each
+UI placement, including when one model is shared between windows. A missing,
+removed, hidden or ambiguously bound target publishes no relationship. Bind each
+handle to at most one element per placement. Explicit tab relationships continue
+to work without handles.
+
+Custom composites can use `.accessibility_controls(popup_handle)` and
+`.accessibility_active_descendant(option_handle)` while keyboard focus stays on
+the composite. Disabled targets cannot be active descendants. `accessibility_disabled` publishes
+disabled state for custom widgets; their ordinary input listeners must enforce
+the same policy. Changed active
+descendants reveal through scrolling ancestors after layout; an unchanged target
+does not reset manual scrolling. Keep references aligned with your widget's
+keyboard highlight and clear them when its popup closes.
+
+For status messages, keep a semantic element mounted with
+`.accessibility_live(LivePoliteness::Polite)` and change its text/value when work
+completes. `Assertive` requests interruption for urgent messages. AccessKit receives
+the priority and atomic-region flag with changed content; no focus change is
+needed. This is a declarative live-region API, not a queue: identical messages do
+not force repeated announcements, and changes before one publication can coalesce.
+Actual announcement delivery depends on the platform adapter and assistive
+technology and still needs native screen-reader acceptance testing.
+
 ## Custom widget roles and state
 
 Widgets built from containers or [custom elements](custom-elements.md) describe
@@ -181,10 +209,12 @@ publish their selection through a text run.
 Rich text links publish Link children of their label, with names, bounds, URLs and
 Focus/Click actions; see [rich text](rich-text.md#semantics).
 Per-character bounds/advances, text-range geometry, rich text attributes, runs per
-soft-wrapped visual line, live regions, label relationships, table row/column indices and expand
+soft-wrapped visual line, table row/column indices and expand
 or collapse actions are not implemented yet. Shaped pointer/caret/selection geometry used
 for rendering remains available through UiPainter, but it is not yet exported as
-AccessKit character geometry. Native value/selection support does not establish
+AccessKit character geometry. Exporting it requires revision-aligned shaped runs,
+visual-line mapping, coordinate transforms and range hit-testing contracts.
+Native value/selection support does not establish
 full screen-reader, magnifier or every text-range interaction behavior.
 
 Explicit metadata is allocated only when an accessibility builder is used. Native
@@ -268,5 +298,8 @@ assistive actions. Ordinary retained scroll containers still publish all childre
 An unmounted row has no Focus or ScrollIntoView target. Scroll actions on the
 viewport/scrollbar mount another range; applications can use `reveal_row` for a
 known data index. Indexed assistive navigation to unmounted rows and focus pinning
-are not implemented. Metadata/consumer validation does not establish complete
+are not implemented. An offscreen provider needs stable logical row identities,
+an indexed action/materialization protocol, focus lifetime rules and a bounded
+publication policy; mounted-row metadata alone does not supply those contracts.
+Metadata/consumer validation does not establish complete
 screen-reader usability for arbitrarily large lists.

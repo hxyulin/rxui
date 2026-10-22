@@ -127,19 +127,29 @@ the existing frame clock and request; they are not an animation system.
 `.placeholder(...)` text in a muted color, with a chevron. Activating it opens a
 ListBox popover anchored below it, flipped above when there is no room. Focus stays
 on the button while the list is open, as in the platform combo box pattern; the
-highlighted option is placement-local state.
+highlighted option is placement-local state keyed by the option key. Opening on a
+selection and moving the highlight reveal the option through the popup viewport.
+Reordering preserves highlight identity; removal or disabling falls back to the
+enabled selection or the first enabled option. An empty/all-disabled list has no
+active descendant.
 
 | State | Keys |
 | --- | --- |
 | Closed | Up/Down open the list on the selection. Enter/Space open it through ordinary activation. A letter proposes the next enabled option whose caption starts with it. |
 | Open | Up/Down move the highlight without wrapping, Home/PageUp and End/PageDown jump to the ends, a letter moves to the next match, Enter/Space choose the highlight and close, Tab closes and moves focus, Escape closes. |
 
+Typing within one second extends a case-insensitive prefix in either state.
+Repeated single letters cycle matches; a prefix with no match starts a new search
+from the latest input. Opening/closing clears the prefix.
+
 Pointer hover highlights an option and a click chooses it. An outside press closes
 the list and is consumed, like other popovers. Disabled options are painted muted
 and cannot be highlighted or chosen. Choosing closes the list and proposes the key,
 including the current one. The button publishes ComboBox with expanded state and
 the current caption as its value; `.accessibility_label(...)` names both the button
-and the list. Options publish ListBoxOption with selected state, position and set
+and the list. The button publishes `controls` for its popup ListBox and
+`active_descendant` for the enabled highlight while open; closing removes both
+relationships without moving focus. Options publish ListBoxOption with selected state, position and set
 size. The list is as wide as a fixed `.width(...)`, else 200 units; use
 `.list_width(...)` for selects that fill their parent.
 
@@ -216,11 +226,9 @@ element's resolved text color, so they need no font coverage.
 - Tooltips appear on hover only. Showing them when keyboard focus arrives needs a
   focus-change listener, which elements do not have yet; until then the text
   reaches keyboard and assistive users as the target's accessible description.
-- The select's highlight is not exposed as an active descendant, because semantic
-  snapshots have no such relation; screen readers hear the committed value. The
-  list does not scroll the highlight into view, so very long lists should stay
-  short or use a virtual list in a popover. Type-ahead matches one letter at a
-  time and cycles; multi-letter search needs a timed buffer.
+- Select type-ahead uses a one-second case-insensitive prefix, without locale-aware
+  collation or an editable search field. Native screen-reader acceptance of popup
+  highlight announcements still needs testing on each platform.
 - Sliders are horizontal only and have no tick marks, value bubble or vertical
   orientation. Cancel does not restore the value from before the press.
 - Spinners and indeterminate bars re-evaluate their owning view every frame.
@@ -235,8 +243,9 @@ default) and assistive activation of check boxes and switches; mixed and disable
 state and Tab exclusion; radio roving Tab stops, arrow focus movement that wraps
 and skips disabled options, and group semantics; slider capture, step snapping,
 every key, assistive SetNumericValue, Escape cancellation and invalid ranges;
-progress values, indeterminate frame requests and spinner semantics; select
-opening without moving focus, highlight movement, type-ahead in both states,
+progress values, indeterminate frame requests and spinner semantics; select opening without moving focus, viewport reveal
+for long lists, highlight identity through reorder/removal, active-descendant and
+controls relationships, timed multi-character type-ahead in both states,
 Enter/Escape/Tab, hover and click choice, disabled options and consumed outside
 presses; tooltip delay by frame clock, focus preservation, pointer transparency,
 press/Escape/leave hiding and description publication; tooltip layout adoption;

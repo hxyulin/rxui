@@ -1086,6 +1086,48 @@ impl Element {
         self.semantics.get_or_insert_with(Default::default).label = Some(label.into());
         self
     }
+    /// Binds a reference for accessible labels or composite highlights. Bind a
+    /// handle to at most one element in each UI placement.
+    pub fn accessibility_handle(mut self, handle: crate::AccessibilityHandle) -> Self {
+        self.semantics.get_or_insert_with(Default::default).handle = Some(handle);
+        self
+    }
+    /// Names this control through another semantic element. Missing, hidden,
+    /// removed or ambiguous targets omit the relationship.
+    pub fn accessibility_labelled_by(mut self, label: crate::AccessibilityHandle) -> Self {
+        self.semantics
+            .get_or_insert_with(Default::default)
+            .labelled_by = Some(label);
+        self
+    }
+    /// Exposes a composite control's highlighted option while focus stays on the
+    /// control. Disabled targets are omitted. A changed target is revealed through
+    /// scroll ancestors after layout; unchanged highlights preserve manual scrolling.
+    pub fn accessibility_active_descendant(mut self, target: crate::AccessibilityHandle) -> Self {
+        self.semantics
+            .get_or_insert_with(Default::default)
+            .active_descendant = Some(target);
+        self
+    }
+    /// Associates this control with content it operates, such as a combo box's
+    /// popup list. Missing, hidden or ambiguous targets omit the relationship.
+    pub fn accessibility_controls(mut self, target: crate::AccessibilityHandle) -> Self {
+        self.semantics.get_or_insert_with(Default::default).controls = Some(target);
+        self
+    }
+    /// Publishes disabled state for a custom semantic widget. This does not
+    /// suppress ordinary input listeners; the widget must enforce its own policy.
+    pub fn accessibility_disabled(mut self, disabled: bool) -> Self {
+        self.semantics.get_or_insert_with(Default::default).disabled = disabled;
+        self
+    }
+    /// Announces changes to this region's text/value without moving focus. Mount
+    /// the region before updating its content. Announcements are atomic (the full
+    /// region) and depend on the native adapter and assistive technology.
+    pub fn accessibility_live(mut self, priority: crate::LivePoliteness) -> Self {
+        self.semantics.get_or_insert_with(Default::default).live = Some(priority);
+        self
+    }
     /// Supplemental accessibility help, independent of the control's value.
     pub fn accessibility_description(mut self, description: impl Into<Arc<str>>) -> Self {
         self.semantics

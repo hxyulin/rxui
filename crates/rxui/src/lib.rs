@@ -260,7 +260,8 @@ pub use runtime::{Mount, Runtime, Subscription};
 pub use scrolling::{ScrollBehavior, ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
 pub use semantics::{
-    Checked, NumericValue, SemanticAction, SemanticLink, SemanticNode, SemanticRole,
+    AccessibilityHandle, Checked, LivePoliteness, NumericValue, SemanticAction, SemanticLink,
+    SemanticNode, SemanticRole,
 };
 #[cfg(feature = "layout")]
 pub use standard::{
@@ -316,6 +317,15 @@ pub use native::{DesktopError, DesktopResult};
 #[cfg(feature = "layout")]
 pub mod prelude {
     pub use crate::{
+        AccessibilityHandle, BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor,
+        Entity, FontFamily, FontStyle, FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter,
+        ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
+        LivePoliteness, Modifiers, PaintStyle, PointerButton, PointerButtons, PointerCancelReason,
+        PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign, TextChangeEvent,
+        TextOverflow, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, WheelInput,
+        WheelSource, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+    };
+    pub use crate::{
         AnchorHandle, Command, CommandAction, CommandId, CommandInfo, CommandRegistration,
         CommandStatus, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement,
         Shortcut, menu, menu_item, modal, popover, standard_commands,
@@ -331,15 +341,6 @@ pub mod prelude {
         ScrollError, ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition,
         VariableList, VirtualList, VirtualRows, scroll_area, scrollbar, split_column, split_row,
         variable_list, virtual_list,
-    };
-    pub use crate::{
-        BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor, Entity, FontFamily,
-        FontStyle, FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter, ImageFit, InputResult,
-        IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener, Modifiers, PaintStyle,
-        PointerButton, PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime,
-        SemanticRole, TextAlign, TextChangeEvent, TextOverflow, TextSubmitEvent, Theme, ThemeColor,
-        Ui, View, ViewContext, WheelInput, WheelSource, button, column, image, label, rgb8, rgba8,
-        row, stack, text_input,
     };
     pub use crate::{
         Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
