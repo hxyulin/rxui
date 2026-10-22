@@ -128,8 +128,49 @@ no new component/layout work and warm AccessKit updates do no node/text work.
 
 This fixture contains labels, without relationship handles or live-region
 updates. It checks the existing preparation/publication paths, not the latency of
-announcements or select navigation. Handle resolution currently scans retained
-nodes when an explicit relationship is resolved. Active-descendant reveal checks
-run after description evaluation; idle preparations preserve manual scrolling and
-skip that traversal. A future indexed relationship registry would need its own
-measurements and invalidation contract.
+announcements or select navigation. The relationship lookup and relocation follow-up is measured below.
+
+## Indexed relationship resolution (2026-10-23)
+
+Measured on Apple M5 Max, macOS 27.0.1, Rust 1.99.0 with the optimized bench
+profile, default features plus accessibility. The baseline is `0ac4c1f` with only
+the new probe copied in; the comparison uses the fixes in this patch. Both used:
+
+```sh
+cargo bench -p rxui --bench architecture_probe --features accessibility --locked -- --relationships-only
+```
+
+Raw runs: [baseline CSV](accessibility/relationships-before-2026-10-23.csv) and
+[indexed CSV](accessibility/relationships-after-2026-10-23.csv), with
+[source fingerprints](accessibility/relationships-2026-10-23.json). Both use identical
+measurement boundaries: initial preparation/publication is untimed; 20 subsequent
+iterations change all captions, time preparation separately from AccessKit
+publication, then 20 semantic enumerations resolve every label reference. Cached
+preparation averages 400 iterations and asserts no new evaluations or layout
+passes. Counts are pairs, each with one row, label and input, plus one root.
+The fixture has no active descendant, to isolate relationship indexing.
+
+At 1,000 pairs, publication fell from 15,748 to 2,868 microseconds and semantic
+enumeration from 16,239 to 344. At 2,000 pairs, publication fell from 140,923 to
+11,841 and enumeration from 70,786 to 1,125. These are single captures under
+substantial concurrent compiler load; scheduling noise precludes a precise
+latency or speedup claim. Preparation includes rebuilding the binding index and
+all ordinary reconciliation/layout work.
+
+The deterministic workload is stronger evidence of scaling: the original
+resolver examines all `3N + 1` nodes for each of `N` unique references, or
+`N * (3N + 1)` binding comparisons per semantic enumeration. The new resolver
+looks up `N` hash buckets and checks exactly one bound candidate per reference
+in this fixture. A changed description rebuilds the placement index once in
+`3N + 1` visits. Visibility is checked live, including ancestor visibility and
+modal eligibility; duplicate bindings inspect their own bucket until two visible
+matches establish ambiguity. This does not implement semantic dirty tracking.
+
+AccessKit workload counters are identical before and after: built nodes per
+publication are `3N + 1`, and sent nodes are 275, 550, 1,100 and 2,200 for 250,
+500, 1,000 and 2,000 pairs respectively (caption length changes also affect some
+bounds). Cached preparations perform no index traversal or rebuilding; existing
+preparation bookkeeping still scales with tree size. Lookup visibility checks
+also observe direct input/geometry availability changes without rebuilding the
+index. A failed prepare suppresses publication, clears the index, and rebuilds
+from the repaired placement on retry.

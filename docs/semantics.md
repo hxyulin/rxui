@@ -48,15 +48,18 @@ visual label without duplicating its text. Handles resolve independently in each
 UI placement, including when one model is shared between windows. A missing,
 removed, hidden or ambiguously bound target publishes no relationship. Bind each
 handle to at most one element per placement. Explicit tab relationships continue
-to work without handles.
+to work without handles. Bindings are indexed per placement after reconciliation;
+resolution checks current visibility, including inert and modal exclusion, rather
+than retaining a cached visible target.
 
 Custom composites can use `.accessibility_controls(popup_handle)` and
 `.accessibility_active_descendant(option_handle)` while keyboard focus stays on
 the composite. Disabled targets cannot be active descendants. `accessibility_disabled` publishes
 disabled state for custom widgets; their ordinary input listeners must enforce
 the same policy. Changed active
-descendants reveal through scrolling ancestors after layout; an unchanged target
-does not reset manual scrolling. Keep references aligned with your widget's
+descendants reveal through scrolling ancestors after layout. Reordering the same
+target or resizing its viewport also reveals it. Manual scrolling stays in place
+across unrelated evaluations when the target's layout geometry is unchanged. Keep references aligned with your widget's
 keyboard highlight and clear them when its popup closes.
 
 For status messages, keep a semantic element mounted with

@@ -1254,3 +1254,96 @@ fn custom_disabled_semantics_reject_assistive_actions_until_enabled() {
     );
     runtime.update(|cx| assert_eq!(owner.read(cx).activations, 1));
 }
+
+#[test]
+fn relationship_index_checks_live_visibility_and_recovers_after_partial_preparation() {
+    struct Relations {
+        handle: AccessibilityHandle,
+        mode: u8,
+    }
+    impl View for Relations {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let input = text_input("")
+                .key("input")
+                .accessibility_labelled_by(self.handle.clone());
+            let mut binding = column()
+                .key("ancestor")
+                .inert(self.mode == 1)
+                .accessibility_hidden(self.mode == 2)
+                .child(
+                    label("Caption")
+                        .key("caption")
+                        .accessibility_handle(self.handle.clone()),
+                );
+            if self.mode == 3 {
+                binding.style.display = taffy::Display::None;
+            }
+            let mut root = column().child(binding).child(
+                column().inert(true).child(
+                    label("Unavailable duplicate")
+                        .key("other")
+                        .accessibility_handle(self.handle.clone()),
+                ),
+            );
+            if self.mode == 4 {
+                root = root.child(modal(input).key("modal"));
+            } else {
+                root = root.child(input);
+            }
+            if self.mode == 5 {
+                // Error after a part of the tree has already reconciled.
+                root = root.child(
+                    column()
+                        .key("bad")
+                        .child(label("a").key("duplicate"))
+                        .child(label("b").key("duplicate")),
+                );
+            }
+            root
+        }
+    }
+    let mut runtime = Runtime::new();
+    let entity = runtime.update(|cx| {
+        cx.new(|_| Relations {
+            handle: AccessibilityHandle::new(),
+            mode: 0,
+        })
+    });
+    let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
+    let id = |ui: &Ui<Relations>, key: &str| {
+        ui.elements()
+            .find(|e| e.key == Some(&Key::from(key)))
+            .unwrap()
+            .id
+    };
+    ui.prepare(&mut runtime, [400., 400.], &mut Measure)
+        .unwrap();
+    let input = id(&ui, "input");
+    let caption = id(&ui, "caption");
+    assert_eq!(ui.semantic_node(input).unwrap().labelled_by, Some(caption));
+    // Input/geometry paths can update availability without a new description.
+    ui.nodes.get_mut(&caption).unwrap().visible = false;
+    assert_eq!(ui.semantic_node(input).unwrap().labelled_by, None);
+    ui.nodes.get_mut(&caption).unwrap().visible = true;
+    assert_eq!(ui.semantic_node(input).unwrap().labelled_by, Some(caption));
+    // Text input synchronizes descriptions before ordinary preparation. A new
+    // handle must resolve even when layout and the retained IDs did not change.
+    runtime.update(|cx| entity.update(cx, |s, _| s.handle = AccessibilityHandle::new()));
+    ui.text_input(&mut runtime, TextInputEvent::SelectAll, &mut Measure)
+        .unwrap();
+    assert_eq!(ui.semantic_node(input).unwrap().labelled_by, Some(caption));
+    for mode in [1, 0, 2, 0, 3, 0, 4, 0, 5, 0] {
+        runtime.update(|cx| entity.update(cx, |s, _| s.mode = mode));
+        let result = ui.prepare(&mut runtime, [400., 400.], &mut Measure);
+        if mode == 5 {
+            assert!(matches!(result, Err(UiError::DuplicateKey(_))));
+            assert_eq!(ui.semantics().count(), 0);
+            continue;
+        }
+        result.unwrap();
+        assert_eq!(
+            ui.semantic_node(id(&ui, "input")).unwrap().labelled_by,
+            (mode == 0).then(|| id(&ui, "caption"))
+        );
+    }
+}

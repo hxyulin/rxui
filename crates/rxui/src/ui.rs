@@ -704,6 +704,14 @@ fn masked(element: &Element) -> bool {
     matches!(&element.kind, ElementKind::TextInput { options: Some(o), .. } if o.password)
 }
 
+#[derive(PartialEq)]
+struct ActiveReveal {
+    target: ElementId,
+    viewport: [f32; 2],
+    // Border and content boxes in layout coordinates, independent of scrolling.
+    path: Vec<(ElementId, Bounds, Bounds)>,
+}
+
 /// One retained UI placement, with keyed reconciliation and Taffy flex layout.
 /// It owns no window, fonts, device, event loop, or executor. Prepare before routing
 /// geometry-based input, and flush Runtime effects at the host's update boundary.
@@ -743,8 +751,11 @@ pub struct Ui<T: View> {
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
     editor_nodes: Vec<ElementId>,
-    active_reveals: IdMap<ElementId, ElementId>,
     measured_rows: IdSet<ElementId>,
+    active_reveals: IdMap<ElementId, ActiveReveal>,
+    active_reveal_evaluations: u64,
+    accessibility_handles: HashMap<usize, Vec<ElementId>>,
+    accessibility_handle_evaluations: u64,
     image_nodes: Vec<ElementId>,
     live_image_nodes: Vec<ElementId>,
     pub(crate) scroll_handle_nodes: Vec<ElementId>,
@@ -800,6 +811,9 @@ impl<T: View> Ui<T> {
             editor_nodes: Vec::new(),
             active_reveals: IdMap::default(),
             measured_rows: Default::default(),
+            active_reveal_evaluations: 0,
+            accessibility_handles: HashMap::new(),
+            accessibility_handle_evaluations: 0,
             image_nodes: Vec::new(),
             live_image_nodes: Vec::new(),
             scroll_handle_nodes: Vec::new(),
@@ -1017,6 +1031,9 @@ impl<T: View> Ui<T> {
         Err(UiError::UnstableControlLayout)
     }
     fn clean_partial_tree(&mut self) {
+        self.accessibility_handles.clear();
+        self.accessibility_handle_evaluations = 0;
+        self.active_reveals.clear();
         self.partial_tree = false;
         let ids: HashSet<_> = self.nodes.keys().copied().collect();
         for node in self.nodes.values_mut() {
@@ -1061,8 +1078,10 @@ impl<T: View> Ui<T> {
                 }
             }
         }
+        let mut laid_out = false;
         let layout_root = self.nodes[&root].layout;
         if self.viewport != Some(viewport) || self.taffy.dirty(layout_root)? {
+            laid_out = true;
             self.layout_subtree(layout_root, viewport, measurer)?;
             self.update_bounds(
                 root,
@@ -1084,6 +1103,7 @@ impl<T: View> Ui<T> {
         for id in portals {
             let layout = self.nodes[&id].layout;
             if self.viewport != Some(viewport) || self.taffy.dirty(layout)? {
+                laid_out = true;
                 self.layout_subtree(layout, viewport, measurer)?;
             }
         }
@@ -1101,7 +1121,8 @@ impl<T: View> Ui<T> {
             self.update_text_scroll(self.editor_nodes[index], measurer)?;
         }
         self.refresh_links(measurer)?;
-        if evaluated != self.stats.component_evaluations {
+        self.refresh_accessibility_handles();
+        if self.active_reveal_evaluations != self.stats.component_evaluations || laid_out {
             let active: IdMap<_, _> = self
                 .order
                 .iter()
@@ -1118,15 +1139,16 @@ impl<T: View> Ui<T> {
                     let target = self
                         .accessibility_target(handle)
                         .filter(|target| !self.semantic_disabled(*target))?;
-                    Some((*id, target))
+                    Some((*id, self.active_reveal_geometry(target, viewport)))
                 })
                 .collect();
-            for (&source, &target) in &active {
-                if self.active_reveals.get(&source) != Some(&target) {
-                    self.reveal(target);
+            for (&source, geometry) in &active {
+                if self.active_reveals.get(&source) != Some(geometry) {
+                    self.reveal(geometry.target);
                 }
             }
             self.active_reveals = active;
+            self.active_reveal_evaluations = self.stats.component_evaluations;
         }
         self.geometry_ready = true;
         self.needs_evaluation = false;
@@ -2827,6 +2849,7 @@ impl<T: View> Ui<T> {
                 self.geometry_ready = false;
             }
         }
+        self.refresh_accessibility_handles();
         self.needs_evaluation = false;
         self.clear_invalid_interaction();
         Ok(())
@@ -3894,16 +3917,70 @@ impl<T: View> Ui<T> {
                     | ElementKind::TextInput { disabled: true, .. }
             )
     }
-    fn accessibility_target(&self, handle: &crate::AccessibilityHandle) -> Option<ElementId> {
-        let mut targets = self.order.iter().copied().filter(|id| {
-            self.nodes[id]
+    // Binding identity changes only during reconciliation. Visibility deliberately
+    // stays live: input/overlay and geometry updates need no index rebuild.
+    fn refresh_accessibility_handles(&mut self) {
+        if self.accessibility_handle_evaluations == self.stats.component_evaluations {
+            return;
+        }
+        self.accessibility_handles.clear();
+        for id in &self.order {
+            if let Some(handle) = self.nodes[id]
                 .element
                 .semantics
                 .as_ref()
                 .and_then(|p| p.handle.as_ref())
-                .is_some_and(|h| h.matches(handle))
-                && self.semantic_visible(*id)
-        });
+            {
+                self.accessibility_handles
+                    .entry(handle.identity())
+                    .or_default()
+                    .push(*id);
+            }
+        }
+        self.accessibility_handle_evaluations = self.stats.component_evaluations;
+    }
+    // Layout coordinates exclude scroll offsets: manual scrolling must not reset
+    // the highlight, while relocation, changed viewport and ancestor sizing do.
+    fn active_reveal_geometry(&self, target: ElementId, viewport: [f32; 2]) -> ActiveReveal {
+        let mut path = Vec::new();
+        let mut current = Some(target);
+        while let Some(id) = current {
+            let node = &self.nodes[&id];
+            let layout = self.taffy.layout(node.layout).expect("prepared layout");
+            let bounds = Bounds {
+                x: layout.location.x,
+                y: layout.location.y,
+                width: layout.size.width,
+                height: layout.size.height,
+            };
+            let content = Bounds {
+                x: layout.border.left + layout.padding.left,
+                y: layout.border.top + layout.padding.top,
+                width: node.content_bounds.width,
+                height: node.content_bounds.height,
+            };
+            // Overlay surfaces are positioned outside Taffy by their anchor.
+            let bounds = if node.parent.is_some_and(|p| self.is_overlay(p)) {
+                node.bounds
+            } else {
+                bounds
+            };
+            path.push((id, bounds, content));
+            current = node.parent;
+        }
+        ActiveReveal {
+            target,
+            viewport,
+            path,
+        }
+    }
+    fn accessibility_target(&self, handle: &crate::AccessibilityHandle) -> Option<ElementId> {
+        let mut targets = self
+            .accessibility_handles
+            .get(&handle.identity())?
+            .iter()
+            .copied()
+            .filter(|id| self.semantic_visible(*id));
         let target = targets.next()?;
         targets.next().is_none().then_some(target)
     }

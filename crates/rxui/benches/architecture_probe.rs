@@ -96,7 +96,96 @@ fn run(name: &str, count: usize, mut op: impl FnMut()) {
     samples.sort_by(f64::total_cmp);
     println!("{name},{count},{:.3},{:.3}", samples[10], samples[18]);
 }
+struct Relationships {
+    handles: Vec<AccessibilityHandle>,
+    revision: u64,
+}
+impl View for Relationships {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column().children(self.handles.iter().enumerate().map(|(i, handle)| {
+            row()
+                .key(i)
+                .child(
+                    label(format!("Label {i}: {}", self.revision))
+                        .accessibility_handle(handle.clone()),
+                )
+                .child(text_input("").accessibility_labelled_by(handle.clone()))
+        }))
+    }
+}
+fn relationships_probe() {
+    println!("operation,count,mean_us,built_per_op,sent_per_op");
+    for count in [250, 500, 1000, 2000] {
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| {
+            cx.new(|_| Relationships {
+                handles: (0..count).map(|_| AccessibilityHandle::new()).collect(),
+                revision: 0,
+            })
+        });
+        let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
+        ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+            .unwrap();
+        let mut ax = AccessKitTree::new();
+        ax.update(&ui, "Relationships", 1.).unwrap();
+        let mut prepare = Duration::ZERO;
+        let mut publish = Duration::ZERO;
+        let before = ax.stats().built_nodes;
+        let mut sent = 0;
+        for _ in 0..20 {
+            runtime.update(|cx| root.update(cx, |s, _| s.revision += 1));
+            let at = Instant::now();
+            ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+                .unwrap();
+            prepare += at.elapsed();
+            let at = Instant::now();
+            let update = ax.update(&ui, "Relationships", 1.).unwrap().unwrap();
+            publish += at.elapsed();
+            sent += update.nodes.len();
+        }
+        println!(
+            "relationships_prepare,{count},{:.3},0,0",
+            prepare.as_secs_f64() * 1e6 / 20.
+        );
+        println!(
+            "relationships_publish,{count},{:.3},{},{}",
+            publish.as_secs_f64() * 1e6 / 20.,
+            (ax.stats().built_nodes - before) / 20,
+            sent / 20
+        );
+        let at = Instant::now();
+        for _ in 0..20 {
+            assert_eq!(
+                ui.semantics().filter(|n| n.labelled_by.is_some()).count(),
+                count
+            );
+        }
+        println!(
+            "relationships_resolve,{count},{:.3},0,0",
+            at.elapsed().as_secs_f64() * 1e6 / 20.
+        );
+        let before = ui.stats();
+        let at = Instant::now();
+        for _ in 0..400 {
+            ui.prepare(&mut runtime, [800., 600.], &mut Measure)
+                .unwrap();
+        }
+        println!(
+            "relationships_cached_prepare,{count},{:.3},0,0",
+            at.elapsed().as_secs_f64() * 1e6 / 400.
+        );
+        assert_eq!(
+            before.component_evaluations,
+            ui.stats().component_evaluations
+        );
+        assert_eq!(before.layout_passes, ui.stats().layout_passes);
+    }
+}
 fn main() {
+    if std::env::args().any(|arg| arg == "--relationships-only") {
+        relationships_probe();
+        return;
+    }
     if std::env::args().any(|arg| arg == "--nested-only") {
         println!("operation,count,mean_us,built_per_op,sent_per_op");
         for count in [100, 1000, 10000] {

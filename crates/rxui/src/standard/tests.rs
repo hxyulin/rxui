@@ -852,6 +852,10 @@ fn select_reveals_selected_and_keyboard_highlights_and_tracks_keys_through_mutat
         );
     };
     visible(&h, "item-35");
+    h.ui.prepare(&mut h.r, [600., 400.], &mut Measure).unwrap();
+    visible(&h, "item-35");
+    h.prepare();
+    visible(&h, "item-35");
     #[cfg(feature = "accessibility")]
     let mut native = AccessKitTree::new();
     #[cfg(feature = "accessibility")]
@@ -902,6 +906,9 @@ fn select_reveals_selected_and_keyboard_highlights_and_tracks_keys_through_mutat
     assert_eq!(h.ui.semantic_node(popup).unwrap().scroll_offset[1], 0.);
     h.prepare();
     assert_eq!(h.ui.semantic_node(popup).unwrap().scroll_offset[1], 0.);
+    // An unrelated evaluation must preserve the user's scroll position too.
+    h.update(|s| s.language = Some(Key::from("item-35")));
+    assert_eq!(h.ui.semantic_node(popup).unwrap().scroll_offset[1], 0.);
     h.key(KeyboardKey::Home);
     visible(&h, "item-0");
     for _ in 0..28 {
@@ -914,6 +921,7 @@ fn select_reveals_selected_and_keyboard_highlights_and_tracks_keys_through_mutat
         h.ui.semantic_node(trigger).unwrap().active_descendant,
         Some(h.id("item-28"))
     );
+    visible(&h, "item-28");
     h.update(|s| {
         s.language_options
             .as_mut()

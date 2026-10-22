@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-23",
+  "machine": "Apple M5 Max, macOS 27.0.1, arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "command": "cargo bench -p rxui --bench architecture_probe --features accessibility --locked -- --relationships-only",
+  "baseline_commit": "0ac4c1f",
+  "baseline_probe": "same probe copied into detached baseline checkout",
+  "load": "interactive machine with substantial concurrent compiler workloads; single captures, no CPU affinity",
+  "measurement": "20 changed-caption prepare/publication iterations, then 20 semantic enumerations, then 400 cached preparations; initial preparation and publication untimed",
+  "after_sha256": {
+    "crates/rxui/src/ui.rs": "a017858e13e1b76d5e87c59cf6b1c769526cc49a2bf22e18501ac010fb03466f",
+    "crates/rxui/src/semantics.rs": "eb9d2999edef937ece8a0edd0357d6ee89cb27abc5eb3adb557dde2430ed3920",
+    "crates/rxui/benches/architecture_probe.rs": "d574618b14164575a7bb2298787c5a3c3eedec35920cc1bdc5c1268b9d8be7ab"
+  },
+  "baseline_sha256": {
+    "crates/rxui/src/ui.rs": "32fce5614fe53ce2af76bdcf2926348fa48107f64fe7cd23a62d0c9e5c473a89",
+    "crates/rxui/src/semantics.rs": "2f9f6354e40faeacab8f07e5d69c9ab5492d26b494fc756b493ba1541ab4ca5a"
+  }
+}

@@ -1,0 +1,17 @@
+operation,count,mean_us,built_per_op,sent_per_op
+relationships_prepare,250,1188.685,0,0
+relationships_publish,250,424.644,751,275
+relationships_resolve,250,73.158,0,0
+relationships_cached_prepare,250,6.503,0,0
+relationships_prepare,500,3076.517,0,0
+relationships_publish,500,1804.237,1501,550
+relationships_resolve,500,210.331,0,0
+relationships_cached_prepare,500,10.650,0,0
+relationships_prepare,1000,6546.196,0,0
+relationships_publish,1000,2867.785,3001,1100
+relationships_resolve,1000,343.804,0,0
+relationships_cached_prepare,1000,18.546,0,0
+relationships_prepare,2000,21009.273,0,0
+relationships_publish,2000,11841.294,6001,2200
+relationships_resolve,2000,1125.131,0,0
+relationships_cached_prepare,2000,44.470,0,0

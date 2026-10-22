@@ -12,8 +12,8 @@ impl AccessibilityHandle {
     pub fn new() -> Self {
         Self::default()
     }
-    pub(crate) fn matches(&self, other: &Self) -> bool {
-        std::rc::Rc::ptr_eq(&self.0, &other.0)
+    pub(crate) fn identity(&self) -> usize {
+        std::rc::Rc::as_ptr(&self.0) as usize
     }
 }
 /// How assistive technology should announce changes to a live region. Keep the
