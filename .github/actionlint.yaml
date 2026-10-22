@@ -1,0 +1,4 @@
+# Custom runner label required by the opt-in workflow; no runner is provisioned.
+self-hosted-runner:
+  labels:
+    - rxui-gpu

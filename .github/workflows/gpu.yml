@@ -1,0 +1,25 @@
+name: Opt-in GPU tests
+
+# No GitHub-hosted GPU is assumed. Configure an isolated self-hosted runner
+# carrying these labels, with a native graphics adapter, working Metal/Vulkan/
+# DX12 driver and any required desktop session, before dispatching this workflow.
+# Run only trusted revisions: workflow_dispatch deliberately excludes PR triggers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, rxui-gpu]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: Run opt-in tests on the configured native adapter
+        run: cargo test --workspace --all-features --locked -- --ignored

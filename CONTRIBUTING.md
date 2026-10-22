@@ -73,16 +73,20 @@ Public items need documentation (`missing_docs` is on). `unsafe` code is denied.
 The only exception is the Windows menu backend, which needs it for Win32 calls.
 When you fix a bug, add a test that fails without the fix.
 
-GPU cache tests are opt-in because CI has no GPU. If you change rendering, run
+GPU cache tests are opt-in because hosted CI has no GPU. The manually dispatched
+`gpu.yml` workflow requires an isolated self-hosted runner labelled `rxui-gpu`,
+a native adapter with working graphics drivers, and any required desktop session.
+No such runner is provisioned by this repository; dispatch only trusted revisions. If you change rendering, run
 them on a machine with a native adapter:
 
 ```sh
 cargo test -p rxui --features rendering painting::tests -- --ignored
 ```
 
-CI runs on Linux only. If you change platform-specific code, such as native
-menus, dialogs or the Windows menu backend, build and run it on the affected
-platform and say so in the pull request.
+CI tests all features on Linux, macOS and Windows, checks all targets on macOS
+and Windows, and tests isolated layout, accessibility, tasks, image-decoding and
+rendering feature subsets on Linux. Windowed/native interaction still needs a
+manual check on the affected platform; report those checks in the pull request.
 
 ## Performance changes
 

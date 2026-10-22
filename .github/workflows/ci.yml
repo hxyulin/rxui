@@ -14,6 +14,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Full all-features debug info can exceed 32-bit DWARF offsets on Linux.
+  # Keep debug artifacts bounded for the desktop and feature matrices too.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   hooks:
@@ -27,10 +30,6 @@ jobs:
   test:
     name: Clippy, tests and docs
     runs-on: ubuntu-latest
-    env:
-      # Full debug info for the all-features test binary passes 4 GiB, past
-      # what 32-bit DWARF offsets can address on x86-64 Linux.
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
@@ -40,6 +39,32 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
+
+  platforms:
+    name: All features (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
+
+  features:
+    name: Feature subset (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [layout, accessibility, tasks, image-decoding, rendering]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --no-default-features --features ${{ matrix.features }} --locked
+      - run: cargo check --workspace --all-targets --no-default-features --features ${{ matrix.features }} --locked
 
   msrv:
     name: Minimum supported Rust version
