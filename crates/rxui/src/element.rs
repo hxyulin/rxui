@@ -188,6 +188,8 @@ impl Element {
             kind,
             children: Vec::new(),
             style: Style {
+                // Absolute children anchor to their parent by default in RXUI.
+                position: Position::Relative,
                 flex_shrink: 0.,
                 flex_direction: FlexDirection::Column,
                 ..Style::default()
@@ -571,7 +573,7 @@ impl Element {
     }
     /// Horizontal child alignment for a stack/grid container.
     pub fn justify_items(mut self, value: AlignItems) -> Self {
-        self.style.justify_items = Some(value);
+        self.style.justify_items = value;
         self
     }
     /// Horizontal alignment of this element in a stack/grid parent.
@@ -706,12 +708,12 @@ impl Element {
     }
     /// Cross-axis child alignment.
     pub fn align_items(mut self, value: AlignItems) -> Self {
-        self.style.align_items = Some(value);
+        self.style.align_items = value;
         self
     }
     /// Main-axis child distribution.
     pub fn justify_content(mut self, value: JustifyContent) -> Self {
-        self.style.justify_content = Some(value);
+        self.style.justify_content = value;
         self
     }
     /// Local background fill, literal linear RGBA or a semantic theme token.
@@ -1404,8 +1406,8 @@ pub fn column() -> Element {
 pub fn stack() -> Element {
     let mut element = Element::new(ElementKind::Stack);
     element.style.display = Display::Grid;
-    element.style.align_items = Some(AlignItems::START);
-    element.style.justify_items = Some(AlignItems::START);
+    element.style.align_items = AlignItems::START;
+    element.style.justify_items = AlignItems::START;
     element
 }
 /// Owned text leaf measured by the host's text measurer.

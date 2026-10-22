@@ -132,7 +132,7 @@ mod platform {
     use crate::{ColorScheme, SystemPreferences};
     use futures_lite::StreamExt;
     use std::time::Duration;
-    use zbus::zvariant::{OwnedValue, Value};
+    use zbus::{OwnedVariant, Variant};
 
     const APPEARANCE: &str = "org.freedesktop.appearance";
     const GNOME: &str = "org.gnome.desktop.interface";
@@ -147,22 +147,22 @@ mod platform {
         )
         .await
     }
-    async fn read_one(proxy: &zbus::Proxy<'_>, namespace: &str, key: &str) -> Option<OwnedValue> {
+    async fn read_one(proxy: &zbus::Proxy<'_>, namespace: &str, key: &str) -> Option<OwnedVariant> {
         // ReadOne is portal version 2; Read wraps the value in another variant.
         match proxy
-            .call::<_, _, OwnedValue>("ReadOne", &(namespace, key))
+            .call::<_, _, OwnedVariant>("ReadOne", &(namespace, key))
             .await
         {
             Ok(value) => Some(value),
             Err(_) => proxy
-                .call::<_, _, OwnedValue>("Read", &(namespace, key))
+                .call::<_, _, OwnedVariant>("Read", &(namespace, key))
                 .await
                 .ok(),
         }
     }
-    fn unwrap<'v, 'a>(value: &'v Value<'a>) -> &'v Value<'a> {
+    fn unwrap<'v, 'a>(value: &'v Variant<'a>) -> &'v Variant<'a> {
         match value {
-            Value::Value(inner) => unwrap(inner),
+            Variant::Variant(inner) => unwrap(inner),
             value => value,
         }
     }
@@ -171,28 +171,28 @@ mod platform {
         preferences: &mut SystemPreferences,
         namespace: &str,
         key: &str,
-        value: &Value<'_>,
+        value: &Variant<'_>,
     ) -> bool {
         let value = unwrap(value);
         match (namespace, key, value) {
-            (APPEARANCE, "color-scheme", Value::U32(v)) => {
+            (APPEARANCE, "color-scheme", Variant::U32(v)) => {
                 preferences.color_scheme = match v {
                     1 => Some(ColorScheme::Dark),
                     2 => Some(ColorScheme::Light),
                     _ => None,
                 };
             }
-            (APPEARANCE, "contrast", Value::U32(v)) => preferences.high_contrast = *v == 1,
-            (APPEARANCE, "reduced-motion", Value::U32(v)) => preferences.reduce_motion = *v == 1,
-            (GNOME, "enable-animations", Value::Bool(enabled)) => {
+            (APPEARANCE, "contrast", Variant::U32(v)) => preferences.high_contrast = *v == 1,
+            (APPEARANCE, "reduced-motion", Variant::U32(v)) => preferences.reduce_motion = *v == 1,
+            (GNOME, "enable-animations", Variant::Bool(enabled)) => {
                 preferences.reduce_motion = !enabled
             }
-            (APPEARANCE, "accent-color", Value::Structure(s)) => {
+            (APPEARANCE, "accent-color", Variant::Structure(s)) => {
                 let channels: Vec<f64> = s
                     .fields()
                     .iter()
                     .filter_map(|f| match unwrap(f) {
-                        Value::F64(v) => Some(*v),
+                        Variant::F64(v) => Some(*v),
                         _ => None,
                     })
                     .collect();
@@ -225,7 +225,7 @@ mod platform {
         preferences
     }
     pub fn read() -> SystemPreferences {
-        futures_lite::future::block_on(futures_lite::future::or(
+        zbus::block_on(futures_lite::future::or(
             async {
                 match portal().await {
                     Ok(proxy) => read_all(&proxy).await,
@@ -244,7 +244,7 @@ mod platform {
         let _ = std::thread::Builder::new()
             .name("rxui-portal-settings".into())
             .spawn(move || {
-                futures_lite::future::block_on(async move {
+                zbus::block_on(async move {
                     let Ok(proxy) = portal().await else {
                         return;
                     };
@@ -257,7 +257,9 @@ mod platform {
                     }
                     while let Some(message) = changes.next().await {
                         let Ok((namespace, key, value)) =
-                            message.body().deserialize::<(String, String, OwnedValue)>()
+                            message
+                                .body()
+                                .deserialize::<(String, String, OwnedVariant)>()
                         else {
                             continue;
                         };

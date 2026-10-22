@@ -24,7 +24,7 @@ impl Showcase {
             .background(ThemeColor::Surface)
             .border_bottom(1.)
             .border_color(ThemeColor::Divider)
-            .layout(|s| s.align_items = Some(taffy::AlignItems::CENTER));
+            .layout(|s| s.align_items = taffy::AlignItems::CENTER);
         if cfg!(target_os = "macos") {
             bar = bar.child(row().width(66.));
         }

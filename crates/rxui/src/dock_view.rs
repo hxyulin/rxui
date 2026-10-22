@@ -137,8 +137,8 @@ pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock
             .layout(|s| {
                 s.grid_template_rows = vec![minmax(length(0.), fr(1.))];
                 s.grid_template_columns = vec![minmax(length(0.), fr(1.))];
-                s.align_items = Some(AlignItems::STRETCH);
-                s.justify_items = Some(JustifyItems::STRETCH);
+                s.align_items = AlignItems::STRETCH;
+                s.justify_items = JustifyItems::STRETCH;
             }),
         tree: Some(tree.clone()),
         panels,

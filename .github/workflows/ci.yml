@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # rust-toolchain.toml selects stable with rustfmt and clippy.
-      - uses: j178/prek-action@v3.0.1
+      - uses: j178/prek-action@v3.1.0
 
   test:
     name: Clippy, tests and docs

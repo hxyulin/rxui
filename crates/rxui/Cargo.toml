@@ -35,15 +35,15 @@ async-executor = { version = "1.14.0", optional = true }
 async-channel = { version = "2.5.0", optional = true }
 futures-lite = { version = "2.6.1", optional = true }
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "async-await"], optional = true }
-arboard = { version = "3.6.1", default-features = false, optional = true }
+arboard = { version = "3.7.0", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 async-io = { version = "2.6.0", optional = true }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "wayland"], optional = true }
-opener = { version = "0.8.5", features = ["reveal"], optional = true }
+opener = { version = "0.9.0", features = ["reveal"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-muda = { version = "0.20.0", default-features = false, optional = true }
+muda = { version = "0.21.2", default-features = false, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"], optional = true }
@@ -56,15 +56,15 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"
 
 # Microsoft's safe registry wrapper: high contrast, accent and animation settings.
 [target.'cfg(target_os = "windows")'.dependencies.windows-registry]
-version = "0.6.1"
+version = "0.100.0"
 optional = true
 
 # XDG desktop portal Settings over the session bus.
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
-zbus = { version = "5.19.0", default-features = false, features = ["async-io"], optional = true }
+zbus = { version = "6.0.0", default-features = false, features = ["default-rt", "proxy"], optional = true }
 
 [dev-dependencies]
-pollster = "0.4.0"
+pollster = "1.0.1"
 accesskit_consumer = "0.39.1"
 
 # Muda's Win32 attachment/message APIs require three narrowly scoped unsafe

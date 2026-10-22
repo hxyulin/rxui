@@ -305,8 +305,8 @@ impl IntoElement for Tabs {
             .layout(|s| {
                 s.grid_template_rows = vec![minmax(length(0.), fr(1.))];
                 s.grid_template_columns = vec![minmax(length(0.), fr(1.))];
-                s.align_items = Some(AlignItems::STRETCH);
-                s.justify_items = Some(JustifyItems::STRETCH);
+                s.align_items = AlignItems::STRETCH;
+                s.justify_items = JustifyItems::STRETCH;
             });
         for (index, entry) in self.entries.into_iter().enumerate() {
             let selected = self.selected.as_ref() == Some(&entry.key);
@@ -372,8 +372,8 @@ impl IntoElement for Tabs {
                     .layout(|s| {
                         s.grid_template_rows = vec![minmax(length(0.), fr(1.))];
                         s.grid_template_columns = vec![minmax(length(0.), fr(1.))];
-                        s.align_items = Some(AlignItems::STRETCH);
-                        s.justify_items = Some(JustifyItems::STRETCH);
+                        s.align_items = AlignItems::STRETCH;
+                        s.justify_items = JustifyItems::STRETCH;
                     })
                     .key(entry.key.clone())
                     .fill_width()
