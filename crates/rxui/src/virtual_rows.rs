@@ -464,3 +464,95 @@ mod tests {
         assert_eq!(anchor.shift(&rows), Some(140.));
     }
 }
+
+/// Window-dependent measurements, owned by a scroll placement, never VirtualRows.
+pub(crate) struct Measurements {
+    pub rows: VirtualRows,
+    estimates: VirtualRows,
+    source: u64,
+    version: u64,
+    environment: Option<(f32, u64, f32, crate::typography::TextStyle)>,
+    pub reader: crate::MountId,
+}
+pub(crate) type MeasurementCache = std::rc::Rc<std::cell::RefCell<Measurements>>;
+#[derive(Clone)]
+pub(crate) struct MeasuredRow {
+    pub cache: MeasurementCache,
+    pub index: usize,
+}
+impl Measurements {
+    pub fn new(rows: &VirtualRows, reader: crate::MountId) -> Self {
+        Self {
+            rows: rows.clone(),
+            estimates: rows.clone(),
+            source: rows.revision(),
+            version: 0,
+            environment: None,
+            reader,
+        }
+    }
+    pub fn sync(&mut self, rows: &VirtualRows, version: u64) {
+        if self.source == rows.revision() && self.version == version {
+            return;
+        }
+        let mut next = rows.clone();
+        if self.version == version {
+            for index in 0..rows.len() {
+                let key = rows.key(index).unwrap();
+                if let Some(old) = self.estimates.index_of(key)
+                    && self.estimates.height(old) == rows.height(index)
+                {
+                    next.set_height(index, self.rows.height(old).unwrap());
+                }
+            }
+        }
+        self.estimates = rows.clone();
+        self.rows = next;
+        self.source = rows.revision();
+        self.version = version;
+    }
+    pub fn environment(
+        &mut self,
+        width: f32,
+        generation: u64,
+        font: f32,
+        style: &crate::typography::TextStyle,
+    ) -> bool {
+        let next = (width, generation, font, style.clone());
+        if self.environment.as_ref() == Some(&next) {
+            return false;
+        }
+        let changed = self.environment.is_some();
+        self.environment = Some(next);
+        if changed {
+            self.rows = self.estimates.clone();
+        }
+        changed
+    }
+}
+
+#[cfg(test)]
+mod measurement_tests {
+    use super::*;
+    #[test]
+    fn structural_changes_preserve_only_unchanged_estimates_and_version_resets() {
+        let mut runtime = crate::Runtime::new();
+        let model = runtime.update(|cx| cx.new(|_| ()));
+        let mount = runtime.update(|cx| cx.mount(&model).unwrap());
+        let mut rows: VirtualRows = [(0, 20.), (1, 20.), (2, 20.)].into_iter().collect();
+        let mut cache = Measurements::new(&rows, mount.id());
+        cache.rows.set_height(1, 80.);
+        rows.insert(0, 3, 20.);
+        cache.sync(&rows, 0);
+        assert_eq!(cache.rows.height(2), Some(80.));
+        rows.remove(0);
+        cache.sync(&rows, 0);
+        assert_eq!(cache.rows.height(1), Some(80.));
+        rows.set_height(1, 30.);
+        cache.sync(&rows, 0);
+        assert_eq!(cache.rows.height(1), Some(30.));
+        cache.rows.set_height(1, 100.);
+        cache.sync(&rows, 1);
+        assert_eq!(cache.rows.height(1), Some(30.));
+    }
+}

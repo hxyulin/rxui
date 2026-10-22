@@ -1,5 +1,7 @@
 //! Placement-scoped scroll references. Sharing a handle never shares offsets.
-use crate::{AppContext, Bounds, ElementId, MountId, ReadContext, Runtime, Ui, UiError, View};
+use crate::{
+    AppContext, Bounds, ElementId, MountId, ReadContext, Runtime, Ui, UiError, View, VirtualRows,
+};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -56,6 +58,7 @@ struct Data {
     readers: HashSet<MountId>,
     /// Scroll anchor of a variable-height list, per UI tree.
     anchors: HashMap<u64, crate::virtual_rows::Anchor>,
+    measurements: HashMap<u64, crate::virtual_rows::MeasurementCache>,
 }
 /// How a scroll container moves for discrete mouse-wheel steps and programmatic
 /// commands ([`ScrollHandle::scroll_to`], [`ScrollHandle::scroll_by`] and the reveal
@@ -174,6 +177,15 @@ impl ScrollHandle {
     ) -> Result<(), ScrollError> {
         self.placement(cx)?.reveal_list_row(cx, rows, index)
     }
+    /// Reveals a row using this placement's measured heights and remaining estimates.
+    /// Call after the measured list has been prepared; the index is application-owned.
+    pub fn reveal_measured_row(
+        &self,
+        cx: &mut AppContext<'_>,
+        index: usize,
+    ) -> Result<(), ScrollError> {
+        self.placement(cx)?.reveal_measured_row(cx, index)
+    }
     /// Reveals a fixed-height row in the source placement, moving the minimum distance.
     /// The index is application-owned; offsets clamp to the current scroll range.
     /// Invalid height or an extent beyond 2^24 logical pixels returns InvalidOffset.
@@ -196,6 +208,27 @@ impl ScrollHandle {
             .iter()
             .find(|(_, b)| b.life.strong_count() != 0 && b.scopes.contains(&scope))
             .map(|(&tree, _)| tree)
+    }
+    pub(crate) fn measurements(
+        &self,
+        tree: u64,
+        rows: &VirtualRows,
+        reader: MountId,
+        version: u64,
+    ) -> crate::virtual_rows::MeasurementCache {
+        let mut data = self.0.borrow_mut();
+        let cache = data
+            .measurements
+            .entry(tree)
+            .or_insert_with(|| {
+                Rc::new(RefCell::new(crate::virtual_rows::Measurements::new(
+                    rows, reader,
+                )))
+            })
+            .clone();
+        cache.borrow_mut().sync(rows, version);
+        cache.borrow_mut().reader = reader;
+        cache
     }
     /// Runs `f` with the anchor slot of `tree` and whether commands are queued for
     /// its viewport. Returns `None` without running `f` when `tree` is unbound.
@@ -322,6 +355,31 @@ impl ScrollPlacement {
         };
         self.reveal_span(cx, rows.offset(index), height)
     }
+    /// Reveals a row using cached placement geometry. Unknown heights use estimates.
+    /// Returns InvalidOffset before measurements exist or for an invalid index.
+    /// After structural edits, prepare the list before using its new indices.
+    pub fn reveal_measured_row(
+        &self,
+        cx: &mut AppContext<'_>,
+        index: usize,
+    ) -> Result<(), ScrollError> {
+        self.state()?;
+        let (top, height) = {
+            let data = self.handle.0.borrow();
+            let cache = data
+                .measurements
+                .get(&self.tree)
+                .ok_or(ScrollError::InvalidOffset)?
+                .borrow();
+            let height = cache
+                .rows
+                .height(index)
+                .filter(|_| cache.rows.is_valid())
+                .ok_or(ScrollError::InvalidOffset)?;
+            (cache.rows.offset(index), height)
+        };
+        self.reveal_span(cx, top, height)
+    }
     /// Reveals a fixed-height row through this explicit weak placement.
     /// The index must describe application data; actual offsets clamp at application.
     pub fn reveal_row(
@@ -410,6 +468,7 @@ impl Drop for Scrolling {
             let mut data = handle.0.borrow_mut();
             data.bindings.remove(&self.tree);
             data.anchors.remove(&self.tree);
+            data.measurements.remove(&self.tree);
             for scope in self.scopes.iter() {
                 data.readers.remove(scope);
             }
@@ -473,6 +532,7 @@ impl<T: View> Ui<T> {
             if !seen.contains(key) {
                 let mut data = h.0.borrow_mut();
                 data.anchors.remove(&self.tree);
+                data.measurements.remove(&self.tree);
                 if data.bindings.remove(&self.tree).is_some() {
                     for &reader in &data.readers {
                         if scrolling.scopes.contains(&reader) {
@@ -491,6 +551,8 @@ impl<T: View> Ui<T> {
             let n = &self.nodes[&id];
             if !n.visible {
                 let mut data = handle.0.borrow_mut();
+                data.measurements.remove(&self.tree);
+                data.anchors.remove(&self.tree);
                 if data.bindings.remove(&self.tree).is_some() {
                     for &reader in &data.readers {
                         if scrolling.scopes.contains(&reader) {
@@ -508,6 +570,14 @@ impl<T: View> Ui<T> {
                 bounds: n.content_bounds,
             };
             let mut data = handle.0.borrow_mut();
+            if data
+                .bindings
+                .get(&self.tree)
+                .is_some_and(|b| b.element != id)
+            {
+                data.measurements.remove(&self.tree);
+                data.anchors.remove(&self.tree);
+            }
             let changed = data.bindings.get(&self.tree).is_none_or(|b| {
                 b.element != id || b.state != state || b.scopes != scrolling.scopes
             });

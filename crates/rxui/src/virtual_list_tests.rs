@@ -629,3 +629,272 @@ fn narrow_tree_rows_keep_slots_clips_hit_areas_and_scroll_ends_on_resize() {
         }
     }
 }
+
+struct MeasuredList {
+    rows: VirtualRows,
+    scroll: ScrollHandle,
+    font: f32,
+    version: u64,
+    builds: Rc<Cell<usize>>,
+}
+impl View for MeasuredList {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column()
+            .fill_width()
+            .fill_height()
+            .font_size(self.font)
+            .child(
+                variable_list(&self.rows, &self.scroll, cx, |_| {
+                    self.builds.set(self.builds.get() + 1);
+                    label("a wrapped row with enough text to span several lines")
+                })
+                .measured()
+                .measurement_version(self.version)
+                .fill_width()
+                .fill_height(),
+            )
+    }
+}
+struct WrappedMeasure(u64);
+impl TextMeasure for WrappedMeasure {
+    fn generation(&self) -> u64 {
+        self.0
+    }
+    fn measure(&mut self, _: ElementId, r: TextRequest<'_>) -> Result<[f32; 2], UiError> {
+        let width = match r.width {
+            TextWidth::Available(w) => w.max(1.),
+            _ => 1000.,
+        };
+        let length = r.text.len() as f32 * 8.;
+        Ok([
+            width.min(length),
+            (length / width).ceil() * r.font_size * (self.0 + 1) as f32,
+        ])
+    }
+}
+fn measured_slot(ui: &Ui<MeasuredList>, key: usize) -> Bounds {
+    ui.elements()
+        .find(|e| e.key == Some(&key.into()))
+        .unwrap()
+        .bounds
+}
+fn settle_measured(
+    r: &mut Runtime,
+    ui: &mut Ui<MeasuredList>,
+    size: [f32; 2],
+    measure: &mut WrappedMeasure,
+) {
+    for frame in 0..30 {
+        ui.prepare(r, size, measure).unwrap();
+        if !ui.needs_prepare(r).unwrap() {
+            return;
+        }
+        r.begin_frame(std::time::Duration::from_millis(frame * 16));
+    }
+    panic!("measured list did not converge");
+}
+#[test]
+fn measured_rows_are_window_local_and_remeasure_for_width_fonts_and_generation() {
+    let mut r = Runtime::new();
+    let model = r.update(|cx| {
+        cx.new(|_| MeasuredList {
+            rows: (0..10_000).map(|i| (i, 30.)).collect(),
+            scroll: ScrollHandle::new(),
+            font: 20.,
+            version: 0,
+            builds: Rc::new(Cell::new(0)),
+        })
+    });
+    let mut narrow = Ui::new(&mut r, model.clone()).unwrap();
+    let mut wide = Ui::new(&mut r, model.clone()).unwrap();
+    let mut measure = WrappedMeasure(0);
+    settle_measured(&mut r, &mut narrow, [200., 100.], &mut measure);
+    settle_measured(&mut r, &mut wide, [400., 100.], &mut measure);
+    assert_eq!(measured_slot(&narrow, 0).height, 60.);
+    assert_eq!(measured_slot(&wide, 0).height, 40.);
+    assert_eq!(r.update(|cx| model.read(cx).rows.height(0)), Some(30.));
+    settle_measured(&mut r, &mut narrow, [400., 100.], &mut measure);
+    assert_eq!(measured_slot(&narrow, 0).height, 40.);
+    r.update(|cx| model.update(cx, |s, _| s.font = 30.));
+    settle_measured(&mut r, &mut narrow, [400., 100.], &mut measure);
+    assert_eq!(measured_slot(&narrow, 0).height, 60.);
+    measure.0 = 1;
+    settle_measured(&mut r, &mut narrow, [400., 100.], &mut measure);
+    assert_eq!(measured_slot(&narrow, 0).height, 120.);
+    settle_measured(&mut r, &mut wide, [400., 100.], &mut WrappedMeasure(0));
+    assert_eq!(measured_slot(&wide, 0).height, 60.);
+    assert!(r.update(|cx| model.read(cx).builds.get()) < 300);
+}
+#[test]
+fn measured_large_jumps_and_structural_edits_preserve_the_visible_anchor() {
+    let mut r = Runtime::new();
+    let model = r.update(|cx| {
+        cx.new(|_| MeasuredList {
+            rows: (0..10_000).map(|i| (i, 30.)).collect(),
+            scroll: ScrollHandle::new(),
+            font: 20.,
+            version: 0,
+            builds: Rc::new(Cell::new(0)),
+        })
+    });
+    let mut ui = Ui::new(&mut r, model.clone()).unwrap();
+    let mut measure = WrappedMeasure(0);
+    settle_measured(&mut r, &mut ui, [200., 100.], &mut measure);
+    let target = ui.semantics().find(|n| n.scroll_range[1] > 0.).unwrap().id;
+    ui.semantic_action(
+        &mut r,
+        SemanticAction::Scroll {
+            target,
+            offset: [0., 150_000.],
+        },
+        &mut measure,
+    )
+    .unwrap();
+    settle_measured(&mut r, &mut ui, [200., 100.], &mut measure);
+    let first = ui
+        .elements()
+        .filter(|e| {
+            matches!(e.key, Some(Key::Integer(_)))
+                && e.bounds.y <= 0.
+                && e.bounds.y + e.bounds.height > 0.
+        })
+        .map(|e| (e.key.cloned().unwrap(), e.bounds.y))
+        .next();
+    let (key, y) = first.expect("visible row at large jump");
+    r.update(|cx| model.update(cx, |s, _| s.rows.insert(0, 99_999, 30.)));
+    settle_measured(&mut r, &mut ui, [200., 100.], &mut measure);
+    assert_eq!(
+        ui.elements()
+            .find(|e| e.key == Some(&key))
+            .unwrap()
+            .bounds
+            .y,
+        y
+    );
+    r.update(|cx| {
+        model.update(cx, |s, _| {
+            s.rows.remove(0);
+        })
+    });
+    settle_measured(&mut r, &mut ui, [200., 100.], &mut measure);
+    assert_eq!(
+        ui.elements()
+            .find(|e| e.key == Some(&key))
+            .unwrap()
+            .bounds
+            .y,
+        y
+    );
+    assert!(r.update(|cx| model.read(cx).builds.get()) < 200);
+}
+#[test]
+fn extreme_measurement_estimates_refine_across_bounded_preparations() {
+    let mut r = Runtime::new();
+    let model = r.update(|cx| {
+        cx.new(|_| MeasuredList {
+            rows: (0..200).map(|i| (i, 10_000.)).collect(),
+            scroll: ScrollHandle::new(),
+            font: 1.,
+            version: 0,
+            builds: Rc::new(Cell::new(0)),
+        })
+    });
+    let mut ui = Ui::new(&mut r, model).unwrap();
+    let mut measure = WrappedMeasure(0);
+    ui.prepare(&mut r, [400., 100.], &mut measure).unwrap();
+    assert!(r.animation_frame_requested());
+    settle_measured(&mut r, &mut ui, [400., 100.], &mut measure);
+    assert_eq!(measured_slot(&ui, 0).height, 2.);
+    assert!(
+        ui.elements()
+            .filter(|e| matches!(e.key, Some(Key::Integer(_))))
+            .count()
+            >= 50
+    );
+}
+
+#[test]
+fn measured_rows_reject_zero_and_excessive_measured_extents() {
+    struct Height(f32);
+    impl TextMeasure for Height {
+        fn measure(&mut self, _: ElementId, _: TextRequest<'_>) -> Result<[f32; 2], UiError> {
+            Ok([10., self.0])
+        }
+    }
+    for height in [0., 16_777_217., 8_388_609.] {
+        let mut r = Runtime::new();
+        let model = r.update(|cx| {
+            cx.new(|_| MeasuredList {
+                rows: [(0, 20.), (1, 20.)].into_iter().collect(),
+                scroll: ScrollHandle::new(),
+                font: 20.,
+                version: 0,
+                builds: Rc::new(Cell::new(0)),
+            })
+        });
+        let mut ui = Ui::new(&mut r, model).unwrap();
+        assert!(matches!(
+            ui.prepare(&mut r, [200., 100.], &mut Height(height)),
+            Err(UiError::InvalidStyle)
+        ));
+    }
+}
+
+#[test]
+fn measured_content_preserves_explicit_height_constraints() {
+    struct Constrained {
+        rows: VirtualRows,
+        scroll: ScrollHandle,
+        show: bool,
+    }
+    impl View for Constrained {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .fill_width()
+                .fill_height()
+                .layout(|s| {
+                    if !self.show {
+                        s.display = taffy::Display::None;
+                    }
+                })
+                .child(
+                    variable_list(&self.rows, &self.scroll, cx, |_| {
+                        label("short").height(75.).min_height(100.)
+                    })
+                    .measured()
+                    .fill_width()
+                    .fill_height(),
+                )
+        }
+    }
+    let mut r = Runtime::new();
+    let model = r.update(|cx| {
+        cx.new(|_| Constrained {
+            rows: [(0, 20.)].into_iter().collect(),
+            scroll: ScrollHandle::new(),
+            show: true,
+        })
+    });
+    let mut ui = Ui::new(&mut r, model.clone()).unwrap();
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    assert_eq!(
+        ui.elements()
+            .find(|e| e.key == Some(&0.into()))
+            .unwrap()
+            .bounds
+            .height,
+        100.
+    );
+    r.update(|cx| model.update(cx, |s, _| s.show = false));
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    r.update(|cx| model.update(cx, |s, _| s.show = true));
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    assert_eq!(
+        ui.elements()
+            .find(|e| e.key == Some(&0.into()))
+            .unwrap()
+            .bounds
+            .height,
+        100.
+    );
+}

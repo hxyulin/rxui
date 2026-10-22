@@ -100,3 +100,38 @@ validation checks bounded mounted trees with total/index metadata after a distan
 jump. A GPU readback regression checks slot colors after a large fractional jump
 with 4× MSAA and isolated group opacity. Native interaction remains
 platform-specific.
+
+## Automatic measurement, 2026-10-23
+
+Reproduced on Apple M5 Max, macOS 27.0.1, Rust 1.99.0. Baseline `9bd9fea`
+uses its original benchmark; the candidate retains those operations and adds
+`measured_` operations. Both use the same mock measurer, viewport, warmups,
+sampling and percentile boundaries described above. The measured cold operation
+includes collecting the model, creating its placement caches, and preparing until
+convergence; the other measured operations use an already converged placement.
+Measured rows have 20-pixel intrinsic height, with the existing 20/28/36 estimates,
+so 70 elements are retained versus 52 in the explicit-height scenarios.
+
+```sh
+cargo bench -p rxui --bench virtual_list --locked
+```
+
+One candidate run followed by one baseline run, with other builds active on the
+machine. Raw data: [candidate](virtual-lists/measured-run-1.csv) and
+[baseline](virtual-lists/measured-baseline-run-1.csv). Large p95 outliers and the
+spread in cold/structural operations make these observations unsuitable for
+small regression claims. The prior October 15 measurements also ran at a different
+level of host contention; compare against this baseline instead.
+
+| Rows | Fixed row crossing, baseline / candidate (µs) | Explicit variable row crossing, baseline / candidate (µs) | Measured cold prepare (µs) | Measured row crossing (µs) | Measured idle prepare (µs) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | 55.0 / 60.4 | 55.1 / 55.6 | 2012 | 85.1 | 1.32 |
+| 10,000 | 55.5 / 55.9 | 55.7 / 61.7 | 1901 | 77.7 | 1.24 |
+| 100,000 | 61.7 / 55.8 | 55.3 / 61.2 | 4468 | 86.5 | 1.39 |
+
+Warm measured scrolling stays independent of total row count. Cold preparation
+has extra refinement/layout work and O(n) placement-cache construction. The
+current implementation also checks mounted intrinsic heights on idle preparation,
+which costs about 1.3 µs here versus 0.15–0.17 µs for explicit lists. Avoiding that
+scan when retained layout is unchanged is a possible later optimization. Explicit
+heights remain useful when the application already knows the geometry.

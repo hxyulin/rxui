@@ -219,3 +219,7 @@ required-features = ["native"]
 [[example]]
 name = "tree_panel_window"
 required-features = ["native"]
+
+[[example]]
+name = "measured_rows_window"
+required-features = ["native"]

@@ -318,8 +318,8 @@ pub use native::{DesktopError, DesktopResult};
 pub mod prelude {
     pub use crate::{
         AccessibilityHandle, BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor,
-        Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Image, ImageAlpha, ImageFilter,
-        ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
+        Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Image, ImageAlpha,
+        ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
         LivePoliteness, Modifiers, PaintStyle, PointerButton, PointerButtons, PointerCancelReason,
         PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign, TextChangeEvent,
         TextOverflow, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, WheelInput,
@@ -343,3 +343,95 @@ pub mod prelude {
         variable_list, virtual_list,
     };
     pub use crate::{
+        Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
+        Toggle, ToggleEvent, checkbox, choice, progress_bar, radio_group, select, select_keyed,
+        slider, spinner, switch, tooltip,
+    };
+    pub use crate::{
+        ColorScheme, DialogButtonOrder, DialogButtonRole, FocusRingPolicy, ScrollbarStyle,
+        SystemPreferences, ThemeMode, ThemeSet,
+    };
+    #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
+    pub use crate::{DesktopError, DesktopResult};
+    #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
+    pub use crate::{
+        DialogError, DialogResult, DialogTask, FileDialog, MessageButtons, MessageDialog,
+        MessageLevel, MessageResponse,
+    };
+    pub use crate::{
+        Dock, DockContextEvent, DockDragInfo, DockDropPreview, DockDropTarget, DockError,
+        DockEvent, DockNode, DockNodeId, DockPanel, DockSide, DockSplit, DockTabs, DockTree, dock,
+        dock_panel,
+    };
+    pub use crate::{
+        FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
+        TabCloseEvent, TabContentPolicy, TabSelectEvent, Tabs, tab, tabs,
+    };
+    pub use crate::{
+        FontFace, LinkEvent, SubmitShortcut, TextSpan, link, rich_text, span, text_area,
+    };
+    pub use crate::{ImeCancelReason, ImeEvent, ImeInput, TextInsertInput, TextInsertSource};
+    #[cfg(feature = "native-menus")]
+    pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
+    #[cfg(feature = "tasks")]
+    pub use crate::{Task, TaskError, TaskResult};
+}
+
+/// Pinned graphics integration dependency used by UiPainter.
+#[cfg(feature = "rendering")]
+pub use astrelis;
+/// Pinned native lifecycle dependency used by Application and custom hosts.
+#[cfg(feature = "native")]
+pub use astrelis_winit;
+/// Selected flex layout solver and style customization types.
+#[cfg(feature = "layout")]
+pub use taffy;
+
+#[cfg(all(test, feature = "tasks"))]
+mod task_tests;
+#[cfg(test)]
+mod tests;
+#[cfg(all(test, feature = "layout"))]
+mod ui_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod editing_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod semantic_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod theme_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod image_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod layout_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod input_tests;
+#[cfg(all(test, feature = "layout"))]
+mod overlay_command_tests;
+#[cfg(all(test, feature = "layout"))]
+mod text_client_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod control_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod dock_tests;
+#[cfg(all(test, feature = "layout"))]
+mod focus_tab_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod virtual_list_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod platform_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod animation_tests;
+
+#[cfg(all(test, feature = "layout"))]
+mod scroll_motion_tests;

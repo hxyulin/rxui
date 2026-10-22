@@ -477,6 +477,7 @@ pub enum Cursor {
 #[derive(Clone, Default)]
 pub(crate) struct InputProperties {
     pub anchor: Option<crate::AnchorHandle>,
+    pub measured_row: Option<crate::virtual_rows::MeasuredRow>,
     pub overlay: Option<Box<crate::overlay::Properties>>,
     pub menu: bool,
     pub commands: Vec<crate::commands::Action>,

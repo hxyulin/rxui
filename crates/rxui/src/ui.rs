@@ -744,6 +744,7 @@ pub struct Ui<T: View> {
     component_nodes: Vec<ElementId>,
     editor_nodes: Vec<ElementId>,
     active_reveals: IdMap<ElementId, ElementId>,
+    measured_rows: IdSet<ElementId>,
     image_nodes: Vec<ElementId>,
     live_image_nodes: Vec<ElementId>,
     pub(crate) scroll_handle_nodes: Vec<ElementId>,
@@ -798,6 +799,7 @@ impl<T: View> Ui<T> {
             component_nodes: Vec::new(),
             editor_nodes: Vec::new(),
             active_reveals: IdMap::default(),
+            measured_rows: Default::default(),
             image_nodes: Vec::new(),
             live_image_nodes: Vec::new(),
             scroll_handle_nodes: Vec::new(),
@@ -963,7 +965,9 @@ impl<T: View> Ui<T> {
         let force_evaluation = self.needs_evaluation;
         // Retain retry intent even if a user view or measurer unwinds.
         self.needs_evaluation = true;
+        let mut refining_measurements = false;
         for attempt in 0..4 {
+            let mut measured_changed = false;
             let result = self.prepare_inner(
                 runtime,
                 viewport,
@@ -983,6 +987,7 @@ impl<T: View> Ui<T> {
                 self.restore_dock_drop_focus();
                 self.apply_focus_commands();
                 self.publish_scroll(runtime)?;
+                measured_changed = self.measure_virtual_rows(runtime)?;
                 self.apply_scroll_commands()?;
                 self.clear_invalid_interaction();
                 self.cancel_invalid_capture();
@@ -996,7 +1001,13 @@ impl<T: View> Ui<T> {
             }
             self.geometry_ready = true;
             self.needs_evaluation = false;
-            if !self.needs_prepare(runtime)? {
+            refining_measurements |= measured_changed;
+            let defer_measurements = attempt == 3
+                && refining_measurements
+                && self.focus_state.as_ref().is_none_or(|s| !s.pending())
+                && !self.input.pending()
+                && !self.scroll_commands_pending();
+            if !self.needs_prepare(runtime)? || defer_measurements {
                 self.finish_motion(runtime);
                 return Ok(());
             }
@@ -1574,6 +1585,16 @@ impl<T: View> Ui<T> {
             self.root = Some(id);
         }
         self.register_focus_node(id);
+        if self.nodes[&id]
+            .element
+            .input
+            .as_ref()
+            .is_some_and(|p| p.measured_row.is_some())
+        {
+            self.measured_rows.insert(id);
+        } else {
+            self.measured_rows.remove(&id);
+        }
         self.register_link_node(id);
         self.register_overlay_node(id);
         if self.nodes[&id].mounted.is_some() {
@@ -4147,3 +4168,63 @@ pub(crate) mod dock_dispatch;
 pub(crate) mod focus;
 #[path = "tab_dispatch.rs"]
 mod tab_dispatch;
+
+impl<T: crate::View> crate::Ui<T> {
+    /// Publishes intrinsic content heights after layout. There is no user callback
+    /// or model mutation here: cache ownership is the viewport's weak placement.
+    pub(crate) fn measure_virtual_rows(
+        &mut self,
+        runtime: &crate::Runtime,
+    ) -> Result<bool, crate::UiError> {
+        let mut changed = false;
+        self.measured_rows.retain(|id| self.nodes.contains_key(id));
+        for id in &self.measured_rows {
+            let node = &self.nodes[id];
+            if !node.visible {
+                continue;
+            }
+            let Some(row) = node
+                .element
+                .input
+                .as_ref()
+                .and_then(|p| p.measured_row.as_ref())
+            else {
+                continue;
+            };
+            let Some(child) = node.children.first().and_then(|id| self.nodes.get(id)) else {
+                continue;
+            };
+            let height = self.taffy.layout(child.layout)?.size.height;
+            if !height.is_finite()
+                || height <= 0.
+                || f64::from(height) > crate::virtual_rows::MAX_EXTENT
+            {
+                return Err(crate::UiError::InvalidStyle);
+            }
+            let mut cache = row.cache.borrow_mut();
+            let mut updated = cache.environment(
+                node.bounds.width,
+                self.measurement_generation,
+                node.font_size,
+                &node.text_style,
+            );
+            if cache
+                .rows
+                .height(row.index)
+                .is_some_and(|old| (old - height).abs() > 0.25)
+            {
+                cache.rows.set_height(row.index, height);
+                updated = true;
+            }
+            if !cache.rows.is_valid() {
+                return Err(crate::UiError::InvalidStyle);
+            }
+            if updated {
+                runtime.inner.invalidate_mount(cache.reader);
+                runtime.inner.frames.borrow_mut().0.insert(cache.reader);
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+}

@@ -236,6 +236,9 @@ pub struct VariableList<'a, F> {
     rows: &'a VirtualRows,
     overscan: usize,
     anchoring: bool,
+    reader: Option<crate::MountId>,
+    measured: bool,
+    measurement_version: u64,
     render: F,
 }
 
@@ -276,11 +279,31 @@ where
         rows,
         overscan: 2,
         anchoring: true,
+        reader: cx.placement_scope(),
+        measured: false,
+        measurement_version: 0,
         render,
     }
 }
 impl<F> VariableList<'_, F> {
     list_builders!();
+    /// Measures mounted row content automatically, using VirtualRows heights as
+    /// estimates for unmeasured rows. Measurements and offsets belong to this
+    /// scroll placement; separate windows can use different widths and fonts.
+    /// Content should have intrinsic height (avoid percentage/fill heights).
+    /// Each preparation refines at most four times; extreme estimates continue
+    /// on another requested frame, with rows clipped to current estimated slots.
+    pub fn measured(mut self) -> Self {
+        self.measured = true;
+        self
+    }
+    /// Invalidates all cached heights when this application-owned revision changes.
+    /// Use for offscreen content changes; mounted content is measured every layout.
+    /// Width, inherited typography and TextMeasure generations invalidate automatically.
+    pub fn measurement_version(mut self, version: u64) -> Self {
+        self.measurement_version = version;
+        self
+    }
     /// Whether changes above the first visible row keep it in place; on by default.
     pub fn anchoring(mut self, enabled: bool) -> Self {
         self.anchoring = enabled;
@@ -288,8 +311,7 @@ impl<F> VariableList<'_, F> {
     }
     /// The vertical offset to describe, after any anchoring correction, which is
     /// queued as a scroll command for the placement.
-    fn settle_offset(&self, state: &ScrollState, max: f32) -> f32 {
-        let rows = self.rows;
+    fn settle_offset(&self, rows: &VirtualRows, state: &ScrollState, max: f32) -> f32 {
         let current = state.offset[1].clamp(0., max);
         let Some(tree) = self.tree else {
             return current;
@@ -335,13 +357,23 @@ where
     E: IntoElement,
 {
     fn into_element(mut self) -> Element {
-        let rows = self.rows;
-        let total = rows.is_valid().then(|| rows.total());
+        let cache = if self.measured {
+            self.tree.zip(self.reader).map(|(tree, reader)| {
+                self.handle
+                    .measurements(tree, self.rows, reader, self.measurement_version)
+            })
+        } else {
+            None
+        };
+        let measured = cache.as_ref().map(|c| c.borrow());
+        let rows = measured.as_ref().map_or(self.rows, |c| &c.rows);
+        // Caller estimates must remain valid even after some rows were measured.
+        let total = (self.rows.is_valid() && rows.is_valid()).then(|| rows.total());
         let mut content = list_content(total, rows.len());
         if let (Some(total), Some(state)) = (total, self.state.filter(|s| s.viewport[1] > 0.))
             && !rows.is_empty()
         {
-            let offset = self.settle_offset(&state, (total - state.viewport[1]).max(0.));
+            let offset = self.settle_offset(rows, &state, (total - state.viewport[1]).max(0.));
             let first = rows.index_at(offset).unwrap_or(0);
             let last = rows.index_at(offset + state.viewport[1]).unwrap_or(first);
             let start = first.saturating_sub(self.overscan);
@@ -350,10 +382,23 @@ where
             for index in start..end.min(rows.len()) {
                 let height = rows.height(index).unwrap_or_default();
                 let row = (self.render)(index).into_element();
+                let intrinsic_height = row.style.size.height;
+                let minimum_height = row.style.min_size.height;
                 let key = rows.key(index).cloned().unwrap_or_else(|| index.into());
-                content
-                    .children
-                    .push(slot(row, key, index, top as f32, height));
+                let mut slot = slot(row, key, index, top as f32, height);
+                if let Some(cache) = &cache {
+                    // Keep a fixed clipped slot while measuring unconstrained content.
+                    // This leaves coherent geometry even when refinement spans frames.
+                    slot.children[0].style.size.height = intrinsic_height;
+                    slot.children[0].style.min_size.height = minimum_height;
+                    slot.children[0].style.flex_shrink = 0.;
+                    slot.input.get_or_insert_with(Default::default).measured_row =
+                        Some(crate::virtual_rows::MeasuredRow {
+                            cache: cache.clone(),
+                            index,
+                        });
+                }
+                content.children.push(slot);
                 top += f64::from(height);
             }
         }

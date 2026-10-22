@@ -145,14 +145,50 @@ Anchoring is skipped:
 the row, as `reveal_row` does for fixed heights, in O(log n). An index past the end
 or rows the list would reject return `ScrollError::InvalidOffset`.
 
-Heights are supplied by the caller rather than measured. Measuring rows after
-layout would need a second layout pass whenever a newly mounted row's estimate was
-wrong, and a large jump can mount a whole viewport of estimated rows; the
-preparation loop is bounded to four passes. The measurements would also have to live
-per placement, because `VirtualRows` is application state shared by windows, which
-would let two windows disagree about offsets. An application that needs content
-heights, such as wrapped text, computes them with its own measurer and calls
-`set_height`; anchoring keeps the viewport still while such corrections arrive.
+### Automatically measured rows
+
+Opt in with `variable_list(&rows, &handle, cx, render).measured()`. `VirtualRows`
+then supplies positive estimates and stable keys. Mounted content is laid out at
+viewport width with automatic height; avoid percentage/fill heights on the row's
+root. Padding belongs inside the row; external margins are not included in its
+measured border-box height. Fixed and explicit variable-height lists keep their
+existing behavior.
+
+Measurements live in each scroll placement, so two windows sharing the model can
+wrap independently. The model's `height`, `offset` and `total` still describe the
+estimates. Use `handle.reveal_measured_row(cx, index)` (also on ScrollPlacement)
+for the placement's measured geometry. Unknown rows use estimates; after changing
+indices, prepare before revealing a new index. Reveals of unmeasured rows are
+approximate; subsequent measurement keeps the visible anchor steady rather than
+promising exact alignment of an arbitrary offscreen target.
+
+Width, inherited typography and the TextMeasure generation reset the cache.
+Mounted content is remeasured after layout; use `.measurement_version(revision)`
+when offscreen content changes without changing its key/estimate. Structural
+changes retain measurements for surviving keys whose estimates have not changed.
+Each placement uses O(n) height storage. Reconciling a model revision clones O(n)
+rows and restores m cached heights in O(m log n); this includes estimate edits.
+Measurement-version resets and width/font resets clone O(n) estimates. Individual
+measured corrections and range lookups use the existing O(log n) Fenwick tree. Removed keys
+and disposed placements release their caches; scrolling does not accumulate
+additional history beyond the current row model.
+
+Each preparation runs at most four refinement passes. Very poor estimates can
+require additional frames: RXUI requests them, preserves a coherent clipped slot
+layout for the current frame, and continues refining. It never renders every row
+between the old position and a large jump. Good estimates reduce intermediate
+clipping and extra frames. Heights differing by at most a quarter logical pixel
+are treated as settled. Empty/zero-height measured rows are rejected; provide a
+positive minimum height. The 2^24-pixel extent limit applies to both estimates and
+measured totals. Content with cyclic, ever-changing intrinsic heights cannot
+converge and can keep requesting frames; use stable intrinsic content.
+
+The standalone `measured_rows_window` example combines wrapped rows, independent
+windows, keyboard-focus tooltips and mount-scoped loading:
+
+```sh
+cargo run -p rxui --example measured_rows_window --features native --locked
+```
 
 ## Accessibility and costs
 

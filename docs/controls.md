@@ -163,8 +163,8 @@ loop or a helper function, need `select_keyed(cx, key)` with distinct keys.
 
 `tooltip(cx, target, text)` wraps any element. After the pointer rests on the
 target, or keyboard focus rests in its subtree, for `TOOLTIP_DELAY` (600 ms) a small popover shows the text below the target,
-flipped above when there is no room. It hides when neither hover nor keyboard
-focus remains, on native deactivation, on any press or key press inside the target, on Escape, and when the target is hidden or
+flipped above when there is no room. It hides when neither hover nor keyboard focus remains, on native deactivation, on any
+press or key press inside the target, on Escape, and when the target is hidden or
 scrolled out of view; a hidden tooltip returns after the pointer leaves and enters
 again. Disabled targets still show their tooltip.
 
@@ -228,3 +228,38 @@ element's resolved text color, so they need no font coverage.
 - Select type-ahead uses a one-second case-insensitive prefix, without locale-aware
   collation or an editable search field. Native screen-reader acceptance of popup
   highlight announcements still needs testing on each platform.
+- Sliders are horizontal only and have no tick marks, value bubble or vertical
+  orientation. Cancel does not restore the value from before the press.
+- Spinners and animated indeterminate bars re-evaluate their owning view every
+  frame unless reduced motion is enabled.
+- Indicators and paddings do not follow compact metrics.
+- Tooltip delay, placement and the select list's maximum height are fixed.
+- No tooltip "warm-up" (an immediate tooltip when moving between targets).
+
+## Verification
+
+Headless tests cover pointer, keyboard (with the host's Enter/Space activation
+default) and assistive activation of check boxes and switches; mixed and disabled
+state and Tab exclusion; radio roving Tab stops, arrow focus movement that wraps
+and skips disabled options, and group semantics; slider capture, step snapping,
+every key, assistive SetNumericValue, Escape cancellation and invalid ranges;
+progress values, indeterminate frame requests, spinner semantics and preference
+toggling in both directions; select opening without moving focus, viewport reveal
+for long lists, highlight identity through reorder/removal, active-descendant and
+controls relationships, timed multi-character type-ahead in both states,
+Enter/Escape/Tab, hover and click choice, disabled options and consumed outside
+presses; tooltip delay by frame clock, focus preservation, pointer transparency,
+press/Escape/leave hiding and description publication; tooltip layout adoption;
+and preset contrast. An AccessKit test checks roles, toggled state, numeric step
+and actions, expanded state, and Increment/Click round trips. An opt-in GPU test
+reads back indicator, tick, switch knob, slider and progress pixels in all three
+presets.
+
+```sh
+cargo test -p rxui --all-features standard:: --locked
+cargo test -p rxui --features rendering standard::gpu_tests --locked -- --ignored
+cargo run -p rxui --example gallery --features native --locked
+```
+
+The screenshots above were rendered headlessly through `TestUi` with the bundled
+Source Sans test font, and inspected visually. They are not native window captures.

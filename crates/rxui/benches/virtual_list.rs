@@ -6,14 +6,14 @@ struct Rows {
     scroll: ScrollHandle,
     /// Variable heights averaging 28 px; `None` measures the fixed-height list.
     variable: Option<VirtualRows>,
+    measured: bool,
 }
 impl View for Rows {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         if let Some(rows) = &self.variable {
-            return variable_list(rows, &self.scroll, cx, |i| label(format!("Row {i}")))
-                .fill_width()
-                .fill_height()
-                .into_element();
+            let list = variable_list(rows, &self.scroll, cx, |i| label(format!("Row {i}")));
+            let list = if self.measured { list.measured() } else { list };
+            return list.fill_width().fill_height().into_element();
         }
         virtual_list(self.count, 28., &self.scroll, cx, |i| {
             label(format!("Row {i}")).key(i)
@@ -38,6 +38,7 @@ fn setup(count: usize, variable: bool) -> (Runtime, Ui<Rows>) {
     let root = r.update(|cx| {
         cx.new(|_| Rows {
             count,
+            measured: false,
             scroll: ScrollHandle::new(),
             variable: variable.then(|| (0..count).map(|i| (i, height(i))).collect()),
         })
@@ -95,8 +96,51 @@ fn scrolling(prefix: &str, count: usize, variable: bool) -> (Runtime, Ui<Rows>, 
     assert_eq!(ui.stats().layout_passes, stats.layout_passes);
     (r, ui, nodes)
 }
+fn measured(count: usize) {
+    let setup = || {
+        let mut r = Runtime::new();
+        let model = r.update(|cx| {
+            cx.new(|_| Rows {
+                count,
+                scroll: ScrollHandle::new(),
+                variable: Some((0..count).map(|i| (i, height(i))).collect()),
+                measured: true,
+            })
+        });
+        let mut ui = Ui::new(&mut r, model).unwrap();
+        for _ in 0..8 {
+            ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+            if !ui.needs_prepare(&r).unwrap() {
+                break;
+            }
+        }
+        assert!(!ui.needs_prepare(&r).unwrap());
+        (r, ui)
+    };
+    let (mut r, mut ui) = setup();
+    let nodes = ui.elements().count();
+    assert!(nodes < 80);
+    run("measured_initial_prepare", count, nodes, || {
+        black_box(setup());
+    });
+    run("measured_idle_prepare", count, nodes, || {
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+        black_box(ui.stats());
+    });
+    let mut forward = true;
+    run("measured_row_crossing", count, nodes, || {
+        ui.scroll([20., 20.], [0., if forward { 28. } else { -28. }])
+            .unwrap();
+        forward = !forward;
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+        black_box(ui.stats());
+    });
+}
 fn main() {
     println!("operation,total_rows,live_elements,median_us,p95_us");
+    for count in [100, 10_000, 100_000] {
+        measured(count);
+    }
     for count in [100, 10_000, 100_000] {
         scrolling("", count, false);
     }
