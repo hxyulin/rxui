@@ -1,0 +1,17 @@
+{
+  "recorded_at": "2026-10-22T17:03:12.162428+00:00",
+  "implementation_commit": "9c925c84616a4ef4019e00adfc5e32c40ca79129",
+  "baseline_probe_commit": "ae08bf2cec46374f524432473a81715d4d8a17a7",
+  "imported_probe_commit": "8b986d8",
+  "machine": "Apple M5 Max",
+  "os": "27.0.1",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "load": "1:03  up 14 days,  4:02, 3 users, load averages: 109.22 107.08 95.97",
+  "command": "cargo bench -p rxui --bench architecture_probe --features accessibility --locked",
+  "probe_sha256": "5c11401e244cf21a1cfe95951f372c4c89f2fe171273acf03c52b445fdc46324",
+  "boundaries": "Unchanged probe from ae08bf2; mock text, no native host/GPU/AX consumer. Spinner counters include 20 warmups plus 400 sampled frames; tooltip wait includes 30 frames at 16ms. See ../architecture-probe/metadata.json.",
+  "limitations": [
+    "Single diagnostic rerun under heavy contention; operation counters are evidence, timings are not reliable speedup estimates.",
+    "Surface availability behavior is covered by scheduling source contracts and retained dirty tests, not an interactive surface-loss run."
+  ]
+}
