@@ -1178,6 +1178,7 @@ fn keyboard_tooltip_text_updates_preserve_visible_and_waiting_state() {
         &mut r,
         KeyEvent {
             key: KeyboardKey::Escape,
+            physical_key: Default::default(),
             pressed: true,
             repeat: false,
             modifiers: Modifiers::default(),
