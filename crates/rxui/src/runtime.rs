@@ -731,89 +731,93 @@ impl RuntimeInner {
         record.dirty = false;
     }
     pub(crate) fn synchronize(&self) {
-        let releases = std::mem::take(&mut *self.releases.borrow_mut());
-        if releases.is_empty() {
-            return;
-        }
-        let mut state = self.state.borrow_mut();
-        // Local state values run user Drop code; release them after the borrow ends.
-        let mut local = Vec::new();
-        #[cfg(feature = "tasks")]
-        let mut disposed_owners = HashSet::new();
-        for release in releases {
-            match release {
-                Release::Entity(id) => {
-                    let Some(slot) = state.slots.get_mut(id.slot) else {
-                        continue;
-                    };
-                    if slot.generation != id.generation
-                        || slot.value.as_ref().is_some_and(|v| v.strong_count() != 0)
-                    {
-                        continue;
-                    }
-                    slot.value = None;
-                    slot.revision = 0;
-                    if let Some(generation) = slot.generation.checked_add(1) {
-                        slot.generation = generation;
-                        state.free.push(id.slot);
-                    }
-                    if let Some(ids) = state.dependents.remove(&id) {
-                        for mount in ids {
-                            if let Some(r) = state.mounts.get_mut(&mount) {
-                                r.dependencies.remove(&id);
-                                r.dirty = true;
+        // Dropping local state or cancelled callbacks can release more mounts.
+        // Finish the cascade before exposing lifecycle or scheduling queries.
+        loop {
+            let releases = std::mem::take(&mut *self.releases.borrow_mut());
+            if releases.is_empty() {
+                return;
+            }
+            let mut state = self.state.borrow_mut();
+            // Local state values run user Drop code; release them after the borrow ends.
+            let mut local = Vec::new();
+            #[cfg(feature = "tasks")]
+            let mut disposed_owners = HashSet::new();
+            for release in releases {
+                match release {
+                    Release::Entity(id) => {
+                        let Some(slot) = state.slots.get_mut(id.slot) else {
+                            continue;
+                        };
+                        if slot.generation != id.generation
+                            || slot.value.as_ref().is_some_and(|v| v.strong_count() != 0)
+                        {
+                            continue;
+                        }
+                        slot.value = None;
+                        slot.revision = 0;
+                        if let Some(generation) = slot.generation.checked_add(1) {
+                            slot.generation = generation;
+                            state.free.push(id.slot);
+                        }
+                        if let Some(ids) = state.dependents.remove(&id) {
+                            for mount in ids {
+                                if let Some(r) = state.mounts.get_mut(&mount) {
+                                    r.dependencies.remove(&id);
+                                    r.dirty = true;
+                                }
                             }
                         }
+                        state.observers.remove(&id);
+                        #[cfg(feature = "tasks")]
+                        disposed_owners.insert(id);
                     }
-                    state.observers.remove(&id);
-                    #[cfg(feature = "tasks")]
-                    disposed_owners.insert(id);
-                }
-                Release::Mount(id) => {
-                    self.wakeups.borrow_mut().remove(&id);
-                    if let Some(record) = state.mounts.remove(&id) {
-                        local.push(record.local);
-                        for source in record.dependencies {
-                            if let Some(ids) = state.dependents.get_mut(&source) {
-                                ids.remove(&id);
-                                if ids.is_empty() {
-                                    state.dependents.remove(&source);
+                    Release::Mount(id) => {
+                        self.wakeups.borrow_mut().remove(&id);
+                        if let Some(record) = state.mounts.remove(&id) {
+                            local.push(record.local);
+                            for source in record.dependencies {
+                                if let Some(ids) = state.dependents.get_mut(&source) {
+                                    ids.remove(&id);
+                                    if ids.is_empty() {
+                                        state.dependents.remove(&source);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                Release::Subscription(source, serial) => {
-                    if let Some(observers) = state.observers.get_mut(&source) {
-                        observers.retain(|(id, _)| *id != serial);
-                        if observers.is_empty() {
-                            state.observers.remove(&source);
+                    Release::Subscription(source, serial) => {
+                        if let Some(observers) = state.observers.get_mut(&source) {
+                            observers.retain(|(id, _)| *id != serial);
+                            if observers.is_empty() {
+                                state.observers.remove(&source);
+                            }
                         }
                     }
                 }
             }
-        }
-        drop(state);
-        drop(local);
-        #[cfg(feature = "tasks")]
-        {
-            let callbacks = {
-                let mut slot = self.tasks.borrow_mut();
-                if let Some(tasks) = slot.as_mut()
-                    && !disposed_owners.is_empty()
-                {
-                    tasks.cancel_owners(&disposed_owners)
-                } else {
-                    Vec::new()
-                }
-            };
-            drop(callbacks);
-            let callbacks = self
-                .tasks
-                .borrow_mut()
-                .as_mut()
-                .map(|tasks| tasks.cancel_mounts());
-            drop(callbacks);
+            drop(state);
+            drop(local);
+            #[cfg(feature = "tasks")]
+            {
+                let callbacks = {
+                    let mut slot = self.tasks.borrow_mut();
+                    if let Some(tasks) = slot.as_mut()
+                        && !disposed_owners.is_empty()
+                    {
+                        tasks.cancel_owners(&disposed_owners)
+                    } else {
+                        Vec::new()
+                    }
+                };
+                drop(callbacks);
+                let callbacks = self
+                    .tasks
+                    .borrow_mut()
+                    .as_mut()
+                    .map(|tasks| tasks.cancel_mounts());
+                drop(callbacks);
+            }
         }
     }
 }

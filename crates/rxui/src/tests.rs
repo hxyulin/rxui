@@ -703,15 +703,27 @@ fn cascading_local_state_release_cannot_leave_a_stale_deadline() {
         let owner = cx.new(|_| ());
         cx.mount(&owner).unwrap()
     });
-    r.evaluate(&child, |_, cx| cx.request_wakeup_at(Duration::from_secs(1)))
-        .unwrap();
+    let grandchild = r.update(|cx| {
+        let owner = cx.new(|_| ());
+        cx.mount(&owner).unwrap()
+    });
+    r.evaluate(&grandchild, |_, cx| {
+        cx.request_wakeup_at(Duration::from_secs(1))
+    })
+    .unwrap();
+    r.evaluate(&child, |_, cx| {
+        cx.use_state(|_| grandchild.clone());
+    })
+    .unwrap();
     r.evaluate(&parent, |_, cx| {
         cx.use_state(|_| child.clone());
     })
     .unwrap();
-    let id = child.id();
+    let id = grandchild.id();
+    drop(grandchild);
     drop(child);
-    drop(parent); // Synchronizing drops local state, which drops the child mount.
+    drop(parent); // Cleanup must drain both generations of local-state releases.
+    assert_eq!(r.next_wakeup(), None);
     assert_eq!(r.next_wakeup(), None);
     assert_eq!(r.mount_wakeup(id), None);
     assert!(!r.begin_frame(Duration::from_secs(1)));
