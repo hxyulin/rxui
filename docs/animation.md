@@ -30,7 +30,7 @@ loop {
     painter.prepare(&ui, &format, scale)?;
     // compose and present ...
     if !runtime.animation_frame_requested() {
-        break; // wait for input
+        break; // wait for input or runtime.next_wakeup(), whichever comes first
     }
 }
 ```
@@ -42,6 +42,35 @@ late frame never makes a transition jump to its end.
 
 `TestUi` prepares while `Ui::is_animating` holds, so tests call
 `test.runtime().begin_frame(time)` before each `render`.
+
+## Deadline wakeups
+
+Use `cx.request_wakeup_at(deadline)` for a delayed change that needs no intermediate
+frames. The deadline is a `Duration` from the same monotonic origin supplied to
+`Runtime::begin_frame`, not a delay from the call. Multiple calls in an evaluation
+choose the earliest deadline. Successful evaluation replaces the view's requests;
+omission cancels them, unmounting removes them, and failed evaluation preserves the
+previous request. An unrelated early frame does not consume a future deadline.
+A due request fires once in `begin_frame`, leaving its mount dirty until evaluated.
+This API works without the `tasks` feature.
+
+Custom hosts must schedule the minimum of `Runtime::next_wakeup()` and their own
+timers, alongside immediate animation redraws. On waking, call
+`begin_frame(started.elapsed())` and prepare every dirty placement, even when the
+wake originated in another window. `Ui::next_wakeup(&runtime)` restricts the query
+to one placement; `Runtime::mount_wakeup` and `Ui::mount_ids` support hosts with
+their own placement mapping. Recompute the timer after evaluations and unmounts,
+including evaluations performed to route input or publish accessibility. Replace
+old host timers when a deadline changes or cancels; combine caret blink with view
+requests so cancelling either source preserves the other.
+
+When a surface is unavailable, retain dirty work and retry when it becomes
+available. Consume an expired timer once instead of continuously arming it in the
+past. Do not discard mount dirtiness when rendering is skipped. Repeatedly asking
+for a past deadline after successful evaluation intentionally schedules continuous
+work, so callers should stop requesting once their delayed action has happened.
+Tooltips request one fresh frame to establish entry time, then one deadline for
+the hover delay; waiting does not periodically evaluate their owning view.
 
 ## Timing and values
 

@@ -989,3 +989,82 @@ fn select_timed_prefix_search_continues_current_match_and_repeated_letters_cycle
     h.key(KeyboardKey::Character("p".into()));
     assert_eq!(h.read(|s| s.language.clone()), Some(Key::from("p")));
 }
+
+#[test]
+fn tooltip_deadline_wait_is_idle_and_cancels_on_leave_suppression_and_unmount() {
+    struct Page {
+        show: bool,
+    }
+    impl View for Page {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let mut root = column();
+            if self.show {
+                root = root.child(tooltip(cx, button("Hover").key("hover"), "Help"));
+            }
+            root.children((0..1000).map(|i| label("Row").key(i)))
+        }
+    }
+    let ms = Duration::from_millis;
+    let mut r = Runtime::new();
+    r.set_reduce_motion(true); // Isolate tooltip waiting from hover paint transitions.
+    r.begin_frame(Duration::ZERO);
+    let page = r.update(|cx| cx.new(|_| Page { show: true }));
+    let mut ui = Ui::new(&mut r, page.clone()).unwrap();
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    ui.pointer(&mut r, PointerEvent::Moved([5., 5.])).unwrap();
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    assert!(r.animation_frame_requested()); // Need fresh entry time.
+    r.begin_frame(ms(16));
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    assert_eq!(ui.next_wakeup(&r), Some(ms(16) + TOOLTIP_DELAY));
+    assert!(!r.animation_frame_requested());
+    let before = ui.stats();
+    for frame in 2..=30 {
+        assert!(!r.begin_frame(ms(frame * 16)));
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    }
+    assert_eq!(
+        ui.stats().component_evaluations,
+        before.component_evaluations
+    );
+    assert_eq!(ui.stats().reused_nodes, before.reused_nodes);
+    assert_eq!(ui.stats().layout_passes, before.layout_passes);
+    assert!(r.begin_frame(ms(16) + TOOLTIP_DELAY));
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    assert!(ui.elements().any(|e| e.key == Some(&Key::from("tooltip"))));
+    assert_eq!(r.next_wakeup(), None);
+    assert!(!r.begin_frame(ms(700)));
+    // Re-enter, establish another deadline, then leave before it fires.
+    for suppress in [false, true] {
+        ui.pointer(&mut r, PointerEvent::Moved([790., 590.]))
+            .unwrap();
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+        ui.pointer(&mut r, PointerEvent::Moved([5., 5.])).unwrap();
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+        r.begin_frame(if suppress { ms(900) } else { ms(800) });
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+        assert!(r.next_wakeup().is_some());
+        let event = if suppress {
+            PointerEvent::Pressed([5., 5.])
+        } else {
+            PointerEvent::Moved([790., 590.])
+        };
+        ui.pointer(&mut r, event).unwrap();
+        ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+        assert_eq!(r.next_wakeup(), None);
+    }
+    ui.pointer(&mut r, PointerEvent::Released([5., 5.]))
+        .unwrap();
+    ui.pointer(&mut r, PointerEvent::Moved([790., 590.]))
+        .unwrap();
+    ui.pointer(&mut r, PointerEvent::Moved([5., 5.])).unwrap();
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    r.begin_frame(ms(1000));
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    assert!(r.next_wakeup().is_some());
+    r.update(|cx| page.update(cx, |p, _| p.show = false));
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    assert_eq!(r.next_wakeup(), None);
+    drop(ui);
+    assert_eq!(r.next_wakeup(), None);
+}

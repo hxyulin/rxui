@@ -1917,12 +1917,43 @@ impl<F> Host<F> {
         if let Some(painter) = &mut self.painter {
             window.input.sync(ui.as_mut(), painter, native.window())?;
         }
-        if ui.has_text_focus() {
-            cx.request_redraw_at(id, window.blink_at)
-                .map_err(|e| ApplicationError::Native(Box::new(e)))?;
-        } else {
-            cx.cancel_redraw_at(id)
-                .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+        self.sync_wakeup(cx, id)
+    }
+    /// Replaces the host's single timer with the minimum of all window sources.
+    fn sync_wakeup(
+        &self,
+        cx: &mut NativeContext<'_, Wake>,
+        id: NativeWindowId,
+    ) -> Result<(), ApplicationError> {
+        let Some(window) = self.windows.get(&id) else {
+            return Ok(());
+        };
+        let Some(ui) = &window.ui else {
+            return Ok(());
+        };
+        // Avoid walking placement mounts on the usual path with no view timers.
+        let wakeup = self.runtime.next_wakeup().and_then(|_| {
+            ui.mounts()
+                .into_iter()
+                .filter_map(|mount| self.runtime.mount_wakeup(mount))
+                .filter_map(|at| self.started.checked_add(at))
+                .min()
+        });
+        let deadline = window_deadline(wakeup, ui.has_text_focus().then_some(window.blink_at));
+        // Astrelis keeps the earliest hint, so cancellation must precede replacement
+        // (including when a view cancels or postpones its request).
+        cx.cancel_redraw_at(id)
+            .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+        if let Some(at) = deadline {
+            if at <= Instant::now() {
+                // Do not continually rearm an expired timer while a surface is
+                // unavailable. The host retains dirty state until it can render.
+                cx.request_redraw(id)
+                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+            } else {
+                cx.request_redraw_at(id, at)
+                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+            }
         }
         Ok(())
     }
@@ -2221,6 +2252,14 @@ impl<F> Host<F> {
         for id in accessible {
             self.publish_accessibility(cx, id)?;
         }
+        for id in self.windows.keys().copied().collect::<Vec<_>>() {
+            if Some(id) != preparing
+                && cx.window(id).is_some()
+                && !self.windows[&id].life.closing.get()
+            {
+                self.sync_wakeup(cx, id)?;
+            }
+        }
         #[cfg(all(
             feature = "native-menus",
             any(target_os = "macos", target_os = "windows")
@@ -2425,8 +2464,6 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             window.caret_visible = true;
             window.blink_at = Instant::now() + Duration::from_millis(500);
             ui.caret_visible(true);
-            cx.cancel_redraw_at(id)
-                .map_err(|e| ApplicationError::Native(Box::new(e)))?;
             cx.request_redraw(id)
                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
         }
@@ -2537,8 +2574,6 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                             window.caret_visible = true;
                             window.blink_at = Instant::now() + Duration::from_millis(500);
                             ui.caret_visible(true);
-                            cx.cancel_redraw_at(id)
-                                .map_err(|e| ApplicationError::Native(Box::new(e)))?;
                             cx.request_redraw(id)
                                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
                         }
@@ -2908,8 +2943,26 @@ fn standard_shortcut(key: &crate::KeyboardKey, modifiers: crate::Modifiers) -> O
     })
 }
 
+/// Combines independent timer sources without allowing one to cancel another.
+fn window_deadline(view: Option<Instant>, caret: Option<Instant>) -> Option<Instant> {
+    match (view, caret) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caret_and_view_deadlines_coexist_and_cancel_independently() {
+        let a = Instant::now();
+        let b = a + Duration::from_millis(500);
+        assert_eq!(window_deadline(Some(a), Some(b)), Some(a));
+        assert_eq!(window_deadline(Some(b), Some(a)), Some(a));
+        assert_eq!(window_deadline(None, Some(b)), Some(b));
+        assert_eq!(window_deadline(Some(a), None), Some(a));
+        assert_eq!(window_deadline(None, None), None);
+    }
     use super::*;
     use crate::{Dispatch, IntoElement, ViewContext, label};
 

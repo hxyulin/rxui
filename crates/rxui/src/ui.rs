@@ -878,6 +878,13 @@ impl<T: View> Ui<T> {
                 .map(|mount| mount.mount_id())
         }))
     }
+    /// Earliest deadline for views in this placement, in `Runtime::begin_frame`
+    /// clock units. Custom hosts combine this with their own window timers.
+    pub fn next_wakeup(&self, runtime: &Runtime) -> Option<std::time::Duration> {
+        self.mount_ids()
+            .filter_map(|mount| runtime.mount_wakeup(mount))
+            .min()
+    }
     /// Cumulative counters, suitable for before/after comparisons.
     pub fn stats(&self) -> UiStats {
         self.stats

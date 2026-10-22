@@ -51,7 +51,7 @@ fn update(
 /// The wrapper takes over the target's flex-item properties (grow, shrink,
 /// basis, alignment, margins, insets, grid placement and percentage sizes), so the
 /// target keeps its place in the parent layout. While the delay runs the owning
-/// view is evaluated once per frame. Hover state is placement-local and keyed by
+/// view requests one deadline after a fresh entry frame. Hover state is placement-local and keyed by
 /// call site, the target's key and the text, so tooltips built in a loop should
 /// have keyed targets.
 ///
@@ -89,7 +89,7 @@ pub fn tooltip<T>(
             s.since.set(Some(since));
             let shown = now.saturating_sub(since) >= TOOLTIP_DELAY;
             if !shown {
-                cx.request_animation_frame();
+                cx.request_wakeup_at(since.saturating_add(TOOLTIP_DELAY));
             }
             shown
         }

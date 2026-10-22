@@ -1216,3 +1216,57 @@ fn custom_measure_equality_skips_layout_but_keeps_latest_description() {
         .unwrap();
     assert_eq!(replacement.bounds.width, 7.);
 }
+
+#[test]
+fn window_deadlines_include_nested_mounts_and_route_only_due_placements() {
+    use std::time::Duration;
+    struct Wake {
+        first: Cell<Option<MountId>>,
+    }
+    impl View for Wake {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let first = self.first.get().unwrap_or_else(|| {
+                self.first.set(Some(cx.mount_id()));
+                cx.mount_id()
+            });
+            if cx.frame_time() == Duration::ZERO {
+                cx.request_wakeup_at(Duration::from_millis(if first == cx.mount_id() {
+                    40
+                } else {
+                    90
+                }));
+            }
+            label("Child")
+        }
+    }
+    struct Parent(Entity<Wake>);
+    impl View for Parent {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            self.0.clone()
+        }
+    }
+    let mut r = Runtime::new();
+    let parent = r.update(|cx| {
+        let child = cx.new(|_| Wake {
+            first: Cell::new(None),
+        });
+        cx.new(|_| Parent(child))
+    });
+    let mut a = Ui::new(&mut r, parent.clone()).unwrap();
+    let mut b = Ui::new(&mut r, parent).unwrap();
+    let mut measure = Measure::default();
+    for ui in [&mut a, &mut b] {
+        ui.prepare(&mut r, [100., 100.], &mut measure).unwrap();
+    }
+    assert_eq!(a.next_wakeup(&r), Some(Duration::from_millis(40)));
+    assert_eq!(b.next_wakeup(&r), Some(Duration::from_millis(90)));
+    r.begin_frame(Duration::from_millis(40));
+    assert!(a.needs_prepare(&r).unwrap());
+    assert!(!b.needs_prepare(&r).unwrap());
+    a.prepare(&mut r, [100., 100.], &mut measure).unwrap();
+    assert_eq!(a.next_wakeup(&r), None);
+    assert_eq!(b.next_wakeup(&r), Some(Duration::from_millis(90)));
+    drop(b);
+    assert_eq!(r.next_wakeup(), None);
+    assert!(!r.begin_frame(Duration::from_millis(100)));
+}

@@ -191,3 +191,9 @@ siblings only. `parts()` lends the runtime, placement and painter together for
 anything else, such as `Ui::focus_next`. Effects keep their host boundary: call
 `test.runtime().flush()` where a test depends on them. `render` reads back through
 `Framebuffer::read_rgba8`, and a zero size fails with `UiError::InvalidGeometry`.
+
+View deadline wakeups share the animation clock origin. Custom hosts must combine
+`Runtime::next_wakeup()` (or `Ui::next_wakeup` per window) with caret and other
+platform timers and replace the combined timer after preparation. See the
+[deadline scheduling contract](animation.md#deadline-wakeups), including unavailable
+surfaces and input-time evaluations.

@@ -71,6 +71,8 @@ pub(crate) struct RuntimeInner {
     pub(crate) frames: RefCell<(HashSet<MountId>, std::time::Duration)>,
     /// Frame clock and reduce-motion preference for animations.
     pub(crate) motion: Cell<crate::animation::Clock>,
+    /// One committed deadline per requesting mount; empty on the idle path.
+    pub(crate) wakeups: RefCell<HashMap<MountId, std::time::Duration>>,
     /// Ui placements with retained motion in flight; each needs further frames.
     pub(crate) animating: Cell<usize>,
     /// Theme of the placement whose view is being evaluated, and whether it was read.
@@ -116,6 +118,7 @@ impl Runtime {
                 native: RefCell::new(None),
                 frames: RefCell::new((HashSet::new(), std::time::Duration::ZERO)),
                 motion: Cell::new(Default::default()),
+                wakeups: RefCell::new(HashMap::new()),
                 animating: Cell::new(0),
                 #[cfg(feature = "layout")]
                 view_theme: RefCell::new(None),
@@ -193,22 +196,32 @@ impl Runtime {
     }
     /// Starts an animation frame at `time`, a monotonic host clock such as the time
     /// since startup. Mounts whose views called `ViewContext::request_animation_frame`
-    /// since the previous frame become dirty, so the next `Ui::prepare` evaluates them
+    /// since the previous frame, and views whose wakeup deadline is due, become
+    /// dirty, so the next `Ui::prepare` evaluates them
     /// with this frame time. Returns whether any live mount was invalidated.
     ///
     /// Calling it also starts the animation clock: until the first call, implicit
     /// transitions and `ViewContext::animate` complete immediately, so hosts that
     /// never drive frames see final values.
     pub fn begin_frame(&mut self, time: std::time::Duration) -> bool {
+        self.inner.synchronize();
         let mut clock = self.inner.motion.get();
         clock.started = true;
         clock.frame = clock.frame.wrapping_add(1);
         self.inner.motion.set(clock);
-        let requested = {
+        let mut requested = {
             let mut frames = self.inner.frames.borrow_mut();
             frames.1 = time;
             std::mem::take(&mut frames.0)
         };
+        self.inner.wakeups.borrow_mut().retain(|id, deadline| {
+            if *deadline <= time {
+                requested.insert(*id);
+                false
+            } else {
+                true
+            }
+        });
         let mut state = self.inner.state.borrow_mut();
         let mut invalidated = false;
         for id in requested {
@@ -220,6 +233,38 @@ impl Runtime {
             }
         }
         invalidated
+    }
+    /// Earliest deadline requested by a live view, in the same monotonic clock as
+    /// [`Self::begin_frame`]. Hosts wake at this time, call `begin_frame`, then
+    /// prepare dirty placements. A due request is consumed once; dirty state
+    /// persists if its placement cannot be prepared yet.
+    pub fn next_wakeup(&self) -> Option<std::time::Duration> {
+        self.inner.synchronize();
+        let state = self.inner.state.borrow();
+        self.inner
+            .wakeups
+            .borrow()
+            .iter()
+            .filter(|(id, _)| {
+                state
+                    .mounts
+                    .get(id)
+                    .is_some_and(|r| r.life.strong_count() != 0)
+            })
+            .map(|(_, at)| *at)
+            .min()
+    }
+    /// Deadline for one live placement mount. Returns `None` for stale or foreign
+    /// identities. Use `Ui::mount_ids` to aggregate only a particular window's mounts.
+    pub fn mount_wakeup(&self, mount: MountId) -> Option<std::time::Duration> {
+        self.inner.synchronize();
+        self.inner
+            .state
+            .borrow()
+            .mounts
+            .get(&mount)
+            .filter(|r| r.life.strong_count() != 0)
+            .and_then(|_| self.inner.wakeups.borrow().get(&mount).copied())
     }
     /// Whether a view asked for another frame since the last [`Self::begin_frame`],
     /// or a `Ui` placement has a transition in flight (`Ui::is_animating`).
@@ -720,6 +765,7 @@ impl RuntimeInner {
                     disposed_owners.insert(id);
                 }
                 Release::Mount(id) => {
+                    self.wakeups.borrow_mut().remove(&id);
                     if let Some(record) = state.mounts.remove(&id) {
                         local.push(record.local);
                         for source in record.dependencies {

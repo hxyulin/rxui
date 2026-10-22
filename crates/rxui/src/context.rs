@@ -3,7 +3,7 @@ use crate::{
     runtime::{MountLife, RuntimeInner},
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashSet,
     ops::{Deref, DerefMut},
     rc::{Rc, Weak},
@@ -289,6 +289,7 @@ pub struct ViewContext<'a, T: 'static> {
     pub(crate) dependencies: RefCell<HashSet<EntityId>>,
     #[cfg(feature = "layout")]
     scroll_dependencies: RefCell<Vec<crate::ScrollHandle>>,
+    wakeup: Cell<Option<std::time::Duration>>,
     committed: bool,
 }
 impl<T> sealed::Sealed for ViewContext<'_, T> {}
@@ -328,6 +329,7 @@ impl<'a, T> ViewContext<'a, T> {
             dependencies: RefCell::new(dependencies),
             #[cfg(feature = "layout")]
             scroll_dependencies: RefCell::new(Vec::new()),
+            wakeup: Cell::new(None),
             committed: false,
         }
     }
@@ -435,6 +437,21 @@ impl<'a, T> ViewContext<'a, T> {
     /// ```
     pub fn request_animation_frame(&self) {
         self.runtime.frames.borrow_mut().0.insert(self.id);
+    }
+    /// Requests evaluation at `deadline`, using the same monotonic origin as
+    /// [`Self::frame_time`] and `Runtime::begin_frame`. Multiple calls in one
+    /// evaluation choose the earliest deadline. A successful evaluation replaces
+    /// its previous requests; omitting the call cancels them. Failed evaluations
+    /// preserve the previous deadline, and unmounting cancels it.
+    ///
+    /// Unrelated frames before the deadline do not consume it. After it fires,
+    /// request a new future deadline only if more work is needed; repeatedly
+    /// requesting a past deadline causes continuous redraws. Custom hosts schedule
+    /// `Runtime::next_wakeup` alongside animation and platform timers.
+    pub fn request_wakeup_at(&self, deadline: std::time::Duration) {
+        self.wakeup.set(Some(
+            self.wakeup.get().map_or(deadline, |old| old.min(deadline)),
+        ));
     }
     /// Time of the current animation frame, as passed to `Runtime::begin_frame`. The
     /// native host uses the time since the application started. Zero before the first
@@ -553,6 +570,12 @@ impl<'a, T> ViewContext<'a, T> {
         #[cfg(feature = "layout")]
         self.runtime
             .commit_scroll_reads(self.id, std::mem::take(self.scroll_dependencies.get_mut()));
+        let mut wakeups = self.runtime.wakeups.borrow_mut();
+        if let Some(deadline) = self.wakeup.get() {
+            wakeups.insert(self.id, deadline);
+        } else {
+            wakeups.remove(&self.id);
+        }
         self.committed = true;
     }
 }

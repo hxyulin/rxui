@@ -617,3 +617,102 @@ fn many_mounts_and_dependency_changes_leave_no_stale_dirty_ids() {
         assert!(runtime.dirty_mounts().is_empty());
     }
 }
+
+#[test]
+fn view_wakeups_commit_replace_cancel_and_survive_failed_evaluations() {
+    use std::time::Duration;
+    let ms = Duration::from_millis;
+    let (mut r, _, mount) = setup(());
+    r.evaluate(&mount, |_, cx| {
+        cx.request_wakeup_at(ms(100));
+        cx.request_wakeup_at(ms(50));
+    })
+    .unwrap();
+    assert_eq!(r.next_wakeup(), Some(ms(50)));
+    assert!(!r.begin_frame(ms(30)));
+    assert_eq!(r.next_wakeup(), Some(ms(50)));
+    assert!(!r.is_dirty(&mount).unwrap());
+    let failed: Result<(), AccessError> = r.evaluate_checked(&mount, |_, cx| {
+        cx.request_wakeup_at(ms(40));
+        Err(AccessError::Borrowed)
+    });
+    assert_eq!(failed, Err(AccessError::Borrowed));
+    assert_eq!(r.next_wakeup(), Some(ms(50)));
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| r.evaluate(&mount, |_, cx| {
+            cx.request_wakeup_at(ms(35));
+            panic!("failed view");
+        })))
+        .is_err()
+    );
+    assert_eq!(r.next_wakeup(), Some(ms(50)));
+    r.evaluate(&mount, |_, cx| cx.request_wakeup_at(ms(80)))
+        .unwrap();
+    assert_eq!(r.next_wakeup(), Some(ms(80)));
+    assert!(!r.begin_frame(ms(50)));
+    assert!(r.begin_frame(ms(80)));
+    assert_eq!(r.next_wakeup(), None);
+    assert!(!r.begin_frame(ms(90))); // Fires only once, even without preparing.
+    assert!(r.is_dirty(&mount).unwrap()); // Unavailable placements retain work.
+    r.evaluate(&mount, |_, cx| cx.request_wakeup_at(ms(120)))
+        .unwrap();
+    r.evaluate(&mount, |_, _| ()).unwrap();
+    assert_eq!(r.next_wakeup(), None); // Omission cancels.
+    r.evaluate(&mount, |_, cx| cx.request_wakeup_at(ms(140)))
+        .unwrap();
+    let id = mount.id();
+    drop(mount);
+    assert_eq!(r.mount_wakeup(id), None);
+    assert_eq!(r.next_wakeup(), None);
+    assert!(!r.begin_frame(ms(150)));
+}
+
+#[test]
+fn deadlines_are_placement_local_even_with_a_shared_owner() {
+    use std::time::Duration;
+    let ms = Duration::from_millis;
+    let (mut r, owner, a) = setup(());
+    let b = r.update(|cx| cx.mount(&owner).unwrap());
+    r.evaluate(&a, |_, cx| cx.request_wakeup_at(ms(40)))
+        .unwrap();
+    r.evaluate(&b, |_, cx| cx.request_wakeup_at(ms(90)))
+        .unwrap();
+    assert_eq!(r.mount_wakeup(a.id()), Some(ms(40)));
+    assert_eq!(r.mount_wakeup(b.id()), Some(ms(90)));
+    assert_eq!(r.next_wakeup(), Some(ms(40)));
+    r.begin_frame(ms(40));
+    assert!(r.is_dirty(&a).unwrap());
+    assert!(!r.is_dirty(&b).unwrap());
+    assert_eq!(r.next_wakeup(), Some(ms(90)));
+    let mut foreign = Runtime::new();
+    let other = foreign.update(|cx| {
+        let e = cx.new(|_| ());
+        cx.mount(&e).unwrap()
+    });
+    assert_eq!(r.mount_wakeup(other.id()), None);
+    drop(a);
+    r.begin_frame(ms(90));
+    assert_eq!(r.dirty_mounts(), vec![b.id()]);
+}
+
+#[test]
+fn cascading_local_state_release_cannot_leave_a_stale_deadline() {
+    use std::time::Duration;
+    let (mut r, _, parent) = setup(());
+    let child = r.update(|cx| {
+        let owner = cx.new(|_| ());
+        cx.mount(&owner).unwrap()
+    });
+    r.evaluate(&child, |_, cx| cx.request_wakeup_at(Duration::from_secs(1)))
+        .unwrap();
+    r.evaluate(&parent, |_, cx| {
+        cx.use_state(|_| child.clone());
+    })
+    .unwrap();
+    let id = child.id();
+    drop(child);
+    drop(parent); // Synchronizing drops local state, which drops the child mount.
+    assert_eq!(r.next_wakeup(), None);
+    assert_eq!(r.mount_wakeup(id), None);
+    assert!(!r.begin_frame(Duration::from_secs(1)));
+}
