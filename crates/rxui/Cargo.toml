@@ -11,6 +11,7 @@ publish = false
 
 [features]
 default = ["layout"]
+gles = ["rendering", "astrelis/gles", "astrelis-winit?/gles"]
 rendering = ["layout", "dep:astrelis"]
 native = ["accessibility", "dep:accesskit_winit", "rendering", "tasks", "dep:astrelis-winit", "dep:arboard", "dep:objc2-app-kit", "dep:windows-registry", "dep:zbus"]
 native-dialogs = ["native", "dep:rfd"]

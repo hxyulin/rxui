@@ -241,7 +241,7 @@ impl Chunks {
                 .is_none_or(|old| !Arc::ptr_eq(old, layout))
                 || resource.raster_scale != raster_scale
                 || phase_changed
-                || resource.prepared.is_none()
+                || resource.prepared.as_ref().is_none_or(|p| p.atlas_full())
             {
                 resource.prepared = None;
                 resource.prepared = Some(
@@ -277,6 +277,12 @@ impl Chunks {
                     .zip(c.resource.prepared_layout.as_ref())
                     .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
         })
+    }
+    /// Whether any retained chunk needs preparation again after atlas space frees.
+    pub fn atlas_full(&self) -> bool {
+        self.list
+            .iter()
+            .any(|c| c.resource.prepared.as_ref().is_some_and(|p| p.atlas_full()))
     }
     /// Chunk holding a whole-text offset; a chunk's end precedes its line break.
     fn at_offset(&self, offset: usize) -> Option<usize> {

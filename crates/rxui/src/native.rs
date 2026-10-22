@@ -21,11 +21,11 @@ mod desktop;
 use crate::{CommandId, CommandInfo, CommandStatus};
 use astrelis::{Frame, GraphicsContext, wgpu};
 use astrelis_winit::{
-    AppContext as NativeContext, Handler, PrepareAction, Runner, RunnerOptions, SurfaceSettings,
-    WindowInfo, WindowMetrics,
+    AppContext as NativeContext, Callback, ErrorAction, Handler, PrepareAction, RunError, Runner,
+    RunnerOptions, SurfaceSettings, WindowInfo, WindowMetrics,
     winit::{
         dpi::{LogicalSize, Size},
-        event::{MouseButton, WindowEvent},
+        event::{DeviceEvent, DeviceId, MouseButton, WindowEvent},
         keyboard::{Key, ModifiersState, NamedKey},
         window::{Theme as NativeTheme, Window, WindowAttributes, WindowId as NativeWindowId},
     },
@@ -130,7 +130,9 @@ impl From<SpawnError> for ApplicationError {
 
 mod geometry;
 pub use geometry::WindowGeometry;
+mod pointer;
 mod preferences;
+pub use pointer::PointerLock;
 mod window_input;
 pub use window_input::{WindowInput, WindowInputResult};
 
@@ -187,6 +189,7 @@ pub struct WindowOptions {
     theme: Option<Theme>,
     surface: SurfaceSettings,
     restore_geometry: bool,
+    standard_shortcuts: bool,
 }
 impl Default for WindowOptions {
     fn default() -> Self {
@@ -204,7 +207,15 @@ impl WindowOptions {
             theme: None,
             surface: SurfaceSettings::new(),
             restore_geometry: false,
+            standard_shortcuts: true,
         }
+    }
+    /// Enables the standard editing and close/quit keyboard shortcuts (default true).
+    /// Explicit command/menu invocations remain available when disabled.
+    #[must_use]
+    pub fn standard_shortcuts(mut self, enabled: bool) -> Self {
+        self.standard_shortcuts = enabled;
+        self
     }
     /// Native window title.
     #[must_use]
@@ -242,7 +253,8 @@ impl WindowOptions {
         self.theme = Some(theme);
         self
     }
-    /// Surface-owned MSAA/depth configuration, validated by Astrelis at creation.
+    /// Surface-owned MSAA/depth, present mode and desired maximum frame latency,
+    /// validated by Astrelis at creation. Latency defaults to two queued frames.
     #[must_use]
     pub fn surface(mut self, settings: SurfaceSettings) -> Self {
         self.surface = settings;
@@ -425,6 +437,8 @@ struct Life {
     theme: RefCell<Theme>,
     inherits_theme: Cell<bool>,
     geometry: Cell<Option<WindowGeometry>>,
+    active: Cell<bool>,
+    pointer: Rc<RefCell<pointer::State>>,
 }
 /// Handle to one requested window. Dropping the handle does not close the window.
 /// Its state becomes closed on lifecycle removal; the handle retains no native
@@ -453,6 +467,48 @@ impl WindowHandle {
     pub fn geometry(&self) -> Option<WindowGeometry> {
         self.life.geometry.get()
     }
+    /// Latest native activation snapshot; false before creation and after closing.
+    pub fn is_active(&self) -> bool {
+        !self.is_closed() && self.life.active.get()
+    }
+    /// Locks and hides the pointer, falling back to confinement. The native window
+    /// must exist and be active. Returns the selected mode, or an error without
+    /// changing the logical state. Deactivation releases it without re-lock on gain.
+    pub fn set_pointer_lock(&self, locked: bool) -> Result<Option<PointerLock>, ApplicationError> {
+        let window = self.native_window().ok_or(ApplicationError::ClosedWindow)?;
+        if locked && !window.has_focus() {
+            return Err(ApplicationError::Native(Box::new(std::io::Error::other(
+                "pointer lock requires an active window",
+            ))));
+        }
+        let result = self
+            .life
+            .pointer
+            .borrow_mut()
+            .set_lock(&window, locked)
+            .map_err(|error| ApplicationError::Native(Box::new(error)))?;
+        window.request_redraw();
+        Ok(result)
+    }
+    /// Overrides hovered cursor visibility; pointer locking also hides the cursor.
+    pub fn set_cursor_hidden(&self, hidden: bool) {
+        self.life.pointer.borrow_mut().hidden = hidden;
+        if let Some(window) = self.native_window() {
+            window.request_redraw();
+        }
+    }
+    /// Current native grab mode, absent after deactivation or explicit release.
+    pub fn pointer_lock(&self) -> Option<PointerLock> {
+        if self.is_closed() {
+            None
+        } else {
+            self.life.pointer.borrow().lock
+        }
+    }
+    /// Takes a native error from automatic pointer release on deactivation.
+    pub fn take_pointer_lock_error(&self) -> Option<String> {
+        self.life.pointer.borrow_mut().error.take()
+    }
     /// Native window after creation and before closing, for platform integration.
     pub fn native_window(&self) -> Option<Arc<Window>> {
         if self.is_closed() {
@@ -474,6 +530,7 @@ trait HostedUi {
     fn set_theme(&mut self, theme: Theme) -> Result<bool, UiError>;
     fn mounts(&self) -> Vec<crate::MountId>;
     fn is_animating(&self) -> bool;
+    fn text_atlas_full(&self, painter: &UiPainter) -> bool;
     fn prepare(
         &mut self,
         runtime: &mut Runtime,
@@ -542,6 +599,7 @@ trait HostedUi {
     fn selected_text(&self) -> Option<String>;
     fn ime_area(&mut self, painter: &mut UiPainter) -> Result<Option<Bounds>, UiError>;
     fn active(&mut self, active: bool) -> bool;
+    fn raw_keyboard(&self) -> bool;
     fn caret_visible(&mut self, visible: bool);
 
     fn wheel(
@@ -579,6 +637,9 @@ impl<T: View> HostedUi for Ui<T> {
     }
     fn is_animating(&self) -> bool {
         self.is_animating()
+    }
+    fn text_atlas_full(&self, painter: &UiPainter) -> bool {
+        painter.text_atlas_full(self)
     }
     fn prepare(
         &mut self,
@@ -699,6 +760,9 @@ impl<T: View> HostedUi for Ui<T> {
     fn ime_area(&mut self, painter: &mut UiPainter) -> Result<Option<Bounds>, UiError> {
         self.ime_cursor_area(painter)
     }
+    fn raw_keyboard(&self) -> bool {
+        self.raw_keyboard()
+    }
     fn active(&mut self, active: bool) -> bool {
         self.set_active(active)
     }
@@ -778,6 +842,7 @@ pub(crate) struct Commands {
     #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
     dialogs: RefCell<dialogs::State>,
     runtime: u64,
+    wake: RefCell<Option<ApplicationWakeHandle>>,
     next: Cell<u64>,
     queue: RefCell<VecDeque<Command>>,
     lives: RefCell<HashMap<WindowId, Rc<Life>>>,
@@ -809,6 +874,7 @@ impl Commands {
     fn new(runtime: u64) -> Self {
         Self {
             runtime,
+            wake: RefCell::new(None),
             clipboard: RefCell::new(None),
             #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
             dialogs: RefCell::new(dialogs::State::default()),
@@ -878,6 +944,15 @@ impl Commands {
     }
 }
 impl AppContext<'_> {
+    /// A thread-safe wake handle for external services. Pair with
+    /// `Application::woken` to apply streamed channel data in a fresh UI update.
+    pub fn wake_handle(&self) -> Result<ApplicationWakeHandle, ApplicationError> {
+        self.native_commands()?
+            .wake
+            .borrow()
+            .clone()
+            .ok_or(ApplicationError::NoHost)
+    }
     /// Window that dispatched the current listener, also in nested entity updates.
     /// Initialization, ordinary updates and entity-scoped task completions have no
     /// implicit source window. Shared model identity does not select a window.
@@ -927,6 +1002,8 @@ impl AppContext<'_> {
                 runtime: commands.runtime,
                 serial,
             },
+            active: Cell::new(false),
+            pointer: Rc::default(),
             native: RefCell::new(None),
             closing: Cell::new(false),
             alive: Cell::new(true),
@@ -1178,6 +1255,10 @@ type GraphicsRenderHook = dyn FnMut(
     WindowInfo<'_>,
     &mut Frame<'_, 'static>,
 ) -> Result<(), ApplicationError>;
+type DeviceEventHook = dyn FnMut(DeviceId, &DeviceEvent, &mut AppContext<'_>);
+type WindowEventHook = dyn FnMut(&WindowHandle, &WindowEvent, &mut AppContext<'_>);
+type ActiveHook = dyn FnMut(&WindowHandle, bool, &mut AppContext<'_>);
+type WakeHook = dyn FnMut(&mut AppContext<'_>);
 type GeometryHook = dyn FnMut(&WindowHandle, WindowGeometry, &mut AppContext<'_>);
 type FileDropHook = dyn FnMut(&WindowHandle, &FileDropEvent, &mut AppContext<'_>);
 type PreferencesHook = dyn FnMut(&SystemPreferences, &mut AppContext<'_>);
@@ -1185,6 +1266,42 @@ type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
 type QuitHook = dyn FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
 type ExitHook = dyn FnOnce(&mut AppContext<'_>);
+type ErrorHook = dyn FnMut(&RunError, &mut AppContext<'_>) -> ErrorAction;
+
+fn default_error_action(error: &RunError) -> ErrorAction {
+    if error.can_continue()
+        && matches!(
+            error,
+            RunError::Handler {
+                callback: Callback::Prepare | Callback::Render | Callback::Submitted,
+                ..
+            } | RunError::Acquisition { .. }
+                | RunError::SurfaceRecovery { .. }
+                | RunError::Submission { .. }
+                | RunError::Graphics { .. }
+        )
+    {
+        ErrorAction::Continue
+    } else {
+        ErrorAction::Exit
+    }
+}
+
+fn error_action(
+    runtime: &mut Runtime,
+    hook: &mut Option<Box<ErrorHook>>,
+    error: &RunError,
+) -> ErrorAction {
+    let action = hook.as_mut().map_or_else(
+        || default_error_action(error),
+        |hook| runtime.update(|cx| hook(error, cx)),
+    );
+    if error.can_continue() {
+        action
+    } else {
+        ErrorAction::Exit
+    }
+}
 /// Desktop host over astrelis-winit. It owns native wiring and on-demand scheduling;
 /// Runtime/Ui/UiPainter remain usable in custom hosts. Initialization runs once,
 /// model/task progression continues independently of surface availability.
@@ -1204,8 +1321,13 @@ pub struct Application {
     executor: Option<Arc<dyn TaskExecutor>>,
     graphics: Option<GraphicsContext>,
     runner_options: RunnerOptions,
+    error: Option<Box<ErrorHook>>,
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
     render_graphics: Option<Box<GraphicsRenderHook>>,
+    device_event: Option<Box<DeviceEventHook>>,
+    window_event: Option<Box<WindowEventHook>>,
+    active_changed: Option<Box<ActiveHook>>,
+    woken: Option<Box<WakeHook>>,
     created: Option<Box<CreatedHook>>,
     geometry_changed: Option<Box<GeometryHook>>,
     file_drop: Option<Box<FileDropHook>>,
@@ -1236,8 +1358,13 @@ impl Application {
             executor: None,
             graphics: None,
             runner_options: RunnerOptions::default(),
+            error: None,
             prepare_graphics: None,
             render_graphics: None,
+            device_event: None,
+            window_event: None,
+            active_changed: None,
+            woken: None,
             created: None,
             geometry_changed: None,
             file_drop: None,
@@ -1293,6 +1420,19 @@ impl Application {
     #[must_use]
     pub fn system_ui_font(mut self, enabled: bool) -> Self {
         self.system_ui_font = enabled;
+        self
+    }
+    /// Observes native failures and chooses whether to skip failed work or exit.
+    /// Defaults to continuing recoverable frame/surface/GPU errors and exiting
+    /// lifecycle/input errors. Astrelis logs failures through the log facade.
+    /// Runs in a fresh update without an implicit source window; mutations are not
+    /// rolled back. Device loss and out-of-memory always exit, even on Continue.
+    #[must_use]
+    pub fn error(
+        mut self,
+        hook: impl FnMut(&RunError, &mut AppContext<'_>) -> ErrorAction + 'static,
+    ) -> Self {
+        self.error = Some(Box::new(hook));
         self
     }
     /// Runs GPU resource preparation before acquisition and before UiPainter's GPU
@@ -1405,6 +1545,44 @@ impl Application {
         self.runner_options = options;
         self
     }
+    /// Observes raw device events, including relative `MouseMotion`, in a UI
+    /// update with no source window. Winit's default device-event policy is focused
+    /// windows only. Filter by your application's active/control mode.
+    #[must_use]
+    pub fn device_event(
+        mut self,
+        hook: impl FnMut(DeviceId, &DeviceEvent, &mut AppContext<'_>) + 'static,
+    ) -> Self {
+        self.device_event = Some(Box::new(hook));
+        self
+    }
+    /// Observes native window events before RXUI routes them. This hook cannot
+    /// consume events; normal input, accessibility and lifecycle handling continues.
+    #[must_use]
+    pub fn window_event(
+        mut self,
+        hook: impl FnMut(&WindowHandle, &WindowEvent, &mut AppContext<'_>) + 'static,
+    ) -> Self {
+        self.window_event = Some(Box::new(hook));
+        self
+    }
+    /// Receives native activation changes after input releases and pointer unlock.
+    /// Use the explicit handle to update the corresponding view's application state.
+    #[must_use]
+    pub fn window_active_changed(
+        mut self,
+        hook: impl FnMut(&WindowHandle, bool, &mut AppContext<'_>) + 'static,
+    ) -> Self {
+        self.active_changed = Some(Box::new(hook));
+        self
+    }
+    /// Runs on the UI thread after an external `ApplicationWakeHandle::wake`.
+    /// Drain owned data from a channel here; no implicit source window is selected.
+    #[must_use]
+    pub fn woken(mut self, hook: impl FnMut(&mut AppContext<'_>) + 'static) -> Self {
+        self.woken = Some(Box::new(hook));
+        self
+    }
     /// Runs after native creation and before showing each managed window. Native
     /// adapter setup can access WindowHandle::native_window without owning the loop.
     #[must_use]
@@ -1504,10 +1682,14 @@ impl Application {
                 ThreadPoolExecutor::new(2, 2).map_err(|e| ApplicationError::Native(Box::new(e)))?,
             ),
         };
+        let wake = ApplicationWakeHandle {
+            proxy: proxy.clone(),
+        };
         runtime.configure_tasks(executor, move || {
             let _ = proxy.send_event(Wake::Tasks);
         })?;
         let commands = Rc::new(Commands::new(runtime.inner.id));
+        *commands.wake.borrow_mut() = Some(wake);
         *commands.theme.borrow_mut() = self.theme;
         *commands.themes.borrow_mut() = self.themes;
         commands.theme_mode.set(self.theme_mode);
@@ -1525,8 +1707,13 @@ impl Application {
             families: self.families,
             system_fonts: self.system_fonts,
             active: false,
+            error: self.error,
             prepare_graphics: self.prepare_graphics,
             render_graphics: self.render_graphics,
+            device_event: self.device_event,
+            window_event: self.window_event,
+            active_changed: self.active_changed,
+            woken: self.woken,
             created: self.created,
             geometry_changed: self.geometry_changed,
             file_drop: self.file_drop,
@@ -1551,7 +1738,25 @@ impl Application {
             .map_err(|e| ApplicationError::Native(Box::new(e)))
     }
 }
+/// Cloneable, `Send + Sync` event-loop wake handle for external producers.
+/// Use [`Application::woken`] to drain a channel into application state on the UI
+/// thread. The handle carries no entity or window ownership.
+#[derive(Clone)]
+pub struct ApplicationWakeHandle {
+    proxy: astrelis_winit::winit::event_loop::EventLoopProxy<Wake>,
+}
+impl ApplicationWakeHandle {
+    /// Wakes the application, returning `Exited` after the event loop closes.
+    /// Each successful call schedules a `woken` callback; batch/coalesce payloads
+    /// in the producer's channel when sending a continuous stream.
+    pub fn wake(&self) -> Result<(), ApplicationError> {
+        self.proxy
+            .send_event(Wake::External)
+            .map_err(|_| ApplicationError::Exited)
+    }
+}
 enum Wake {
+    External,
     Geometry(NativeWindowId),
     /// Pushed preference snapshot (the Linux/BSD portal watcher).
     Preferences(SystemPreferences),
@@ -1607,6 +1812,7 @@ struct HostedWindow {
     background: Option<Color>,
     input: WindowInput,
     blink_at: Instant,
+    text_retry_at: Option<Instant>,
     caret_visible: bool,
     accessibility: Option<accesskit_winit::Adapter>,
     accesskit: AccessKitTree,
@@ -1668,8 +1874,13 @@ struct Host<F> {
     families: Vec<(crate::FontFamily, Arc<str>)>,
     system_fonts: bool,
     active: bool,
+    error: Option<Box<ErrorHook>>,
     prepare_graphics: Option<Box<GraphicsPrepareHook>>,
     render_graphics: Option<Box<GraphicsRenderHook>>,
+    device_event: Option<Box<DeviceEventHook>>,
+    window_event: Option<Box<WindowEventHook>>,
+    active_changed: Option<Box<ActiveHook>>,
+    woken: Option<Box<WakeHook>>,
     created: Option<Box<CreatedHook>>,
     geometry_changed: Option<Box<GeometryHook>>,
     file_drop: Option<Box<FileDropHook>>,
@@ -1939,7 +2150,10 @@ impl<F> Host<F> {
                 .filter_map(|at| self.started.checked_add(at))
                 .min()
         });
-        let deadline = window_deadline(wakeup, ui.has_text_focus().then_some(window.blink_at));
+        let deadline = window_deadline(
+            window_deadline(wakeup, window.text_retry_at),
+            ui.has_text_focus().then_some(window.blink_at),
+        );
         // Astrelis keeps the earliest hint, so cancellation must precede replacement
         // (including when a view cancels or postpones its request).
         cx.cancel_redraw_at(id)
@@ -2062,6 +2276,9 @@ impl<F> Host<F> {
                         let transparent = options.attributes.transparent;
                         let sync_native_theme = options.attributes.preferred_theme.is_none();
                         let native = create_window(cx, options.attributes, options.surface)?;
+                        let mut input =
+                            WindowInput::with_standard_shortcuts(options.standard_shortcuts);
+                        input.pointer = life.pointer.clone();
                         self.windows.insert(
                             native,
                             HostedWindow {
@@ -2072,8 +2289,9 @@ impl<F> Host<F> {
                                 geometry_pending: false,
                                 restore_geometry: options.restore_geometry,
                                 background: options.background,
-                                input: WindowInput::default(),
+                                input,
                                 blink_at: Instant::now() + Duration::from_millis(500),
+                                text_retry_at: None,
                                 caret_visible: true,
                                 accessibility: None,
                                 accesskit: AccessKitTree::new(),
@@ -2272,6 +2490,11 @@ impl<F> Host<F> {
 impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for Host<F> {
     type Message = Wake;
     type Error = ApplicationError;
+    fn error(&mut self, _cx: &mut NativeContext<'_, Wake>, error: &RunError) -> ErrorAction {
+        // The runner logs failures and drains shared-device diagnostics before
+        // invoking this hook; draining here would hide events from that policy.
+        error_action(&mut self.runtime, &mut self.error, error)
+    }
     fn resumed(&mut self, cx: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
         self.active = true;
         if !self.preferences_started {
@@ -2382,6 +2605,12 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         if self.windows.get(&id).is_none_or(|w| w.life.closing.get()) {
             return self.progress(cx, None);
         }
+        if let Some(hook) = &mut self.window_event {
+            let handle = WindowHandle {
+                life: self.windows[&id].life.clone(),
+            };
+            self.runtime.update(|cx| hook(&handle, &event, cx));
+        }
         match event {
             WindowEvent::ThemeChanged(theme) => self.refresh_preferences(cx, Some(theme)),
             // Accessibility settings change while another app is active.
@@ -2468,6 +2697,31 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
         }
         self.sync_text_platform(cx, id)?;
+        if let WindowEvent::Focused(active) = event {
+            let handle = WindowHandle {
+                life: self.windows[&id].life.clone(),
+            };
+            handle.life.active.set(active);
+            if let Some(hook) = &mut self.active_changed {
+                self.runtime.update(|cx| hook(&handle, active, cx));
+            }
+            if !active && self.focused_window == Some(id) {
+                self.focused_window = None;
+            }
+        }
+        self.progress(cx, None)
+    }
+    fn device_event(
+        &mut self,
+        cx: &mut NativeContext<'_, Wake>,
+        id: DeviceId,
+        event: DeviceEvent,
+    ) -> Result<(), Self::Error> {
+        if !self.commands.exited.get()
+            && let Some(hook) = &mut self.device_event
+        {
+            self.runtime.update(|cx| hook(id, &event, cx));
+        }
         self.progress(cx, None)
     }
     fn user_event(
@@ -2504,6 +2758,14 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                     .and_then(|m| m.resolve(&event, self.focused_window))
                 {
                     self.invoke_command(cx, window, command)?;
+                }
+                self.progress(cx, None)
+            }
+            Wake::External => {
+                if !self.commands.exited.get()
+                    && let Some(hook) = &mut self.woken
+                {
+                    self.runtime.update(|cx| hook(cx));
                 }
                 self.progress(cx, None)
             }
@@ -2667,6 +2929,14 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             self.painter.as_mut().unwrap(),
             native.render_format().unwrap(),
         )?;
+        // Keep text retries as a timer source so caret/view synchronization cannot
+        // cancel them. Clear the source after a complete text preparation.
+        window.text_retry_at = window
+            .ui
+            .as_ref()
+            .unwrap()
+            .text_atlas_full(self.painter.as_ref().unwrap())
+            .then(|| Instant::now() + Duration::from_millis(100));
         self.sync_mounts(id);
         self.sync_text_platform(cx, id)?;
         self.publish_accessibility(cx, id)?;
@@ -2855,7 +3125,179 @@ fn keyboard_key(key: &Key) -> crate::KeyboardKey {
         Key::Named(NamedKey::PageDown) => K::PageDown,
         Key::Named(NamedKey::Backspace) => K::Backspace,
         Key::Named(NamedKey::Delete) => K::Delete,
+        Key::Named(NamedKey::Shift) => K::Shift,
+        Key::Named(NamedKey::Control) => K::Control,
+        Key::Named(NamedKey::Alt) => K::Alt,
+        Key::Named(NamedKey::Super) => K::Super,
+        Key::Named(NamedKey::AltGraph) => K::AltGraph,
+        Key::Named(NamedKey::Fn) => K::Fn,
+        Key::Named(NamedKey::FnLock) => K::FnLock,
+        Key::Named(NamedKey::Meta) => K::Meta,
+        Key::Named(NamedKey::Hyper) => K::Hyper,
+        Key::Named(NamedKey::Symbol) => K::Symbol,
+        Key::Named(NamedKey::SymbolLock) => K::SymbolLock,
+
+        Key::Named(NamedKey::CapsLock) => K::CapsLock,
+        Key::Named(NamedKey::NumLock) => K::NumLock,
+        Key::Named(NamedKey::ScrollLock) => K::ScrollLock,
+        Key::Named(NamedKey::Insert) => K::Insert,
+        Key::Named(NamedKey::Pause) => K::Pause,
+        Key::Named(NamedKey::PrintScreen) => K::PrintScreen,
+        Key::Named(NamedKey::ContextMenu) => K::ContextMenu,
+        Key::Named(NamedKey::F1) => K::Function(1),
+        Key::Named(NamedKey::F2) => K::Function(2),
+        Key::Named(NamedKey::F3) => K::Function(3),
+        Key::Named(NamedKey::F4) => K::Function(4),
+        Key::Named(NamedKey::F5) => K::Function(5),
+        Key::Named(NamedKey::F6) => K::Function(6),
+        Key::Named(NamedKey::F7) => K::Function(7),
+        Key::Named(NamedKey::F8) => K::Function(8),
+        Key::Named(NamedKey::F9) => K::Function(9),
+        Key::Named(NamedKey::F10) => K::Function(10),
+        Key::Named(NamedKey::F11) => K::Function(11),
+        Key::Named(NamedKey::F12) => K::Function(12),
+        Key::Named(NamedKey::F13) => K::Function(13),
+        Key::Named(NamedKey::F14) => K::Function(14),
+        Key::Named(NamedKey::F15) => K::Function(15),
+        Key::Named(NamedKey::F16) => K::Function(16),
+        Key::Named(NamedKey::F17) => K::Function(17),
+        Key::Named(NamedKey::F18) => K::Function(18),
+        Key::Named(NamedKey::F19) => K::Function(19),
+        Key::Named(NamedKey::F20) => K::Function(20),
+        Key::Named(NamedKey::F21) => K::Function(21),
+        Key::Named(NamedKey::F22) => K::Function(22),
+        Key::Named(NamedKey::F23) => K::Function(23),
+        Key::Named(NamedKey::F24) => K::Function(24),
+        Key::Named(NamedKey::F25) => K::Function(25),
+        Key::Named(NamedKey::F26) => K::Function(26),
+        Key::Named(NamedKey::F27) => K::Function(27),
+        Key::Named(NamedKey::F28) => K::Function(28),
+        Key::Named(NamedKey::F29) => K::Function(29),
+        Key::Named(NamedKey::F30) => K::Function(30),
+        Key::Named(NamedKey::F31) => K::Function(31),
+        Key::Named(NamedKey::F32) => K::Function(32),
+        Key::Named(NamedKey::F33) => K::Function(33),
+        Key::Named(NamedKey::F34) => K::Function(34),
+        Key::Named(NamedKey::F35) => K::Function(35),
         other => K::Other(format!("{other:?}")),
+    }
+}
+fn physical_key(key: astrelis_winit::winit::keyboard::PhysicalKey) -> crate::PhysicalKey {
+    use crate::PhysicalKey as P;
+    use astrelis_winit::winit::keyboard::{KeyCode, PhysicalKey};
+    match key {
+        PhysicalKey::Code(code) => match code {
+            KeyCode::KeyA => P::KeyA,
+            KeyCode::KeyB => P::KeyB,
+            KeyCode::KeyC => P::KeyC,
+            KeyCode::KeyD => P::KeyD,
+            KeyCode::KeyE => P::KeyE,
+            KeyCode::KeyF => P::KeyF,
+            KeyCode::KeyG => P::KeyG,
+            KeyCode::KeyH => P::KeyH,
+            KeyCode::KeyI => P::KeyI,
+            KeyCode::KeyJ => P::KeyJ,
+            KeyCode::KeyK => P::KeyK,
+            KeyCode::KeyL => P::KeyL,
+            KeyCode::KeyM => P::KeyM,
+            KeyCode::KeyN => P::KeyN,
+            KeyCode::KeyO => P::KeyO,
+            KeyCode::KeyP => P::KeyP,
+            KeyCode::KeyQ => P::KeyQ,
+            KeyCode::KeyR => P::KeyR,
+            KeyCode::KeyS => P::KeyS,
+            KeyCode::KeyT => P::KeyT,
+            KeyCode::KeyU => P::KeyU,
+            KeyCode::KeyV => P::KeyV,
+            KeyCode::KeyW => P::KeyW,
+            KeyCode::KeyX => P::KeyX,
+            KeyCode::KeyY => P::KeyY,
+            KeyCode::KeyZ => P::KeyZ,
+            KeyCode::Digit0 => P::Digit0,
+            KeyCode::Digit1 => P::Digit1,
+            KeyCode::Digit2 => P::Digit2,
+            KeyCode::Digit3 => P::Digit3,
+            KeyCode::Digit4 => P::Digit4,
+            KeyCode::Digit5 => P::Digit5,
+            KeyCode::Digit6 => P::Digit6,
+            KeyCode::Digit7 => P::Digit7,
+            KeyCode::Digit8 => P::Digit8,
+            KeyCode::Digit9 => P::Digit9,
+            KeyCode::ShiftLeft => P::ShiftLeft,
+            KeyCode::ShiftRight => P::ShiftRight,
+            KeyCode::ControlLeft => P::ControlLeft,
+            KeyCode::ControlRight => P::ControlRight,
+            KeyCode::AltLeft => P::AltLeft,
+            KeyCode::AltRight => P::AltRight,
+            KeyCode::SuperLeft => P::SuperLeft,
+            KeyCode::SuperRight => P::SuperRight,
+            KeyCode::Escape => P::Escape,
+            KeyCode::Tab => P::Tab,
+            KeyCode::Enter => P::Enter,
+            KeyCode::Space => P::Space,
+            KeyCode::Backspace => P::Backspace,
+            KeyCode::Delete => P::Delete,
+            KeyCode::Insert => P::Insert,
+            KeyCode::Home => P::Home,
+            KeyCode::End => P::End,
+            KeyCode::PageUp => P::PageUp,
+            KeyCode::PageDown => P::PageDown,
+            KeyCode::ArrowLeft => P::ArrowLeft,
+            KeyCode::ArrowRight => P::ArrowRight,
+            KeyCode::ArrowUp => P::ArrowUp,
+            KeyCode::ArrowDown => P::ArrowDown,
+            KeyCode::Backquote => P::Backquote,
+            KeyCode::Minus => P::Minus,
+            KeyCode::Equal => P::Equal,
+            KeyCode::BracketLeft => P::BracketLeft,
+            KeyCode::BracketRight => P::BracketRight,
+            KeyCode::Backslash => P::Backslash,
+            KeyCode::Semicolon => P::Semicolon,
+            KeyCode::Quote => P::Quote,
+            KeyCode::Comma => P::Comma,
+            KeyCode::Period => P::Period,
+            KeyCode::Slash => P::Slash,
+            KeyCode::CapsLock => P::CapsLock,
+            KeyCode::NumLock => P::NumLock,
+            KeyCode::ScrollLock => P::ScrollLock,
+            KeyCode::F1 => P::Function(1),
+            KeyCode::F2 => P::Function(2),
+            KeyCode::F3 => P::Function(3),
+            KeyCode::F4 => P::Function(4),
+            KeyCode::F5 => P::Function(5),
+            KeyCode::F6 => P::Function(6),
+            KeyCode::F7 => P::Function(7),
+            KeyCode::F8 => P::Function(8),
+            KeyCode::F9 => P::Function(9),
+            KeyCode::F10 => P::Function(10),
+            KeyCode::F11 => P::Function(11),
+            KeyCode::F12 => P::Function(12),
+            KeyCode::F13 => P::Function(13),
+            KeyCode::F14 => P::Function(14),
+            KeyCode::F15 => P::Function(15),
+            KeyCode::F16 => P::Function(16),
+            KeyCode::F17 => P::Function(17),
+            KeyCode::F18 => P::Function(18),
+            KeyCode::F19 => P::Function(19),
+            KeyCode::F20 => P::Function(20),
+            KeyCode::F21 => P::Function(21),
+            KeyCode::F22 => P::Function(22),
+            KeyCode::F23 => P::Function(23),
+            KeyCode::F24 => P::Function(24),
+            KeyCode::F25 => P::Function(25),
+            KeyCode::F26 => P::Function(26),
+            KeyCode::F27 => P::Function(27),
+            KeyCode::F28 => P::Function(28),
+            KeyCode::F29 => P::Function(29),
+            KeyCode::F30 => P::Function(30),
+            KeyCode::F31 => P::Function(31),
+            KeyCode::F32 => P::Function(32),
+            KeyCode::F33 => P::Function(33),
+            KeyCode::F34 => P::Function(34),
+            KeyCode::F35 => P::Function(35),
+            other => P::Code(format!("{other:?}")),
+        },
+        PhysicalKey::Unidentified(native) => P::Native(format!("{native:?}")),
     }
 }
 /// Winit icon for a portable cursor; `None` hides the pointer.
@@ -2978,6 +3420,86 @@ mod tests {
         commands
     }
 
+    #[test]
+    fn resilience_error_policy_retries_frames_and_observes_fatal_diagnostics() {
+        let mut runtime = Runtime::new();
+        let mut hook = None;
+        for callback in [Callback::Prepare, Callback::Render, Callback::Submitted] {
+            let error = RunError::Handler {
+                callback,
+                window: None,
+                source: Box::new(ApplicationError::Ui(UiError::InvalidGeometry)),
+            };
+            assert_eq!(
+                error_action(&mut runtime, &mut hook, &error),
+                ErrorAction::Continue
+            );
+        }
+        let lifecycle = RunError::Handler {
+            callback: Callback::Resumed,
+            window: None,
+            source: Box::new(ApplicationError::InvalidWindowOptions),
+        };
+        assert_eq!(
+            error_action(&mut runtime, &mut hook, &lifecycle),
+            ErrorAction::Exit
+        );
+        let window = NativeWindowId::from(1);
+        for source in [
+            astrelis::GpuEvent::Validation("bad frame".into()),
+            astrelis::GpuEvent::Internal("transient".into()),
+        ] {
+            assert_eq!(
+                error_action(
+                    &mut runtime,
+                    &mut hook,
+                    &RunError::Graphics { window, source }
+                ),
+                ErrorAction::Continue
+            );
+        }
+        let observed = Rc::new(Cell::new(0));
+        let count = observed.clone();
+        hook = Some(Box::new(move |_, cx| {
+            assert!(cx.window().is_none());
+            count.set(count.get() + 1);
+            ErrorAction::Continue
+        }));
+        for source in [
+            astrelis::GpuEvent::OutOfMemory("allocation".into()),
+            astrelis::GpuEvent::DeviceLost {
+                reason: wgpu::DeviceLostReason::Unknown,
+                message: "lost device".into(),
+            },
+        ] {
+            assert_eq!(
+                error_action(
+                    &mut runtime,
+                    &mut hook,
+                    &RunError::Graphics { window, source }
+                ),
+                ErrorAction::Exit
+            );
+        }
+        assert_eq!(observed.get(), 2);
+        hook = Some(Box::new(|_, _| ErrorAction::Exit));
+        assert_eq!(
+            error_action(
+                &mut runtime,
+                &mut hook,
+                &RunError::Acquisition {
+                    window,
+                    source: astrelis::FrameError::Retry
+                },
+            ),
+            ErrorAction::Exit
+        );
+    }
+    #[test]
+    fn external_wake_handle_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ApplicationWakeHandle>();
+    }
     #[test]
     fn font_registration_validates_now_and_queues_for_the_shared_painter() {
         let mut runtime = Runtime::new();

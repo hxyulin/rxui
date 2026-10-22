@@ -64,6 +64,7 @@ fn controlled_fraction_and_pixel_splits_layout_constraints_drag_escape_and_keys(
         ui.key(
             &mut r,
             KeyEvent {
+                physical_key: Default::default(),
                 key: KeyboardKey::Escape,
                 pressed: true,
                 repeat: false,
@@ -77,6 +78,7 @@ fn controlled_fraction_and_pixel_splits_layout_constraints_drag_escape_and_keys(
         ui.key(
             &mut r,
             KeyEvent {
+                physical_key: Default::default(),
                 key: KeyboardKey::End,
                 pressed: true,
                 repeat: false,
@@ -176,6 +178,7 @@ fn scrollbars_drag_keys_and_explicit_commands_are_placement_scoped_and_disposabl
         .key(
             &mut r,
             KeyEvent {
+                physical_key: Default::default(),
                 key: KeyboardKey::End,
                 pressed: true,
                 repeat: false,
@@ -261,6 +264,7 @@ fn key<T: View>(ui: &mut Ui<T>, r: &mut Runtime, key: KeyboardKey) -> InputResul
     ui.key(
         r,
         KeyEvent {
+            physical_key: Default::default(),
             key,
             pressed: true,
             repeat: false,

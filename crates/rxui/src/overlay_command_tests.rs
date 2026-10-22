@@ -21,6 +21,7 @@ fn center<T: View>(ui: &Ui<T>, key: &str) -> [f32; 2] {
 }
 fn key(key: KeyboardKey) -> KeyEvent {
     KeyEvent {
+        physical_key: Default::default(),
         key,
         pressed: true,
         repeat: false,
@@ -30,6 +31,7 @@ fn key(key: KeyboardKey) -> KeyEvent {
 fn chord() -> KeyEvent {
     let s = Shortcut::primary("k");
     KeyEvent {
+        physical_key: Default::default(),
         key: s.key,
         modifiers: s.modifiers,
         ..key(KeyboardKey::Escape)
@@ -550,6 +552,7 @@ fn dock_context_requests_do_not_select_or_drag_and_have_keyboard_equivalents() {
     ui.key(
         &mut r,
         KeyEvent {
+            physical_key: Default::default(),
             key: KeyboardKey::Other("F10".into()),
             modifiers: Modifiers {
                 shift: true,

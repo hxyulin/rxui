@@ -264,6 +264,7 @@ fn focus_rings_fade_in_when_keyboard_input_reveals_pointer_focus() {
     assert!(!ui.is_animating());
 
     let key = KeyEvent {
+        physical_key: Default::default(),
         key: KeyboardKey::ArrowDown,
         pressed: true,
         repeat: false,
@@ -451,6 +452,7 @@ fn closing_overlays_keep_their_visual_but_release_focus_input_and_semantics() {
         ui.key(
             &mut r,
             KeyEvent {
+                physical_key: Default::default(),
                 key: KeyboardKey::Escape,
                 pressed: true,
                 repeat: false,

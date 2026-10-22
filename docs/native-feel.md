@@ -252,3 +252,9 @@ are installed; neither was run here.
   (`NSSystemColorsDidChangeNotification`), instead of on activation.
 - See the [platform integration roadmap](native-services.md#platform-integration-roadmap)
   for native menus on Linux, tray icons, notifications and single-instance apps.
+
+Window-level hidden cursors and pointer grabs take precedence over hovered cursor
+icons. Use `WindowHandle::set_cursor_hidden` or `set_pointer_lock` for a control
+mode; direct winit visibility changes are not retained RXUI policy. Focus loss
+releases locking. See [pointer locking](application.md#pointer-locking-and-visibility)
+for failure handling and platform differences.

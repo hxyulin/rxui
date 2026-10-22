@@ -117,6 +117,7 @@ fn explicit_capture_moves_outside_then_escape_removal_and_deactivation_cancel() 
     ui.key(
         &mut r,
         KeyEvent {
+            physical_key: Default::default(),
             key: KeyboardKey::Escape,
             pressed: true,
             repeat: false,
@@ -172,6 +173,7 @@ fn prevent_default_does_not_stop_route_and_capture_is_per_placement() {
         .key(
             &mut r,
             KeyEvent {
+                physical_key: Default::default(),
                 key: KeyboardKey::ArrowRight,
                 pressed: true,
                 repeat: false,
@@ -275,6 +277,7 @@ fn stopping_propagation_keeps_button_default_and_custom_focusable_routes_keys() 
             .key(
                 &mut r,
                 KeyEvent {
+                    physical_key: Default::default(),
                     key: KeyboardKey::Character("x".into()),
                     pressed: true,
                     repeat: false,
@@ -615,4 +618,189 @@ fn unchanged_pointer_listener_needs_no_evaluation_or_redraw() {
         stats.component_evaluations + 2
     );
     assert_eq!(runtime.update(|cx| root.read(cx).moves), 1);
+}
+
+#[test]
+fn raw_keyboard_routes_capture_and_release_without_commands_or_escape_defaults() {
+    struct Run;
+    impl Command for Run {}
+    struct Raw {
+        raw: bool,
+        keys: Vec<KeyEvent>,
+        commands: usize,
+        prevent: bool,
+    }
+    impl View for Raw {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column()
+                .raw_keyboard(self.raw)
+                .on_command(
+                    cx.command(Run, |s, _, _| s.commands += 1)
+                        .shortcut(Shortcut::primary("q")),
+                )
+                .on_key_down_capture(cx.listener(|s, e: &KeyInput, _| {
+                    s.keys.push(e.event.clone());
+                    if s.prevent {
+                        e.prevent_default();
+                    }
+                }))
+                .on_key_up_capture(cx.listener(|s, e: &KeyInput, _| s.keys.push(e.event.clone())))
+                .child(button("Target").size(80., 30.).on_pointer_down(cx.listener(
+                    |_, e: &PointerInput, _| {
+                        e.capture_pointer();
+                        e.focus();
+                    },
+                )))
+        }
+    }
+    let mut r = Runtime::new();
+    let entity = r.update(|cx| {
+        cx.new(|_| Raw {
+            raw: true,
+            keys: Vec::new(),
+            commands: 0,
+            prevent: false,
+        })
+    });
+    let mut ui = Ui::new(&mut r, entity.clone()).unwrap();
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    ui.pointer(&mut r, PointerEvent::Pressed([10., 10.]))
+        .unwrap();
+    assert!(ui.captured_pointer().is_some());
+    for (key, physical_key) in [
+        (KeyboardKey::Tab, PhysicalKey::Tab),
+        (KeyboardKey::Escape, PhysicalKey::Escape),
+        (KeyboardKey::Enter, PhysicalKey::Enter),
+        (KeyboardKey::Shift, PhysicalKey::ShiftLeft),
+        (KeyboardKey::Control, PhysicalKey::ControlRight),
+        (KeyboardKey::Character("q".into()), PhysicalKey::KeyQ),
+    ] {
+        ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+        let event = KeyEvent {
+            key,
+            physical_key,
+            pressed: true,
+            repeat: false,
+            modifiers: Shortcut::primary("q").modifiers,
+        };
+        assert!(ui.key(&mut r, event.clone()).unwrap().default_prevented);
+        assert!(
+            ui.key(
+                &mut r,
+                KeyEvent {
+                    pressed: false,
+                    ..event
+                }
+            )
+            .unwrap()
+            .default_prevented
+        );
+    }
+    assert!(ui.captured_pointer().is_some());
+    r.update(|cx| {
+        let state = entity.read(cx);
+        assert_eq!(state.commands, 0);
+        assert_eq!(state.keys.len(), 12);
+        assert_eq!(state.keys[10].physical_key, PhysicalKey::KeyQ);
+    });
+    // Capture + prevent_default covers individual keys without raw mode too.
+    r.update(|cx| {
+        entity.update(cx, |s, _| {
+            s.raw = false;
+            s.prevent = true;
+        })
+    });
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    let key = KeyEvent {
+        key: KeyboardKey::Escape,
+        physical_key: PhysicalKey::Escape,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    assert!(ui.key(&mut r, key.clone()).unwrap().default_prevented);
+    assert!(ui.captured_pointer().is_some());
+    // Releases remain observable even after a custom host has deactivated its UI.
+    ui.set_active(false);
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    assert!(!ui.key(&mut r, key.clone()).unwrap().changed);
+    assert!(
+        ui.key(
+            &mut r,
+            KeyEvent {
+                pressed: false,
+                ..key
+            }
+        )
+        .unwrap()
+        .changed
+    );
+}
+
+#[test]
+fn cancelled_button_release_reaches_capture_without_clicking_and_clears_buttons() {
+    #[derive(Default)]
+    struct Buttons {
+        ups: Vec<(PointerButton, PointerButtons)>,
+        clicks: usize,
+        cancels: usize,
+    }
+    impl View for Buttons {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            button("Capture")
+                .size(100., 40.)
+                .on_pointer_down(cx.listener(|_, e: &PointerInput, _| e.capture_pointer()))
+                .on_pointer_up(
+                    cx.listener(|s, e: &PointerInput, _| {
+                        s.ups.push((e.button.unwrap(), e.buttons))
+                    }),
+                )
+                .on_pointer_cancel(cx.listener(|s, _, _| s.cancels += 1))
+                .on_click(cx.listener(|s, _, _| s.clicks += 1))
+        }
+    }
+    let mut r = Runtime::new();
+    let entity = r.update(|cx| cx.new(|_| Buttons::default()));
+    let mut ui = Ui::new(&mut r, entity.clone()).unwrap();
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    for button in [
+        PointerButton::Primary,
+        PointerButton::Secondary,
+        PointerButton::Middle,
+    ] {
+        ui.pointer(
+            &mut r,
+            PointerEvent::Down {
+                position: [10., 10.],
+                button,
+                modifiers: Default::default(),
+            },
+        )
+        .unwrap();
+    }
+    for button in [
+        PointerButton::Primary,
+        PointerButton::Secondary,
+        PointerButton::Middle,
+    ] {
+        ui.pointer(
+            &mut r,
+            PointerEvent::CancelledUp {
+                position: [180., 80.],
+                button,
+                modifiers: Default::default(),
+            },
+        )
+        .unwrap();
+    }
+    ui.pointer(&mut r, PointerEvent::Cancelled).unwrap();
+    ui.set_active(false);
+    assert!(ui.captured_pointer().is_none());
+    r.update(|cx| {
+        let state = entity.read(cx);
+        assert_eq!(state.clicks, 0);
+        assert_eq!(state.ups.len(), 3);
+        assert!(!state.ups.last().unwrap().1.any());
+        assert_eq!(state.cancels, 1);
+    });
 }

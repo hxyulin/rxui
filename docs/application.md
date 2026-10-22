@@ -83,6 +83,98 @@ host does not block indefinitely on pending jobs. Exit stops accepting window
 operations, and runtime disposal cancels outstanding task delivery. A custom
 RunnerOptions policy can select whether closing the last window exits.
 
+## Runtime errors and GPU diagnostics
+
+The host continues after recoverable prepare/render/submitted callback failures,
+surface acquisition/recreation failures, submission errors, and validation/internal
+GPU diagnostics when `RunError::can_continue()` allows it. Failed frame work is
+skipped and retried with Astrelis's `RunnerOptions::retry_delay` (16 ms by default).
+Surface loss uses capped exponential backoff. Initialization, lifecycle and input
+callback errors exit by default. Continuing skips the failed callback; it does not
+replay input or roll back model changes or already submitted GPU work.
+
+`Application::error` receives `rxui::astrelis_winit::RunError` and returns
+`rxui::astrelis_winit::ErrorAction`. It can count/log failures and override the
+default policy. The original callback error is retained in `RunError::Handler`,
+including errors returned by `prepare_graphics`, custom element preparation and
+RXUI's own UI preparation. Panics are not caught. The hook runs in a fresh
+application update without an implicit source window. `RunError` carries a native
+winit window ID where available; it is distinct from RXUI's `WindowId`.
+
+```rust,no_run
+use rxui::{Application, astrelis_winit::ErrorAction};
+
+let app = Application::new().error(|error, _cx| {
+    eprintln!("native failure: {error}");
+    if error.can_continue() {
+        ErrorAction::Continue
+    } else {
+        ErrorAction::Exit
+    }
+});
+```
+
+This example also opts into continuing lifecycle/input failures. Return
+`ErrorAction::Exit` for any failure your application cannot handle. Astrelis logs
+runner failures and uncaptured GPU diagnostics through the `log` facade; RXUI
+installs no logging backend. Applications choose one to retain those messages.
+The runner polls and drains `GraphicsContext::take_gpu_events()` before rendering
+and sleeping, including idle checks at least every 100 ms while windows exist.
+RXUI forwards the resulting `RunError::Graphics` through the same error hook and
+does not drain the shared queue a second time. Shared-device diagnostics affect
+all resources on that device, even though delivery names one window.
+
+Device loss and GPU out-of-memory always force clean shutdown after notifying the
+hook, even if it returns Continue. `Application::run` returns
+`ApplicationError::Native` containing the `RunError::Graphics`. Automatic device
+rebuild is not provided: restarting requires a fresh GraphicsContext, surfaces,
+UiPainter/renderers/atlases, prepared geometry and all application GPU resources.
+CPU models, layouts and font data may be retained for reconstruction. See
+[remaining production follow-ups](astrelis-followups.md).
+
+Atlas pressure is separate from a failed frame. Astrelis prepares the glyphs that
+fit and omits new glyphs while pages are leased. RXUI keeps that partial text
+drawable and prepares incomplete normal text, placeholders and long-text chunks
+again, even when layout is unchanged. The native host requests another redraw
+100 ms later while pressure remains; it does not spin an on-demand window.
+Custom hosts can inspect `UiPainter::text_atlas_full(&ui)` after preparation and
+schedule their own paced retry while releasing obsolete text and driving GPU
+progress. Permanently retained resources may keep the atlas full indefinitely;
+retrying does not expand its page budget or change layout/hit testing.
+
+## Native backends and surface latency
+
+RXUI's `gles` feature forwards to `astrelis/gles` and, when `native` is enabled,
+`astrelis-winit/gles`. It enables rendering without enabling the native host on its
+own. The native runner passes winit's owned display handle into instance creation,
+including the EGL display connection required for GLES presentation. Astrelis
+reads instance environment settings such as `WGPU_BACKEND`, plus `WGPU_POWER_PREF`
+and `WGPU_ADAPTER_NAME` for adapter selection. An unmatched adapter name returns
+`Error::RequestedAdapterNotFound`. For example, build with `native,gles` and set
+`WGPU_BACKEND=gl` to request GL. Linux drivers and X11/Wayland presentation still
+require runtime verification.
+
+`WindowOptions::surface` accepts Astrelis's `SurfaceSettings`, including present
+mode and desired maximum queued frames:
+
+```rust
+use rxui::{WindowOptions, astrelis::wgpu, astrelis_winit::SurfaceSettings};
+
+let options = WindowOptions::new().surface(
+    SurfaceSettings::new()
+        .present_mode(wgpu::PresentMode::AutoVsync)
+        .desired_maximum_frame_latency(1),
+);
+```
+
+The latency default is 2; zero becomes 1, and wgpu clamps to supported values.
+One queued frame may lower latency while serializing CPU/GPU work. Settings
+survive resize, surface replacement and suspension. A caller-supplied device via
+`Application::graphics` keeps its instance configuration. Custom GLES hosts should
+use `WindowContext::with_display` or `GraphicsContext::with_surface_instance` with
+a display-configured instance; the older constructors without a display handle
+do not establish the native EGL display contract.
+
 ## Scheduling and embedding
 
 The default is on-demand rendering. Input/task updates invalidate dependent
@@ -197,3 +289,65 @@ View deadline wakeups share the animation clock origin. Custom hosts must combin
 platform timers and replace the combined timer after preparation. See the
 [deadline scheduling contract](animation.md#deadline-wakeups), including unavailable
 surfaces and input-time evaluations.
+
+## Input policy and native event observers
+
+Desktop defaults are unchanged. `WindowOptions::standard_shortcuts(false)` disables
+the built-in primary+W/Q/Z/Y/C/X/V/A table for one window, including close and quit.
+Registered application shortcuts and explicit commands/menu actions still work.
+Custom hosts use `WindowInput::set_standard_shortcuts(false)`. For a control view
+that must also suppress registered shortcuts, Tab, activation and text input, use
+`Element::raw_keyboard(true)`; see [interaction](interaction.md#raw-keyboard-input-and-deactivation).
+These policies do not veto OS close requests. `close_requested` and
+`quit_requested` remain the lifecycle veto hooks.
+
+`Application::device_event` receives winit `DeviceId` and a borrowed `DeviceEvent`,
+including `MouseMotion { delta }` for relative mouse input. Device events have no
+implicit source window and follow winit's default focused-window delivery policy.
+Filter by your application's active window and control mode. `window_event`
+receives an explicit `WindowHandle` and a borrowed raw `WindowEvent` before RXUI
+routes it. These observers run in fresh application updates with no implicit
+`cx.window()` and cannot consume or replace RXUI handling. They may update models
+or queue the usual application operations. `window_active_changed` runs after the
+window's held inputs are released and its pointer is unlocked, so views can clear
+control state without losing release notifications. The hooks do not establish
+a fixed-rate input publisher; schedule that work in the application's service
+runtime and transfer owned snapshots across the thread boundary.
+
+`cx.wake_handle()` returns an `ApplicationWakeHandle`, which is cloneable,
+`Send + Sync` and holds no entities or windows. External services send owned data
+through a channel and call `wake()`. `Application::woken` then drains the channel
+and updates entities on the UI thread, followed by normal effects, window commands
+and redraw scheduling. Calls after event-loop shutdown return
+`ApplicationError::Exited`. Each successful wake schedules a callback; producers
+should batch or coalesce a stream rather than accumulate unbounded work.
+See [streaming updates](async.md#streaming-updates-from-external-runtimes) for a
+50 Hz example using an application-owned Tokio runtime.
+
+## Pointer locking and visibility
+
+`WindowHandle::set_pointer_lock(true)` requests `CursorGrabMode::Locked`, falls
+back to `Confined` when locking fails, and hides the cursor. The native window
+must exist and have focus. The result reports `Some(PointerLock::Locked)` or
+`Some(PointerLock::Confined)`; if both fail it returns `ApplicationError::Native`
+and preserves logical state. Handle errors in the application rather than
+propagating them out of initialization. `set_pointer_lock(false)` releases it;
+`pointer_lock()` reports the selected mode. `set_cursor_hidden(bool)` separately
+controls visibility, including before native creation. Hovered cursor changes
+respect both the window's hidden state and its active grab.
+
+Focus loss automatically releases the grab and never re-locks it on focus gain.
+The cursor becomes visible again unless explicitly hidden or over a hidden-cursor
+element. An automatic release failure is available through
+`take_pointer_lock_error()`; it does not become a fatal runner error. Custom hosts
+have equivalent `WindowInput::set_pointer_lock`, `set_cursor_hidden` and
+`take_pointer_lock_error` operations and must call `sync_window` after focus events.
+They receive winit's `ExternalError` directly for explicit lock requests.
+
+X11 does not implement Locked, so RXUI selects Confined. Confinement is bounded by
+the window and does not promise unbounded relative movement; use the device-event
+observer and account for the returned mode. Wayland supports locking when the
+compositor permits it, but does not permit arbitrary cursor warping; this API does
+not warp the cursor. macOS supports Locked and does not implement Confined.
+Native grab failures remain possible on every platform. Runtime locking and
+relative motion require testing on the target desktop/compositor.

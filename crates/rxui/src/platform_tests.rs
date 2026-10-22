@@ -24,6 +24,7 @@ fn ring<T: View>(ui: &Ui<T>, key: &str) -> bool {
 }
 fn press(key: KeyboardKey, modifiers: Modifiers) -> KeyEvent {
     KeyEvent {
+        physical_key: Default::default(),
         key,
         pressed: true,
         repeat: false,

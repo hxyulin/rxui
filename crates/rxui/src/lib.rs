@@ -236,13 +236,14 @@ pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
 #[cfg(feature = "layout")]
 pub use input::{
     Cursor, EventPhase, FocusEvent, HoverEvent, ImeCancelReason, ImeEvent, ImeInput, InputResult,
-    KeyEvent, KeyInput, KeyboardKey, Modifiers, PointerButton, PointerButtons, PointerCancelReason,
-    PointerInput, TextInsertInput, TextInsertSource, WheelInput, WheelSource,
+    KeyEvent, KeyInput, KeyboardKey, Modifiers, PhysicalKey, PointerButton, PointerButtons,
+    PointerCancelReason, PointerInput, TextInsertInput, TextInsertSource, WheelInput, WheelSource,
 };
 pub use listener::{Dispatch, Listener};
 #[cfg(feature = "native")]
 pub use native::{
-    Application, ApplicationError, GraphicsPrepareContext, WindowHandle, WindowId, WindowOptions,
+    Application, ApplicationError, ApplicationWakeHandle, GraphicsPrepareContext, PointerLock,
+    WindowHandle, WindowId, WindowOptions,
 };
 #[cfg(feature = "native")]
 pub use native::{FileDropEvent, WindowGeometry, WindowInput, WindowInputResult};
@@ -320,10 +321,10 @@ pub mod prelude {
         AccessibilityHandle, BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor,
         Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Image, ImageAlpha,
         ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
-        LivePoliteness, Modifiers, PaintStyle, PointerButton, PointerButtons, PointerCancelReason,
-        PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign, TextChangeEvent,
-        TextOverflow, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext, WheelInput,
-        WheelSource, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+        LivePoliteness, Modifiers, PaintStyle, PhysicalKey, PointerButton, PointerButtons,
+        PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign,
+        TextChangeEvent, TextOverflow, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext,
+        WheelInput, WheelSource, button, column, image, label, rgb8, rgba8, row, stack, text_input,
     };
     pub use crate::{
         AnchorHandle, Command, CommandAction, CommandId, CommandInfo, CommandRegistration,
@@ -333,8 +334,8 @@ pub mod prelude {
     pub use crate::{Animated, Easing, Interpolate, Spring, Transition};
     #[cfg(feature = "native")]
     pub use crate::{
-        Application, ApplicationError, CloseResponse, FileDropEvent, WindowGeometry, WindowHandle,
-        WindowOptions,
+        Application, ApplicationError, ApplicationWakeHandle, CloseResponse, FileDropEvent,
+        PointerLock, WindowGeometry, WindowHandle, WindowOptions,
     };
     pub use crate::{
         Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollBehavior,

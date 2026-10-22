@@ -130,3 +130,59 @@ blocking worker is occupied. The native example exercises shared-window jobs.
 Executor implementation references: [async-executor](https://docs.rs/async-executor/latest/async_executor/struct.Executor.html),
 [futures-util Abortable](https://docs.rs/futures-util/latest/futures_util/future/struct.Abortable.html),
 and [async-channel](https://docs.rs/async-channel/latest/async_channel/).
+
+## Streaming updates from external runtimes
+
+A long-lived service does not need one RXUI task per sample. Send owned values over
+a channel, then call an `ApplicationWakeHandle` obtained from `cx.wake_handle()`.
+`Application::woken` drains the receiver inside a fresh UI update, even while
+presentation is suspended. Keep RXUI entities and window handles on the UI thread;
+only the channel sender, owned values and wake handle cross threads.
+
+For example, an application with an existing Tokio runtime can publish at 50 Hz.
+This sketch assumes `Model` implements `View` and has a `sample: u64` field;
+`tokio_handle` is the application's `tokio::runtime::Handle`:
+
+```rust
+use std::{cell::RefCell, rc::Rc, sync::mpsc, time::Duration};
+use rxui::prelude::*;
+
+let (sender, receiver) = mpsc::sync_channel(1);
+let model = Rc::new(RefCell::new(None::<Entity<Model>>));
+let target = model.clone();
+Application::new()
+    .woken(move |cx| {
+        // Keep only the latest sample when several arrive before delivery.
+        let latest = receiver.try_iter().last();
+        if let (Some(sample), Some(model)) = (latest, target.borrow().as_ref()) {
+            model.update(cx, |this, _| this.sample = sample);
+        }
+    })
+    .run(move |cx| {
+        let entity = cx.new(|_| Model { sample: 0 });
+        *model.borrow_mut() = Some(entity.clone());
+        cx.open_window(WindowOptions::new(), entity)?;
+        let wake = cx.wake_handle()?;
+        tokio_handle.spawn(async move {
+            let mut ticks = tokio::time::interval(Duration::from_millis(20));
+            let mut sample = 0;
+            loop {
+                ticks.tick().await;
+                sample += 1;
+                match sender.try_send(sample) {
+                    Ok(()) => if wake.wake().is_err() { break; },
+                    Err(mpsc::TrySendError::Full(_)) => {},
+                    Err(mpsc::TrySendError::Disconnected(_)) => break,
+                }
+            }
+        });
+        Ok(())
+    })?;
+```
+
+The bounded channel drops a new sample while one is pending. A shared latest-value
+mailbox can instead replace pending data; choose the stream's overflow policy
+explicitly. Wake messages carry no data and each successful call schedules a
+`woken` callback. For higher rates, coalesce notifications with a pending flag or
+send one batch per wake. The service owns its timer, cancellation and shutdown;
+RXUI supplies UI-thread delivery and event-loop wakeup, without installing Tokio.

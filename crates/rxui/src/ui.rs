@@ -448,6 +448,16 @@ pub enum PointerEvent {
         /// Modifiers.
         modifiers: crate::Modifiers,
     },
+    /// Host-synthesized release on deactivation. Routes up listeners without
+    /// activating controls or committing pointer defaults; follow with `Cancelled`.
+    CancelledUp {
+        /// Logical position.
+        position: [f32; 2],
+        /// Released button.
+        button: crate::PointerButton,
+        /// Modifiers after deactivation.
+        modifiers: crate::Modifiers,
+    },
     /// Primary button pressed.
     Pressed([f32; 2]),
     /// Primary button released.
@@ -2928,6 +2938,9 @@ impl<T: View> Ui<T> {
     /// Whether the focus accepts platform IME composition: an editable input that is
     /// not masked, or a text input client. Password inputs take committed text only.
     pub fn accepts_ime(&self) -> bool {
+        if self.raw_keyboard() {
+            return false;
+        }
         self.accepts_text_input() && self.focused.is_some_and(|id| !self.nodes[&id].masked())
     }
     /// Whether focus is on selectable text: any text input, including read-only
@@ -2937,6 +2950,18 @@ impl<T: View> Ui<T> {
             && self
                 .focused
                 .is_some_and(|id| self.enabled(id) && self.nodes[&id].editor.is_some())
+    }
+    /// Whether the focused element (or root) is inside a raw-keyboard subtree.
+    pub fn raw_keyboard(&self) -> bool {
+        let mut current = self.focused.or(self.root);
+        while let Some(id) = current {
+            let node = &self.nodes[&id];
+            if node.element.input.as_ref().is_some_and(|p| p.raw_keyboard) {
+                return true;
+            }
+            current = node.parent;
+        }
+        false
     }
     /// Changes native activation. Losing activation cancels composition/capture while
     /// retaining the focused identity and committed selection for later reactivation.

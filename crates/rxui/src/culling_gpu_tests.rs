@@ -226,6 +226,7 @@ fn dock_drag_preview_respects_dpi_viewport_scissor_theme_and_isolated_content() 
                 ui.key(
                     &mut runtime,
                     KeyEvent {
+                        physical_key: Default::default(),
                         key: KeyboardKey::Escape,
                         pressed: true,
                         repeat: false,

@@ -262,14 +262,214 @@ pub enum KeyboardKey {
     Backspace,
     /// Delete.
     Delete,
+    /// Shift.
+    Shift,
+    /// Control.
+    Control,
+    /// Alt/Option.
+    Alt,
+    /// Alternate graphics modifier (AltGr).
+    AltGraph,
+    /// Function modifier.
+    Fn,
+    /// Function lock.
+    FnLock,
+    /// Legacy Meta modifier.
+    Meta,
+    /// Legacy Hyper modifier.
+    Hyper,
+    /// Symbol modifier.
+    Symbol,
+    /// Symbol lock.
+    SymbolLock,
+    /// Super/Command/Windows.
+    Super,
+    /// Caps Lock.
+    CapsLock,
+    /// Num Lock.
+    NumLock,
+    /// Scroll Lock.
+    ScrollLock,
+    /// Insert.
+    Insert,
+    /// Pause.
+    Pause,
+    /// Print Screen.
+    PrintScreen,
+    /// Context menu.
+    ContextMenu,
+    /// Function key number, starting at 1.
+    Function(u8),
     /// Other native named/unknown key, for diagnostics; spelling is backend-dependent.
     Other(String),
+}
+/// Layout-independent key position, named by the US keyboard position.
+/// Logical characters and text remain available separately in [`KeyEvent::key`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PhysicalKey {
+    /// US A position.
+    KeyA,
+    /// US B position.
+    KeyB,
+    /// US C position.
+    KeyC,
+    /// US D position.
+    KeyD,
+    /// US E position.
+    KeyE,
+    /// US F position.
+    KeyF,
+    /// US G position.
+    KeyG,
+    /// US H position.
+    KeyH,
+    /// US I position.
+    KeyI,
+    /// US J position.
+    KeyJ,
+    /// US K position.
+    KeyK,
+    /// US L position.
+    KeyL,
+    /// US M position.
+    KeyM,
+    /// US N position.
+    KeyN,
+    /// US O position.
+    KeyO,
+    /// US P position.
+    KeyP,
+    /// US Q position.
+    KeyQ,
+    /// US R position.
+    KeyR,
+    /// US S position.
+    KeyS,
+    /// US T position.
+    KeyT,
+    /// US U position.
+    KeyU,
+    /// US V position.
+    KeyV,
+    /// US W position.
+    KeyW,
+    /// US X position.
+    KeyX,
+    /// US Y position.
+    KeyY,
+    /// US Z position.
+    KeyZ,
+    /// Top-row 0 position.
+    Digit0,
+    /// Top-row 1 position.
+    Digit1,
+    /// Top-row 2 position.
+    Digit2,
+    /// Top-row 3 position.
+    Digit3,
+    /// Top-row 4 position.
+    Digit4,
+    /// Top-row 5 position.
+    Digit5,
+    /// Top-row 6 position.
+    Digit6,
+    /// Top-row 7 position.
+    Digit7,
+    /// Top-row 8 position.
+    Digit8,
+    /// Top-row 9 position.
+    Digit9,
+    /// Left Shift.
+    ShiftLeft,
+    /// Right Shift.
+    ShiftRight,
+    /// Left Control.
+    ControlLeft,
+    /// Right Control.
+    ControlRight,
+    /// Left Alt/Option.
+    AltLeft,
+    /// Right Alt/Option.
+    AltRight,
+    /// Left Super/Command.
+    SuperLeft,
+    /// Right Super/Command.
+    SuperRight,
+    /// Escape.
+    Escape,
+    /// Tab.
+    Tab,
+    /// Enter/Return.
+    Enter,
+    /// Space.
+    Space,
+    /// Backspace.
+    Backspace,
+    /// Delete.
+    Delete,
+    /// Insert.
+    Insert,
+    /// Home.
+    Home,
+    /// End.
+    End,
+    /// Page up.
+    PageUp,
+    /// Page down.
+    PageDown,
+    /// Left arrow.
+    ArrowLeft,
+    /// Right arrow.
+    ArrowRight,
+    /// Up arrow.
+    ArrowUp,
+    /// Down arrow.
+    ArrowDown,
+    /// US backquote position.
+    Backquote,
+    /// US minus position.
+    Minus,
+    /// US equals position.
+    Equal,
+    /// US left bracket position.
+    BracketLeft,
+    /// US right bracket position.
+    BracketRight,
+    /// US backslash position.
+    Backslash,
+    /// US semicolon position.
+    Semicolon,
+    /// US quote position.
+    Quote,
+    /// US comma position.
+    Comma,
+    /// US period position.
+    Period,
+    /// US slash position.
+    Slash,
+    /// Caps Lock.
+    CapsLock,
+    /// Num Lock.
+    NumLock,
+    /// Scroll Lock.
+    ScrollLock,
+    /// Function key number, starting at 1.
+    Function(u8),
+    /// Other identified native position (winit KeyCode spelling in the native host).
+    Code(String),
+    /// Native unidentified key; spelling is backend-dependent.
+    Native(String),
+    /// The host did not provide a physical identity.
+    #[default]
+    Unidentified,
 }
 /// Portable host keyboard event, before built-in control/text defaults.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyEvent {
     /// Logical identity.
     pub key: KeyboardKey,
+    /// Layout-independent position; custom hosts may use `Unidentified`.
+    pub physical_key: PhysicalKey,
     /// True for key down, false for key up.
     pub pressed: bool,
     /// Native repeat flag.
@@ -298,7 +498,7 @@ impl KeyInput {
         });
     }
     /// Suppresses native-host control/text defaults for this event: activation, Tab
-    /// focus traversal, built-in editing, and the text a key press would insert
+    /// focus traversal, command shortcuts, built-in editing, and the text a key press would insert
     /// into a text input client.
     pub fn prevent_default(&self) {
         self.requests.update(|mut r| {
@@ -480,6 +680,7 @@ pub(crate) struct InputProperties {
     pub measured_row: Option<crate::virtual_rows::MeasuredRow>,
     pub overlay: Option<Box<crate::overlay::Properties>>,
     pub menu: bool,
+    pub raw_keyboard: bool,
     pub commands: Vec<crate::commands::Action>,
     pub dock: Option<Box<crate::dock_view::Metadata>>,
     pub focus: Option<Box<crate::ui::focus::Properties>>,

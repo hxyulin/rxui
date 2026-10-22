@@ -101,6 +101,7 @@ fn press_key<T: View>(
     ui.key(
         r,
         KeyEvent {
+            physical_key: Default::default(),
             key,
             pressed: true,
             repeat,

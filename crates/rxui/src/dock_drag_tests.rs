@@ -270,6 +270,7 @@ fn cancellation_outside_noop_and_unavailable_edges_never_commit() {
                 ui.key(
                     &mut r,
                     KeyEvent {
+                        physical_key: Default::default(),
                         key: KeyboardKey::Escape,
                         pressed: true,
                         repeat: false,
