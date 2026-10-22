@@ -1078,8 +1078,13 @@ fn keyboard_focus_tooltips_delay_dismiss_and_rearm_on_refocus() {
     h.prepare();
     h.frame(1_000);
     assert!(h.shown("tooltip").is_none());
+    assert_eq!(h.r.next_wakeup(), Some(Duration::from_millis(1_600)));
+    let evaluations = h.ui.stats().component_evaluations;
+    h.frame(1_300);
+    assert_eq!(h.ui.stats().component_evaluations, evaluations);
     h.frame(1_600);
     assert!(h.shown("tooltip").is_some());
+    assert_eq!(h.r.next_wakeup(), None);
     assert_eq!(h.ui.focused_element(), Some(h.id("save")));
     h.pointer(PointerEvent::Moved(h.center(h.id("save"))));
     h.pointer(PointerEvent::Moved([590., 790.]));
