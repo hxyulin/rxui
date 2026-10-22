@@ -173,6 +173,17 @@ pub struct HoverEvent {
     /// True when the pointer entered the subtree, false when it left.
     pub hovered: bool,
 }
+/// Notification that keyboard focus entered or left an element's subtree, or
+/// changed input modality while remaining there. It cannot prevent focus changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FocusEvent {
+    /// Element whose listener runs (an ancestor may observe descendant focus).
+    pub target: ElementId,
+    /// Whether the subtree contains focus in the active window after the transition.
+    pub focused: bool,
+    /// Whether keyboard navigation is the current input modality.
+    pub keyboard: bool,
+}
 /// Mouse wheel or trackpad scroll payload, routed from the element under the pointer
 /// to the root before default container scrolling.
 pub struct WheelInput {
@@ -475,6 +486,7 @@ pub(crate) struct InputProperties {
     pub pointer: [Option<Listener<PointerInput>>; 8],
     pub key: [Option<Listener<KeyInput>>; 4],
     pub hover: Option<Listener<HoverEvent>>,
+    pub focus_change: Option<Listener<FocusEvent>>,
     pub wheel: Option<Listener<WheelInput>>,
     /// Text input client opt-in, listeners and IME area; see `Element::text_input_client`.
     pub text: Option<Box<TextClient>>,

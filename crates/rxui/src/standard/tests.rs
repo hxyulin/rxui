@@ -1068,3 +1068,43 @@ fn tooltip_deadline_wait_is_idle_and_cancels_on_leave_suppression_and_unmount() 
     drop(ui);
     assert_eq!(r.next_wakeup(), None);
 }
+
+#[test]
+fn keyboard_focus_tooltips_delay_dismiss_and_rearm_on_refocus() {
+    let mut h = Harness::new(Form::default());
+    // Keyboard modality plus custom-host focus; notifications dispatch at prepare.
+    h.ui.focus_next(false);
+    h.ui.focus(h.id("save"));
+    h.prepare();
+    h.frame(1_000);
+    assert!(h.shown("tooltip").is_none());
+    h.frame(1_600);
+    assert!(h.shown("tooltip").is_some());
+    assert_eq!(h.ui.focused_element(), Some(h.id("save")));
+    h.pointer(PointerEvent::Moved(h.center(h.id("save"))));
+    h.pointer(PointerEvent::Moved([590., 790.]));
+    assert!(h.shown("tooltip").is_some());
+    h.key(KeyboardKey::Escape);
+    h.frame(3_000);
+    assert!(h.shown("tooltip").is_none());
+    h.ui.focus(h.id("agree"));
+    h.prepare();
+    h.ui.focus(h.id("save"));
+    h.prepare();
+    h.frame(4_000);
+    h.frame(4_600);
+    assert!(h.shown("tooltip").is_some());
+    let saved = h.ui.focused_element();
+    h.ui.set_active(false);
+    h.prepare();
+    assert!(h.shown("tooltip").is_none());
+    assert_eq!(h.ui.focused_element(), saved);
+    h.ui.set_active(true);
+    h.prepare();
+    h.frame(5_000);
+    h.frame(5_600);
+    assert!(h.shown("tooltip").is_some());
+    h.ui.focus(h.id("agree"));
+    h.prepare();
+    assert!(h.shown("tooltip").is_none());
+}

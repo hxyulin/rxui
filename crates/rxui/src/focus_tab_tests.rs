@@ -642,3 +642,152 @@ fn entity_panels_constrain_filling_scroll_areas_and_long_headers_reveal_on_navig
     let focused = ui.element(ui.focused_element().unwrap()).unwrap();
     assert!(focused.bounds.intersection(focused.clip_bounds).width > 0.);
 }
+
+struct FocusNotifications {
+    events: Vec<(&'static str, bool, bool)>,
+    show: bool,
+    disabled: bool,
+    redirect: bool,
+    handle: FocusHandle,
+}
+impl View for FocusNotifications {
+    fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        let mut group = column().on_focus_change(cx.listener(|s, e: &FocusEvent, _| {
+            s.events.push(("group", e.focused, e.keyboard));
+        }));
+        if self.show {
+            group = group.child(
+                button("first")
+                    .key("first")
+                    .disabled(self.disabled)
+                    .on_focus_change(cx.listener(|s, e: &FocusEvent, cx| {
+                        s.events.push(("first", e.focused, e.keyboard));
+                        if e.focused && s.redirect {
+                            s.handle.focus(cx).unwrap();
+                        }
+                    })),
+            );
+        }
+        group.child(
+            button("second")
+                .key("second")
+                .focus_handle(self.handle.clone())
+                .on_focus_change(cx.listener(|s, e: &FocusEvent, _| {
+                    s.events.push(("second", e.focused, e.keyboard));
+                })),
+        )
+    }
+}
+#[test]
+fn focus_notifications_commit_then_deliver_leave_before_enter_and_allow_redirect() {
+    let mut r = Runtime::new();
+    let model = r.update(|cx| {
+        cx.new(|_| FocusNotifications {
+            events: vec![],
+            show: true,
+            disabled: false,
+            redirect: false,
+            handle: FocusHandle::new(),
+        })
+    });
+    let mut ui = Ui::new(&mut r, model.clone()).unwrap();
+    prepare(&mut r, &mut ui);
+    ui.focus_next(false);
+    // Custom-host focus APIs queue until preparation; there is no model lease.
+    assert!(r.update(|cx| model.read(cx).events.is_empty()));
+    prepare(&mut r, &mut ui);
+    assert_eq!(
+        r.update(|cx| model.read(cx).events.clone()),
+        vec![("group", true, true), ("first", true, true)]
+    );
+    r.update(|cx| {
+        model.update(cx, |s, _| {
+            s.events.clear();
+            s.show = false;
+        })
+    });
+    prepare(&mut r, &mut ui);
+    assert_eq!(
+        r.update(|cx| model.read(cx).events.clone()),
+        vec![("first", false, true), ("group", false, true)]
+    );
+    r.update(|cx| {
+        model.update(cx, |s, _| {
+            s.events.clear();
+            s.show = true;
+            s.redirect = true;
+        })
+    });
+    prepare(&mut r, &mut ui);
+    ui.focus(keyed(&ui, "first"));
+    prepare(&mut r, &mut ui);
+    assert_eq!(ui.focused_element(), Some(keyed(&ui, "second")));
+    assert_eq!(
+        r.update(|cx| model.read(cx).events.clone()),
+        vec![
+            ("group", true, true),
+            ("first", true, true),
+            ("first", false, true),
+            ("second", true, true)
+        ]
+    );
+    r.update(|cx| model.update(cx, |s, _| s.events.clear()));
+    prepare(&mut r, &mut ui);
+    ui.focus(keyed(&ui, "second"));
+    prepare(&mut r, &mut ui);
+    assert!(r.update(|cx| model.read(cx).events.is_empty()));
+}
+
+#[test]
+fn removed_component_focus_listeners_are_weak_and_other_windows_keep_focus() {
+    use std::{cell::RefCell, rc::Rc};
+    struct Child(Rc<RefCell<Vec<bool>>>);
+    impl View for Child {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            button("child").key("child").on_focus_change(
+                cx.listener(|s, e: &FocusEvent, _| s.0.borrow_mut().push(e.focused)),
+            )
+        }
+    }
+    struct Parent {
+        child: Entity<Child>,
+        show: bool,
+    }
+    impl View for Parent {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let root = column();
+            if self.show {
+                root.child(self.child.clone())
+            } else {
+                root
+            }
+        }
+    }
+    let mut r = Runtime::new();
+    let seen = Rc::new(RefCell::new(vec![]));
+    let child = r.update(|cx| cx.new(|_| Child(seen.clone())));
+    let parent = r.update(|cx| {
+        cx.new(|_| Parent {
+            child: child.clone(),
+            show: true,
+        })
+    });
+    let mut a = Ui::new(&mut r, parent.clone()).unwrap();
+    let mut b = Ui::new(&mut r, parent.clone()).unwrap();
+    prepare(&mut r, &mut a);
+    prepare(&mut r, &mut b);
+    a.focus_next(false);
+    prepare(&mut r, &mut a);
+    assert_eq!(seen.borrow().as_slice(), [true]);
+    assert!(b.focused_element().is_none());
+    b.focus_next(false);
+    prepare(&mut r, &mut b);
+    let b_focus = b.focused_element();
+    drop(a);
+    assert_eq!(b.focused_element(), b_focus);
+    r.update(|cx| parent.update(cx, |s, _| s.show = false));
+    prepare(&mut r, &mut b);
+    assert_eq!(seen.borrow().as_slice(), [true, true]);
+    assert!(b.focused_element().is_none());
+    assert!(r.update(|cx| child.try_read(cx).is_ok()));
+}

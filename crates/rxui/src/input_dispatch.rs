@@ -388,6 +388,7 @@ impl<T: View> Ui<T> {
         runtime: &mut Runtime,
     ) -> Result<bool, UiError> {
         let mut changed = self.flush_text_client(runtime)?;
+        changed |= self.flush_focus_notifications(runtime)?;
         for (listener, event) in std::mem::take(&mut self.input.pending_hover) {
             changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
         }
@@ -722,7 +723,7 @@ impl<T: View> Ui<T> {
             && self.set_keyboard_modality(true);
         let mut path = std::mem::take(&mut self.input.route);
         self.input_path(target, &mut path);
-        let result = (|| {
+        let result: Result<InputResult, UiError> = (|| {
             let mut result = InputResult {
                 changed: ring_changed,
                 ..Default::default()
@@ -810,6 +811,8 @@ impl<T: View> Ui<T> {
             Ok(result)
         })();
         self.input.route = path;
-        result
+        let mut result = result?;
+        result.changed |= self.flush_focus_notifications(runtime)?;
+        Ok(result)
     }
 }

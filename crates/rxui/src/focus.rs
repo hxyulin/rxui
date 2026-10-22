@@ -159,6 +159,9 @@ struct Command {
 }
 #[derive(Default)]
 pub(super) struct State {
+    notifications: Vec<(crate::Listener<crate::FocusEvent>, crate::FocusEvent)>,
+    path: Vec<(ElementId, crate::Listener<crate::FocusEvent>)>,
+    keyboard: bool,
     pub drop_focus: Option<Box<(ElementId, Key)>>,
     pub nodes: IdSet<ElementId>,
     life: Rc<()>,
@@ -170,7 +173,9 @@ pub(super) struct State {
 }
 impl State {
     pub(super) fn pending(&self) -> bool {
-        !self.commands.borrow().is_empty() || self.drop_focus.is_some()
+        !self.commands.borrow().is_empty()
+            || self.drop_focus.is_some()
+            || !self.notifications.is_empty()
     }
 }
 impl Drop for State {
@@ -189,6 +194,72 @@ pub(super) struct TabAnchor {
     panel: bool,
 }
 impl<T: View> Ui<T> {
+    pub(super) fn queue_focus_notifications(&mut self) {
+        let mut path = Vec::new();
+        let mut current = self.focused.filter(|_| self.active);
+        while let Some(id) = current {
+            let Some(node) = self.nodes.get(&id) else {
+                break;
+            };
+            if let Some(listener) = node
+                .element
+                .input
+                .as_ref()
+                .and_then(|p| p.focus_change.clone())
+            {
+                path.push((id, listener));
+            }
+            current = node.parent;
+        }
+        path.reverse();
+        if path.is_empty() && self.focus_state.is_none() {
+            return;
+        }
+        let state = self.focus_state.get_or_insert_with(Default::default);
+        for (id, listener) in state.path.iter().rev() {
+            if !path.iter().any(|(next, _)| id == next) {
+                state.notifications.push((
+                    listener.clone(),
+                    crate::FocusEvent {
+                        target: *id,
+                        focused: false,
+                        keyboard: self.keyboard_modality,
+                    },
+                ));
+            }
+        }
+        for (id, listener) in &path {
+            if state.keyboard != self.keyboard_modality
+                || !state.path.iter().any(|(old, _)| id == old)
+            {
+                state.notifications.push((
+                    listener.clone(),
+                    crate::FocusEvent {
+                        target: *id,
+                        focused: true,
+                        keyboard: self.keyboard_modality,
+                    },
+                ));
+            }
+        }
+        state.path = path;
+        state.keyboard = self.keyboard_modality;
+    }
+    pub(super) fn flush_focus_notifications(
+        &mut self,
+        runtime: &mut Runtime,
+    ) -> Result<bool, UiError> {
+        let pending = self
+            .focus_state
+            .as_mut()
+            .map(|s| std::mem::take(&mut s.notifications))
+            .unwrap_or_default();
+        let mut changed = false;
+        for (listener, event) in pending {
+            changed |= runtime.update(|cx| listener.dispatch(&event, cx))? == Dispatch::Handled;
+        }
+        Ok(changed)
+    }
     pub(super) fn register_focus_node(&mut self, id: ElementId) {
         if self.nodes[&id]
             .element

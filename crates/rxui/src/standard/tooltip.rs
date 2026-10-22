@@ -1,8 +1,8 @@
 //! Hover tooltips: delayed, non-focusable popovers that never intercept input.
 use super::{callback, local};
 use crate::{
-    AnchorHandle, DismissEvent, Dispatch, Element, Entity, HoverEvent, IntoElement, KeyInput,
-    PointerEvents, PointerInput, ThemeColor, ViewContext, label, popover, stack,
+    AnchorHandle, DismissEvent, Dispatch, Element, Entity, FocusEvent, HoverEvent, IntoElement,
+    KeyInput, PointerEvents, PointerInput, ThemeColor, ViewContext, label, popover, stack,
 };
 use std::{cell::Cell, time::Duration};
 use taffy::prelude::{AlignItems, Dimension};
@@ -14,6 +14,8 @@ pub const TOOLTIP_DELAY: Duration = Duration::from_millis(600);
 #[derive(Default)]
 pub(crate) struct TooltipState {
     hovered: bool,
+    keyboard_focused: bool,
+    focused: bool,
     /// Hidden by a press, key or Escape until the pointer leaves and returns.
     suppressed: bool,
     /// Frame time when the pointer entered, possibly from an earlier frame.
@@ -37,10 +39,11 @@ fn update(
     })
 }
 
-/// Wraps `target` with a hover tooltip showing `text`.
+/// Wraps `target` with a hover and keyboard-focus tooltip showing `text`.
 ///
 /// The tooltip appears after the pointer rests on the target for
-/// [`TOOLTIP_DELAY`] and hides when the pointer leaves, on any press or key
+/// [`TOOLTIP_DELAY`] (also after keyboard focus enters its subtree). It hides
+/// when neither hover nor keyboard focus remains, on any press or key
 /// press inside the target, on Escape, and when the target is hidden or scrolled
 /// away. It never takes focus, is transparent to pointer input and does not
 /// consume outside presses, so it cannot block the control it describes. The text
@@ -78,7 +81,7 @@ pub fn tooltip<T>(
     let visible = {
         let s = state.read(cx);
         let now = cx.frame_time();
-        if !s.hovered || s.suppressed {
+        if (!s.hovered && !s.keyboard_focused) || s.suppressed {
             false
         } else if s.since.get().is_none() && now == s.entered {
             // The hover listener saw the previous frame's clock; wait for a fresh one.
@@ -112,25 +115,54 @@ pub fn tooltip<T>(
         let now = cx.runtime.frames.borrow().1;
         let hovered = event.hovered;
         update(&hover, cx, |s| {
-            let changed = s.hovered != hovered || s.suppressed;
+            let active = s.hovered || s.keyboard_focused;
+            let rearm = hovered && s.suppressed;
+            let changed = s.hovered != hovered || rearm;
             s.hovered = hovered;
-            s.suppressed = false;
-            s.entered = now;
-            s.since.set(None);
-            changed || hovered
+            if active != (s.hovered || s.keyboard_focused) || rearm {
+                s.suppressed = false;
+                s.entered = now;
+                s.since.set(None);
+            }
+            changed
+        })
+    }));
+    let focus = state.clone();
+    wrapper = wrapper.on_focus_change(callback(move |event: &FocusEvent, cx| {
+        let now = cx.runtime.frames.borrow().1;
+        update(&focus, cx, |s| {
+            let active = s.hovered || s.keyboard_focused;
+            let fresh = event.focused && !s.focused;
+            // A key on a pointer-focused control dismisses its hover tooltip;
+            // changing modality alone must not turn that into keyboard entry.
+            let focused = event.focused && event.keyboard && (fresh || s.keyboard_focused);
+            let changed = s.focused != event.focused || s.keyboard_focused != focused;
+            s.focused = event.focused;
+            s.keyboard_focused = focused;
+            if !changed {
+                return false;
+            }
+            let next_active = s.hovered || s.keyboard_focused;
+            if active != next_active || (fresh && event.keyboard && s.suppressed) {
+                if !next_active || fresh {
+                    s.suppressed = false;
+                }
+                s.entered = now;
+                s.since.set(None);
+            }
+            true
         })
     }));
     let press = state.clone();
     wrapper = wrapper.on_pointer_down_capture(callback(move |_: &PointerInput, cx| {
         update(&press, cx, |s| {
-            !std::mem::replace(&mut s.suppressed, s.hovered) && s.hovered
+            !std::mem::replace(&mut s.suppressed, s.hovered || s.keyboard_focused)
+                && (s.hovered || s.keyboard_focused)
         })
     }));
     let key = state.clone();
     wrapper = wrapper.on_key_down_capture(callback(move |_: &KeyInput, cx| {
-        update(&key, cx, |s| {
-            !std::mem::replace(&mut s.suppressed, s.hovered) && s.hovered
-        })
+        update(&key, cx, |s| !std::mem::replace(&mut s.suppressed, true))
     }));
     wrapper = wrapper.child(target);
     if visible {

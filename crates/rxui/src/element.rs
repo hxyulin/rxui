@@ -353,6 +353,20 @@ impl Element {
         self.input.get_or_insert_with(Default::default).hover = Some(listener);
         self
     }
+    /// Observes focus/blur within this subtree, without making it focusable.
+    /// Leaves run innermost first, enters outermost first; moving between two
+    /// descendants does not blur their common ancestors. Modality changes also
+    /// notify focused subtrees. Notifications are queued after focus commits and
+    /// dispatched by input processing or the next preparation, outside model
+    /// leases. Focus commands queued by callbacks apply in a later preparation
+    /// pass (the normal four-pass stability limit applies). Removal sends blur
+    /// to retained listener bindings; a disposed component listener is skipped.
+    /// Native deactivation blurs and reactivation focuses the remembered target.
+    /// Dropping the entire Ui does not dispatch callbacks.
+    pub fn on_focus_change(mut self, listener: Listener<crate::FocusEvent>) -> Self {
+        self.input.get_or_insert_with(Default::default).focus_change = Some(listener);
+        self
+    }
     /// Registers a wheel listener in the target/bubble route. It runs before default
     /// container scrolling, which `WheelInput::prevent_default` suppresses.
     pub fn on_wheel(mut self, listener: Listener<crate::WheelInput>) -> Self {

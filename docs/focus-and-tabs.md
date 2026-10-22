@@ -190,3 +190,32 @@ component scheduling separately.
 The [controlled docking tree](docking.md) now composes these groups with splits and
 checked programmatic edits. Header drag previews and reorder/move/split gestures follow that model; native
 cross-window detach remains separate work.
+
+## Focus notifications
+
+`element.on_focus_change(cx.listener(|this, event: &FocusEvent, cx| { ... }))`
+observes whether that element's subtree contains focus. It does not make the
+element focusable. Leaves run from the inner element outward, followed by enters
+from the outer element inward; common ancestors stay focused when focus moves
+between descendants. `event.keyboard` reports input modality, and a modality
+change also notifies the focused subtree. Repeated focus requests are silent.
+
+Focus commits before notifications. Events snapshot transitions without coalescing;
+several host focus calls before preparation report each transition in order. A
+callback can therefore receive an earlier transition after a later one committed.
+Pointer and key input dispatch notifications after routing;
+custom-host `Ui::focus`/`focus_next` queue them until preparation. Callbacks run
+outside entity leases and may update state or queue FocusHandle commands; those
+commands run in a later preparation pass, bounded by the normal four-pass limit.
+A redirect loop reports UnstableControlLayout. Callback panics propagate normally;
+the drained notification batch is not replayed. Hidden, disabled, inert or removed
+targets lose focus. Removed elements retain their last listener for blur delivery,
+but a disposed component's weak listener is skipped. Dropping the whole Ui does
+not run callbacks. Native deactivation emits blur and reactivation emits focus for the remembered
+target. The retained `focused_element()` identity and selection stay intact while
+inactive. `set_active` queues these notifications until preparation.
+
+Tooltips use these notifications to show after the same 600 ms delay on keyboard
+focus as on hover. Presses, keys and Escape suppress the tooltip until a fresh
+hover/focus entry. Tooltips remain nonfocusable, transparent to pointer input and
+hidden from assistive technology; the target retains its accessible description.

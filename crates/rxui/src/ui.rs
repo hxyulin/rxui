@@ -2384,6 +2384,7 @@ impl<T: View> Ui<T> {
             self.change_focus(None);
         }
         self.prune_hover(false);
+        self.queue_focus_notifications();
     }
     /// Iterates visible retained elements in paint order after successful preparation.
     pub fn elements(&self) -> impl Iterator<Item = ElementInfo<'_>> {
@@ -2701,6 +2702,7 @@ impl<T: View> Ui<T> {
     pub(crate) fn set_keyboard_modality(&mut self, keyboard: bool) -> bool {
         let before = self.focus_ring_visible();
         self.keyboard_modality = keyboard;
+        self.queue_focus_notifications();
         before != self.focus_ring_visible()
     }
     /// Whether a primary press at `point` should move the native window: the
@@ -2752,6 +2754,7 @@ impl<T: View> Ui<T> {
             self.reset_link_focus();
             self.remember_focus(next);
             self.caret_visible = true;
+            self.queue_focus_notifications();
         }
     }
     fn rebuild_editor(&mut self, id: ElementId) {
@@ -2910,6 +2913,7 @@ impl<T: View> Ui<T> {
             }
             self.cancel_client_composition(crate::ImeCancelReason::Deactivated);
         }
+        self.queue_focus_notifications();
         changed
     }
     /// Paint-only caret visibility for a host's on-demand blink deadline.
@@ -3975,7 +3979,7 @@ impl<T: View> Ui<T> {
                 if self.nodes[&id].editor.is_some() {
                     self.update_text_scroll(id, measure)?;
                 }
-                Ok(changed || revealed)
+                Ok(self.flush_focus_notifications(runtime)? || changed || revealed)
             }
             crate::SemanticAction::Activate(_) => self.activate(runtime, id),
             crate::SemanticAction::SetValue {
@@ -4067,7 +4071,7 @@ impl<T: View> Ui<T> {
                 self.caret_visible = true;
                 self.update_text_scroll(id, measure)?;
                 let revealed = self.geometry_ready && self.reveal(id);
-                Ok(changed || revealed)
+                Ok(self.flush_focus_notifications(runtime)? || changed || revealed)
             }
             crate::SemanticAction::Scroll { offset, .. } => {
                 if !self.geometry_ready || offset.iter().any(|v| !v.is_finite()) {
