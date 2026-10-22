@@ -432,6 +432,11 @@ impl<T> fmt::Debug for Mount<T> {
     }
 }
 impl<T> Mount<T> {
+    /// Captures a weak task scope for this mount, independent of sibling mounts.
+    #[cfg(feature = "tasks")]
+    pub fn task_scope(&self) -> crate::TaskScope {
+        crate::TaskScope::new(Rc::downgrade(&self.life), self.id().runtime)
+    }
     /// Placement identity; independent of the owner's identity.
     pub fn id(&self) -> MountId {
         self.life.id
@@ -802,6 +807,12 @@ impl RuntimeInner {
                     Vec::new()
                 }
             };
+            drop(callbacks);
+            let callbacks = self
+                .tasks
+                .borrow_mut()
+                .as_mut()
+                .map(|tasks| tasks.cancel_mounts());
             drop(callbacks);
         }
     }

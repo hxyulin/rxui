@@ -275,7 +275,7 @@ pub use tabs::{
 };
 #[cfg(feature = "tasks")]
 pub use tasks::{
-    BackgroundFuture, BlockingJob, SpawnError, Task, TaskError, TaskExecutor, TaskResult,
+    BackgroundFuture, BlockingJob, SpawnError, Task, TaskError, TaskExecutor, TaskResult, TaskScope,
 };
 #[cfg(all(feature = "tasks", not(target_arch = "wasm32")))]
 pub use tasks::{ThreadPoolExecutor, sleep};

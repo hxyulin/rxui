@@ -355,3 +355,45 @@ fn default_pool_keeps_async_timer_progress_independent_of_blocking_work() {
     runtime.poll_tasks();
     assert!(blocking.is_finished());
 }
+
+#[test]
+fn mount_scope_cancels_queued_results_without_affecting_a_shared_owner() {
+    let (mut runtime, executor, _) = setup();
+    let entity = runtime.update(|cx| cx.new(|_| 0));
+    let a = runtime.update(|cx| cx.mount(&entity).unwrap());
+    let b = runtime.update(|cx| cx.mount(&entity).unwrap());
+    let scope = a.task_scope();
+    let seen = Rc::new(Cell::new(0));
+    runtime.update(|cx| {
+        for scope in [scope.clone(), b.task_scope()] {
+            let seen = seen.clone();
+            scope
+                .spawn(cx, async { 1 }, move |result, _| {
+                    seen.set(seen.get() + result.unwrap())
+                })
+                .unwrap()
+                .detach();
+        }
+    });
+    executor.tick();
+    executor.tick();
+    drop(a);
+    assert_eq!(runtime.poll_tasks(), 1);
+    assert_eq!(seen.get(), 1);
+    assert!(matches!(
+        runtime.update(|cx| scope.spawn(cx, async {}, |_, _| {})),
+        Err(SpawnError::Disposed)
+    ));
+    assert_eq!(runtime.update(|cx| *entity.read(cx)), 0);
+    let pending = runtime
+        .update(|cx| {
+            b.task_scope()
+                .spawn_blocking(cx, || 3, |_, _| panic!("disposed completion"))
+        })
+        .unwrap();
+    drop(b);
+    runtime.synchronize();
+    assert!(pending.is_finished());
+    executor.blocking();
+    assert_eq!(runtime.poll_tasks(), 0);
+}

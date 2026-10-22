@@ -333,6 +333,12 @@ impl<'a, T> ViewContext<'a, T> {
             committed: false,
         }
     }
+    /// Captures a weak task scope for this placement. Starting work requires a
+    /// mutation context, so evaluating a view never starts asynchronous effects.
+    #[cfg(feature = "tasks")]
+    pub fn task_scope(&self) -> crate::TaskScope {
+        crate::TaskScope::new(self.mount.clone(), self.id.runtime)
+    }
     /// Current placement identity, distinct from the owner's EntityId.
     pub fn mount_id(&self) -> MountId {
         self.id

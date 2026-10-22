@@ -63,8 +63,31 @@ cancellation if they must stop underlying side effects.
 Task ownership follows the entity, not the initiating window. Two windows can
 share one entity and its pending job. Closing one window leaves that job alive
 while another placement or external strong handle retains the entity. For work
-that should belong to a particular placement, store the Task in a separately
-owned per-window view entity. A dedicated mount-scoped task API is future work.
+that belongs to one placement, capture `cx.task_scope()` in `View::view` (or
+`mount.task_scope()` in a custom host), then start it from a listener:
+
+```rust,ignore
+let scope = cx.task_scope();
+let owner = cx.listener(move |this, _, cx| {
+    this.task = Some(scope.spawn(cx, async { 42 }, |result, cx| {
+        // Update weak application entities or explicit placement handles here.
+        println!("{:?}", result);
+    }).unwrap());
+});
+```
+
+`TaskScope::spawn` and `spawn_blocking` return `Result<Task, SpawnError>`.
+The capability is weak and independent for each mount, even when two windows
+share an entity. Removing the last strong Mount cancels its jobs during runtime
+synchronization; delivery checks mount liveness too, so queued results cannot
+escape disposal. Detaching preserves this scope. A replacement mount gets a fresh
+scope; old capabilities return `Disposed`. Foreign runtime contexts return
+`WrongRuntime`. Completions receive AppContext and have no implicit mount;
+use weak entity captures to update shared data, or explicit placement handles.
+Closing one window cancels only its mount jobs. Hidden but retained components
+keep their scopes; removing an element within a component does not dispose the
+component mount. Use a child view for a narrower lifetime.
+
 Task completions have no implicit `cx.window()`; capture a WindowHandle explicitly
 when an operation needs one and check its lifecycle.
 

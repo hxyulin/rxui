@@ -44,6 +44,10 @@ pub enum SpawnError {
     Unavailable,
     /// Runtime execution was configured more than once.
     AlreadyConfigured,
+    /// The source mount has been disposed.
+    Disposed,
+    /// The mutation context belongs to another runtime.
+    WrongRuntime,
     /// Installed adapter does not support blocking work.
     BlockingUnavailable,
     /// Executor rejected this work without starting it.
@@ -53,6 +57,8 @@ impl fmt::Display for SpawnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unavailable => f.write_str("RXUI task executor is not configured"),
+            Self::Disposed => f.write_str("RXUI task mount was disposed"),
+            Self::WrongRuntime => f.write_str("RXUI task scope belongs to another runtime"),
             Self::AlreadyConfigured => f.write_str("RXUI task executor is already configured"),
             Self::BlockingUnavailable => f.write_str("RXUI executor has no blocking-work adapter"),
             Self::Rejected(reason) => write!(f, "RXUI executor rejected work: {reason}"),
@@ -167,6 +173,7 @@ impl fmt::Debug for Task {
 type Completion = dyn FnOnce(Outcome, &mut AppContext<'_>);
 struct Record {
     owner: Option<EntityId>,
+    mount: Option<std::rc::Weak<crate::runtime::MountLife>>,
     control: Arc<Control>,
     completion: Box<Completion>,
 }
@@ -191,6 +198,21 @@ impl Tasks {
             records: HashMap::new(),
             next: 1,
         }
+    }
+    pub(crate) fn cancel_mounts(&mut self) -> Vec<Box<Completion>> {
+        let ids: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(_, r)| r.mount.as_ref().is_some_and(|m| m.strong_count() == 0))
+            .map(|(id, _)| *id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.records.remove(&id))
+            .map(|r| {
+                r.control.cancel();
+                r.completion
+            })
+            .collect()
     }
     /// Cancels the tasks of all disposed owners in one pass over the records.
     pub(crate) fn cancel_owners(
@@ -256,6 +278,7 @@ impl Runtime {
                 (tasks.records.remove(&packet.id), packet.outcome)
             };
             if let (Some(record), Some(outcome)) = next
+                && record.mount.as_ref().is_none_or(|m| m.strong_count() != 0)
                 && record
                     .control
                     .status
@@ -303,6 +326,15 @@ pub(crate) fn start<R: Send + 'static>(
     completion: impl FnOnce(TaskResult<R>, &mut AppContext<'_>) + 'static,
     work: Work<R>,
 ) -> Result<Task, SpawnError> {
+    start_scoped(runtime, owner, None, completion, work)
+}
+fn start_scoped<R: Send + 'static>(
+    runtime: &std::rc::Rc<RuntimeInner>,
+    owner: Option<EntityId>,
+    mount: Option<std::rc::Weak<crate::runtime::MountLife>>,
+    completion: impl FnOnce(TaskResult<R>, &mut AppContext<'_>) + 'static,
+    work: Work<R>,
+) -> Result<Task, SpawnError> {
     let (executor, hub, control, registration) = {
         let mut slot = runtime.tasks.borrow_mut();
         let tasks = slot.as_mut().ok_or(SpawnError::Unavailable)?;
@@ -322,6 +354,7 @@ pub(crate) fn start<R: Send + 'static>(
             id,
             Record {
                 owner,
+                mount,
                 control: control.clone(),
                 completion: Box::new(move |outcome, cx| {
                     completion(
@@ -491,5 +524,53 @@ impl Drop for ThreadPoolExecutor {
         self.stopping.store(true, Ordering::Release);
         self.shutdown.close();
         self.blocking.close();
+    }
+}
+
+/// Weak capability for tasks whose lifetime ends with one component mount.
+/// Capture it during evaluation, then start work in a listener/update. Cloning
+/// or detaching a task never retains the mount. Completions have no implicit
+/// source window; capture explicit placement handles when needed.
+#[derive(Clone)]
+pub struct TaskScope {
+    mount: std::rc::Weak<crate::runtime::MountLife>,
+    runtime: u64,
+}
+impl TaskScope {
+    pub(crate) fn new(mount: std::rc::Weak<crate::runtime::MountLife>, runtime: u64) -> Self {
+        Self { mount, runtime }
+    }
+    /// Starts a future; disposal suppresses even results already queued for delivery.
+    pub fn spawn<R: Send + 'static>(
+        &self,
+        cx: &mut AppContext<'_>,
+        future: impl Future<Output = R> + Send + 'static,
+        completion: impl FnOnce(TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> Result<Task, SpawnError> {
+        self.start(cx, completion, Work::Future(Box::pin(future)))
+    }
+    /// Starts blocking work. Already running work cannot be forcibly interrupted.
+    pub fn spawn_blocking<R: Send + 'static>(
+        &self,
+        cx: &mut AppContext<'_>,
+        work: impl FnOnce() -> R + Send + 'static,
+        completion: impl FnOnce(TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> Result<Task, SpawnError> {
+        self.start(cx, completion, Work::Blocking(Box::new(work)))
+    }
+    fn start<R: Send + 'static>(
+        &self,
+        cx: &mut AppContext<'_>,
+        completion: impl FnOnce(TaskResult<R>, &mut AppContext<'_>) + 'static,
+        work: Work<R>,
+    ) -> Result<Task, SpawnError> {
+        if cx.runtime.id != self.runtime {
+            return Err(SpawnError::WrongRuntime);
+        }
+        let mount = self.mount.upgrade().ok_or(SpawnError::Disposed)?;
+        if !cx.runtime.mount_live(mount.id) {
+            return Err(SpawnError::Disposed);
+        }
+        start_scoped(cx.runtime, None, Some(self.mount.clone()), completion, work)
     }
 }
