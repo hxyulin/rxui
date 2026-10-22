@@ -18,6 +18,10 @@ pub(crate) const SPOKES: u8 = 12;
 
 impl CustomElement for Glyph {
     type State = ();
+    fn measure_eq(&self, _: &Self) -> bool {
+        // All glyphs use the default empty intrinsic measurement; styles set size.
+        true
+    }
     #[cfg(feature = "rendering")]
     fn paint(
         &self,

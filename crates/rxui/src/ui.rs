@@ -1396,7 +1396,7 @@ impl<T: View> Ui<T> {
             }
             if let (ElementKind::Custom(old), ElementKind::Custom(new)) =
                 (&node.element.kind, &element.kind)
-                && !old.same(new.as_ref())
+                && !new.measure_eq(old.as_ref())
             {
                 self.taffy.mark_dirty(node.layout)?;
             }

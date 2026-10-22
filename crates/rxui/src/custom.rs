@@ -18,7 +18,8 @@ pub struct CustomMeasure {
 ///
 /// A custom element is an owned description, rebuilt by its view like any builder.
 /// Reconciliation keeps the retained node while the type stays the same; a value
-/// that compares unequal to the previous one is measured again. Wrap it with
+/// whose measurement differs from the previous one is measured again (see
+/// [`Self::measure_eq`]). Wrap it with
 /// [`custom`] and style, position, listen to and describe it with the ordinary
 /// [`crate::Element`] builders, for example `.accessibility_role(...)`.
 ///
@@ -62,6 +63,15 @@ pub trait CustomElement: PartialEq + 'static {
     fn measure(&self, request: CustomMeasure) -> [f32; 2] {
         let _ = request;
         [0.; 2]
+    }
+    /// Whether this description has identical measurement behavior to `previous`.
+    /// Returning true promises identical `measure` output for every identical
+    /// [`CustomMeasure`] input. The default compares the entire description.
+    /// Override to ignore paint-only fields, such as color or animation phase.
+    /// Styles, constraints and font changes still invalidate layout independently;
+    /// painting, hit testing and semantics always use the latest description.
+    fn measure_eq(&self, previous: &Self) -> bool {
+        self == previous
     }
     /// Whether `point`, relative to the border box of `size`, hits this element.
     /// Consulted only where the element already takes pointer input (listeners,
@@ -133,7 +143,7 @@ pub fn custom(element: impl CustomElement) -> crate::Element {
 /// Object-safe form of [`CustomElement`] stored in descriptions.
 pub(crate) trait AnyCustom {
     fn as_any(&self) -> &dyn Any;
-    fn same(&self, other: &dyn AnyCustom) -> bool;
+    fn measure_eq(&self, other: &dyn AnyCustom) -> bool;
     fn measure(&self, request: CustomMeasure) -> [f32; 2];
     fn hit_test(&self, point: [f32; 2], size: [f32; 2]) -> bool;
     #[cfg(feature = "rendering")]
@@ -159,8 +169,11 @@ impl<E: CustomElement> AnyCustom for E {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn same(&self, other: &dyn AnyCustom) -> bool {
-        other.as_any().downcast_ref::<E>() == Some(self)
+    fn measure_eq(&self, other: &dyn AnyCustom) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<E>()
+            .is_some_and(|previous| CustomElement::measure_eq(self, previous))
     }
     fn measure(&self, request: CustomMeasure) -> [f32; 2] {
         CustomElement::measure(self, request)

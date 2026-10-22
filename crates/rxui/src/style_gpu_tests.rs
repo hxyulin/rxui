@@ -231,6 +231,9 @@ struct BarState {
 }
 impl CustomElement for Bar {
     type State = BarState;
+    fn measure_eq(&self, _: &Self) -> bool {
+        true
+    }
     fn measure(&self, request: CustomMeasure) -> [f32; 2] {
         [request.known[0].unwrap_or(40.), 20.]
     }
@@ -259,13 +262,20 @@ impl CustomElement for Bar {
         Ok(())
     }
 }
-struct Bars;
+struct Bars {
+    fraction: f32,
+}
 impl View for Bars {
     fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
         column()
             .padding(10.)
             .color([0., 1., 0., 1.])
-            .child(custom(Bar { fraction: 0.5 }).key("bar"))
+            .child(
+                custom(Bar {
+                    fraction: self.fraction,
+                })
+                .key("bar"),
+            )
             .child(custom(Bar { fraction: 1. }).opacity(0.5))
     }
 }
@@ -278,8 +288,8 @@ fn custom_elements_prepare_retained_state_and_paint_in_logical_units() {
             .device()
             .push_error_scope(wgpu::ErrorFilter::Validation);
         let mut runtime = Runtime::new();
-        let root = runtime.update(|cx| cx.new(|_| Bars));
-        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        let root = runtime.update(|cx| cx.new(|_| Bars { fraction: 0.5 }));
+        let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
         let mut painter = UiPainter::new(&graphics);
         let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [60, 60]);
         let at = |x, y| pixel(&pixels, 60, x, y);
@@ -292,7 +302,11 @@ fn custom_elements_prepare_retained_state_and_paint_in_logical_units() {
             .find(|e| e.key == Some(&Key::from("bar")))
             .unwrap()
             .id;
-        render(&graphics, &mut runtime, &mut ui, &mut painter, [60, 60]);
+        let layouts = ui.stats().layout_passes;
+        runtime.update(|cx| root.update(cx, |s, _| s.fraction = 1.));
+        let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [60, 60]);
+        assert_eq!(pixel(&pixels, 60, 35, 20), [0, 255, 0, 255]);
+        assert_eq!(ui.stats().layout_passes, layouts);
         let state = painter.customs[&id].downcast_ref::<BarState>().unwrap();
         assert_eq!(state.prepared, 2);
         painter.forget(&ui);

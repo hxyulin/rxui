@@ -1094,3 +1094,125 @@ fn animation_frames_reevaluate_requesting_views_until_they_stop() {
     assert!(!ui.needs_prepare(&runtime).unwrap());
     assert_eq!(evaluations.get(), 3);
 }
+
+#[test]
+fn custom_measure_equality_skips_layout_but_keeps_latest_description() {
+    #[derive(PartialEq)]
+    struct Mark {
+        size: f32,
+        phase: u32,
+        calls: Rc<Cell<u32>>,
+    }
+    impl CustomElement for Mark {
+        type State = ();
+        fn measure_eq(&self, previous: &Self) -> bool {
+            self.size == previous.size
+        }
+        fn measure(&self, r: CustomMeasure) -> [f32; 2] {
+            self.calls.set(self.calls.get() + 1);
+            [self.size + r.font_size; 2]
+        }
+        fn hit_test(&self, _: [f32; 2], _: [f32; 2]) -> bool {
+            self.phase.is_multiple_of(2)
+        }
+    }
+    #[derive(PartialEq)]
+    struct Other;
+    impl CustomElement for Other {
+        type State = ();
+        fn measure(&self, _: CustomMeasure) -> [f32; 2] {
+            [7.; 2]
+        }
+    }
+    struct Page {
+        size: f32,
+        phase: u32,
+        font: f32,
+        other: bool,
+        calls: Rc<Cell<u32>>,
+    }
+    impl View for Page {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let leaf = if self.other {
+                custom(Other)
+            } else {
+                custom(Mark {
+                    size: self.size,
+                    phase: self.phase,
+                    calls: self.calls.clone(),
+                })
+            };
+            row().child(
+                leaf.key("mark")
+                    .font_size(self.font)
+                    .color(if self.phase == 0 {
+                        [1., 0., 0., 1.]
+                    } else {
+                        [0., 1., 0., 1.]
+                    })
+                    .accessibility_label(format!("Phase {}", self.phase))
+                    .focusable(true)
+                    .pointer_events(PointerEvents::Block),
+            )
+        }
+    }
+    let calls = Rc::new(Cell::new(0));
+    let mut r = Runtime::new();
+    let page = r.update(|cx| {
+        cx.new(|_| Page {
+            size: 20.,
+            phase: 0,
+            font: 12.,
+            other: false,
+            calls: calls.clone(),
+        })
+    });
+    let mut ui = Ui::new(&mut r, page.clone()).unwrap();
+    let mut measure = Measure::default();
+    ui.prepare(&mut r, [400., 300.], &mut measure).unwrap();
+    let id = ui
+        .elements()
+        .find(|e| e.key == Some(&"mark".into()))
+        .unwrap()
+        .id;
+    let before = (calls.get(), ui.stats().layout_passes);
+    assert_eq!(ui.hit_test([5., 5.]), Some(id));
+    for phase in 1..=80 {
+        r.update(|cx| page.update(cx, |p, _| p.phase = phase));
+        ui.prepare(&mut r, [400., 300.], &mut measure).unwrap();
+        assert_eq!((calls.get(), ui.stats().layout_passes), before);
+        assert_eq!(
+            ui.hit_test([5., 5.]),
+            if phase.is_multiple_of(2) {
+                Some(id)
+            } else {
+                None
+            }
+        );
+        assert_eq!(ui.element(id).unwrap().color, [0., 1., 0., 1.]);
+        assert_eq!(
+            ui.semantic_node(id).unwrap().label,
+            Some(format!("Phase {phase}").as_str())
+        );
+    }
+    r.update(|cx| page.update(cx, |p, _| p.size = 40.));
+    ui.prepare(&mut r, [400., 300.], &mut measure).unwrap();
+    assert!(calls.get() > before.0);
+    assert_eq!(ui.element(id).unwrap().bounds.width, 52.);
+    let before = calls.get();
+    r.update(|cx| page.update(cx, |p, _| p.font = 16.));
+    ui.prepare(&mut r, [400., 300.], &mut measure).unwrap();
+    assert!(calls.get() > before);
+    assert_eq!(ui.element(id).unwrap().bounds.width, 56.);
+    let before = ui.stats().layout_passes;
+    ui.prepare(&mut r, [30., 300.], &mut measure).unwrap();
+    assert!(ui.stats().layout_passes > before);
+    r.update(|cx| page.update(cx, |p, _| p.other = true));
+    ui.prepare(&mut r, [400., 300.], &mut measure).unwrap();
+    assert!(ui.element(id).is_none()); // A different custom type gets a new identity.
+    let replacement = ui
+        .elements()
+        .find(|e| e.key == Some(&"mark".into()))
+        .unwrap();
+    assert_eq!(replacement.bounds.width, 7.);
+}

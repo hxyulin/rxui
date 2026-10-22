@@ -39,9 +39,13 @@ custom(Meter { fraction: 0.4 })
 
 - **Description.** The value is part of the view's owned description and is rebuilt
   on every evaluation. Reconciliation keeps the retained node while the element type
-  stays the same. `PartialEq` decides whether layout must measure it again: an equal
-  value keeps its measurement, an unequal one is measured on the next prepare.
-  Painting always uses the latest value.
+  stays the same. `measure_eq(previous)` decides whether a description change invalidates
+  measurement. It defaults to `self == previous`, preserving `PartialEq` behavior.
+  Override it to ignore paint-only fields: returning true promises identical
+  `measure` output for every identical `CustomMeasure` input. For example the
+  meter above can return `true` because `fraction` only affects painting.
+  Constraints, styles and font changes still invalidate measurement independently.
+  Painting, hit testing and semantics always use the latest description.
 - **Measurement.** `measure` returns the content size in logical units, excluding
   padding and border. `CustomMeasure` carries the sizes layout already fixed
   (`known`), the space the parent offers (`available`, a Taffy `AvailableSpace`)
