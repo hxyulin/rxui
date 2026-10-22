@@ -134,8 +134,9 @@ scroll containers retain all children, and their geometry work scales with those
 children. [Fixed-height virtual lists](virtual-lists.md) describe only viewport
 rows plus overscan, preserving overlapping keys and disposing rows which leave
 that range. Their retained node count and mock-layout CPU work scale with viewport
-size rather than total item count. Kinetic scrolling and variable-height lists
-remain future work.
+size rather than total item count. Variable-height lists support caller-supplied
+heights or placement-local measurement with estimates and scroll anchoring;
+see [virtual lists](virtual-lists.md). Kinetic scrolling remains future work.
 
 ## Native hosting and async work
 

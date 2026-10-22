@@ -380,8 +380,8 @@ column().children(self.items.iter().map(|item| {
 Reordering keyed items preserves editing/focus state for surviving compatible
 widgets. Recreating entities on every view call would create new state, so
 ViewContext is not an unrestricted factory for persistent models. Children are
-created during initialization/updates or through a future explicitly keyed
-mount-state facility.
+created during initialization/updates or retained per placement through
+`ViewContext::use_state` and `use_keyed_state`.
 
 Element descriptions are temporary values. Reconciliation retains compatible
 nodes and resources, updates properties/handlers, and releases removed scopes.
@@ -445,9 +445,9 @@ painting and semantic publication are distinct dirty states.
 
 UI mutation scopes cannot cross an await or move onto worker threads. Background
 jobs compute owned data; completions return to the UI thread and enter a new
-update scope. The implemented task API is documented in [async.md](async.md). Jobs have entity-
-or application-scoped ownership and cancellation/disposal behavior; mount-scoped
-work is a future extension. Out-of-order
+update scope. The implemented task API is documented in [async.md](async.md). Jobs have
+entity-, application-, or mount-scoped ownership and cancellation/disposal behavior.
+`TaskScope` captures a weak mount capability without starting work during evaluation. Out-of-order
 results require application/request generation checks where relevant; reading
 live state in a listener does not solve asynchronous result races.
 
@@ -527,8 +527,8 @@ are later work. They must build on the same state/identity/access contracts.
 - Broader typography inheritance, generic scoped providers and logical unit types.
 - Event propagation/default actions, document-level editing commands and
   extensions to the implemented synchronous controlled-value reconciliation policy.
-- Mount-scoped/local tasks and async shutdown orchestration beyond implemented
-  entity/application-scoped execution and completion ordering.
+- Local non-Send tasks and async shutdown orchestration beyond implemented
+  entity/application/mount-scoped execution and completion ordering.
 - Exact embedded preparation/platform-output/custom-element interfaces.
 
 These refine the agreed model; they should be resolved through small consumer
