@@ -482,6 +482,17 @@ impl<T: View> Ui<T> {
             .is_some_and(|s| !s.commands.borrow().is_empty())
     }
     pub(crate) fn publish_scroll(&mut self, runtime: &Runtime) -> Result<bool, UiError> {
+        self.publish_scroll_refinement(runtime, &HashSet::new())
+    }
+    /// Publishes all metrics, returning whether non-measurement work was dirtied.
+    /// Only range/offset feedback from a viewport measured on the previous pass
+    /// can be attributed to refinement; viewport geometry changes still converge
+    /// under the normal control-layout budget.
+    pub(crate) fn publish_scroll_refinement(
+        &mut self,
+        runtime: &Runtime,
+        refining_viewports: &HashSet<ElementId>,
+    ) -> Result<bool, UiError> {
         let revision = self.scroll_revision();
         if self
             .scrolling
@@ -581,6 +592,15 @@ impl<T: View> Ui<T> {
             let changed = data.bindings.get(&self.tree).is_none_or(|b| {
                 b.element != id || b.state != state || b.scopes != scrolling.scopes
             });
+            let measurement_feedback = refining_viewports.contains(&id)
+                && data.bindings.get(&self.tree).is_some_and(|b| {
+                    b.element == id
+                        && b.scopes == scrolling.scopes
+                        && b.state.viewport == state.viewport
+                        && b.state.bounds == state.bounds
+                        && b.state.range[0] == state.range[0]
+                        && b.state.offset[0] == state.offset[0]
+                });
             data.bindings.insert(
                 self.tree,
                 Binding {
@@ -597,7 +617,7 @@ impl<T: View> Ui<T> {
                 for &reader in &data.readers {
                     if scrolling.scopes.contains(&reader) {
                         runtime.inner.invalidate_mount(reader);
-                        invalidated = true;
+                        invalidated |= !measurement_feedback;
                     }
                 }
             }

@@ -692,3 +692,57 @@ fn text_buttons_center_their_caption_vertically() {
     let (_, content, origin) = caption("intrinsic");
     assert_eq!(origin, [content.x, content.y]);
 }
+
+#[test]
+fn measured_siblings_do_not_mask_unrelated_scroll_metric_cycles() {
+    struct Page {
+        cycle: ScrollHandle,
+        measured: ScrollHandle,
+        rows: VirtualRows,
+    }
+    impl View for Page {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            let previous = self.cycle.state(cx);
+            let height = if previous.is_some_and(|s| s.viewport[1] == 100.) {
+                200.
+            } else {
+                100.
+            };
+            row()
+                .child(
+                    column()
+                        .size(100., height)
+                        .scroll_y()
+                        .scroll_handle(self.cycle.clone())
+                        .child(column().height(500.)),
+                )
+                .child(
+                    variable_list(&self.rows, &self.measured, cx, |_| label("row"))
+                        .measured()
+                        .size(100., 100.),
+                )
+        }
+    }
+    // The two-row list settles early. With huge estimates the list still
+    // measures new rows on pass four; neither may waive the sibling's cycle.
+    for (count, estimate) in [(2, 30.), (200, 10_000.)] {
+        let mut r = Runtime::new();
+        let page = r.update(|cx| {
+            cx.new(|_| Page {
+                cycle: ScrollHandle::new(),
+                measured: ScrollHandle::new(),
+                rows: (0..count).map(|i| (i, estimate)).collect(),
+            })
+        });
+        let mut ui = Ui::new(&mut r, page).unwrap();
+        assert!(
+            matches!(
+                ui.prepare(&mut r, [300., 300.], &mut Measure),
+                Err(UiError::UnstableControlLayout)
+            ),
+            "count={count}, estimate={estimate}"
+        );
+        assert!(!ui.is_prepared());
+        assert!(ui.needs_prepare(&r).unwrap());
+    }
+}

@@ -979,9 +979,10 @@ impl<T: View> Ui<T> {
         let force_evaluation = self.needs_evaluation;
         // Retain retry intent even if a user view or measurer unwinds.
         self.needs_evaluation = true;
-        let mut refining_measurements = false;
+        let mut refining_viewports = HashSet::new();
         for attempt in 0..4 {
-            let mut measured_changed = false;
+            let mut unrelated_work = false;
+            let mut measurement_work = false;
             let result = self.prepare_inner(
                 runtime,
                 viewport,
@@ -1000,27 +1001,31 @@ impl<T: View> Ui<T> {
                 self.sync_overlay_focus();
                 self.restore_dock_drop_focus();
                 self.apply_focus_commands();
-                self.publish_scroll(runtime)?;
-                measured_changed = self.measure_virtual_rows(runtime)?;
                 self.apply_scroll_commands()?;
                 self.clear_invalid_interaction();
                 self.cancel_invalid_capture();
                 self.refresh_dock_drag();
                 self.flush_input_cancellations(runtime)?;
+                // Only the publications below may be deferred. Check other work
+                // first, even when it dirties the same mount as a measured list.
+                self.geometry_ready = true;
+                self.needs_evaluation = false;
+                unrelated_work = self.needs_prepare(runtime)?;
+                unrelated_work |= self.publish_scroll_refinement(runtime, &refining_viewports)?;
+                measurement_work = !refining_viewports.is_empty();
+                refining_viewports = self.measure_virtual_rows(runtime)?;
+                measurement_work |= !refining_viewports.is_empty();
                 Ok::<_, UiError>(())
             })();
             if let Err(error) = post {
+                self.geometry_ready = false;
+                self.needs_evaluation = true;
                 self.clean_partial_tree();
                 return Err(error);
             }
             self.geometry_ready = true;
             self.needs_evaluation = false;
-            refining_measurements |= measured_changed;
-            let defer_measurements = attempt == 3
-                && refining_measurements
-                && self.focus_state.as_ref().is_none_or(|s| !s.pending())
-                && !self.input.pending()
-                && !self.scroll_commands_pending();
+            let defer_measurements = attempt == 3 && measurement_work && !unrelated_work;
             if !self.needs_prepare(runtime)? || defer_measurements {
                 self.finish_motion(runtime);
                 return Ok(());
@@ -4252,8 +4257,8 @@ impl<T: crate::View> crate::Ui<T> {
     pub(crate) fn measure_virtual_rows(
         &mut self,
         runtime: &crate::Runtime,
-    ) -> Result<bool, crate::UiError> {
-        let mut changed = false;
+    ) -> Result<HashSet<ElementId>, crate::UiError> {
+        let mut changed = HashSet::new();
         self.measured_rows.retain(|id| self.nodes.contains_key(id));
         for id in &self.measured_rows {
             let node = &self.nodes[id];
@@ -4299,7 +4304,15 @@ impl<T: crate::View> crate::Ui<T> {
             if updated {
                 runtime.inner.invalidate_mount(cache.reader);
                 runtime.inner.frames.borrow_mut().0.insert(cache.reader);
-                changed = true;
+                let mut ancestor = node.parent;
+                while let Some(id) = ancestor {
+                    let parent = &self.nodes[&id];
+                    if parent.element.scroll_handle.is_some() {
+                        changed.insert(id);
+                        break;
+                    }
+                    ancestor = parent.parent;
+                }
             }
         }
         Ok(changed)
