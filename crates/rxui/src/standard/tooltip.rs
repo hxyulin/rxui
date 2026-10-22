@@ -54,9 +54,10 @@ fn update(
 /// The wrapper takes over the target's flex-item properties (grow, shrink,
 /// basis, alignment, margins, insets, grid placement and percentage sizes), so the
 /// target keeps its place in the parent layout. While the delay runs the owning
-/// view requests one deadline after a fresh entry frame. Hover state is placement-local and keyed by
-/// call site, the target's key and the text, so tooltips built in a loop should
-/// have keyed targets.
+/// view requests one deadline after a fresh entry frame. Hover and focus state is
+/// placement-local and keyed by call site and the target's key, so tooltips built
+/// in a loop should have keyed targets. Updating text preserves the current delay
+/// and visibility.
 ///
 /// ```
 /// use rxui::prelude::*;
@@ -77,7 +78,7 @@ pub fn tooltip<T>(
 ) -> Element {
     let mut target = target.into_element();
     let text = text.into();
-    let state: Entity<TooltipState> = local(cx, (target.key.clone(), text.as_str()));
+    let state: Entity<TooltipState> = local(cx, target.key.clone());
     let visible = {
         let s = state.read(cx);
         let now = cx.frame_time();

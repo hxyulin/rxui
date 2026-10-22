@@ -1121,3 +1121,88 @@ fn keyboard_focus_tooltips_delay_dismiss_and_rearm_on_refocus() {
     h.prepare();
     assert!(h.shown("tooltip").is_none());
 }
+
+#[test]
+fn keyboard_tooltip_text_updates_preserve_visible_and_waiting_state() {
+    struct Page {
+        text: String,
+        target: &'static str,
+    }
+    impl View for Page {
+        fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            tooltip(cx, button("Target").key(self.target), self.text.clone())
+        }
+    }
+    let ms = Duration::from_millis;
+    let mut r = Runtime::new();
+    r.set_reduce_motion(true);
+    r.begin_frame(Duration::ZERO);
+    let page = r.update(|cx| {
+        cx.new(|_| Page {
+            text: "Initial".into(),
+            target: "first",
+        })
+    });
+    let mut ui = Ui::new(&mut r, page.clone()).unwrap();
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    let target = ui
+        .elements()
+        .find(|e| e.key == Some(&Key::from("first")))
+        .unwrap()
+        .id;
+    ui.focus_next(false);
+    ui.focus(target);
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    r.begin_frame(ms(16));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert_eq!(ui.next_wakeup(&r), Some(ms(616)));
+
+    r.begin_frame(ms(300));
+    r.update(|cx| page.update(cx, |p, _| p.text = "While waiting".into()));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert_eq!(ui.next_wakeup(&r), Some(ms(616)));
+    assert!(!ui.elements().any(|e| e.key == Some(&Key::from("tooltip"))));
+    r.begin_frame(ms(616));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert!(ui.elements().any(|e| e.key == Some(&Key::from("tooltip"))));
+    r.update(|cx| page.update(cx, |p, _| p.text = "While visible".into()));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert!(ui.elements().any(|e| e.key == Some(&Key::from("tooltip"))));
+    assert!(ui.elements().any(|e| e.text == Some("While visible")));
+    assert_eq!(ui.focused_element(), Some(target));
+    assert_eq!(ui.next_wakeup(&r), None);
+
+    // Suppression also survives text edits and cancels the deadline.
+    ui.key(
+        &mut r,
+        KeyEvent {
+            key: KeyboardKey::Escape,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        },
+    )
+    .unwrap();
+    r.update(|cx| page.update(cx, |p, _| p.text = "Suppressed".into()));
+    r.begin_frame(ms(3000));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert!(!ui.elements().any(|e| e.key == Some(&Key::from("tooltip"))));
+    assert_eq!(ui.next_wakeup(&r), None);
+
+    r.update(|cx| page.update(cx, |p, _| p.target = "second"));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    let target = ui
+        .elements()
+        .find(|e| e.key == Some(&Key::from("second")))
+        .unwrap()
+        .id;
+    ui.focus(target);
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    r.begin_frame(ms(3016));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert_eq!(ui.next_wakeup(&r), Some(ms(3616)));
+    r.begin_frame(ms(3616));
+    ui.prepare(&mut r, [300., 200.], &mut Measure).unwrap();
+    assert!(ui.elements().any(|e| e.key == Some(&Key::from("tooltip"))));
+    assert_eq!(ui.focused_element(), Some(target));
+}
