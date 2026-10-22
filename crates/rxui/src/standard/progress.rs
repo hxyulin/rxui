@@ -62,9 +62,10 @@ impl ProgressBar {
     }
     /// Animates an indeterminate bar from the view's frame clock. It requests the
     /// next animation frame on every evaluation while indeterminate, so the owning
-    /// view is evaluated each frame; a determinate bar requests nothing.
+    /// view is evaluated each frame. With reduced motion it shows a centered static
+    /// segment; a determinate bar requests nothing.
     pub fn animate<T>(mut self, cx: &ViewContext<'_, T>) -> Self {
-        if self.value.is_none() {
+        if self.value.is_none() && !cx.reduce_motion() {
             self.phase = Some((cx.frame_time().as_secs_f32() / SWEEP).fract());
             cx.request_animation_frame();
         }
@@ -130,7 +131,8 @@ impl IntoElement for ProgressBar {
 /// Spinning activity indicator, 20 logical units square, painted in the accent
 /// color and named "Loading". It requests an animation frame on every evaluation,
 /// so the owning view is evaluated each frame while the spinner is shown; remove
-/// it when the work finishes. Element builders restyle or rename it.
+/// it when the work finishes. Reduced motion keeps a static indicator and requests
+/// no frames. Element builders restyle or rename it.
 ///
 /// ```
 /// use rxui::prelude::*;
@@ -146,9 +148,15 @@ impl IntoElement for ProgressBar {
 /// }
 /// ```
 pub fn spinner<T>(cx: &ViewContext<'_, T>) -> Element {
-    cx.request_animation_frame();
+    if !cx.reduce_motion() {
+        cx.request_animation_frame();
+    }
     // One spoke per step, a full turn per second.
-    let head = (cx.frame_time().as_secs_f32() * f32::from(SPOKES)) as u64 % u64::from(SPOKES);
+    let head = if cx.reduce_motion() {
+        0
+    } else {
+        (cx.frame_time().as_secs_f32() * f32::from(SPOKES)) as u64 % u64::from(SPOKES)
+    };
     glyph(Glyph::Spinner { head: head as u8 }, 20.)
         .color(ThemeColor::Accent)
         .accessibility_hidden(false)

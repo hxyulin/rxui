@@ -791,6 +791,38 @@ fn standard_controls_publish_accesskit_roles_states_and_actions() {
 }
 
 #[test]
+fn progress_reduced_motion_stops_requests_and_resumes_when_disabled() {
+    let mut h = Harness::new(Form {
+        progress: None,
+        animate: true,
+        spinner: true,
+        ..Form::default()
+    });
+    assert!(h.r.animation_frame_requested());
+    h.r.set_reduce_motion(true);
+    h.frame(400);
+    assert!(!h.r.animation_frame_requested());
+    let fill = h.within("progress", "fill");
+    let first = h.bounds(fill);
+    h.frame(800);
+    assert_eq!(first, h.bounds(fill));
+    assert!(!h.r.animation_frame_requested());
+    assert_eq!(
+        h.ui.semantic_node(h.id("progress")).unwrap().value,
+        Some("Indeterminate")
+    );
+    assert_eq!(
+        h.ui.semantic_node(h.id("spinner")).unwrap().label,
+        Some("Loading")
+    );
+    h.r.update(|cx| cx.set_reduce_motion(false));
+    h.prepare();
+    h.frame(1200);
+    assert!(h.r.animation_frame_requested());
+    assert_ne!(first.x, h.bounds(fill).x);
+}
+
+#[test]
 fn select_reveals_selected_and_keyboard_highlights_and_tracks_keys_through_mutation() {
     let mut h = Harness::new(Form {
         language: Some(Key::from("item-35")),

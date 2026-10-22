@@ -98,3 +98,38 @@ clip/scissor pixels. Per-character accessibility geometry remains future work.
 Raw results: [run 1](accessibility/elements-run-1.csv),
 [run 2](accessibility/elements-run-2.csv), [run 3](accessibility/elements-run-3.csv).
 The [semantics contract](../semantics.md) documents the API and host lifecycle.
+
+
+## Control accessibility validation (2026-10-23)
+
+The select active-descendant/live-region changes were checked with the existing
+`elements` benchmark on Apple M5 Max (Mac17,7), macOS 27.0.1, Rust 1.99.0. The
+command and source fingerprints are in
+[the metadata](accessibility/controls-2026-10-23.json); the complete single run is
+[the CSV](accessibility/controls-2026-10-23.csv). Measurement boundaries, warmups,
+sample counts and batch sizes are unchanged. The machine was interactive with
+other compiler workloads running, so this is a validation capture, not an isolated
+before/after comparison.
+
+At 1,000 labels, the new run's median values were:
+
+| Workload | Median (µs) | Archived 2026-10-06 median range (µs) |
+| --- | ---: | ---: |
+| Idle prepare | 0.155 | 0.030–0.033 |
+| Unchanged description rebuilt | 5426.404 | 371.672–376.682 |
+| Unchanged AccessKit cache update | 0.017 | 0.009–0.009 |
+| Initial AccessKit tree | 2853.318 | 394.084–397.242 |
+
+The archived run used a different machine, toolchain and earlier source, and the
+new run has substantial scheduling noise. The larger timings do not isolate a
+regression from this change; a controlled same-machine baseline is still needed
+for a performance conclusion. Benchmark assertions passed: idle preparation does
+no new component/layout work and warm AccessKit updates do no node/text work.
+
+This fixture contains labels, without relationship handles or live-region
+updates. It checks the existing preparation/publication paths, not the latency of
+announcements or select navigation. Handle resolution currently scans retained
+nodes when an explicit relationship is resolved. Active-descendant reveal checks
+run after description evaluation; idle preparations preserve manual scrolling and
+skip that traversal. A future indexed relationship registry would need its own
+measurements and invalidation contract.

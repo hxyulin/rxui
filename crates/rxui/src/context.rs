@@ -57,9 +57,7 @@ impl AppContext<'_> {
     /// Overrides the reduce-motion preference, for example from an application
     /// setting. Native hosts may set it again when the system setting changes.
     pub fn set_reduce_motion(&mut self, reduce: bool) {
-        let mut clock = self.runtime.motion.get();
-        clock.reduce_motion = reduce;
-        self.runtime.motion.set(clock);
+        self.runtime.set_reduce_motion(reduce);
     }
     /// Launches an application-scoped Send future. Retain its Task or detach explicitly.
     /// Panics if execution is not configured/rejected; try_spawn provides fallible setup.
@@ -446,7 +444,11 @@ impl<'a, T> ViewContext<'a, T> {
     }
     /// Whether motion is reduced (`Runtime::set_reduce_motion`). Views can pick a
     /// gentler alternative; [`Self::animate`] already completes immediately then.
+    /// Reading subscribes this mount to future preference changes.
     pub fn reduce_motion(&self) -> bool {
+        if let Some(record) = self.runtime.state.borrow_mut().mounts.get_mut(&self.id) {
+            record.motion_read = true;
+        }
         self.runtime.motion.get().reduce_motion
     }
     /// A value that moves toward `target` with `transition`, retained for this

@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-23",
+  "machine": "Apple M5 Max (Mac17,7), macOS 27.0.1",
+  "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "base_commit": "9bd9fea",
+  "command": "cargo bench -p rxui --bench elements --features accessibility --locked",
+  "profile": "optimized bench",
+  "load": "Interactive machine with concurrent compiler workloads; not isolated",
+  "runs": 1,
+  "source_sha256": {
+    "Cargo.lock": "9b80e488740de1b87259eb2d0809e4b1b6f58265b4c23cd8931bf8ef46464b6d",
+    "crates/rxui/benches/elements.rs": "26bbd86b31274608cc94590e5addea6a835ceced965e50bdfcf00f2fcbaebea5",
+    "crates/rxui/src/ui.rs": "32fce5614fe53ce2af76bdcf2926348fa48107f64fe7cd23a62d0c9e5c473a89",
+    "crates/rxui/src/semantics.rs": "2f9f6354e40faeacab8f07e5d69c9ab5492d26b494fc756b493ba1541ab4ca5a",
+    "crates/rxui/src/accessibility.rs": "e3c556c89f08303a3ee7c16ceed2a997734b6af5bf0f65d9e7e16977a5975c37",
+    "crates/rxui/src/element.rs": "ea6d9805dc3b50bd2c1277c6623af45917b1f534d09a1a1376a57ceee266113c",
+    "crates/rxui/src/context.rs": "40c52af02aac993406b1e199c4a3820dc477f16f1b8cb2ab9275b51f875a980a",
+    "crates/rxui/src/runtime.rs": "c9edaa98c494d5207da596a874c7b2c28e959e9e0a35f18728530065bd74587d",
+    "crates/rxui/src/standard/select.rs": "a2e127f59d53aa075ac180e98b85803940c1395e2379e51027eabe17e47ab17f",
+    "crates/rxui/src/standard/progress.rs": "c4eb7280ad46aeac8c6e1853b95fb7912dd01d908892e938bcacd34a388b58bc"
+  }
+}

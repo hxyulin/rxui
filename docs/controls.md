@@ -113,10 +113,12 @@ progress through `.range(min, max)` (0..=1 by default) and publishes a numeric
 ProgressIndicator. `None` shows an indeterminate segment and publishes the value
 text "Indeterminate". `.animate(cx)` sweeps that segment from the view's frame
 clock; it calls `request_animation_frame` on every evaluation while the bar is
-indeterminate and does nothing for a determinate bar.
+indeterminate and does nothing for a determinate bar. With reduced motion enabled,
+it shows a centered static segment and requests no frames.
 
 `spinner(cx)` is a 20-unit activity indicator named "Loading", painted in the
-accent color. It always requests the next frame. Both animations re-evaluate the
+accent color. It requests the next frame unless reduced motion is enabled; then
+it keeps a static spoke pattern. Both animations re-evaluate the
 owning view once per frame while shown, so put them in a small component when the
 surrounding view is expensive, and remove them when the work finishes. They use
 the existing frame clock and request; they are not an animation system.
@@ -231,7 +233,8 @@ element's resolved text color, so they need no font coverage.
   highlight announcements still needs testing on each platform.
 - Sliders are horizontal only and have no tick marks, value bubble or vertical
   orientation. Cancel does not restore the value from before the press.
-- Spinners and indeterminate bars re-evaluate their owning view every frame.
+- Spinners and animated indeterminate bars re-evaluate their owning view every
+  frame unless reduced motion is enabled.
 - Indicators and paddings do not follow compact metrics.
 - Tooltip delay, placement and the select list's maximum height are fixed.
 - No tooltip "warm-up" (an immediate tooltip when moving between targets).
@@ -243,7 +246,8 @@ default) and assistive activation of check boxes and switches; mixed and disable
 state and Tab exclusion; radio roving Tab stops, arrow focus movement that wraps
 and skips disabled options, and group semantics; slider capture, step snapping,
 every key, assistive SetNumericValue, Escape cancellation and invalid ranges;
-progress values, indeterminate frame requests and spinner semantics; select opening without moving focus, viewport reveal
+progress values, indeterminate frame requests, spinner semantics and preference
+toggling in both directions; select opening without moving focus, viewport reveal
 for long lists, highlight identity through reorder/removal, active-descendant and
 controls relationships, timed multi-character type-ahead in both states,
 Enter/Escape/Tab, hover and click choice, disabled options and consumed outside

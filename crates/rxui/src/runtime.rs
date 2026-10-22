@@ -42,6 +42,7 @@ pub(crate) struct MountRecord {
     #[cfg(feature = "layout")]
     scroll_reads: Option<Box<crate::scrolling::ScrollReads>>,
     dirty: bool,
+    pub(crate) motion_read: bool,
     evaluating: bool,
 }
 pub(crate) struct Bookkeeping {
@@ -231,10 +232,10 @@ impl Runtime {
     /// overlay enter/exit motion and `ViewContext::animate` complete immediately,
     /// including any that are in flight at the next frame. Native hosts set it from
     /// the operating system's accessibility setting; applications may override it.
+    /// A changed preference invalidates views that have read it, including static
+    /// reduced-motion indicators, so they can resume without a model update.
     pub fn set_reduce_motion(&self, reduce: bool) {
-        let mut clock = self.inner.motion.get();
-        clock.reduce_motion = reduce;
-        self.inner.motion.set(clock);
+        self.inner.set_reduce_motion(reduce);
     }
     /// The reduce-motion preference; off by default.
     pub fn reduce_motion(&self) -> bool {
@@ -507,6 +508,19 @@ impl RuntimeInner {
         drop(initialization);
         entity
     }
+    pub(crate) fn set_reduce_motion(&self, reduce: bool) {
+        let mut clock = self.motion.get();
+        if clock.reduce_motion == reduce {
+            return;
+        }
+        clock.reduce_motion = reduce;
+        self.motion.set(clock);
+        for record in self.state.borrow_mut().mounts.values_mut() {
+            if record.motion_read {
+                record.dirty = true;
+            }
+        }
+    }
     pub(crate) fn mount<T: 'static>(
         self: &Rc<Self>,
         owner: &Entity<T>,
@@ -538,6 +552,7 @@ impl RuntimeInner {
                 #[cfg(feature = "layout")]
                 scroll_reads: None,
                 dirty: true,
+                motion_read: false,
                 evaluating: false,
             },
         );
