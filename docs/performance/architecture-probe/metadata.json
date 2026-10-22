@@ -1,0 +1,35 @@
+{
+  "recorded_at": "2026-10-23T00:47:52+08:00",
+  "base_commit": "9bd9feadab289cae2655db283d9d7c7c6412be64",
+  "machine": "Apple M5 Max",
+  "os": "macOS 27.0.1 (26A434)",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "gpu": "Apple M5 Max / Metal",
+  "load": "Concurrent unrelated builds and benchmarks; observed load averages 101-115. Single diagnostic runs, no clean baseline comparison or regression conclusion.",
+  "commands": [
+    "cargo bench -p rxui --bench elements --features accessibility --locked",
+    "cargo bench -p rxui --bench architecture_probe --features accessibility --locked",
+    "cargo bench -p rxui --bench architecture_probe --features accessibility --locked -- --nested-only",
+    "cargo bench -p rxui --bench text --features rendering,accessibility --locked",
+    "target/release/deps/text-126d724a76e310c8 --accessibility",
+    "cargo bench -p rxui --bench compositing --features rendering --locked"
+  ],
+  "source_sha256": {
+    "crates/rxui/benches/architecture_probe.rs": "5c11401e244cf21a1cfe95951f372c4c89f2fe171273acf03c52b445fdc46324",
+    "crates/rxui/benches/elements.rs": "26bbd86b31274608cc94590e5addea6a835ceced965e50bdfcf00f2fcbaebea5",
+    "crates/rxui/benches/text.rs": "e020e2cd24a787e8c55ccea625cbe0b1b15244695994d7c34d0f888126fca9dd",
+    "crates/rxui/benches/compositing.rs": "4af1c72525cf881aeec7794a3d31f3390e50cd80a809043f2403abf2c4159c83"
+  },
+  "boundaries": {
+    "probe": "Mock text CPU only. Frame=begin_frame+Ui::prepare; initial setup excluded. 20 warmups then 20 batches of 20. Counts logged before warmup and after all 420 ops. Tooltip logs 30 frames over 480ms. No native host or AX consumer.",
+    "ax": "100 updates; only AccessKitTree::update timed; mutation, scroll and Ui preparation outside timer. *_mean rows store arithmetic mean in median_us column; p95=0 is an unmeasured sentinel. Nested CSV reports mean and work counters. No AX consumer.",
+    "virtual": "100k fixed rows, 800x600 viewport; alternating +/-0.25 scroll after offset=10, no realized range change. Includes scroll+Ui::prepare.",
+    "text": "Unchanged repository benchmark; real shaping and UiPainter preparation; no encode/submit. Accessibility variant includes AccessKit publication. Samples are batch averages.",
+    "compositing": "Unchanged repository benchmark. Cached prepare, whole description update+prepare, encode/discard, and encode+submit/wait are distinct. Submit/wait is not isolated GPU time. Ten warmups, ten batches of twenty."
+  },
+  "limitations": [
+    "Timings are highly contended, not stable latency estimates. Work counters and source traces are primary evidence.",
+    "No huge-single-paragraph run, native end-to-end latency, GPU timestamp query, clean AB comparison, or Windows/Linux validation.",
+    "Source code has no implementation changes; new benchmark and raw probe artifacts only."
+  ]
+}

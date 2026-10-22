@@ -1,0 +1,14 @@
+operation,count,median_us,p95_batch_us
+spinner_owner_frame,100,70.640,1484.550
+spinner_child_frame,100,5.973,6.300
+ax_one_label_update_mean,100,447.610,0
+ax_scroll_update_mean,100,60.082,0
+spinner_owner_frame,1000,4077.442,9974.015
+spinner_child_frame,1000,45.735,47.127
+ax_one_label_update_mean,1000,4223.534,0
+ax_scroll_update_mean,1000,5183.930,0
+spinner_owner_frame,10000,48721.175,58737.329
+spinner_child_frame,10000,1990.487,7785.144
+ax_one_label_update_mean,10000,46328.741,0
+ax_scroll_update_mean,10000,58443.598,0
+virtual_within_row,100000,47.671,824.773

@@ -1,0 +1,13 @@
+adapter: AdapterInfo { name: "Apple M5 Max", vendor: 0, device: 0, device_type: IntegratedGpu, device_pci_bus_id: "", driver: "", driver_info: "", backend: Metal, subgroup_min_size: 4, subgroup_max_size: 64, transient_saves_memory: Some(true), limit_bucket: None }
+direct,16: LayerStats { allocations: 0, render_passes: 0, composites: 0, live_layers: 0, live_pixels: 0 }
+one_group,16: LayerStats { allocations: 1, render_passes: 420, composites: 420, live_layers: 1, live_pixels: 5056 }
+nested,16: LayerStats { allocations: 2, render_passes: 840, composites: 840, live_layers: 2, live_pixels: 10112 }
+many_groups,16: LayerStats { allocations: 16, render_passes: 6720, composites: 6720, live_layers: 16, live_pixels: 4096 }
+direct,256: LayerStats { allocations: 0, render_passes: 0, composites: 0, live_layers: 0, live_pixels: 0 }
+one_group,256: LayerStats { allocations: 1, render_passes: 420, composites: 420, live_layers: 1, live_pixels: 108256 }
+nested,256: LayerStats { allocations: 2, render_passes: 840, composites: 840, live_layers: 2, live_pixels: 216512 }
+many_groups,256: LayerStats { allocations: 256, render_passes: 107520, composites: 107520, live_layers: 256, live_pixels: 65536 }
+direct,1000: LayerStats { allocations: 0, render_passes: 0, composites: 0, live_layers: 0, live_pixels: 0 }
+one_group,1000: LayerStats { allocations: 1, render_passes: 420, composites: 420, live_layers: 1, live_pixels: 394816 }
+nested,1000: LayerStats { allocations: 2, render_passes: 840, composites: 840, live_layers: 2, live_pixels: 789632 }
+many_groups,1000: LayerStats { allocations: 1000, render_passes: 420000, composites: 420000, live_layers: 1000, live_pixels: 256000 }

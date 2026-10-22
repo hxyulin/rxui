@@ -1,0 +1,16 @@
+operation,lines,samples,iterations_per_sample,median_us,p95_us
+idle,100,20,10,0.6,0.6
+caret_vertical,100,20,10,5.0,5.0
+type_middle,100,20,10,165.4,228.1
+type_end,100,20,10,79.4,80.7
+undo_redo,100,20,10,80.6,115.4
+idle,1000,20,10,0.6,0.6
+caret_vertical,1000,20,10,27.9,28.0
+type_middle,1000,20,10,310.1,947.1
+type_end,1000,20,10,124.1,407.5
+undo_redo,1000,20,10,131.3,387.0
+idle,5000,20,10,0.6,0.6
+caret_vertical,5000,20,10,94.3,95.5
+type_middle,5000,20,10,669.4,3248.9
+type_end,5000,20,10,615.1,8506.6
+undo_redo,5000,20,10,1919.2,4156.7
