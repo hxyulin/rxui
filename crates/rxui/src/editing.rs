@@ -263,6 +263,7 @@ impl<'a> Proposal<'a> {
 }
 /// One reversible history step: replacing `range` of the current value with `text`
 /// restores the recorded value and its selection.
+#[derive(Clone)]
 pub(crate) struct Snapshot {
     pub range: Range<usize>,
     pub text: String,
@@ -309,8 +310,8 @@ fn reverse_step(old: &str, new: &str, selection: TextSelection) -> Snapshot {
     }
 }
 /// At most 128 stored steps and 1 MiB of restoring UTF-8 across both stacks per placement.
-#[derive(Default)]
-struct History {
+#[derive(Clone, Default)]
+pub(crate) struct History {
     undo: std::collections::VecDeque<Snapshot>,
     redo: std::collections::VecDeque<Snapshot>,
     bytes: usize,
@@ -392,13 +393,14 @@ impl History {
     }
 }
 pub(crate) struct Editor {
+    pub life: std::rc::Rc<()>,
     pub selection: TextSelection,
     pub display: String,
     pub composition: Option<Composition>,
     pub pending: Option<Pending>,
     pub scroll_x: f32,
     pub ime_reset_revision: u64,
-    history: History,
+    pub(super) history: History,
     pub drag_selection: Option<TextSelection>,
     pub drag_line: bool,
     /// Password inputs display one mask character per grapheme.
@@ -415,6 +417,7 @@ pub(crate) const MASK: char = '\u{2022}';
 impl Editor {
     pub fn new(value: &str, masked: bool) -> Self {
         let mut editor = Self {
+            life: Default::default(),
             selection: TextSelection::caret(value.len()),
             display: String::new(),
             composition: None,

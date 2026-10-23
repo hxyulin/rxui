@@ -153,6 +153,7 @@ pub struct Element {
     pub(crate) scroll: Option<ScrollAxes>,
     pub(crate) scroll_behavior: crate::ScrollBehavior,
     pub(crate) scroll_handle: Option<crate::ScrollHandle>,
+    pub(crate) text_editing: Option<Box<crate::ui::editing_transfer::Properties>>,
     pub(crate) semantics: Option<Box<crate::semantics::Properties>>,
     pub(crate) input: Option<Box<crate::input::InputProperties>>,
 }
@@ -209,6 +210,7 @@ impl Element {
             scroll: None,
             scroll_behavior: crate::ScrollBehavior::platform(),
             scroll_handle: None,
+            text_editing: None,
             semantics: None,
             input: None,
         }
@@ -264,6 +266,30 @@ impl Element {
             .focus
             .get_or_insert_with(Default::default)
             .tab_stop = Some(value);
+        self
+    }
+    /// Associates a built-in input with an application-owned document identity.
+    /// Changing the document key resets its editing session, even for equal bytes;
+    /// version changes alone preserve valid selection/history.
+    pub fn text_editing_identity(mut self, identity: crate::TextEditingIdentity) -> Self {
+        self.text_editing
+            .get_or_insert_with(Default::default)
+            .identity = Some(identity);
+        self
+    }
+    /// Binds a weak queued capture handle. Multiple live bindings are ambiguous.
+    pub fn text_editing_handle(mut self, handle: crate::TextEditingHandle) -> Self {
+        self.text_editing
+            .get_or_insert_with(Default::default)
+            .handle = Some(handle);
+        self
+    }
+    /// Restores a queued committed snapshot once it becomes ready. Pending captures
+    /// survive destination-first preparation; inspect failures through the ticket.
+    pub fn restore_text_editing(mut self, capture: crate::TextEditingCapture) -> Self {
+        self.text_editing
+            .get_or_insert_with(Default::default)
+            .restore = Some(capture);
         self
     }
     /// Binds a placement-local focus reference. Containers restore a remembered

@@ -387,3 +387,10 @@ so later indexing or invalidation work can be justified by evidence.
 
 Undo/persistence, retained placement transfer, automatic native window targeting,
 per-group sizing and custom header composition remain separate work.
+
+Applications that need committed built-in field selection and bounded undo/redo to
+follow a deliberate structural move can opt into
+[explicit editing capture/restore](text-input.md#explicit-committed-editing-transfer).
+The `text_editing_transfer_window` example captures from an ordinary app listener
+before splitting/merging a dock. This does not retain mounts, hooks, tasks, focus,
+scroll state or IME preedit, and does not install native cross-window routing.

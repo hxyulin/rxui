@@ -240,3 +240,7 @@ web-time = "1.1.0"
 [[example]]
 name = "local_tasks"
 required-features = ["tasks"]
+
+[[example]]
+name = "text_editing_transfer_window"
+required-features = ["native"]

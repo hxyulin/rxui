@@ -307,6 +307,11 @@ pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow,
 #[cfg(feature = "layout")]
 pub use ui::dock_dispatch::{DockDragInfo, DockDragSession, DockDropPreview};
 #[cfg(feature = "layout")]
+pub use ui::editing_transfer::{
+    TextEditingCapture, TextEditingError, TextEditingHandle, TextEditingIdentity,
+    TextEditingSnapshot,
+};
+#[cfg(feature = "layout")]
 pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
 #[cfg(feature = "layout")]
 pub use ui::{
@@ -390,6 +395,10 @@ pub mod prelude {
     pub use crate::{LocalTask, Task, TaskError, TaskResult};
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
+    pub use crate::{
+        TextEditingCapture, TextEditingError, TextEditingHandle, TextEditingIdentity,
+        TextEditingSnapshot,
+    };
 }
 
 /// Pinned graphics integration dependency used by UiPainter.

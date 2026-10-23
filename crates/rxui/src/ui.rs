@@ -762,6 +762,7 @@ pub struct Ui<T: View> {
     active_views: Vec<crate::EntityId>,
     component_nodes: Vec<ElementId>,
     editor_nodes: Vec<ElementId>,
+    editing_commands: std::rc::Rc<std::cell::RefCell<Vec<editing_transfer::CaptureCommand>>>,
     measured_rows: IdSet<ElementId>,
     active_reveals: IdMap<ElementId, ActiveReveal>,
     active_reveal_evaluations: u64,
@@ -821,6 +822,7 @@ impl<T: View> Ui<T> {
             active_views: Vec::new(),
             component_nodes: Vec::new(),
             editor_nodes: Vec::new(),
+            editing_commands: Default::default(),
             active_reveals: IdMap::default(),
             measured_rows: Default::default(),
             active_reveal_evaluations: 0,
@@ -924,7 +926,8 @@ impl<T: View> Ui<T> {
     /// Whether this placement has unevaluated component work or unavailable geometry.
     /// Hosts also account for viewport, font-generation and visual-input changes.
     pub fn needs_prepare(&self, runtime: &Runtime) -> Result<bool, AccessError> {
-        if self.scroll_commands_pending()
+        if self.editing_transfer_pending()
+            || self.scroll_commands_pending()
             || self.overlay_pending()
             || self.input.pending()
             || self.text_client.pending()
@@ -1315,6 +1318,7 @@ impl<T: View> Ui<T> {
         force_evaluation: bool,
     ) -> Result<(), UiError> {
         profiling::scope!("rxui::evaluate_views");
+        self.capture_editing_commands();
         // Cleared on success; an error or unwind leaves it for the next prepare.
         self.partial_tree = true;
         let before = self.stats.component_evaluations;
@@ -1354,6 +1358,8 @@ impl<T: View> Ui<T> {
                 self.nodes.get_mut(&id).unwrap().button_name = name;
             }
         }
+        self.publish_editing_bindings();
+        self.restore_editing_requests();
         self.partial_tree = false;
         Ok(())
     }
@@ -1510,6 +1516,38 @@ impl<T: View> Ui<T> {
                         .checked_add(1)
                         .expect("RXUI text revision exhausted");
                     self.taffy.mark_dirty(node.layout)?;
+                }
+                // Equal bytes do not establish document identity. A new document
+                // starts a fresh editing session; accepted version increments do not.
+                let old_identity = node
+                    .element
+                    .text_editing
+                    .as_ref()
+                    .and_then(|p| p.identity.as_ref());
+                let new_identity = element
+                    .text_editing
+                    .as_ref()
+                    .and_then(|p| p.identity.as_ref());
+                if old_identity
+                    .zip(new_identity)
+                    .is_some_and(|(a, b)| a.document != b.document)
+                {
+                    if editor.cancel_composition() {
+                        editor.rebuild(new);
+                        node.text_revision = node
+                            .text_revision
+                            .checked_add(1)
+                            .expect("RXUI text revision exhausted");
+                        self.taffy.mark_dirty(node.layout)?;
+                    }
+                    let ime_reset_revision = editor.ime_reset_revision;
+                    **editor = Editor::new(new, mask);
+                    editor.ime_reset_revision = ime_reset_revision;
+                }
+                // A stored clone of an old description must not keep its weak
+                // handle binding live after this description is replaced.
+                if node.element.text_editing.is_some() || element.text_editing.is_some() {
+                    editor.life = Default::default();
                 }
                 editor.reconcile(old, new);
             }
@@ -4345,3 +4383,6 @@ impl<T: crate::View> crate::Ui<T> {
         Ok(changed)
     }
 }
+
+#[path = "editing_transfer.rs"]
+pub(crate) mod editing_transfer;

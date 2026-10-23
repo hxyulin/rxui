@@ -337,3 +337,77 @@ the same controlled proposal path, while selection requests validate the publish
 text revision and grapheme boundaries. See [the semantics contract](semantics.md).
 Per-character accessibility geometry, find/replace and other document-editing
 commands remain future work.
+
+## Explicit committed editing transfer
+
+Structural moves can remount built-in fields. Applications can opt into transferring
+committed selection (direction and affinity) and the existing bounded undo/redo
+stacks. This is an app-owned editing snapshot, not retained mount or document history.
+
+Bind a session-specific `TextEditingHandle` and `TextEditingIdentity::new(document_key,
+version)` to the field with `.text_editing_handle(handle.clone())` and
+`.text_editing_identity(identity)`. The document key is application identity, separate
+from sibling-local element keys. Advance the application version on accepted or
+external value changes. Exact controlled UTF-8 bytes, document identity/version,
+single/multiline and password mode must match at restoration. Node `text_revision`
+is placement-local and is never used as portable identity. Reusing a placement for
+a different document resets selection and history, even for equal bytes. A version
+increment alone preserves the valid editing session.
+
+An ordinary application handler can request capture before changing topology:
+
+```rust,ignore
+// No Ui access is needed inside cx.listener.
+let ticket = self.editing_handle.capture()?;
+self.saved_editing = Some(ticket);
+// Publish the accepted dock move here. In the replacement field description:
+text_area(self.value.clone())
+    .text_editing_identity(TextEditingIdentity::new(self.document_key.clone(), self.version))
+    .text_editing_handle(self.editing_handle.clone())
+    .restore_text_editing(self.saved_editing.clone().unwrap());
+```
+
+The queue captures the source's last reconciled committed state before its next
+description refresh tears it down. Capture is nondestructive and does not cancel
+composition or pointer capture. Normal source removal/deactivation keeps its usual
+cancellation behavior. Capturing from `on_change` while its proposal is unsettled
+returns `Busy` in the ticket; capture from a later command instead. Dirty external
+model changes are not silently accepted into the snapshot.
+
+The replacement applies a ready ticket before layout. Destination-first preparation
+in another `Ui` keeps the request pending without continuously dirtying frames;
+source readiness makes the destination's `needs_prepare` true. `Application` checks
+all windows for that work during its normal command flush. Custom hosts must check
+`needs_prepare` for their Uis after source preparation and request destination work.
+If the source Ui is dropped before processing, the ticket resolves to `Disposed`.
+
+`ticket.snapshot()` reports pending/success/failure; `ticket.restore_results()` makes
+attempted destination results available to app handlers without a Ui or ElementId.
+Failed validation leaves the destination unchanged and the snapshot available.
+After repairing the destination contract, call `ticket.retry_restore()` and prepare
+again. Failures do not repeatedly dirty frames. A failed capture needs a fresh
+capture request. Remove the restore property when the transfer has been handled;
+a retained ticket will otherwise be attempted again on a later remount.
+
+Custom hosts can use `Ui::capture_text_editing(id)` and
+`Ui::restore_text_editing(id, &snapshot)` directly, or make a ready ticket using
+`TextEditingCapture::from_snapshot(snapshot)`. Reconcile external changes first.
+Weak handles never retain nodes/windows and old ElementIds remain stale. Duplicate
+live bindings return `Ambiguous`; use independent handles for independent sessions
+(including simultaneous views of the same document), or choose an explicit Ui/id.
+
+Preedit, pending/unaccepted edits, pointer capture/drag, focus, scroll offsets,
+pixel geometry, vertical goal columns, caret animation, hooks and tasks do not
+transfer. Capture excludes preedit while retaining the original committed selection;
+restore refuses to overwrite destination composition, an unsettled proposal or
+an active destination text drag/capture.
+Geometry/theme/layout rebuild in the destination. Restored undo/redo still propose
+through its current controlled handler: rejection preserves the chain, normalization
+of replay clears it. A transfer ends typing coalescence. Focus requires a separate
+explicit `FocusHandle::focus`/host request, and never implies native activation.
+Snapshots contain exact text and history, including password values; keep them in
+trusted app memory. They have no serialization or cross-process persistence API.
+
+Run `mbx run -p rxui --example text_editing_transfer_window --features native --locked`
+for an ordinary app-handler example that splits/merges a dock editor and separately
+opts into focus. Automated tests exercise remounts and separate Uis in both orders.
