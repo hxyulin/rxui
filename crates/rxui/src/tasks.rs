@@ -1,3 +1,6 @@
+pub(crate) mod local;
+pub use local::{LocalFuture, LocalTask, LocalTaskExecutor};
+
 use crate::{AppContext, EntityId, Runtime, runtime::RuntimeInner};
 use futures_util::{
     FutureExt,
@@ -256,60 +259,112 @@ impl Runtime {
         *slot = Some(Tasks::new(executor, wake));
         Ok(())
     }
-    /// Delivers ready task results in fresh UI updates, with no active entity lease.
-    /// Up to 1,024 queue records are consumed; the adapter is woken again if that
-    /// budget is reached. A callback panic does not discard later queued results.
+    /// Delivers completions on the UI thread, alternating local and background
+    /// queues with a shared 1,024-packet budget. Does not drive either executor.
+    /// A callback unwind rearms host notifications and preserves later results.
     pub fn poll_tasks(&mut self) -> usize {
         profiling::scope!("rxui::poll_tasks");
         self.inner.synchronize();
-        if let Some(tasks) = self.inner.tasks.borrow().as_ref() {
-            tasks.hub.pending.store(false, Ordering::Release);
+        let background = self.inner.tasks.borrow().as_ref().map(|t| t.hub.clone());
+        let local = self
+            .inner
+            .local_tasks
+            .borrow()
+            .as_ref()
+            .map(|t| t.hub.clone());
+        if let Some(hub) = &background {
+            hub.pending.store(false, Ordering::Release);
         }
-        let mut delivered = 0;
-        for _ in 0..1024 {
-            let next = {
-                let mut slot = self.inner.tasks.borrow_mut();
-                let Some(tasks) = slot.as_mut() else {
-                    return delivered;
+        if let Some(hub) = &local {
+            hub.pending.set(false);
+        }
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut delivered = 0;
+            for turn in 0..1024 {
+                let next = if turn % 2 == 0 {
+                    self.take_local_completion()
+                        .or_else(|| self.take_background_completion())
+                } else {
+                    self.take_background_completion()
+                        .or_else(|| self.take_local_completion())
                 };
-                let Ok(packet) = tasks.receiver.try_recv() else {
-                    return delivered;
+                let Some(next) = next else {
+                    return (delivered, false);
                 };
-                (tasks.records.remove(&packet.id), packet.outcome)
-            };
-            if let (Some(record), Some(outcome)) = next
-                && record.mount.as_ref().is_none_or(|m| m.strong_count() != 0)
-                && record
-                    .control
-                    .status
-                    .compare_exchange(RUNNING, FINISHED, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-            {
-                delivered += 1;
-                (record.completion)(
-                    outcome,
-                    &mut AppContext {
+                if let Some(completion) = next {
+                    delivered += 1;
+                    completion(&mut AppContext {
                         runtime: &self.inner,
                         dispatch_mount: None,
-                    },
-                );
+                    });
+                }
+                self.inner.synchronize();
             }
-            self.inner.synchronize();
+            (delivered, true)
+        }));
+        if result.as_ref().map_or(true, |(_, budget)| *budget) {
+            // Wake outside registry borrows. Preserve the original callback panic,
+            // including if a faulty host's wake callback also unwinds.
+            let wake = || {
+                if let Some(hub) = background {
+                    hub.request_wake();
+                }
+                if let Some(hub) = local {
+                    hub.request_wake();
+                }
+            };
+            if result.is_err() {
+                let _ = std::panic::catch_unwind(AssertUnwindSafe(wake));
+            } else {
+                wake();
+            }
         }
-        if let Some(tasks) = self.inner.tasks.borrow().as_ref() {
-            tasks.hub.request_wake();
+        match result {
+            Ok((delivered, _)) => delivered,
+            Err(panic) => std::panic::resume_unwind(panic),
         }
-        delivered
     }
-    /// Number of registered tasks, including results awaiting delivery.
+    fn take_background_completion(&self) -> Option<Option<Box<Delivery>>> {
+        let (record, outcome) = {
+            let mut slot = self.inner.tasks.borrow_mut();
+            let tasks = slot.as_mut()?;
+            let packet = tasks.receiver.try_recv().ok()?;
+            (tasks.records.remove(&packet.id), packet.outcome)
+        };
+        Some(match (record, outcome) {
+            (Some(record), Some(outcome))
+                if record.mount.as_ref().is_none_or(|m| m.strong_count() != 0)
+                    && record
+                        .control
+                        .status
+                        .compare_exchange(RUNNING, FINISHED, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok() =>
+            {
+                Some(
+                    Box::new(move |cx: &mut AppContext<'_>| (record.completion)(outcome, cx))
+                        as Box<Delivery>,
+                )
+            }
+            _ => None,
+        })
+    }
+    /// Number of registered local and background tasks, including queued results.
     pub fn pending_tasks(&self) -> usize {
         self.inner
             .tasks
             .borrow()
             .as_ref()
             .map_or(0, |tasks| tasks.records.len())
+            + self
+                .inner
+                .local_tasks
+                .borrow()
+                .as_ref()
+                .map_or(0, |tasks| tasks.len())
     }
 }
+
+type Delivery = dyn FnOnce(&mut AppContext<'_>);
 
 fn panic_error(payload: Box<dyn Any + Send>) -> TaskError {
     TaskError::Panicked(
@@ -366,7 +421,7 @@ fn start_scoped<R: Send + 'static>(
         );
         (
             tasks.executor.clone(),
-            tasks.hub.clone(),
+            Arc::downgrade(&tasks.hub),
             control,
             registration,
         )
@@ -381,6 +436,7 @@ fn start_scoped<R: Send + 'static>(
         Work::Future(future) => executor.spawn(Box::pin(async move {
             if let Ok(outcome) =
                 Abortable::new(AssertUnwindSafe(future).catch_unwind(), registration).await
+                && let Some(hub) = hub.upgrade()
             {
                 hub.send(Packet {
                     id,
@@ -401,10 +457,12 @@ fn start_scoped<R: Send + 'static>(
                 let outcome = std::panic::catch_unwind(AssertUnwindSafe(job))
                     .map(|value| Box::new(value) as Box<dyn Any + Send>)
                     .map_err(panic_error);
-                hub.send(Packet {
-                    id,
-                    outcome: Some(outcome),
-                });
+                if let Some(hub) = hub.upgrade() {
+                    hub.send(Packet {
+                        id,
+                        outcome: Some(outcome),
+                    });
+                }
             }))
         }
     };

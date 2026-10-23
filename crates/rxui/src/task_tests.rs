@@ -277,7 +277,7 @@ fn completion_wakes_coalesce_and_budget_reschedules_remaining_results() {
 }
 #[test]
 fn callback_panic_preserves_later_results_and_runtime_remains_usable() {
-    let (mut runtime, executor, _) = setup();
+    let (mut runtime, executor, wake) = setup();
     let seen = Rc::new(Cell::new(false));
     runtime.update(|cx| cx.spawn(async {}, |_, _| panic!("callback panic")).detach());
     runtime.update(|cx| {
@@ -291,6 +291,11 @@ fn callback_panic_preserves_later_results_and_runtime_remains_usable() {
     executor.tick();
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.poll_tasks())).is_err()
+    );
+    assert_eq!(
+        wake.load(Ordering::SeqCst),
+        2,
+        "unwind must rearm outstanding results"
     );
     assert_eq!(runtime.poll_tasks(), 1);
     assert!(seen.get());

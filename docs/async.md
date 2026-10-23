@@ -1,8 +1,9 @@
-# Scoped background tasks
+# Scoped tasks
 
 Status: implemented behind the optional `tasks` feature; the native Application
 host supplies an executor and event-loop wakeup. The state/layout runtime creates
-no workers until a host configures execution.
+no workers until a host configures execution. An explicit local executor boundary
+also supports non-Send futures and outputs; see Portable thread-local tasks below.
 
 ## Work and completion
 
@@ -186,3 +187,62 @@ explicitly. Wake messages carry no data and each successful call schedules a
 `woken` callback. For higher rates, coalesce notifications with a pending flag or
 send one batch per wake. The service owns its timer, cancellation and shutdown;
 RXUI supplies UI-thread delivery and event-loop wakeup, without installing Tokio.
+
+## Portable thread-local tasks
+
+The `tasks` feature also provides an explicit local executor boundary with the
+same signatures on native and wasm. `LocalFuture` is a boxed `'static` future
+without `Send`. Implement `LocalTaskExecutor::spawn_local(LocalFuture)` and install
+it once with `Runtime::configure_local_tasks(Rc<dyn LocalTaskExecutor>, wake)`.
+The wake closure may capture `Rc` and must schedule a later host turn, never call
+`poll_tasks` inline. Local-only runtimes need no background executor. Native
+`Application` currently configures only background execution; local configuration
+and executor driving are the custom host's responsibility. This slice does not
+supply a browser host or a browser Promise adapter.
+
+`AppContext::spawn_local` / `try_spawn_local` and the corresponding `Context<T>`
+methods accept non-Send futures **and** non-Send results. They mirror the
+application/owner completion signatures above and return `LocalTask`.
+`TaskScope::spawn_local(cx, future, completion)` returns
+`Result<LocalTask, SpawnError>` and preserves mount and runtime validation.
+`LocalTask` stays on the UI thread; `Task` retains its existing Send/Sync traits
+and background spawn retains its Send requirements on all platforms.
+
+```rust,ignore
+let value = Rc::new(String::from("owned local snapshot"));
+this.task = Some(cx.spawn_local(async move {
+    wait_for_service().await;
+    value // Rc survives a pending await and is also the result.
+}, |this, result, _cx| this.value = Some(result.unwrap())));
+```
+
+There are two distinct responsibilities: the local executor polls futures and
+arranges wakeups when pending futures become runnable; `poll_tasks` only delivers
+completed results in fresh UI updates. A completion wake cannot make a pending
+future progress. In particular, calling `LocalExecutor::try_tick` once per event
+without retaining an executor ticker/waker leaves an idle host asleep. The runnable
+[`local_tasks` example](../crates/rxui/examples/local_tasks.rs) uses
+`LocalExecutor::run` around a sleeping event receiver, so a timer resumes an
+`Rc` future without frame polling, then a completion event triggers UI delivery:
+
+```sh
+mbx run -p rxui --example local_tasks --no-default-features --features tasks
+```
+
+Local delivery uses its own `Rc`/`RefCell` mailbox and untyped non-Send output;
+it never crosses the background channel. Futures and handles weakly reference
+the mailbox and do not retain the runtime. Dropping/cancelling `LocalTask`
+suppresses queued success and error alike. Detached work still ends with its
+owner, mount or runtime. Aborting wakes pollable work; capture cleanup inside a
+pending future requires the host to drive the executor once more (or drop it).
+Rejecting adapters must drop work without polling or retaining it. Rejection or
+executor unwind removes the registration and releases callback captures.
+
+`poll_tasks` alternates both queues under a shared 1,024-packet budget, including
+cancelled packets, and rearms notifications when the budget is reached. It invokes
+callbacks after registry borrows end. If a completion callback unwinds on native,
+later results remain queued, a replacement wake is requested, and the original
+panic is resumed. Future panics become `TaskError` only where unwinding is
+supported; no recovery is promised for aborting wasm panics. Application request
+generations still need explicit checks for latest-request policy; local execution
+does not infer request ordering or undo external side effects.

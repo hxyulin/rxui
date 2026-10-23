@@ -19,7 +19,7 @@
 //! separate from drawing. Controlled
 //! single-line inputs retain selection, bounded undo/redo and IME preedit independently of
 //! application-owned values. The optional
-//! tasks feature delivers owned background results in fresh UI updates; native
+//! tasks feature delivers owned background and local results in fresh UI updates; native
 //! adds Application hosting over astrelis-winit with lazy AccessKit publication.
 //! Optional native-dialogs adds parent-bound file pickers and message dialogs;
 //! desktop-services adds asynchronous URL/file launches and file-manager reveal.
@@ -288,7 +288,8 @@ pub use tabs::{
 };
 #[cfg(feature = "tasks")]
 pub use tasks::{
-    BackgroundFuture, BlockingJob, SpawnError, Task, TaskError, TaskExecutor, TaskResult, TaskScope,
+    BackgroundFuture, BlockingJob, LocalFuture, LocalTask, LocalTaskExecutor, SpawnError, Task,
+    TaskError, TaskExecutor, TaskResult, TaskScope,
 };
 #[cfg(all(feature = "tasks", not(target_arch = "wasm32")))]
 pub use tasks::{ThreadPoolExecutor, sleep};
@@ -385,10 +386,10 @@ pub mod prelude {
         FontFace, LinkEvent, SubmitShortcut, TextSpan, link, rich_text, span, text_area,
     };
     pub use crate::{ImeCancelReason, ImeEvent, ImeInput, TextInsertInput, TextInsertSource};
+    #[cfg(feature = "tasks")]
+    pub use crate::{LocalTask, Task, TaskError, TaskResult};
     #[cfg(feature = "native-menus")]
     pub use crate::{NativeMenu, NativeMenuBar, NativeMenuRole};
-    #[cfg(feature = "tasks")]
-    pub use crate::{Task, TaskError, TaskResult};
 }
 
 /// Pinned graphics integration dependency used by UiPainter.

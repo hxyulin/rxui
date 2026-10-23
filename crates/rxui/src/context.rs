@@ -60,6 +60,24 @@ impl AppContext<'_> {
         self.runtime.set_reduce_motion(reduce);
     }
     /// Launches an application-scoped Send future. Retain its Task or detach explicitly.
+    /// Local futures and outputs belong on `spawn_local`; background bounds are
+    /// identical on native and wasm:
+    ///
+    /// ```compile_fail
+    /// use std::rc::Rc;
+    /// let mut runtime = rxui::Runtime::new();
+    /// runtime.update(|cx| {
+    ///     let value = Rc::new(1);
+    ///     cx.spawn(async move { std::future::ready(()).await; drop(value); }, |_, _| {}).detach();
+    /// });
+    /// ```
+    ///
+    /// ```compile_fail
+    /// let mut runtime = rxui::Runtime::new();
+    /// runtime.update(|cx| {
+    ///     cx.spawn(async { std::rc::Rc::new(1) }, |_, _| {}).detach();
+    /// });
+    /// ```
     /// Panics if execution is not configured/rejected; try_spawn provides fallible setup.
     #[cfg(feature = "tasks")]
     pub fn spawn<R: Send + 'static>(
@@ -83,6 +101,27 @@ impl AppContext<'_> {
             completion,
             crate::tasks::Work::Future(Box::pin(future)),
         )
+    }
+    /// Starts a local future; future and output may hold Rc across awaits.
+    /// Keep the LocalTask or detach it explicitly. Panics on setup failure;
+    /// try_spawn_local is fallible. Completion runs only at poll_tasks.
+    #[cfg(feature = "tasks")]
+    pub fn spawn_local<R: 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + 'static,
+        completion: impl FnOnce(crate::TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> crate::LocalTask {
+        self.try_spawn_local(future, completion)
+            .unwrap_or_else(|e| panic!("cannot spawn RXUI task: {e}"))
+    }
+    /// Fallible application task setup. Completion executes only at poll_tasks.
+    #[cfg(feature = "tasks")]
+    pub fn try_spawn_local<R: 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + 'static,
+        completion: impl FnOnce(crate::TaskResult<R>, &mut AppContext<'_>) + 'static,
+    ) -> Result<crate::LocalTask, crate::SpawnError> {
+        crate::tasks::local::start(self.runtime, None, completion, future)
     }
     /// Launches application-scoped blocking work on the executor's separate pool.
     #[cfg(feature = "tasks")]
@@ -186,6 +225,37 @@ impl<'a, T> Context<'a, T> {
                 }
             },
             crate::tasks::Work::Future(Box::pin(future)),
+        )
+    }
+    /// Starts a local future; future and output may hold Rc across awaits.
+    /// Keep the LocalTask or detach it explicitly. Panics on setup failure;
+    /// try_spawn_local is fallible. Completion runs only at poll_tasks.
+    #[cfg(feature = "tasks")]
+    pub fn spawn_local<R: 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + 'static,
+        completion: impl FnOnce(&mut T, crate::TaskResult<R>, &mut Context<'_, T>) + 'static,
+    ) -> crate::LocalTask {
+        self.try_spawn_local(future, completion)
+            .unwrap_or_else(|e| panic!("cannot spawn RXUI task: {e}"))
+    }
+    /// Fallible owner-scoped future setup.
+    #[cfg(feature = "tasks")]
+    pub fn try_spawn_local<R: 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = R> + 'static,
+        completion: impl FnOnce(&mut T, crate::TaskResult<R>, &mut Context<'_, T>) + 'static,
+    ) -> Result<crate::LocalTask, crate::SpawnError> {
+        let owner = self.owner.clone();
+        crate::tasks::local::start(
+            self.app.runtime,
+            Some(owner.id()),
+            move |outcome, cx| {
+                if let Some(entity) = owner.upgrade() {
+                    entity.update(cx, |state, cx| completion(state, outcome, cx));
+                }
+            },
+            future,
         )
     }
     /// Launches blocking work with a weak completion binding to current T.

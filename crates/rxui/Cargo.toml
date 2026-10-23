@@ -236,3 +236,7 @@ required-features = ["layout"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = "1.1.0"
+
+[[example]]
+name = "local_tasks"
+required-features = ["tasks"]

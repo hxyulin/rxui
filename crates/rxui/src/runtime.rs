@@ -65,6 +65,8 @@ pub(crate) struct RuntimeInner {
     flushing: Cell<bool>,
     #[cfg(feature = "tasks")]
     pub(crate) tasks: RefCell<Option<crate::tasks::Tasks>>,
+    #[cfg(feature = "tasks")]
+    pub(crate) local_tasks: RefCell<Option<crate::tasks::local::LocalTasks>>,
     #[cfg(feature = "native")]
     pub(crate) native: RefCell<Option<std::rc::Rc<crate::native::Commands>>>,
     /// Mounts that asked to be evaluated on the next frame, and the current frame time.
@@ -114,6 +116,8 @@ impl Runtime {
                 flushing: Cell::new(false),
                 #[cfg(feature = "tasks")]
                 tasks: RefCell::new(None),
+                #[cfg(feature = "tasks")]
+                local_tasks: RefCell::new(None),
                 #[cfg(feature = "native")]
                 native: RefCell::new(None),
                 frames: RefCell::new((HashSet::new(), std::time::Duration::ZERO)),
@@ -816,6 +820,12 @@ impl RuntimeInner {
                     .borrow_mut()
                     .as_mut()
                     .map(|tasks| tasks.cancel_mounts());
+                drop(callbacks);
+                let callbacks = self
+                    .local_tasks
+                    .borrow_mut()
+                    .as_mut()
+                    .map(|tasks| tasks.cancel_disposed(&disposed_owners));
                 drop(callbacks);
             }
         }
