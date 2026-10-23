@@ -233,3 +233,6 @@ required-features = ["native"]
 name = "docking"
 harness = false
 required-features = ["layout"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1.1.0"

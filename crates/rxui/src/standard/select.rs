@@ -7,8 +7,12 @@ use crate::{
     ViewContext, button, column, label, popover, row,
 };
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use taffy::prelude::AlignItems;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// Placement-local open state and keyboard highlight.
 #[derive(Default)]
