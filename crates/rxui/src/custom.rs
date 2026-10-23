@@ -24,7 +24,7 @@ pub struct CustomMeasure {
 /// [`crate::Element`] builders, for example `.accessibility_role(...)`.
 ///
 /// Painting needs the `rendering` feature: [`Self::prepare`] runs in
-/// `UiPainter::prepare` with the Astrelis painter and fonts, outside any pass, and
+/// `UiPainter::prepare` with the RXUI drawing painter and fonts, outside any pass, and
 /// [`Self::paint`] records draws in logical window units on a session that is
 /// already scaled, offset and clipped for this element. `State` is retained per
 /// placement by the painter and dropped with the element.
@@ -33,7 +33,7 @@ pub struct CustomMeasure {
 /// # #[cfg(feature = "rendering")]
 /// # {
 /// use rxui::{CustomElement, CustomMeasure, ElementInfo, NumericValue, UiError, custom, prelude::*};
-/// use rxui::astrelis::{PaintSession, Rect};
+/// use rxui::drawing::{PaintSession, Rect};
 ///
 /// #[derive(PartialEq)]
 /// struct Meter { fraction: f32 }
@@ -97,7 +97,7 @@ pub trait CustomElement: PartialEq + 'static {
         &self,
         state: &Self::State,
         element: &crate::ElementInfo<'_>,
-        paint: &mut astrelis::PaintSession<'_, '_>,
+        paint: &mut rxui_draw::PaintSession<'_, '_>,
     ) -> Result<(), crate::UiError> {
         let _ = (state, element, paint);
         Ok(())
@@ -107,13 +107,17 @@ pub trait CustomElement: PartialEq + 'static {
 /// Resources lent to [`CustomElement::prepare`].
 #[cfg(feature = "rendering")]
 pub struct CustomPrepare<'a> {
+    /// Application-shared wgpu device for custom pipelines and resources.
+    pub device: &'a crate::wgpu::Device,
+    /// Application-shared queue for custom resource uploads.
+    pub queue: &'a crate::wgpu::Queue,
     /// Painter for text, path and image preparation.
-    pub painter: &'a mut astrelis::Painter,
+    pub painter: &'a mut rxui_draw::Painter,
     /// Loaded fonts for shaping. Load new fonts through `UiPainter::fonts_mut` so
     /// measurement is invalidated.
-    pub fonts: &'a mut astrelis::TextSystem,
-    /// Destination format of the frame.
-    pub format: &'a astrelis::RenderFormat,
+    pub fonts: &'a mut rxui_draw::TextSystem,
+    /// Actual attachment format used to paint this element, including opacity layers.
+    pub format: &'a rxui_draw::RenderFormat,
     /// Physical pixels per logical unit.
     pub raster_scale: f32,
 }
@@ -125,9 +129,9 @@ impl CustomPrepare<'_> {
     /// preserve the phase. Include custom scrolling/line/overlay offsets in the
     /// origin, and reprepare when its fractional physical phase or density changes.
     /// This assumes RXUI's uniform scale. If `paint` adds another transform, use
-    /// explicit Astrelis raster options appropriate to that final transform instead.
-    pub fn text_raster_options(&self, origin: [f32; 2]) -> astrelis::TextRasterOptions {
-        astrelis::TextRasterOptions::new()
+    /// explicit RXUI drawing raster options appropriate to that final transform instead.
+    pub fn text_raster_options(&self, origin: [f32; 2]) -> rxui_draw::TextRasterOptions {
+        rxui_draw::TextRasterOptions::new()
             .raster_scale(self.raster_scale)
             .physical_origin(origin.map(|v| v * self.raster_scale))
     }
@@ -162,7 +166,7 @@ pub(crate) trait AnyCustom {
         &self,
         state: &dyn Any,
         element: &crate::ElementInfo<'_>,
-        paint: &mut astrelis::PaintSession<'_, '_>,
+        paint: &mut rxui_draw::PaintSession<'_, '_>,
     ) -> Result<(), crate::UiError>;
 }
 impl<E: CustomElement> AnyCustom for E {
@@ -206,7 +210,7 @@ impl<E: CustomElement> AnyCustom for E {
         &self,
         state: &dyn Any,
         element: &crate::ElementInfo<'_>,
-        paint: &mut astrelis::PaintSession<'_, '_>,
+        paint: &mut rxui_draw::PaintSession<'_, '_>,
     ) -> Result<(), crate::UiError> {
         let state = state
             .downcast_ref()

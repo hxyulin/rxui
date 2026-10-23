@@ -1,9 +1,9 @@
 use super::image_gpu_tests::{Page, pixels, prepare, read_pixel};
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 
-fn target(graphics: &GraphicsContext, samples: u32) -> astrelis::Framebuffer {
+fn target(graphics: &GraphicsContext, samples: u32) -> rxui_draw::Framebuffer {
     graphics
         .create_framebuffer(
             FramebufferOptions::new(64, 64)
@@ -39,7 +39,7 @@ fn draw(
     painter: &mut UiPainter,
     ui: &Ui<Page>,
     graphics: &GraphicsContext,
-    target: &mut astrelis::Framebuffer,
+    target: &mut rxui_draw::Framebuffer,
     scale: f32,
 ) -> Vec<u8> {
     let texture = target.color_texture().unwrap().clone();
@@ -83,7 +83,7 @@ fn group_opacity_overlap_nesting_overflow_and_storage_reuse_match_pixels() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Page(scene(0.5, 1.))));
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         prepare(&mut runtime, &mut ui, &mut painter, &target.render_format());
         let stats = ui.stats();
         let bytes = draw(&mut painter, &ui, &graphics, &mut target, 1.);
@@ -179,7 +179,7 @@ fn groups_include_images_text_clip_dpi_msaa_and_live_framebuffer_updates() {
             })
         });
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(std::sync::Arc::<[u8]>::from(
@@ -290,7 +290,7 @@ fn fractional_srgb_groups_preserve_viewport_scissor_and_placement_ownership() {
         let root = runtime.update(|cx| cx.new(|_| Page(description)));
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
         let mut other = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         for ui in [&mut ui, &mut other] {
             ui.prepare(&mut runtime, [32., 32.], &mut painter).unwrap();
             painter.prepare(ui, &target.render_format(), 1.5).unwrap();
@@ -396,7 +396,7 @@ fn zero_opacity_preserves_unrelated_text_across_layer_to_direct_transitions() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Page(description(0.5))));
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(std::sync::Arc::<[u8]>::from(

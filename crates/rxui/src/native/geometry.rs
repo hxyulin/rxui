@@ -1,6 +1,6 @@
 //! Persistable normal window bounds and monitor-aware restoration.
 use super::*;
-use astrelis_winit::winit::dpi::{LogicalSize, PhysicalPosition};
+use rxui_host::winit::dpi::{LogicalSize, PhysicalPosition};
 
 /// Persistable window placement. The application chooses storage and window keys.
 /// `inner_size` is the normal (unmaximized) content size in logical pixels;
@@ -61,7 +61,7 @@ impl WindowGeometry {
 #[derive(Clone, Copy)]
 pub(super) struct Request {
     size: Option<Size>,
-    position: Option<astrelis_winit::winit::dpi::Position>,
+    position: Option<rxui_host::winit::dpi::Position>,
     maximized: bool,
 }
 impl Request {
@@ -79,7 +79,7 @@ impl Request {
         let mut value = self.resolve(1.)?;
         if matches!(
             self.position,
-            Some(astrelis_winit::winit::dpi::Position::Logical(_))
+            Some(rxui_host::winit::dpi::Position::Logical(_))
         ) {
             value.outer_position = None;
         }
@@ -186,9 +186,7 @@ pub(super) fn restore_attributes(
         None => attributes,
     }
 }
-pub(super) fn monitors(
-    event_loop: &astrelis_winit::winit::event_loop::ActiveEventLoop,
-) -> Vec<Monitor> {
+pub(super) fn monitors(event_loop: &rxui_host::winit::event_loop::ActiveEventLoop) -> Vec<Monitor> {
     event_loop
         .primary_monitor()
         .into_iter()
@@ -294,8 +292,8 @@ mod tests {
     #[test]
     fn physical_attributes_wait_for_actual_dpi_and_restore_converts_once() {
         let attrs = Window::default_attributes()
-            .with_inner_size(astrelis_winit::winit::dpi::PhysicalSize::new(1600, 1200))
-            .with_position(astrelis_winit::winit::dpi::PhysicalPosition::new(80, 120));
+            .with_inner_size(rxui_host::winit::dpi::PhysicalSize::new(1600, 1200))
+            .with_position(rxui_host::winit::dpi::PhysicalPosition::new(80, 120));
         let request = Request::new(&attrs);
         assert_eq!(request.pending(), None);
         assert_eq!(request.resolve(2.).unwrap().inner_size, [800., 600.]);
@@ -311,7 +309,7 @@ mod tests {
         );
         let logical = Window::default_attributes()
             .with_inner_size(LogicalSize::new(800., 600.))
-            .with_position(astrelis_winit::winit::dpi::LogicalPosition::new(40., 60.));
+            .with_position(rxui_host::winit::dpi::LogicalPosition::new(40., 60.));
         let request = Request::new(&logical);
         assert_eq!(request.pending().unwrap().outer_position, None);
         assert_eq!(request.resolve(2.).unwrap().outer_position, Some([80, 120]));

@@ -1,10 +1,10 @@
-//! Placement regressions for the adapter, above Astrelis's direct-raster tests.
+//! Placement regressions for the adapter, above RXUI drawing's direct-raster tests.
 use super::image_gpu_tests::{Page, pixels, read_pixel};
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 
-fn target(graphics: &GraphicsContext) -> astrelis::Framebuffer {
+fn target(graphics: &GraphicsContext) -> rxui_draw::Framebuffer {
     graphics
         .create_framebuffer(
             FramebufferOptions::new(64, 64)
@@ -14,7 +14,7 @@ fn target(graphics: &GraphicsContext) -> astrelis::Framebuffer {
         .unwrap()
 }
 fn painter(graphics: &GraphicsContext) -> UiPainter {
-    let mut painter = UiPainter::new(graphics);
+    let mut painter = UiPainter::with_graphics(graphics);
     painter
         .fonts_mut()
         .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
@@ -42,7 +42,7 @@ fn scene(origin: [f32; 2], opacity: f32) -> Element {
 }
 fn render(
     graphics: &GraphicsContext,
-    target: &mut astrelis::Framebuffer,
+    target: &mut rxui_draw::Framebuffer,
     painter: &mut UiPainter,
     ui: &Ui<Page>,
     scale: f32,

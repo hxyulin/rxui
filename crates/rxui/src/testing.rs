@@ -4,7 +4,7 @@ use crate::{
     Runtime, SemanticAction, SemanticNode, TextInputEvent, TextMeasure, Ui, UiError, UiPainter,
     View,
 };
-use astrelis::{FramebufferOptions, GraphicsContext, wgpu};
+use rxui_draw::{FramebufferOptions, GraphicsContext, wgpu};
 
 /// One placement rendered offscreen, for tests and tools without a window.
 ///
@@ -17,7 +17,7 @@ use astrelis::{FramebufferOptions, GraphicsContext, wgpu};
 ///
 /// ```no_run
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use rxui::{TestUi, prelude::*, astrelis::GraphicsContext};
+/// use rxui::{TestUi, prelude::*, drawing::GraphicsContext};
 /// struct Counter(u32);
 /// impl View for Counter {
 ///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
@@ -48,7 +48,7 @@ impl<T: View> TestUi<T> {
         let entity = runtime.update(|cx| cx.new(|_| root));
         let ui = Ui::new(&mut runtime, entity)?;
         Ok(Self {
-            painter: UiPainter::new(graphics),
+            painter: UiPainter::with_graphics(graphics),
             graphics: graphics.clone(),
             runtime,
             ui,

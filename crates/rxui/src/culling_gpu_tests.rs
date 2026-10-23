@@ -1,7 +1,7 @@
 use super::image_gpu_tests::{Page, pixels, prepare, read_pixel};
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 
 #[test]
 #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
@@ -74,7 +74,7 @@ fn viewport_overlays_escape_clips_z_and_opacity_with_msaa_dpi_and_modal_backdrop
         let mut runtime = Runtime::new();
         let entity = runtime.update(|cx| cx.new(|_| Page(description(0))));
         let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         for stage in 0..3 {
             runtime.update(|cx| entity.update(cx, |s, _| s.0 = description(stage)));
             ui.prepare(&mut runtime, [32., 32.], &mut painter).unwrap();
@@ -177,7 +177,7 @@ fn dock_drag_preview_respects_dpi_viewport_scissor_theme_and_isolated_content() 
             })
         });
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(Arc::<[u8]>::from(
@@ -356,7 +356,7 @@ fn dock_tree_reparenting_and_collapse_paint_real_font_panels_in_their_slots() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| DockPage { tree }));
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(Arc::<[u8]>::from(
@@ -519,7 +519,7 @@ fn scroll_culling_retains_glyphs_overflow_and_independent_descendants() {
             })
         });
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(Arc::<[u8]>::from(
@@ -644,7 +644,7 @@ fn real_font_tab_panels_handle_intrinsic_grid_probes_and_constrain_entity_scroll
             })
         });
         let mut ui = Ui::new(&mut r, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(Arc::<[u8]>::from(

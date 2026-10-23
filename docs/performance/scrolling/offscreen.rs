@@ -216,7 +216,7 @@ impl View for Workspace {
 fn main() {
     use rxui::{
         AccessKitTree, Ui, UiPainter,
-        astrelis::{FramebufferOptions, GraphicsContext, wgpu},
+        drawing::{FramebufferOptions, GraphicsContext, wgpu},
     };
     use std::time::{Duration, Instant};
     let graphics = pollster::block_on(GraphicsContext::headless()).unwrap();
@@ -226,7 +226,7 @@ fn main() {
     let mut runtime = Runtime::new();
     let root = runtime.update(|cx| cx.new(|_| Workspace::new()));
     let mut ui = Ui::new(&mut runtime, root).unwrap();
-    let mut painter = UiPainter::new(&graphics);
+    let mut painter = UiPainter::with_graphics(&graphics);
     painter
         .fonts_mut()
         .load_font_shared(std::sync::Arc::<[u8]>::from(

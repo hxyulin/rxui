@@ -1,6 +1,6 @@
 use super::GraphicsContext;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 
 const SIZE: [u32; 2] = [640, 360];
 const LABELS: [&str; 4] = [

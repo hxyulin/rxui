@@ -1,7 +1,7 @@
 # Native Application hosting
 
 Status: implemented for desktop with the optional `native` feature. The host
-composes Runtime, Ui, UiPainter and astrelis-winit; those lower-level APIs remain
+composes Runtime, Ui, UiPainter and rxui-host; those lower-level APIs remain
 usable independently. There is one shared graphics device and one UiPainter per
 Application, with retained resources for every managed UI placement.
 
@@ -88,13 +88,13 @@ RunnerOptions policy can select whether closing the last window exits.
 The host continues after recoverable prepare/render/submitted callback failures,
 surface acquisition/recreation failures, submission errors, and validation/internal
 GPU diagnostics when `RunError::can_continue()` allows it. Failed frame work is
-skipped and retried with Astrelis's `RunnerOptions::retry_delay` (16 ms by default).
+skipped and retried with RXUI drawing's `RunnerOptions::retry_delay` (16 ms by default).
 Surface loss uses capped exponential backoff. Initialization, lifecycle and input
 callback errors exit by default. Continuing skips the failed callback; it does not
 replay input or roll back model changes or already submitted GPU work.
 
-`Application::error` receives `rxui::astrelis_winit::RunError` and returns
-`rxui::astrelis_winit::ErrorAction`. It can count/log failures and override the
+`Application::error` receives `rxui::host::RunError` and returns
+`rxui::host::ErrorAction`. It can count/log failures and override the
 default policy. The original callback error is retained in `RunError::Handler`,
 including errors returned by `prepare_graphics`, custom element preparation and
 RXUI's own UI preparation. Panics are not caught. The hook runs in a fresh
@@ -102,7 +102,7 @@ application update without an implicit source window. `RunError` carries a nativ
 winit window ID where available; it is distinct from RXUI's `WindowId`.
 
 ```rust,no_run
-use rxui::{Application, astrelis_winit::ErrorAction};
+use rxui::{Application, host::ErrorAction};
 
 let app = Application::new().error(|error, _cx| {
     eprintln!("native failure: {error}");
@@ -115,7 +115,7 @@ let app = Application::new().error(|error, _cx| {
 ```
 
 This example also opts into continuing lifecycle/input failures. Return
-`ErrorAction::Exit` for any failure your application cannot handle. Astrelis logs
+`ErrorAction::Exit` for any failure your application cannot handle. RXUI drawing logs
 runner failures and uncaptured GPU diagnostics through the `log` facade; RXUI
 installs no logging backend. Applications choose one to retain those messages.
 The runner polls and drains `GraphicsContext::take_gpu_events()` before rendering
@@ -132,7 +132,7 @@ UiPainter/renderers/atlases, prepared geometry and all application GPU resources
 CPU models, layouts and font data may be retained for reconstruction. See
 [remaining production follow-ups](astrelis-followups.md).
 
-Atlas pressure is separate from a failed frame. Astrelis prepares the glyphs that
+Atlas pressure is separate from a failed frame. RXUI drawing prepares the glyphs that
 fit and omits new glyphs while pages are leased. RXUI keeps that partial text
 drawable and prepares incomplete normal text, placeholders and long-text chunks
 again, even when layout is unchanged. The native host requests another redraw
@@ -144,21 +144,21 @@ retrying does not expand its page budget or change layout/hit testing.
 
 ## Native backends and surface latency
 
-RXUI's `gles` feature forwards to `astrelis/gles` and, when `native` is enabled,
-`astrelis-winit/gles`. It enables rendering without enabling the native host on its
+RXUI's `gles` feature forwards to `rxui-draw/gles` and, when `native` is enabled,
+`rxui-host/gles`. It enables rendering without enabling the native host on its
 own. The native runner passes winit's owned display handle into instance creation,
-including the EGL display connection required for GLES presentation. Astrelis
+including the EGL display connection required for GLES presentation. RXUI drawing
 reads instance environment settings such as `WGPU_BACKEND`, plus `WGPU_POWER_PREF`
 and `WGPU_ADAPTER_NAME` for adapter selection. An unmatched adapter name returns
 `Error::RequestedAdapterNotFound`. For example, build with `native,gles` and set
 `WGPU_BACKEND=gl` to request GL. Linux drivers and X11/Wayland presentation still
 require runtime verification.
 
-`WindowOptions::surface` accepts Astrelis's `SurfaceSettings`, including present
+`WindowOptions::surface` accepts RXUI drawing's `SurfaceSettings`, including present
 mode and desired maximum queued frames:
 
 ```rust
-use rxui::{WindowOptions, astrelis::wgpu, astrelis_winit::SurfaceSettings};
+use rxui::{WindowOptions, drawing::wgpu, host::SurfaceSettings};
 
 let options = WindowOptions::new().surface(
     SurfaceSettings::new()
@@ -178,7 +178,7 @@ do not establish the native EGL display contract.
 ## Scheduling and embedding
 
 The default is on-demand rendering. Input/task updates invalidate dependent
-placements and request redraw through astrelis-winit. Completion uses event-loop
+placements and request redraw through rxui-host. Completion uses event-loop
 proxy wakeups rather than periodic polling. The host drains task results and
 flushes deferred effects after update scopes end, then processes window commands.
 Dirty UI preparation happens before surface acquisition.
@@ -199,7 +199,7 @@ clipboard, IME enable/reset/candidate geometry and on-demand caret blink deadlin
 Resize/DPI changes invalidate geometry and select
 the appropriate text raster density. Model/task progression continues while
 presentation is suspended; queued new windows wait for resume. Surface recovery,
-retry pacing and presentation remain Astrelis responsibilities.
+retry pacing and presentation remain RXUI drawing responsibilities.
 
 The host opens its own clear-color UI pass. Applications requiring custom 2D/3D
 passes or complete input/platform control can use the explicit

@@ -27,9 +27,9 @@ impl CustomElement for Glyph {
         &self,
         _: &(),
         element: &crate::ElementInfo<'_>,
-        paint: &mut astrelis::PaintSession<'_, '_>,
+        paint: &mut rxui_draw::PaintSession<'_, '_>,
     ) -> Result<(), crate::UiError> {
-        use astrelis::{LineCap, LineDraw};
+        use rxui_draw::{LineCap, LineDraw};
         let b = element.content_bounds;
         let at = |x: f32, y: f32| [b.x + x * b.width, b.y + y * b.height];
         let width = (b.width.min(b.height)

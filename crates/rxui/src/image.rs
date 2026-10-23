@@ -11,14 +11,14 @@ pub(crate) enum Source {
         bytes: Arc<[u8]>,
     },
     #[cfg(feature = "rendering")]
-    Texture(astrelis::Texture),
-    #[cfg(feature = "rendering")]
     View {
-        view: astrelis::wgpu::TextureView,
+        view: rxui_draw::wgpu::TextureView,
         size: [u32; 2],
     },
     #[cfg(feature = "rendering")]
-    Framebuffer(astrelis::SampledColor),
+    Framebuffer(rxui_draw::SampledColor),
+    #[cfg(feature = "rendering")]
+    External(ExternalTexture),
 }
 #[derive(Debug)]
 struct Data {
@@ -82,14 +82,17 @@ impl Image {
     /// Shares a texture's default full 2D view. Pixel writes need redraw, not new identity.
     /// The texture must belong to the painter's graphics device and support sampling.
     #[cfg(feature = "rendering")]
-    pub fn from_texture(texture: astrelis::Texture) -> Self {
-        Self::new(Source::Texture(texture), ImageAlpha::Straight)
+    pub fn from_texture(texture: &crate::wgpu::Texture) -> Result<Self, UiError> {
+        Self::from_view(
+            texture.create_view(&Default::default()),
+            [texture.width(), texture.height()],
+        )
     }
     /// Shares a raw view with explicit intrinsic pixel dimensions (for custom mip/layer views).
     /// Use a single-sampled 2D color view from the painter's graphics device.
-    /// Astrelis validates sampling support; wgpu validates raw-view device ownership.
+    /// The renderer validates sampling support; wgpu validates raw-view device ownership.
     #[cfg(feature = "rendering")]
-    pub fn from_view(view: astrelis::wgpu::TextureView, size: [u32; 2]) -> Result<Self, UiError> {
+    pub fn from_view(view: rxui_draw::wgpu::TextureView, size: [u32; 2]) -> Result<Self, UiError> {
         if size.contains(&0) {
             return Err(UiError::InvalidImage);
         }
@@ -98,13 +101,19 @@ impl Image {
     /// Retains the live resolved color output; resize/MSAA replacement follows the source.
     /// Creation requires TEXTURE_BINDING usage. Render before the UI samples this output.
     #[cfg(feature = "rendering")]
-    pub fn from_framebuffer(framebuffer: &astrelis::Framebuffer) -> Self {
+    pub fn from_framebuffer(framebuffer: &rxui_draw::Framebuffer) -> Self {
         Self::from_sampled(framebuffer.sampled_color())
     }
     /// Shares a live framebuffer output without borrowing its rendering owner.
     #[cfg(feature = "rendering")]
-    pub fn from_sampled(source: astrelis::SampledColor) -> Self {
+    pub fn from_sampled(source: rxui_draw::SampledColor) -> Self {
         Self::new(Source::Framebuffer(source), ImageAlpha::Premultiplied)
+    }
+    /// Shares an application-managed live texture. Render into it before recording UI.
+    /// Specify whether its pixels use straight or premultiplied alpha.
+    #[cfg(feature = "rendering")]
+    pub fn from_external_texture(source: ExternalTexture, alpha: ImageAlpha) -> Self {
+        Self::new(Source::External(source), alpha)
     }
     fn new(source: Source, alpha: ImageAlpha) -> Self {
         Self(Arc::new(Data {
@@ -122,9 +131,9 @@ impl Image {
         match &self.0.source {
             Source::Rgba { size, .. } => Some(*size),
             #[cfg(feature = "rendering")]
-            Source::Texture(texture) => Some(texture.size()),
-            #[cfg(feature = "rendering")]
             Source::View { size, .. } => Some(*size),
+            #[cfg(feature = "rendering")]
+            Source::External(source) => source.snapshot().map(|(_, size)| size),
             #[cfg(feature = "rendering")]
             Source::Framebuffer(source) => source
                 .view()
@@ -143,7 +152,7 @@ impl Image {
     pub(crate) fn is_live(&self) -> bool {
         #[cfg(feature = "rendering")]
         {
-            matches!(self.source(), Source::Framebuffer(_))
+            matches!(self.source(), Source::Framebuffer(_) | Source::External(_))
         }
         #[cfg(not(feature = "rendering"))]
         {
@@ -157,6 +166,48 @@ impl Image {
         self.0.alpha
     }
 }
+/// An application-owned texture view which can be replaced without changing image identity.
+/// Update between UI preparation/recording steps, then request redraw. Pixel writes
+/// to the same view need no replacement. A suspended source paints nothing.
+#[cfg(feature = "rendering")]
+#[derive(Clone, Debug)]
+pub struct ExternalTexture(Arc<std::sync::RwLock<Option<ExternalTextureView>>>);
+#[cfg(feature = "rendering")]
+type ExternalTextureView = (crate::wgpu::TextureView, [u32; 2]);
+#[cfg(feature = "rendering")]
+impl ExternalTexture {
+    /// Imports a single-sampled, sampleable 2D color view and its intrinsic dimensions.
+    pub fn new(view: crate::wgpu::TextureView, size: [u32; 2]) -> Result<Self, UiError> {
+        let source = Self(Arc::new(std::sync::RwLock::new(None)));
+        source.replace(view, size)?;
+        Ok(source)
+    }
+    /// Replaces storage, for example after resizing an application render target.
+    /// Existing images retain their identity and follow this replacement.
+    pub fn replace(&self, view: crate::wgpu::TextureView, size: [u32; 2]) -> Result<(), UiError> {
+        let texture = view.texture();
+        if size.contains(&0)
+            || texture.sample_count() != 1
+            || texture.dimension() != crate::wgpu::TextureDimension::D2
+            || !texture
+                .usage()
+                .contains(crate::wgpu::TextureUsages::TEXTURE_BINDING)
+            || texture.format().is_depth_stencil_format()
+        {
+            return Err(UiError::InvalidImage);
+        }
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = Some((view, size));
+        Ok(())
+    }
+    /// Suspends painting until another view is supplied.
+    pub fn suspend(&self) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    pub(crate) fn snapshot(&self) -> Option<(crate::wgpu::TextureView, [u32; 2])> {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 /// Mapping from source aspect ratio into the element's content box.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImageFit {

@@ -114,7 +114,7 @@ fn main() {
     if std::env::args().any(|a| a == "--gpu") {
         use rxui::{
             UiPainter,
-            astrelis::{FramebufferOptions, GraphicsContext},
+            drawing::{FramebufferOptions, GraphicsContext},
         };
         let graphics = pollster::block_on(GraphicsContext::headless()).unwrap();
         let target = graphics
@@ -131,7 +131,7 @@ fn main() {
                 })
             });
             let mut ui = Ui::new(&mut runtime, root).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             ui.prepare(&mut runtime, [800., 600.], &mut painter)
                 .unwrap();
             painter.prepare(&ui, &target.render_format(), 1.).unwrap();

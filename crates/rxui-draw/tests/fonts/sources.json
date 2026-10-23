@@ -1,0 +1,43 @@
+[
+  {
+    "file": "SourceSans3-Regular.otf",
+    "repository": "https://github.com/adobe-fonts/source-sans",
+    "path": "OTF/SourceSans3-Regular.otf",
+    "revision": "7c691c2772570a0d3a9e1bffe8a9d6074257d985",
+    "bytes": 334924,
+    "sha256": "08df266400933d3178d081a45f94a08814c3e55b4b7dd2e0ff69cb1329f13ab6"
+  },
+  {
+    "file": "SourceSans3-OFL.md",
+    "repository": "https://github.com/adobe-fonts/source-sans",
+    "path": "LICENSE.md",
+    "revision": "ca29c267aed34e82052d7ca5e027cf0e714c0f11",
+    "bytes": 4486,
+    "sha256": "56af9b9c6715597e458284a474dc118a50a4150e9d547c70f7b4a33c3e6a9328"
+  },
+  {
+    "file": "NotoSansArabic.ttf",
+    "repository": "https://github.com/google/fonts",
+    "path": "ofl/notosansarabic/NotoSansArabic[wdth,wght].ttf",
+    "revision": "e5ee31305efa101c2cae65f44d9642df2c8f0b4d",
+    "bytes": 844676,
+    "sha256": "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e"
+  },
+  {
+    "file": "NotoSansArabic-OFL.txt",
+    "repository": "https://github.com/google/fonts",
+    "path": "ofl/notosansarabic/OFL.txt",
+    "revision": "e5ee31305efa101c2cae65f44d9642df2c8f0b4d",
+    "bytes": 4382,
+    "sha256": "07fc70bfeb985cc1a87a8587d0a0c80bab11c86c9dc3fd95b6f0cb332f983e96"
+  },
+  {
+    "file": "TestColor.ttf",
+    "source": "generate_color.py",
+    "generator": "fonttools 4.60.2",
+    "license": "MIT (repository license)",
+    "bytes": 1340,
+    "sha256": "89bb0f29171dcfedd6fe3fdca39dc84cf6d4116676df80ce078966b49a4b1225",
+    "generator_sha256": "b51991fb48d6aab476aeaa4138581714c6063a1a5b9d3f4173396005c058d5b5"
+  }
+]

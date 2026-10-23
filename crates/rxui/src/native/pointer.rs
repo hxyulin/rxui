@@ -1,5 +1,5 @@
 //! Window-owned cursor visibility and native pointer grab state.
-use astrelis_winit::winit::{
+use rxui_host::winit::{
     error::ExternalError,
     window::{CursorGrabMode, Window},
 };

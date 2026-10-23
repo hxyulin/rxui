@@ -20,7 +20,7 @@
 //! single-line inputs retain selection, bounded undo/redo and IME preedit independently of
 //! application-owned values. The optional
 //! tasks feature delivers owned background and local results in fresh UI updates; native
-//! adds Application hosting over astrelis-winit with lazy AccessKit publication.
+//! adds Application hosting using its optional native host with lazy AccessKit publication.
 //! Optional native-dialogs adds parent-bound file pickers and message dialogs;
 //! desktop-services adds asynchronous URL/file launches and file-manager reveal.
 //! Native clipboard text access shares the host's persistent clipboard owner.
@@ -191,9 +191,6 @@ pub use accesskit;
 pub use animation::{Animated, Easing, Interpolate, Spring, ThemeMotion, Transition};
 #[cfg(feature = "layout")]
 pub use appearance::{ColorScheme, SystemPreferences, ThemeMode, ThemeSet};
-/// OS close-request policy used by Application's lifecycle hook.
-#[cfg(feature = "native")]
-pub use astrelis_winit::CloseResponse;
 #[cfg(feature = "layout")]
 pub use commands::{
     Command, CommandAction, CommandId, CommandInfo, CommandRegistration, CommandStatus, Shortcut,
@@ -271,6 +268,9 @@ pub use overlay::{
 #[cfg(feature = "rendering")]
 pub use painting::{ComposedUi, ImageStats, LayerStats, UiPainter};
 pub use runtime::{Mount, Runtime, Subscription};
+/// OS close-request policy used by Application's lifecycle hook.
+#[cfg(feature = "native")]
+pub use rxui_host::CloseResponse;
 #[cfg(feature = "layout")]
 pub use scrolling::{ScrollBehavior, ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
@@ -411,10 +411,25 @@ pub mod prelude {
 
 /// Pinned graphics integration dependency used by UiPainter.
 #[cfg(feature = "rendering")]
-pub use astrelis;
-/// Pinned native lifecycle dependency used by Application and custom hosts.
+pub mod drawing {
+    pub use rxui_draw::{
+        BoxShadow, Brush, BrushKind, BrushOptions, CornerRadii, DrawSpace, EdgeAntialiasing,
+        FillRule, LineCap, LineDraw, LineJoin, PaintSession, Painter, Path, PathBuilder, PathDraw,
+        PathOptions, PathStroke, PreparedPath, PreparedText, Rect, RenderFormat, Shape, ShapeDraw,
+        Stroke, StrokePlacement, TextBuffer, TextDraw, TextLayout, TextRasterOptions, TextRenderer,
+        TextRendererOptions, TextRendererStats, TextSystem, TextureAlpha, TextureBinding,
+        TextureBindingOptions, TextureDraw, TextureFilter, Transform2D, UvRect, wgpu,
+    };
+    // Optional managed rendering conveniences used by the native host.
+    pub use rxui_draw::{
+        Error, Frame, FrameError, Framebuffer, FramebufferOptions, GraphicsContext,
+        PipelineOptions, Point2D, PointBuffer, PointBufferOptions, PolylineDraw, PolylineRenderer,
+        RenderPass, RenderTarget, SurfaceOptions, Texture, TextureOptions,
+    };
+}
+/// Optional RXUI native lifecycle helpers used by Application and custom hosts.
 #[cfg(feature = "native")]
-pub use astrelis_winit;
+pub use rxui_host as host;
 /// Selected flex layout solver and style customization types.
 #[cfg(feature = "layout")]
 pub use taffy;
@@ -473,3 +488,17 @@ mod animation_tests;
 mod scroll_motion_tests;
 #[cfg(all(test, feature = "layout"))]
 mod tree_tests;
+
+/// Raw-wgpu rendering integration.
+#[cfg(feature = "rendering")]
+mod wgpu_rendering;
+/// The wgpu version used by RXUI's renderer.
+#[cfg(feature = "rendering")]
+pub use rxui_draw::wgpu;
+#[cfg(feature = "rendering")]
+pub use rxui_draw::{RecordingResources, RenderFormat};
+#[cfg(feature = "rendering")]
+pub use wgpu_rendering::UiRenderTarget;
+
+#[cfg(feature = "rendering")]
+pub use image::ExternalTexture;

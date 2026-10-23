@@ -1,7 +1,7 @@
 use super::image_gpu_tests::{pixels, read_pixel};
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 
 struct Controls {
     position: SplitPosition,
@@ -64,7 +64,7 @@ fn scroll_thumbs_split_lines_and_isolated_clipping_follow_live_geometry() {
             c.border = [1.; 4];
         }))
         .unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
         let stats = ui.stats();
         for scrolled in [false, true] {
@@ -181,7 +181,7 @@ fn virtual_rows_render_fractional_slots_after_large_jumps_with_msaa_and_opacity(
             })
         });
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
         for jumped in [false, true] {
             if jumped {

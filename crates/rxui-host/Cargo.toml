@@ -1,0 +1,28 @@
+[package]
+name = "rxui-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+gles = ["rxui-draw/gles"]
+x11-drag = ["dep:x11rb"]
+desktop-drag = ["dep:astrelis-native-drag"]
+
+[dependencies]
+log = "0.4.34"
+rxui-draw = { path = "../rxui-draw" }
+profiling.workspace = true
+winit.workspace = true
+astrelis-native-drag = { workspace = true, optional = true }
+pollster = "1.0.1"
+x11rb = { version = "0.13.2", optional = true, features = ["shape", "xtest"] }
+
+[dev-dependencies]
+pollster = "1.0.1"
+winit.workspace = true
+
+[lints]
+workspace = true

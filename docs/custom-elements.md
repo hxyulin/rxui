@@ -5,12 +5,12 @@ preparation and painting need `rendering`.
 
 A custom element is an application-defined leaf. It takes part in layout like a
 label or image, receives pointer input through the ordinary listeners, and paints
-with the Astrelis painter. Implement `CustomElement` and wrap the value with
+with the RXUI drawing painter. Implement `CustomElement` and wrap the value with
 `custom(...)`:
 
 ```rust
 use rxui::{CustomElement, CustomMeasure, ElementInfo, NumericValue, UiError, custom, prelude::*};
-use rxui::astrelis::{PaintSession, Rect};
+use rxui::drawing::{PaintSession, Rect};
 
 #[derive(PartialEq)]
 struct Meter { fraction: f32 }
@@ -57,7 +57,7 @@ custom(Meter { fraction: 0.4 })
   listeners, a cursor, `focusable(true)` or `PointerEvents::Block`) and for wheel
   scrolling. The default accepts the whole box.
 - **Preparation.** `prepare` runs in `UiPainter::prepare` for every visible custom
-  element, outside any render pass. `CustomPrepare` lends the Astrelis `Painter`
+  element, outside any render pass. `CustomPrepare` lends the RXUI drawing `Painter`
   (text, path and image preparation), the `TextSystem` for shaping, the frame's
   render format and the raster scale. Load fonts through `UiPainter::fonts_mut`
   instead, so text measurement is invalidated.
@@ -233,9 +233,9 @@ fractional physical origin changes; whole physical-pixel translations reuse the
 same prepared resource. The phase key can be computed with
 `origin.map(|v| (v * cx.raster_scale).rem_euclid(1.))`. Do not round only the origin
 to a quarter-pixel bin for the cache key: each glyph's fractional local position
-can cross a different bin boundary. The Astrelis glyph cache bounds the actual
+can cross a different bin boundary. The RXUI drawing glyph cache bounds the actual
 quarter-pixel raster variants.
 
 The helper assumes RXUI's positive uniform draw scale. If custom painting adds
-rotation, shear or nonuniform scaling, select Astrelis's ordinary filtered text
+rotation, shear or nonuniform scaling, select RXUI drawing's ordinary filtered text
 preparation or use its explicit placement contract for a suitable final transform.

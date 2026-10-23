@@ -4,7 +4,7 @@
 default_install_hook_types = ["pre-commit", "pre-push"]
 
 # Benchmark inputs and output, and third-party license texts are kept byte for byte.
-exclude = '^(docs/performance/.*\.(csv|log|rs)|crates/rxui/tests/fonts/.*-OFL\.md)$'
+exclude = '^(docs/performance/.*\.(csv|log|rs)|crates/(rxui|rxui-draw)/tests/fonts/.*(?:-OFL\.(?:md|txt)|\.(?:otf|ttf)))$'
 
 [[repos]]
 repo = "builtin"

@@ -5,7 +5,7 @@
 //! current user's registry on Windows, and the XDG desktop portal on Linux/BSD.
 //! Every read is best effort; an unavailable value keeps its default.
 use crate::{ColorScheme, SystemPreferences};
-use astrelis_winit::winit::{event_loop::ActiveEventLoop, window::Theme as NativeTheme};
+use rxui_host::winit::{event_loop::ActiveEventLoop, window::Theme as NativeTheme};
 
 impl SystemPreferences {
     /// Reads the current system preferences, for custom hosts that own their event

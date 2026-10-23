@@ -7,7 +7,7 @@ use crate::{
     Bounds, CommandId, CommandStatus, ElementId, KeyEvent, PointerButton, PointerButtons,
     PointerEvent, Runtime, TextInputEvent, TextMovement, Ui, UiError, UiPainter, View,
 };
-use astrelis_winit::{
+use rxui_host::{
     WindowMetrics,
     winit::{
         dpi::{LogicalPosition, LogicalSize},
@@ -19,7 +19,7 @@ use astrelis_winit::{
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 /// Per-window input state that translates winit events into [`Ui`] input, for hosts
-/// that own their event loop or `astrelis_winit::Handler`.
+/// that own their event loop or `rxui_host::Handler`.
 ///
 /// It is the translation `Application` uses: physical cursor positions become logical
 /// pointer events, presses get platform-style click counts, modifiers are tracked,
@@ -29,7 +29,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 ///
 /// ```no_run
 /// # use rxui::{UiError, UiPainter, WindowInput, prelude::*};
-/// # use rxui::astrelis_winit::{WindowMetrics, winit::{event::WindowEvent, window::Window}};
+/// # use rxui::host::{WindowMetrics, winit::{event::WindowEvent, window::Window}};
 /// # fn host<T: View>(runtime: &mut Runtime, ui: &mut Ui<T>, painter: &mut UiPainter,
 /// #     input: &mut WindowInput, window: &Window, metrics: WindowMetrics, event: WindowEvent)
 /// #     -> Result<(), UiError> {
@@ -114,7 +114,7 @@ impl WindowInput {
         &mut self,
         window: &Window,
         locked: bool,
-    ) -> Result<Option<super::PointerLock>, astrelis_winit::winit::error::ExternalError> {
+    ) -> Result<Option<super::PointerLock>, rxui_host::winit::error::ExternalError> {
         self.pointer.borrow_mut().set_lock(window, locked)
     }
     /// Hides the cursor independently of hovered icons and pointer locking.
@@ -633,8 +633,8 @@ impl WindowInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use astrelis::GraphicsContext;
-    use astrelis_winit::winit::{dpi::PhysicalSize, event::Modifiers};
+    use rxui_draw::GraphicsContext;
+    use rxui_host::winit::{dpi::PhysicalSize, event::Modifiers};
 
     fn press() -> KeyEvent {
         KeyEvent {
@@ -811,7 +811,7 @@ mod tests {
     }
     #[test]
     fn physical_positions_and_named_modifiers_are_typed() {
-        use astrelis_winit::winit::keyboard::{KeyCode, PhysicalKey};
+        use rxui_host::winit::keyboard::{KeyCode, PhysicalKey};
         assert_eq!(
             physical_key(PhysicalKey::Code(KeyCode::KeyW)),
             crate::PhysicalKey::KeyW

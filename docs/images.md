@@ -16,7 +16,7 @@ RGBA sources require nonzero dimensions and exactly width × height × 4 bytes.
 Pixels are straight-alpha sRGB RGBA8. Upload uses an sRGB texture; tints and UI
 colors use linear RGBA. `.image_alpha(ImageAlpha::Premultiplied)` selects already
 premultiplied RGB for custom sources. GPU framebuffer output defaults to
-premultiplied alpha, matching Astrelis blending into a transparent destination.
+premultiplied alpha, matching RXUI drawing blending into a transparent destination.
 Shaders that write straight RGB should select Straight explicitly.
 
 The optional `image-decoding` feature adds `Image::decode(&encoded_bytes)` for PNG
@@ -66,7 +66,7 @@ let d = Image::from_sampled(framebuffer.sampled_color());
 
 GPU sources must belong to UiPainter's graphics device. Textures/views must be
 single-sampled 2D color outputs with TEXTURE_BINDING usage and sampling-compatible
-formats. Astrelis validates format/usage/sample requirements; wgpu validates raw
+formats. RXUI drawing validates format/usage/sample requirements; wgpu validates raw
 texture/view device ownership. Managed framebuffer sources return DeviceMismatch
 before constructing their binding. Depth/stencil output and arbitrary storage
 textures require an application shader producing a sampleable color image.
@@ -101,14 +101,14 @@ Frame. It records before the UI pass, using the same command encoder and submiss
 
 ```rust
 let mut pass = frame.render_to(&mut framebuffer)
-    .clear_color(astrelis::wgpu::Color::TRANSPARENT).begin()?;
+    .clear_color(drawing::wgpu::Color::TRANSPARENT).begin()?;
 // Draw with application-owned renderers.
 ```
 
 Drop the pass before the callback returns. The host clears/draws its UI pass and
 finishes/presents the frame. Do not finish the host frame, mutate prepared models,
 or resize sampled sources during recording. A custom host can perform the same
-sequence directly through Ui/UiPainter/Astrelis without either Application hook.
+sequence directly through Ui/UiPainter/RXUI drawing without either Application hook.
 Applications with several windows can key their resources by WindowId and retain
 WindowHandles to prune closed-window resources. Hooks receive no automatic
 per-window resource container. Request redraw on external GPU writes with

@@ -65,7 +65,7 @@ A host explicitly sequences:
 
 Ui owns no window, fonts, device or executor. TextMeasure exposes intrinsic and
 constrained text sizing, plus a generation for changes to external font inputs.
-Headless tests can supply deterministic sizing; UiPainter uses real Astrelis
+Headless tests can supply deterministic sizing; UiPainter uses real RXUI drawing
 shaping. Logical layout remains independent of raster density and physical
 attachments. The host applies one logical-to-physical transform for painting.
 
@@ -146,7 +146,7 @@ scrolling. [The application contract](application.md) describes lifecycle option
 and source-window dispatch. Application supplies default system fonts and a worker
 pool, with explicit customization for both. Runtime/Ui/UiPainter remain embeddable;
 the [custom-host example](../crates/rxui/examples/counter_custom_host.rs) implements
-an astrelis-winit Handler directly. Neither example contains a test-only mode or
+an rxui-host Handler directly. Neither example contains a test-only mode or
 support module.
 
 The [task contract](async.md) documents owned background work and weak, synchronous

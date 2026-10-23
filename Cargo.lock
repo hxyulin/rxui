@@ -230,22 +230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astrelis"
-version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
-dependencies = [
- "bymsdfgen-core",
- "bytemuck",
- "cosmic-text",
- "log",
- "lyon_tessellation",
- "profiling",
- "swash",
- "unicode-segmentation",
- "wgpu",
-]
-
-[[package]]
 name = "astrelis-native-drag"
 version = "0.4.0-dev.0"
 source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
@@ -255,18 +239,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "windows-sys 0.61.2",
- "winit",
-]
-
-[[package]]
-name = "astrelis-winit"
-version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
-dependencies = [
- "astrelis",
- "log",
- "pollster 1.0.1",
- "profiling",
  "winit",
 ]
 
@@ -2503,9 +2475,7 @@ dependencies = [
  "accesskit_consumer",
  "accesskit_winit",
  "arboard",
- "astrelis",
  "astrelis-native-drag",
- "astrelis-winit",
  "async-channel",
  "async-executor",
  "async-io",
@@ -2518,12 +2488,45 @@ dependencies = [
  "pollster 1.0.1",
  "profiling",
  "rfd",
+ "rxui-draw",
+ "rxui-host",
  "taffy",
  "unicode-segmentation",
  "web-time",
  "windows-registry",
  "windows-sys 0.61.2",
+ "winit",
  "zbus 6.0.0",
+]
+
+[[package]]
+name = "rxui-draw"
+version = "0.2.0-dev.0"
+dependencies = [
+ "bymsdfgen-core",
+ "bytemuck",
+ "cosmic-text",
+ "log",
+ "lyon_tessellation",
+ "pollster 1.0.1",
+ "profiling",
+ "swash",
+ "unicode-segmentation",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "rxui-host"
+version = "0.2.0-dev.0"
+dependencies = [
+ "astrelis-native-drag",
+ "log",
+ "pollster 1.0.1",
+ "profiling",
+ "rxui-draw",
+ "winit",
+ "x11rb",
 ]
 
 [[package]]

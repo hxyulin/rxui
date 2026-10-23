@@ -7,7 +7,7 @@
 //! attaching a sampling profiler.
 use rxui::{
     AccessKitTree, ElementType, PointerEvent, PointerInput, TextInputEvent, UiPainter,
-    astrelis::{FramebufferOptions, GraphicsContext, wgpu},
+    drawing::{FramebufferOptions, GraphicsContext, wgpu},
     prelude::*,
 };
 use std::{hint::black_box, time::Duration, time::Instant};
@@ -103,7 +103,7 @@ fn main() {
             })
         });
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font_shared(std::sync::Arc::<[u8]>::from(

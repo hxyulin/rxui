@@ -2,7 +2,7 @@ use crate::{
     Bounds, ElementId, TextMeasure, TextRequest, TextWidth, Ui, UiError, View, id::IdMap,
     ui::VisibleContent,
 };
-use astrelis::{
+use rxui_draw::{
     CornerRadii, FontFamily, FontSlant, GraphicsContext, Painter, PreparedText, Rect, RenderFormat,
     RenderPass, ShapeDraw, Stroke, TextAlign, TextBuffer, TextDraw, TextLayout, TextRasterOptions,
     TextStyle, TextSystem, TextWrap, Transform2D,
@@ -12,24 +12,24 @@ use std::{
     sync::Arc,
 };
 
-impl From<astrelis::Error> for UiError {
-    /// Text failures that astrelis wrapped into its graphics error keep their text variant,
+impl From<rxui_draw::Error> for UiError {
+    /// Text failures that the drawing backend wrapped into its graphics error keep their text variant,
     /// so one failure maps to one `UiError` variant however it reached rxui.
-    fn from(error: astrelis::Error) -> Self {
+    fn from(error: rxui_draw::Error) -> Self {
         match error {
-            astrelis::Error::Text(error) => Self::Text(error),
-            astrelis::Error::TextRender(error) => Self::TextRender(*error),
+            rxui_draw::Error::Text(error) => Self::Text(error),
+            rxui_draw::Error::TextRender(error) => Self::TextRender(*error),
             other => Self::Graphics(other),
         }
     }
 }
-impl From<astrelis::TextError> for UiError {
-    fn from(error: astrelis::TextError) -> Self {
+impl From<rxui_draw::TextError> for UiError {
+    fn from(error: rxui_draw::TextError) -> Self {
         Self::Text(error)
     }
 }
-impl From<astrelis::TextRenderError> for UiError {
-    fn from(error: astrelis::TextRenderError) -> Self {
+impl From<rxui_draw::TextRenderError> for UiError {
+    fn from(error: rxui_draw::TextRenderError) -> Self {
         Self::TextRender(error)
     }
 }
@@ -95,14 +95,14 @@ fn spans(
     spans: &[crate::ResolvedSpan],
     window: std::ops::Range<usize>,
     families: &FamilyMap,
-) -> Vec<astrelis::TextSpan> {
+) -> Vec<rxui_draw::TextSpan> {
     spans
         .iter()
         .filter(|s| s.range.start < window.end && s.range.end > window.start)
         .map(|s| {
             let range = s.range.start.max(window.start) - window.start
                 ..s.range.end.min(window.end) - window.start;
-            let mut span = astrelis::TextSpan::new(range);
+            let mut span = rxui_draw::TextSpan::new(range);
             span.family = s.family.as_ref().map(|f| family(f, families));
             span.weight = s.weight.map(|w| w.0);
             span.slant = s.style.map(slant);
@@ -313,7 +313,7 @@ impl TextResource {
                 .collect()),
         }
     }
-    fn caret(&self, position: astrelis::TextPosition) -> Option<astrelis::TextCaret> {
+    fn caret(&self, position: rxui_draw::TextPosition) -> Option<rxui_draw::TextCaret> {
         match &self.chunks {
             Some(chunks) => chunks.caret(position),
             None => self.prepared_layout.as_ref()?.caret(position),
@@ -450,8 +450,8 @@ struct ImageKey {
     alpha: crate::ImageAlpha,
 }
 struct ImageResource {
-    texture: Option<astrelis::Texture>,
-    view: Option<astrelis::wgpu::TextureView>,
+    texture: Option<rxui_draw::Texture>,
+    view: Option<rxui_draw::wgpu::TextureView>,
 }
 fn image_key(image: &crate::ImageInfo<'_>) -> ImageKey {
     ImageKey {
@@ -460,7 +460,7 @@ fn image_key(image: &crate::ImageInfo<'_>) -> ImageKey {
         alpha: image.alpha,
     }
 }
-/// Explicit Astrelis text measurement and painting adapter for a retained Ui.
+/// Explicit RXUI drawing text measurement and painting adapter for a retained Ui.
 /// It owns fonts and caches, but no window or application lifecycle. Call Ui::prepare
 /// using this as TextMeasure, then prepare GPU resources before frame acquisition.
 /// Painting uses caller-selected passes/clipping. No font discovery is implicit:
@@ -475,7 +475,7 @@ pub struct UiPainter {
     texts: IdMap<ElementId, TextResource>,
     graphics: GraphicsContext,
     images: HashMap<crate::ImageId, ImageResource>,
-    image_bindings: HashMap<ImageKey, astrelis::TextureBinding>,
+    image_bindings: HashMap<ImageKey, rxui_draw::TextureBinding>,
     image_placements: IdMap<ElementId, ImageKey>,
     image_stats: ImageStats,
     layers: IdMap<ElementId, composition::LayerResource>,
@@ -497,8 +497,19 @@ struct TextPass {
     atlas_full: bool,
 }
 impl UiPainter {
+    /// Creates a renderer on an application-owned wgpu device and queue.
+    pub fn new(device: &rxui_draw::wgpu::Device, queue: &rxui_draw::wgpu::Queue) -> Self {
+        Self::from_wgpu(device, queue)
+    }
+
+    /// Creates a renderer on an application-owned device and queue.
+    /// Does not create a surface, select an adapter, or install device callbacks.
+    pub fn from_wgpu(device: &rxui_draw::wgpu::Device, queue: &rxui_draw::wgpu::Queue) -> Self {
+        Self::with_graphics(&GraphicsContext::from_device_queue(device, queue))
+    }
+
     /// Creates empty fonts and renderer caches for this graphics device.
-    pub fn new(graphics: &GraphicsContext) -> Self {
+    pub fn with_graphics(graphics: &GraphicsContext) -> Self {
         Self {
             fonts: TextSystem::new(),
             families: FamilyMap::new(),
@@ -595,7 +606,7 @@ impl UiPainter {
     pub fn sans_serif_family(&self) -> Option<&str> {
         self.families.sans_serif.as_deref()
     }
-    /// Astrelis renderer access for cache statistics and explicit customization.
+    /// RXUI drawing renderer access for cache statistics and explicit customization.
     pub fn painter(&mut self) -> &mut Painter {
         &mut self.painter
     }
@@ -790,6 +801,25 @@ impl UiPainter {
             let Some(custom) = ui.custom_element(element.id) else {
                 continue;
             };
+            // A custom pipeline must match the attachment it actually paints into.
+            // Opacity layers can differ from the window (e.g. RGBA layers for BGRA).
+            let mut ancestor = Some(element.id);
+            let mut in_layer = false;
+            while let Some(id) = ancestor {
+                let Some((parent, opacity)) = ui.composition_node(id) else {
+                    break;
+                };
+                if opacity < 1. {
+                    in_layer = true;
+                    break;
+                }
+                ancestor = parent;
+            }
+            let custom_format = if in_layer {
+                format.layer()?
+            } else {
+                format.clone()
+            };
             let state = self
                 .customs
                 .entry(element.id)
@@ -802,9 +832,11 @@ impl UiPainter {
                 state.as_mut(),
                 &element,
                 &mut crate::CustomPrepare {
+                    device: self.graphics.device(),
+                    queue: self.graphics.queue(),
                     painter: &mut self.painter,
                     fonts: &mut self.fonts,
-                    format,
+                    format: &custom_format,
                     raster_scale,
                 },
             )?;
@@ -839,7 +871,7 @@ impl UiPainter {
                     if resource.texture.is_none() {
                         let texture = self
                             .graphics
-                            .create_texture(astrelis::TextureOptions::new(size[0], size[1]))?;
+                            .create_texture(rxui_draw::TextureOptions::new(size[0], size[1]))?;
                         texture.write(bytes)?;
                         self.image_stats.uploads += 1;
                         self.image_stats.uploaded_bytes += bytes.len() as u64;
@@ -847,11 +879,11 @@ impl UiPainter {
                     }
                     Some(resource.texture.as_ref().unwrap().view().clone())
                 }
-                crate::image::Source::Texture(texture) => Some(texture.view().clone()),
                 crate::image::Source::View { view, .. } => Some(view.clone()),
+                crate::image::Source::External(source) => source.snapshot().map(|(view, _)| view),
                 crate::image::Source::Framebuffer(source) => match source.view() {
                     Ok(view) => Some(view),
-                    Err(astrelis::Error::TargetSuspended) => None,
+                    Err(rxui_draw::Error::TargetSuspended) => None,
                     Err(e) => return Err(e.into()),
                 },
             };
@@ -874,14 +906,14 @@ impl UiPainter {
                 continue;
             };
             if !self.image_bindings.contains_key(&key) {
-                let options = astrelis::TextureBindingOptions::new()
+                let options = rxui_draw::TextureBindingOptions::new()
                     .filter(match key.filter {
-                        crate::ImageFilter::Nearest => astrelis::TextureFilter::Nearest,
-                        crate::ImageFilter::Linear => astrelis::TextureFilter::Linear,
+                        crate::ImageFilter::Nearest => rxui_draw::TextureFilter::Nearest,
+                        crate::ImageFilter::Linear => rxui_draw::TextureFilter::Linear,
                     })
                     .alpha(match key.alpha {
-                        crate::ImageAlpha::Straight => astrelis::TextureAlpha::Straight,
-                        crate::ImageAlpha::Premultiplied => astrelis::TextureAlpha::Premultiplied,
+                        crate::ImageAlpha::Straight => rxui_draw::TextureAlpha::Straight,
+                        crate::ImageAlpha::Premultiplied => rxui_draw::TextureAlpha::Premultiplied,
                     });
                 let binding =
                     if let crate::image::Source::Framebuffer(source) = image.source.source() {
@@ -1125,7 +1157,7 @@ impl UiPainter {
                             let mut paint = element_session(&mut paint, &element)?;
                             paint.draw_image(
                                 layer.binding.as_ref().ok_or(UiError::InvalidGeometry)?,
-                                astrelis::TextureDraw::new(Rect::new(
+                                rxui_draw::TextureDraw::new(Rect::new(
                                     destination.x,
                                     destination.y,
                                     destination.width,
@@ -1180,7 +1212,7 @@ impl UiPainter {
                         paint.draw_box_shadow(
                             rect,
                             radii,
-                            astrelis::BoxShadow::new(shadow.color)
+                            rxui_draw::BoxShadow::new(shadow.color)
                                 .offset(shadow.offset[0], shadow.offset[1])
                                 .blur(shadow.blur)
                                 .spread(shadow.spread),
@@ -1282,8 +1314,8 @@ impl UiPainter {
                         )?;
                         paint.draw_image(
                             &self.image_bindings[&key],
-                            astrelis::TextureDraw::new(Rect::new(d.x, d.y, d.width, d.height))
-                                .uv(astrelis::UvRect::new(
+                            rxui_draw::TextureDraw::new(Rect::new(d.x, d.y, d.width, d.height))
+                                .uv(rxui_draw::UvRect::new(
                                     image.uv[0],
                                     image.uv[1],
                                     image.uv[2],
@@ -1625,7 +1657,7 @@ impl UiPainter {
         self.passes.remove(&ui.tree_id());
     }
 }
-pub(crate) fn font_face(info: astrelis::FontInfo) -> crate::FontFace {
+pub(crate) fn font_face(info: rxui_draw::FontInfo) -> crate::FontFace {
     crate::FontFace {
         families: info.families,
         postscript_name: info.postscript_name,
@@ -1638,27 +1670,27 @@ pub(crate) fn font_face(info: astrelis::FontInfo) -> crate::FontFace {
         monospaced: info.monospaced,
     }
 }
-fn ast_position(p: crate::TextPosition) -> astrelis::TextPosition {
-    astrelis::TextPosition::new(p.byte_offset).affinity(match p.affinity {
-        crate::TextAffinity::Upstream => astrelis::TextAffinity::Upstream,
-        crate::TextAffinity::Downstream => astrelis::TextAffinity::Downstream,
+fn ast_position(p: crate::TextPosition) -> rxui_draw::TextPosition {
+    rxui_draw::TextPosition::new(p.byte_offset).affinity(match p.affinity {
+        crate::TextAffinity::Upstream => rxui_draw::TextAffinity::Upstream,
+        crate::TextAffinity::Downstream => rxui_draw::TextAffinity::Downstream,
     })
 }
-fn ui_position(p: astrelis::TextPosition) -> crate::TextPosition {
+fn ui_position(p: rxui_draw::TextPosition) -> crate::TextPosition {
     crate::TextPosition {
         byte_offset: p.byte_offset,
         affinity: match p.affinity {
-            astrelis::TextAffinity::Upstream => crate::TextAffinity::Upstream,
-            astrelis::TextAffinity::Downstream => crate::TextAffinity::Downstream,
+            rxui_draw::TextAffinity::Upstream => crate::TextAffinity::Upstream,
+            rxui_draw::TextAffinity::Downstream => crate::TextAffinity::Downstream,
         },
     }
 }
 /// A child session for one element's own painting, clipped to its rounded ancestor
 /// clip when it has one. Dropping it restores the parent's scissor and rounded clip.
 fn element_session<'a, 'frame>(
-    paint: &'a mut astrelis::PaintSession<'_, 'frame>,
+    paint: &'a mut rxui_draw::PaintSession<'_, 'frame>,
     element: &crate::ElementInfo<'_>,
-) -> Result<astrelis::PaintSession<'a, 'frame>, UiError> {
+) -> Result<rxui_draw::PaintSession<'a, 'frame>, UiError> {
     Ok(match element.rounded_clip {
         Some(c) => paint.clipped_rounded(
             Rect::new(c.bounds.x, c.bounds.y, c.bounds.width, c.bounds.height),
@@ -1703,13 +1735,13 @@ enum Query<'a> {
     Chunked(&'a chunks::Chunks),
 }
 impl Query<'_> {
-    fn hit_test(&self, point: [f32; 2]) -> Option<astrelis::TextPosition> {
+    fn hit_test(&self, point: [f32; 2]) -> Option<rxui_draw::TextPosition> {
         match self {
             Self::Single(layout) => layout.hit_test(point),
             Self::Chunked(chunks) => chunks.hit_test(point),
         }
     }
-    fn caret(&self, position: astrelis::TextPosition) -> Option<astrelis::TextCaret> {
+    fn caret(&self, position: rxui_draw::TextPosition) -> Option<rxui_draw::TextCaret> {
         match self {
             Self::Single(layout) => layout.caret(position),
             Self::Chunked(chunks) => chunks.caret(position),
@@ -1717,9 +1749,9 @@ impl Query<'_> {
     }
     fn neighbor(
         &self,
-        position: astrelis::TextPosition,
+        position: rxui_draw::TextPosition,
         right: bool,
-    ) -> Option<astrelis::TextPosition> {
+    ) -> Option<rxui_draw::TextPosition> {
         match self {
             Self::Single(layout) => layout.visual_neighbor(position, right),
             Self::Chunked(chunks) => chunks.neighbor(position, right),
@@ -1863,7 +1895,7 @@ mod tests {
         }
         pollster::block_on(async {
             let graphics = GraphicsContext::headless().await.unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
                 .unwrap();
@@ -2061,7 +2093,7 @@ mod tests {
 
     use super::*;
     use crate::{IntoElement, Runtime, ViewContext, column, label};
-    use astrelis::{FramebufferOptions, wgpu};
+    use rxui_draw::{FramebufferOptions, wgpu};
 
     struct TextView {
         text: String,
@@ -2108,10 +2140,10 @@ mod tests {
                 let mut runtime = Runtime::new();
                 let root = runtime.update(|cx| cx.new(|_| Pressure { kind, text }));
                 let mut ui = Ui::new(&mut runtime, root).unwrap();
-                let mut painter = UiPainter::new(&graphics);
-                *painter.painter().text() = astrelis::TextRenderer::with_options(
+                let mut painter = UiPainter::with_graphics(&graphics);
+                *painter.painter().text() = rxui_draw::TextRenderer::with_options(
                     &graphics,
-                    astrelis::TextRendererOptions {
+                    rxui_draw::TextRendererOptions {
                         page_size: 32,
                         max_pages: 1,
                         ..Default::default()
@@ -2178,7 +2210,7 @@ mod tests {
             let mut runtime = Runtime::new();
             let root = runtime.update(|cx| cx.new(|_| Input("abc שלום def".into())));
             let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .fonts_mut()
                 .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
@@ -2349,7 +2381,7 @@ mod tests {
         }
         fn ink(
             graphics: &GraphicsContext,
-            target: &mut astrelis::Framebuffer,
+            target: &mut rxui_draw::Framebuffer,
             painter: &mut UiPainter,
             ui: &Ui<Fields>,
             area: Bounds,
@@ -2433,7 +2465,7 @@ mod tests {
                 })
             });
             let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .fonts_mut()
                 .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
@@ -2527,7 +2559,7 @@ mod tests {
     fn registered_fonts_report_faces_and_family_maps_re_measure_text() {
         pollster::block_on(async {
             let graphics = GraphicsContext::headless().await.unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             let generation = painter.generation();
             assert!(matches!(
                 painter.register_font(vec![0u8; 16]),
@@ -2608,7 +2640,7 @@ mod tests {
             let mut runtime = Runtime::new();
             let root = runtime.update(|cx| cx.new(|_| Doc(text)));
             let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
                 .unwrap();
@@ -2806,7 +2838,7 @@ mod tests {
             let mut runtime = Runtime::new();
             let root = runtime.update(|cx| cx.new(|_| Tall));
             let mut ui = Ui::new(&mut runtime, root).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
                 .unwrap();
@@ -2924,7 +2956,7 @@ mod tests {
             let mut runtime = Runtime::new();
             let root = runtime.update(|cx| cx.new(|_| Rich(20)));
             let mut ui = Ui::new(&mut runtime, root).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
                 .unwrap();
@@ -3080,7 +3112,7 @@ mod tests {
                 })
             });
             let mut ui = Ui::new(&mut runtime, entity).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .fonts_mut()
                 .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
@@ -3149,7 +3181,7 @@ mod tests {
             let mut runtime = Runtime::new();
             let root = runtime.update(|cx| cx.new(|_| Blocks));
             let mut ui = Ui::new(&mut runtime, root).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             ui.prepare(&mut runtime, [64., 64.], &mut painter).unwrap();
             painter.prepare(&ui, &target.render_format(), 1.).unwrap();
             for expected in [[255, 0, 0, 255], [0, 255, 0, 255]] {
@@ -3249,7 +3281,7 @@ mod tests {
             let mut runtime = Runtime::new();
             let root = runtime.update(|cx| cx.new(|_| BoxView));
             let mut ui = Ui::new(&mut runtime, root).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             for (theme, surface, border) in [
                 (crate::Theme::dark(), [27_u8, 28, 33], [62_u8, 65, 74]),
                 (crate::Theme::light(), [255, 255, 255], [195, 199, 206]),
@@ -3337,7 +3369,7 @@ mod tests {
                 })
             });
             let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .fonts_mut()
                 .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
@@ -3383,7 +3415,7 @@ mod tests {
                 })
             });
             let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             painter
                 .fonts_mut()
                 .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))

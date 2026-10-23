@@ -1,7 +1,7 @@
 use crate::{Color, UiError};
 use std::sync::{Arc, OnceLock};
 
-/// Converts sRGB byte channels to the linear RGBA used by Astrelis. Alpha is opaque.
+/// Converts sRGB byte channels to the linear RGBA used by RXUI drawing. Alpha is opaque.
 pub fn rgb8(r: u8, g: u8, b: u8) -> Color {
     rgba8(r, g, b, 255)
 }

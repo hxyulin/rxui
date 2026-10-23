@@ -1,6 +1,6 @@
 # Contributing to RXUI
 
-RXUI is a declarative desktop UI framework built on Astrelis. Read the
+RXUI is a declarative desktop UI framework with an RXUI-owned wgpu renderer. Read the
 [guide](docs/guide.md) and the [design document](docs/next-design.md) first, then
 the contract for the area you are changing. Small fixes, new examples and clear
 bug reports are all useful contributions.
@@ -29,21 +29,15 @@ whitespace and line endings, check TOML, YAML and JSON syntax, check spelling,
 and run `cargo fmt`. On push, they run clippy with warnings denied.
 `prek run --all-files` runs the commit hooks over the whole tree.
 
-## Working with a local Astrelis
+## Drawing and hosting
 
-The workspace pins Astrelis to a Git revision in [Cargo.toml](Cargo.toml) and the
-lockfile, so an ordinary clone builds against it. To change both repositories
-together, check Astrelis out next to RXUI as `../astrelis` and opt in to the
-local patch:
-
-```sh
-cp .cargo/config.toml.example .cargo/local.toml
-cargo --config .cargo/local.toml test --workspace --all-features
-```
-
-The patch rewrites the Astrelis source entries in `Cargo.lock`. Don't commit
-`.cargo/local.toml` or a lockfile that points at local paths. Land the Astrelis
-change first, then bump the pinned revision here in its own commit.
+`crates/rxui-draw` owns GPU drawing, shaders, shaping and resource preparation.
+`crates/rxui-host` supplies the optional native lifecycle integration. The renderer
+accepts application-owned wgpu handles; see [embedding](docs/wgpu-embedding.md).
+Drawing algorithms were ported from Astrelis; provenance is recorded in
+`crates/rxui-draw/PORTING.md`. Changes here do not require a sibling checkout.
+The optional experimental native drag service still uses the independently pinned
+`astrelis-native-drag` package, which has no renderer dependency.
 
 ## Find the right source
 
@@ -131,3 +125,11 @@ Unless you explicitly state otherwise, any contribution you intentionally submit
 for inclusion, as defined in the Apache-2.0 license, is dual licensed under both,
 without any additional terms or conditions. Third-party material keeps its own
 license; the OFL test font is an example.
+
+GPU regression tests are opt-in, keeping ordinary tests usable without an adapter:
+
+```sh
+mbx test -p rxui-draw --lib -- --ignored --skip capture_coverage_comparison
+mbx test -p rxui --features rendering --test wgpu_embedding -- --ignored
+mbx test -p rxui --all-features --lib -- --ignored
+```

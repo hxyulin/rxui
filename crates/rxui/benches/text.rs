@@ -8,7 +8,7 @@
 use rxui::{
     AccessKitTree, ElementType, SemanticAction, TextInputEvent, TextMovement, TextSelection,
     UiPainter,
-    astrelis::{FramebufferOptions, GraphicsContext, wgpu},
+    drawing::{FramebufferOptions, GraphicsContext, wgpu},
     prelude::*,
 };
 use std::{hint::black_box, time::Instant};
@@ -69,7 +69,7 @@ fn main() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Doc { text }));
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .register_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf").as_slice())
             .unwrap();

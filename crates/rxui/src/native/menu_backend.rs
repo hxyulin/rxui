@@ -15,9 +15,8 @@ mod windows;
 // Muda's event handler can only be installed once. Keep the wake destination in
 // replaceable storage instead of permanently retaining a finished application's loop.
 static INSTALL: Once = Once::new();
-static PROXY: Mutex<Option<astrelis_winit::winit::event_loop::EventLoopProxy<Wake>>> =
-    Mutex::new(None);
-fn install(proxy: astrelis_winit::winit::event_loop::EventLoopProxy<Wake>) {
+static PROXY: Mutex<Option<rxui_host::winit::event_loop::EventLoopProxy<Wake>>> = Mutex::new(None);
+fn install(proxy: rxui_host::winit::event_loop::EventLoopProxy<Wake>) {
     *PROXY.lock().expect("menu proxy") = Some(proxy);
     INSTALL.call_once(|| {
         MenuEvent::set_event_handler(Some(|event| {
@@ -278,7 +277,7 @@ impl Menus {
     }
     pub(super) fn start(
         &mut self,
-        proxy: astrelis_winit::winit::event_loop::EventLoopProxy<Wake>,
+        proxy: rxui_host::winit::event_loop::EventLoopProxy<Wake>,
     ) -> Result<(), ApplicationError> {
         install(proxy);
         #[cfg(target_os = "macos")]
@@ -362,10 +361,7 @@ impl Menus {
         }
     }
     #[cfg(target_os = "windows")]
-    pub(super) fn hook(
-        &self,
-        builder: &mut astrelis_winit::winit::event_loop::EventLoopBuilder<Wake>,
-    ) {
+    pub(super) fn hook(&self, builder: &mut rxui_host::winit::event_loop::EventLoopBuilder<Wake>) {
         windows::hook(builder, self.windows.clone());
     }
 }

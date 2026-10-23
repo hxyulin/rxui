@@ -3,4 +3,5 @@ extend-exclude = [
     "*.csv",
     "*.log",
     "crates/rxui/tests/fonts/*.otf",
+    "crates/rxui-draw/tests/fonts/*",
 ]

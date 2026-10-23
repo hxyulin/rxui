@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/rxui"]
+members = ["crates/rxui", "crates/rxui-draw", "crates/rxui-host"]
+default-members = ["crates/rxui"]
 
 [workspace.package]
 version = "0.2.0-dev.0"
@@ -11,8 +12,10 @@ authors = ["hxyulin <hxyulin@proton.me>"]
 repository = "https://github.com/hxyulin/rxui"
 
 [workspace.dependencies]
-astrelis = { git = "https://github.com/hxyulin/astrelis", rev = "4e360d5a3ad5dbe8bff11baf3eaa512a9241db21", version = "0.4.0-dev.0" }
-astrelis-winit = { git = "https://github.com/hxyulin/astrelis", rev = "4e360d5a3ad5dbe8bff11baf3eaa512a9241db21", version = "0.4.0-dev.0" }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "dx12", "webgpu"] }
+winit = "0.30.13"
+rxui-draw = { path = "crates/rxui-draw" }
+rxui-host = { path = "crates/rxui-host" }
 astrelis-native-drag = { git = "https://github.com/hxyulin/astrelis", rev = "4e360d5a3ad5dbe8bff11baf3eaa512a9241db21", version = "0.4.0-dev.0" }
 taffy = { version = "0.15.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 profiling = { version = "1.0.18", default-features = false }

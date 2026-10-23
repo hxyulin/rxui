@@ -112,7 +112,7 @@ RGBA8 adds intermediate 8-bit quantization; deeper nesting can accumulate roundi
 Layers use the destination's MSAA count and resolve before parent sampling. They
 use nearest sampling for pixel-aligned composition, avoiding extra float-filtering
 feature requirements. Unsupported layer formats/sample counts or oversized
-allocations return Astrelis errors; there is no silent quality fallback. Layers
+allocations return RXUI drawing errors; there is no silent quality fallback. Layers
 have no depth/stencil attachment of their own.
 
 Each visible partial-opacity group adds one pass and one composite draw. GPU cost

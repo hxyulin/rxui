@@ -1,5 +1,5 @@
 use super::*;
-use astrelis::{
+use rxui_draw::{
     Frame, Framebuffer, FramebufferOptions, TextureAlpha, TextureBinding, TextureBindingOptions,
     TextureFilter, wgpu,
 };
@@ -151,7 +151,7 @@ impl UiPainter {
     /// This is an ordinary direct painting scope when no opacity groups exist.
     ///
     /// ```no_run
-    /// # use rxui::{Ui, UiPainter, UiError, View, astrelis::{Frame, wgpu}};
+    /// # use rxui::{Ui, UiPainter, UiError, View, drawing::{Frame, wgpu}};
     /// fn draw<T: View>(painter: &mut UiPainter, ui: &Ui<T>, frame: &mut Frame<'_, '_>) -> Result<(), UiError> {
     ///     painter.compose(ui, frame, 1., |frame, ui| {
     ///         let mut pass = frame.render_pass().clear_color(wgpu::Color::BLACK).begin()?;
@@ -224,6 +224,94 @@ impl UiPainter {
             },
         )
     }
+    pub(crate) fn record_wgpu<T: View>(
+        &mut self,
+        ui: &Ui<T>,
+        encoder: &mut rxui_draw::wgpu::CommandEncoder,
+        destination: &crate::UiRenderTarget<'_>,
+        scale: f32,
+    ) -> Result<rxui_draw::RecordingResources, UiError> {
+        self.validate_resources(ui, scale)?;
+        let plan = if ui.needs_composition() {
+            let plan = self
+                .compositions
+                .get(&ui.tree_id())
+                .cloned()
+                .ok_or(UiError::InvalidGeometry)?;
+            if plan.key != ui.layer_key()
+                || plan.scale != scale
+                || plan.format != destination.render_format()
+            {
+                return Err(UiError::InvalidGeometry);
+            }
+            Some(plan)
+        } else {
+            None
+        };
+        let graphics = self.graphics.clone();
+        let mut recording = rxui_draw::Recording::new(&graphics, encoder);
+        if let Some(plan) = &plan {
+            for (group, spec) in plan.groups.iter().enumerate().rev() {
+                let Some(bounds) = spec.bounds else {
+                    continue;
+                };
+                let mut target = self
+                    .layers
+                    .get_mut(&spec.id)
+                    .and_then(|r| r.target.take())
+                    .ok_or(UiError::InvalidGeometry)?;
+                let result = (|| {
+                    let mut pass = recording
+                        .render_to(&mut target)
+                        .clear_color(rxui_draw::wgpu::Color::TRANSPARENT)
+                        .begin()?;
+                    self.paint_scope(
+                        ui,
+                        &mut pass,
+                        scale,
+                        PaintScope {
+                            shift: [-(bounds[0] as f32), -(bounds[1] as f32)],
+                            plan: Some(plan),
+                            group: Some(group),
+                        },
+                    )
+                })();
+                self.layers.get_mut(&spec.id).unwrap().target = Some(target);
+                result?;
+                self.layer_stats.render_passes += 1;
+            }
+        }
+        let mut color = rxui_draw::RenderColorAttachment::new(
+            destination.view,
+            destination.format,
+            destination.size,
+        )
+        .ops(rxui_draw::wgpu::Operations {
+            load: destination.load,
+            store: rxui_draw::wgpu::StoreOp::Store,
+        });
+        if let Some(resolve) = destination.resolve_target {
+            color = color.resolve_to(resolve);
+        }
+        let colors = [Some(color)];
+        {
+            let mut pass = recording.begin_render_pass(&rxui_draw::RenderPassDescriptor {
+                colors: &colors,
+                ..Default::default()
+            })?;
+            self.paint_scope(
+                ui,
+                &mut pass,
+                scale,
+                PaintScope {
+                    plan: plan.as_deref(),
+                    ..Default::default()
+                },
+            )?;
+        }
+        Ok(recording.finish()?)
+    }
+
     pub(super) fn prepare_composition<T: View>(
         &mut self,
         ui: &Ui<T>,

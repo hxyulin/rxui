@@ -1,6 +1,6 @@
 use super::*;
 use crate::*;
-use astrelis::wgpu;
+use rxui_draw::wgpu;
 
 /// Prepares and paints one frame into a linear RGBA8 target, returning its pixels.
 pub(super) fn render<T: View>(
@@ -50,7 +50,7 @@ fn per_corner_radii_and_single_side_borders_match_pixels() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Corners));
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [80, 40]);
         let at = |x, y| pixel(&pixels, 80, x, y);
         assert_eq!(at(1, 1), [0, 0, 0, 255]); // Rounded top-left corner.
@@ -101,7 +101,7 @@ fn box_shadows_paint_behind_backgrounds_and_survive_own_box_culling() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Shadows));
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [80, 80]);
         let at = |x, y| pixel(&pixels, 80, x, y);
         assert_eq!(at(15, 15), [255, 0, 0, 255]); // Background over its shadow.
@@ -146,7 +146,7 @@ fn rounded_clipping_containers_round_descendant_painting() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| RoundedClipView));
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         let mut pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [80, 40]);
         for scrolled in [false, true] {
             let at = |x, y| pixel(&pixels, 80, x, y);
@@ -187,7 +187,7 @@ fn text_alignment_and_line_height_reach_the_shaped_layout() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Typography));
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         painter
             .fonts_mut()
             .load_font(include_bytes!("../tests/fonts/SourceSans3-Regular.otf"))
@@ -251,7 +251,7 @@ impl CustomElement for Bar {
         &self,
         state: &BarState,
         element: &ElementInfo<'_>,
-        paint: &mut astrelis::PaintSession<'_, '_>,
+        paint: &mut rxui_draw::PaintSession<'_, '_>,
     ) -> Result<(), UiError> {
         assert!(state.prepared > 0);
         let b = element.content_bounds;
@@ -290,7 +290,7 @@ fn custom_elements_prepare_retained_state_and_paint_in_logical_units() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Bars { fraction: 0.5 }));
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         let pixels = render(&graphics, &mut runtime, &mut ui, &mut painter, [60, 60]);
         let at = |x, y| pixel(&pixels, 60, x, y);
         assert_eq!(at(15, 20), [0, 255, 0, 255]);

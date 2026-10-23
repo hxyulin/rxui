@@ -1,5 +1,5 @@
 use crate::*;
-use astrelis::GraphicsContext;
+use rxui_draw::GraphicsContext;
 use std::time::Duration;
 
 struct Dialog {

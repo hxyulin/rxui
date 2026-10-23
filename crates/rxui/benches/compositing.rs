@@ -2,7 +2,7 @@
 //! submit-and-wait wall time; the latter includes driver/queue overhead, not GPU timestamps.
 use rxui::{
     Element, UiPainter,
-    astrelis::{FramebufferOptions, GraphicsContext, wgpu},
+    drawing::{FramebufferOptions, GraphicsContext, wgpu},
     prelude::*,
 };
 use std::{hint::black_box, time::Instant};
@@ -100,7 +100,7 @@ fn main() {
                 })
             });
             let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-            let mut painter = UiPainter::new(&graphics);
+            let mut painter = UiPainter::with_graphics(&graphics);
             if text {
                 painter
                     .fonts_mut()

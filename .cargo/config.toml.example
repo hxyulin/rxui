@@ -1,7 +1,5 @@
-# Optional local override. Copy to the ignored .cargo/local.toml and use:
-# cargo --config .cargo/local.toml test --workspace
-# The committed manifests and canonical lockfile use the pinned Git revision.
-# A local patch may change lockfile source entries; restore those before committing.
+# Optional override for the experimental native drag service only.
+# Drawing and hosting are RXUI-owned workspace packages.
+# Copy to .cargo/local.toml and opt in with --config .cargo/local.toml.
 [patch."https://github.com/hxyulin/astrelis"]
-astrelis = { path = "../astrelis/crates/astrelis" }
-astrelis-winit = { path = "../astrelis/crates/astrelis-winit" }
+astrelis-native-drag = { path = "../astrelis/crates/astrelis-native-drag" }

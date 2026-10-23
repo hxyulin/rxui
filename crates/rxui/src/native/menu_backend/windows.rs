@@ -1,6 +1,6 @@
 //! The only unsafe boundary in RXUI: borrowed live HWNDs and winit-owned MSGs.
 use super::*;
-use astrelis_winit::winit::{
+use rxui_host::winit::{
     platform::windows::EventLoopBuilderExtWindows,
     raw_window_handle::{HasWindowHandle, RawWindowHandle},
 };
@@ -29,7 +29,7 @@ pub(super) fn detach(menu: &Menu, window: &Arc<Window>) {
     }
 }
 pub(super) fn hook(
-    builder: &mut astrelis_winit::winit::event_loop::EventLoopBuilder<Wake>,
+    builder: &mut rxui_host::winit::event_loop::EventLoopBuilder<Wake>,
     menus: WindowMenus,
 ) {
     builder.with_msg_hook(move |message| {

@@ -1,0 +1,31 @@
+//! RXUI-owned optional desktop lifecycle integration.
+//! Drawing algorithms ported from Astrelis revision 4e360d5a3ad5dbe8bff11baf3eaa512a9241db21.
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+pub mod drag;
+mod error;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod handler;
+mod policy;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod runner;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod scheduler;
+#[cfg(all(
+    test,
+    any(target_os = "macos", target_os = "windows", target_os = "linux")
+))]
+mod scheduler_tests;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod trace;
+mod window;
+
+pub use error::{Callback, RunError, UnknownWindow, WindowError};
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+pub use handler::{ErrorAction, Handler, PrepareAction};
+pub use policy::{CloseResponse, InvalidWindowMetrics, RedrawMode, SurfaceSettings, WindowMetrics};
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+pub use runner::{AppContext, Runner, RunnerOptions};
+pub use rxui_draw as drawing;
+pub use window::{WindowContext, WindowInfo, WindowUpdate};
+pub use winit;

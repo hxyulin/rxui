@@ -2,7 +2,7 @@
 //! Detach with a button or release outside all dock regions. Reattach with a button
 //! or close the detached window. Enable `native-docking` for experimental native
 //! cross-window dragging; `--two-windows` starts with a separate destination.
-use rxui::{astrelis_winit::CloseResponse, prelude::*};
+use rxui::{host::CloseResponse, prelude::*};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 struct Document(String);
@@ -240,9 +240,7 @@ fn main() -> Result<(), ApplicationError> {
             } else {
                 40.
             };
-            native.set_outer_position(rxui::astrelis_winit::winit::dpi::LogicalPosition::new(
-                x, 100.,
-            ));
+            native.set_outer_position(rxui::host::winit::dpi::LogicalPosition::new(x, 100.));
         }
         eprintln!("docking window created: {:?}", window.id());
     })

@@ -1,7 +1,7 @@
 use super::image_gpu_tests::{Page, pixels, prepare, read_pixel};
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 #[test]
 #[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
 fn stacked_subtrees_paint_in_scoped_z_order_and_restore_caller_clipping() {
@@ -49,7 +49,7 @@ fn stacked_subtrees_paint_in_scoped_z_order_and_restore_caller_clipping() {
         let mut runtime = Runtime::new();
         let root = runtime.update(|cx| cx.new(|_| Page(description(-1))));
         let mut ui = Ui::new(&mut runtime, root.clone()).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         prepare(&mut runtime, &mut ui, &mut painter, &target.render_format());
         let layouts = ui.stats().layout_passes;
         for (z, expected) in [(-1, [0, 0, 255, 255]), (1, [0, 255, 0, 255])] {

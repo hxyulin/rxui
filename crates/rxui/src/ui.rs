@@ -73,15 +73,15 @@ pub enum UiError {
     Measurement(Box<dyn Error>),
     /// Internal Taffy operation failed.
     Layout(taffy::TaffyError),
-    /// Astrelis pipeline/recording failure.
+    /// RXUI drawing pipeline/recording failure.
     #[cfg(feature = "rendering")]
-    Graphics(astrelis::Error),
-    /// Astrelis CPU text failure.
+    Graphics(rxui_draw::Error),
+    /// RXUI drawing CPU text failure.
     #[cfg(feature = "rendering")]
-    Text(astrelis::TextError),
-    /// Astrelis text preparation failure.
+    Text(rxui_draw::TextError),
+    /// RXUI drawing text preparation failure.
     #[cfg(feature = "rendering")]
-    TextRender(astrelis::TextRenderError),
+    TextRender(rxui_draw::TextRenderError),
 }
 impl From<AccessError> for UiError {
     fn from(value: AccessError) -> Self {
@@ -239,7 +239,7 @@ pub struct TextRequest<'a> {
     /// Retained text/font revision, scoped to the element identity.
     pub revision: u64,
 }
-/// Host-supplied text sizing, allowing headless tests and real Astrelis shaping.
+/// Host-supplied text sizing, allowing headless tests and real RXUI drawing shaping.
 pub trait TextMeasure {
     /// Measures text content, excluding node padding/border.
     fn measure(&mut self, id: ElementId, request: TextRequest<'_>) -> Result<[f32; 2], UiError>;

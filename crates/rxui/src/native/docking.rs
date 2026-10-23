@@ -1,7 +1,7 @@
 //! Native primary-drag orchestration. Platform hooks never dispatch RXUI callbacks.
 use super::*;
 use astrelis_native_drag::{Adapter, CaptureState, Signal, Target};
-use astrelis_winit::winit::event::{ElementState, MouseButton};
+use rxui_host::winit::event::{ElementState, MouseButton};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -30,7 +30,7 @@ struct PollWake {
 }
 impl PollWake {
     fn new(
-        proxy: astrelis_winit::winit::event_loop::EventLoopProxy<Wake>,
+        proxy: rxui_host::winit::event_loop::EventLoopProxy<Wake>,
     ) -> Result<Self, ApplicationError> {
         let (stop, stopped) = mpsc::channel();
         let queued = Arc::new(AtomicBool::new(false));
@@ -104,7 +104,7 @@ impl Backend for Adapter {
 
 pub(super) struct Docking<B: Backend = Adapter> {
     adapter: B,
-    proxy: Option<astrelis_winit::winit::event_loop::EventLoopProxy<Wake>>,
+    proxy: Option<rxui_host::winit::event_loop::EventLoopProxy<Wake>>,
     pub source: Option<NativeWindowId>,
     released_at: Option<Instant>,
     release_position: Option<[f64; 2]>,
@@ -114,7 +114,7 @@ pub(super) struct Docking<B: Backend = Adapter> {
 }
 impl Docking {
     pub fn new(
-        proxy: astrelis_winit::winit::event_loop::EventLoopProxy<Wake>,
+        proxy: rxui_host::winit::event_loop::EventLoopProxy<Wake>,
     ) -> Result<Self, ApplicationError> {
         Ok(Self {
             adapter: Adapter::new().map_err(native_error)?,

@@ -2,7 +2,7 @@
 //! point uploads; recording uses the host's encoder, followed by the UI image pass.
 //! The same Image identity follows the resolved framebuffer output across resize/MSAA.
 use rxui::{
-    astrelis::{
+    drawing::{
         Framebuffer, FramebufferOptions, Painter, Point2D, PointBuffer, PointBufferOptions,
         PolylineDraw, Rect, Transform2D, wgpu,
     },

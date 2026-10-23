@@ -1,5 +1,5 @@
 <h1 align="center">RXUI</h1>
-<p align="center">A declarative desktop UI framework for Rust, rendered with Astrelis.</p>
+<p align="center">A declarative desktop UI framework for Rust, with an embeddable wgpu renderer.</p>
 <p align="center">
   <a href="https://github.com/hxyulin/rxui/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/hxyulin/rxui/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="Cargo.toml"><img alt="Rust 1.98.1 or newer" src="https://img.shields.io/badge/rustc-1.98.1%2B-dea584?logo=rust"></a>
@@ -15,7 +15,8 @@
 You describe each view with builders, from persistent, typed application state.
 RXUI reconciles the result against the previous frame by key, lays it out with
 Taffy, routes input, publishes accessibility trees through AccessKit, and paints
-with [Astrelis](https://github.com/hxyulin/astrelis) on wgpu.
+with its own wgpu drawing implementation. You can supply your device, queue,
+encoder and target views, or use the optional desktop host.
 
 ```rust
 use rxui::prelude::*;
@@ -58,7 +59,7 @@ fn main() -> Result<(), ApplicationError> {
 | Styling | Light, dark and high-contrast themes, compact density, inherited text styles and state paints |
 | Animation | Implicit state and theme transitions, overlay enter/exit, springs and animated values, reduce motion |
 | Accessibility | Roles, names and actions, published through AccessKit only while assistive technology is active |
-| Graphics | Images, live framebuffers, group opacity and hooks to record your own Astrelis passes |
+| Graphics | Images, live framebuffers, group opacity and hooks to record your own wgpu passes |
 | Desktop | Multiple windows, native menus, file dialogs, clipboard, file drop and saved window geometry |
 | Async | Scoped local and background futures, plus blocking jobs that finish into live state |
 
@@ -71,6 +72,23 @@ is tagged [`v0.1`](https://github.com/hxyulin/rxui/tree/v0.1) and kept on the
 
 The native host runs on macOS, Windows and Linux. Native menus are macOS and
 Windows only.
+
+## Embedding in a wgpu application
+
+Enable `rendering` without the desktop host. Construct `UiPainter::new(&device,
+&queue)`, prepare the UI, and call `record` with your encoder and a
+`UiRenderTarget`. Submit your commands, then call `resources.after_submit(&queue)`.
+RXUI does not acquire your surface, submit, present, or replace device callbacks.
+
+`Image::from_view` imports raw texture views. `ExternalTexture` follows replacement
+views after resize while preserving image identity. Custom elements can prepare
+application pipelines and draw through the raw wgpu pass.
+
+See [the embedding contract](docs/wgpu-embedding.md) and the standalone example:
+
+```sh
+mbx run -p rxui --example wgpu_app --no-default-features --features rendering
+```
 
 ## Getting started
 
@@ -85,8 +103,8 @@ rxui = { git = "https://github.com/hxyulin/rxui", features = ["native"] }
 | Feature | Adds |
 | --- | --- |
 | `layout` (default) | Elements, layout and input, headless with host-supplied text measurement |
-| `rendering` | `UiPainter` over Astrelis, for embedding in your own render loop |
-| `gles` | Opt-in GLES backend through Astrelis; native runner supplies the display handle. See [backend selection](docs/application.md#native-backends-and-surface-latency) and [Linux verification](docs/astrelis-followups.md) |
+| `rendering` | `UiPainter` on your own wgpu device, encoder and render targets |
+| `gles` | Opt-in wgpu GLES backend; native runner supplies the display handle. See [backend selection](docs/application.md#native-backends-and-surface-latency) and [Linux verification](docs/astrelis-followups.md) |
 | `native` | The desktop `Application` host, AccessKit, clipboard and background tasks |
 | `native-docking` | Opt-in experimental cross-window dock dragging on macOS/Windows; see [docking](docs/docking.md#experimental-native-cross-window-dragging) |
 | `native-menus` | Menu bars and Close/Quit handling on macOS and Windows |
@@ -140,12 +158,13 @@ the same shape GPUI had already settled on: state owned by the application,
 then used GPUI as its reference for naming and API. The two diverge below that
 layer. RXUI tracks dependencies automatically instead of requiring explicit
 notification, reconciles a retained element tree by key, and renders through
-Astrelis and wgpu in a frame your own passes can join.
+RXUI-owned drawing code on wgpu, recording into an application-owned encoder.
+The initial drawing algorithms were ported from [Astrelis](https://github.com/hxyulin/astrelis).
 
 ## Contributing
 
 Bug reports, examples and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
-covers setup, working against a local Astrelis checkout, the checks to run and
+covers setup, the drawing implementation, the checks to run and
 what to include in a pull request.
 
 ## License

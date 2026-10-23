@@ -19,8 +19,10 @@ pub use dialogs::{
 #[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
 mod desktop;
 use crate::{CommandId, CommandInfo, CommandStatus};
-use astrelis::{Frame, GraphicsContext, wgpu};
-use astrelis_winit::{
+#[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
+pub use desktop::{DesktopError, DesktopResult};
+use rxui_draw::{Frame, GraphicsContext, wgpu};
+use rxui_host::{
     AppContext as NativeContext, Callback, ErrorAction, Handler, PrepareAction, RunError, Runner,
     RunnerOptions, SurfaceSettings, WindowInfo, WindowMetrics,
     winit::{
@@ -30,8 +32,6 @@ use astrelis_winit::{
         window::{Theme as NativeTheme, Window, WindowAttributes, WindowId as NativeWindowId},
     },
 };
-#[cfg(all(feature = "desktop-services", not(target_arch = "wasm32")))]
-pub use desktop::{DesktopError, DesktopResult};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
@@ -107,8 +107,8 @@ impl From<UiError> for ApplicationError {
         Self::Ui(e)
     }
 }
-impl From<astrelis::Error> for ApplicationError {
-    fn from(e: astrelis::Error) -> Self {
+impl From<rxui_draw::Error> for ApplicationError {
+    fn from(e: rxui_draw::Error) -> Self {
         Self::Ui(e.into())
     }
 }
@@ -256,7 +256,7 @@ impl WindowOptions {
         self
     }
     /// Surface-owned MSAA/depth, present mode and desired maximum frame latency,
-    /// validated by Astrelis at creation. Latency defaults to two queued frames.
+    /// validated by RXUI drawing at creation. Latency defaults to two queued frames.
     #[must_use]
     pub fn surface(mut self, settings: SurfaceSettings) -> Self {
         self.surface = settings;
@@ -311,7 +311,7 @@ impl WindowOptions {
     /// Change it later through `WindowHandle::native_window().set_window_level`.
     #[must_use]
     pub fn always_on_top(mut self, on_top: bool) -> Self {
-        use astrelis_winit::winit::window::WindowLevel;
+        use rxui_host::winit::window::WindowLevel;
         self.attributes = self.attributes.with_window_level(if on_top {
             WindowLevel::AlwaysOnTop
         } else {
@@ -326,7 +326,7 @@ impl WindowOptions {
     pub fn titlebar_transparent(mut self, transparent: bool) -> Self {
         #[cfg(target_os = "macos")]
         {
-            use astrelis_winit::winit::platform::macos::WindowAttributesExtMacOS;
+            use rxui_host::winit::platform::macos::WindowAttributesExtMacOS;
             self.attributes = self.attributes.with_titlebar_transparent(transparent);
         }
         #[cfg(not(target_os = "macos"))]
@@ -340,7 +340,7 @@ impl WindowOptions {
     pub fn fullsize_content_view(mut self, fullsize: bool) -> Self {
         #[cfg(target_os = "macos")]
         {
-            use astrelis_winit::winit::platform::macos::WindowAttributesExtMacOS;
+            use rxui_host::winit::platform::macos::WindowAttributesExtMacOS;
             self.attributes = self.attributes.with_fullsize_content_view(fullsize);
         }
         #[cfg(not(target_os = "macos"))]
@@ -354,7 +354,7 @@ impl WindowOptions {
     pub fn title_hidden(mut self, hidden: bool) -> Self {
         #[cfg(target_os = "macos")]
         {
-            use astrelis_winit::winit::platform::macos::WindowAttributesExtMacOS;
+            use rxui_host::winit::platform::macos::WindowAttributesExtMacOS;
             self.attributes = self.attributes.with_title_hidden(hidden);
         }
         #[cfg(not(target_os = "macos"))]
@@ -388,7 +388,7 @@ impl WindowOptions {
             Some(Size::Physical(size)) => size.width == 0 || size.height == 0,
             None => false,
         };
-        let invalid_position = matches!(self.attributes.position, Some(astrelis_winit::winit::dpi::Position::Logical(p)) if !p.x.is_finite() || !p.y.is_finite());
+        let invalid_position = matches!(self.attributes.position, Some(rxui_host::winit::dpi::Position::Logical(p)) if !p.x.is_finite() || !p.y.is_finite());
         let logical = |size: Option<Size>| match size {
             Some(Size::Logical(size)) => Some([size.width, size.height]),
             _ => None,
@@ -413,7 +413,7 @@ impl WindowOptions {
                 .any(|v| !v.is_finite() || !(0. ..=1.).contains(v))
             || self
                 .surface
-                .surface_options(astrelis_winit::winit::dpi::PhysicalSize::new(1, 1))
+                .surface_options(rxui_host::winit::dpi::PhysicalSize::new(1, 1))
                 .sample_count
                 == 0
         {
@@ -564,7 +564,7 @@ trait HostedUi {
         runtime: &mut Runtime,
         metrics: WindowMetrics,
         painter: &mut UiPainter,
-        format: &astrelis::RenderFormat,
+        format: &rxui_draw::RenderFormat,
     ) -> Result<(), UiError>;
     fn compose(
         &self,
@@ -717,7 +717,7 @@ impl<T: View> HostedUi for Ui<T> {
         runtime: &mut Runtime,
         metrics: WindowMetrics,
         painter: &mut UiPainter,
-        format: &astrelis::RenderFormat,
+        format: &rxui_draw::RenderFormat,
     ) -> Result<(), UiError> {
         let size = metrics.logical_size();
         self.prepare(runtime, [size.width as f32, size.height as f32], painter)?;
@@ -1210,7 +1210,7 @@ impl AppContext<'_> {
     ) -> Result<Vec<crate::FontFace>, ApplicationError> {
         let commands = self.native_commands()?;
         let bytes = bytes.into();
-        let faces = astrelis::TextSystem::new()
+        let faces = rxui_draw::TextSystem::new()
             .load_font_shared(bytes.clone())
             .map_err(UiError::from)?;
         commands
@@ -1335,7 +1335,7 @@ pub struct GraphicsPrepareContext<'a> {
     /// Logical/physical size and DPI for backing-resolution choices.
     pub metrics: WindowMetrics,
     /// Surface attachment format for custom pipeline preparation.
-    pub format: &'a astrelis::RenderFormat,
+    pub format: &'a rxui_draw::RenderFormat,
 }
 type GraphicsPrepareHook =
     dyn FnMut(GraphicsPrepareContext<'_>, &mut AppContext<'_>) -> Result<(), ApplicationError>;
@@ -1352,8 +1352,8 @@ type GeometryHook = dyn FnMut(&WindowHandle, WindowGeometry, &mut AppContext<'_>
 type FileDropHook = dyn FnMut(&WindowHandle, &FileDropEvent, &mut AppContext<'_>);
 type PreferencesHook = dyn FnMut(&SystemPreferences, &mut AppContext<'_>);
 type CreatedHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>);
-type QuitHook = dyn FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse;
-type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse;
+type QuitHook = dyn FnMut(&mut AppContext<'_>) -> rxui_host::CloseResponse;
+type CloseHook = dyn FnMut(&WindowHandle, &mut AppContext<'_>) -> rxui_host::CloseResponse;
 type ExitHook = dyn FnOnce(&mut AppContext<'_>);
 type ErrorHook = dyn FnMut(&RunError, &mut AppContext<'_>) -> ErrorAction;
 
@@ -1391,7 +1391,7 @@ fn error_action(
         ErrorAction::Exit
     }
 }
-/// Desktop host over astrelis-winit. It owns native wiring and on-demand scheduling;
+/// Desktop host over rxui-host. It owns native wiring and on-demand scheduling;
 /// Runtime/Ui/UiPainter remain usable in custom hosts. Initialization runs once,
 /// model/task progression continues independently of surface availability.
 pub struct Application {
@@ -1529,7 +1529,7 @@ impl Application {
     }
     /// Observes native failures and chooses whether to skip failed work or exit.
     /// Defaults to continuing recoverable frame/surface/GPU errors and exiting
-    /// lifecycle/input errors. Astrelis logs failures through the log facade.
+    /// lifecycle/input errors. RXUI drawing logs failures through the log facade.
     /// Runs in a fresh update without an implicit source window; mutations are not
     /// rolled back. Device loss and out-of-memory always exit, even on Continue.
     #[must_use]
@@ -1703,7 +1703,7 @@ impl Application {
     #[must_use]
     pub fn close_requested(
         mut self,
-        hook: impl FnMut(&WindowHandle, &mut AppContext<'_>) -> astrelis_winit::CloseResponse + 'static,
+        hook: impl FnMut(&WindowHandle, &mut AppContext<'_>) -> rxui_host::CloseResponse + 'static,
     ) -> Self {
         self.close = Some(Box::new(hook));
         self
@@ -1714,7 +1714,7 @@ impl Application {
     #[must_use]
     pub fn quit_requested(
         mut self,
-        hook: impl FnMut(&mut AppContext<'_>) -> astrelis_winit::CloseResponse + 'static,
+        hook: impl FnMut(&mut AppContext<'_>) -> rxui_host::CloseResponse + 'static,
     ) -> Self {
         self.quit = Some(Box::new(hook));
         self
@@ -1765,7 +1765,7 @@ impl Application {
             any(target_os = "macos", target_os = "windows")
         ))]
         let menus = self.menu_bar.map(menu_backend::Menus::new);
-        let mut builder = astrelis_winit::winit::event_loop::EventLoop::<Wake>::with_user_event();
+        let mut builder = rxui_host::winit::event_loop::EventLoop::<Wake>::with_user_event();
         #[cfg(all(feature = "native-menus", target_os = "windows"))]
         if let Some(menus) = &menus {
             menus.hook(&mut builder);
@@ -1855,7 +1855,7 @@ impl Application {
 /// thread. The handle carries no entity or window ownership.
 #[derive(Clone)]
 pub struct ApplicationWakeHandle {
-    proxy: astrelis_winit::winit::event_loop::EventLoopProxy<Wake>,
+    proxy: rxui_host::winit::event_loop::EventLoopProxy<Wake>,
 }
 impl ApplicationWakeHandle {
     /// Wakes the application, returning `Exited` after the event loop closes.
@@ -2272,7 +2272,7 @@ impl<F> Host<F> {
             window_deadline(wakeup, window.text_retry_at),
             ui.has_text_focus().then_some(window.blink_at),
         );
-        // Astrelis keeps the earliest hint, so cancellation must precede replacement
+        // RXUI drawing keeps the earliest hint, so cancellation must precede replacement
         // (including when a view cancels or postpones its request).
         cx.cancel_redraw_at(id)
             .map_err(|e| ApplicationError::Native(Box::new(e)))?;
@@ -2467,10 +2467,10 @@ impl<F> Host<F> {
                             let response = self
                                 .close
                                 .as_mut()
-                                .map_or(astrelis_winit::CloseResponse::Close, |hook| {
+                                .map_or(rxui_host::CloseResponse::Close, |hook| {
                                     self.runtime.update(|cx| hook(&handle, cx))
                                 });
-                            if response == astrelis_winit::CloseResponse::Close {
+                            if response == rxui_host::CloseResponse::Close {
                                 handle.life.closing.set(true);
                                 #[cfg(all(
                                     feature = "native-dialogs",
@@ -2496,10 +2496,10 @@ impl<F> Host<F> {
                         let response = self
                             .quit
                             .as_mut()
-                            .map_or(astrelis_winit::CloseResponse::Close, |hook| {
+                            .map_or(rxui_host::CloseResponse::Close, |hook| {
                                 self.runtime.update(hook)
                             });
-                        if response == astrelis_winit::CloseResponse::Close {
+                        if response == rxui_host::CloseResponse::Close {
                             self.commands.exited.set(true);
                             #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
                             if self.commands.dialogs.borrow().running() {
@@ -2662,7 +2662,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         id: NativeWindowId,
     ) -> Result<(), Self::Error> {
         if self.painter.is_none() {
-            let mut painter = UiPainter::new(cx.window(id).unwrap().graphics());
+            let mut painter = UiPainter::with_graphics(cx.window(id).unwrap().graphics());
             if self.system_fonts {
                 painter.fonts_mut().load_system_fonts();
             }
@@ -2690,7 +2690,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             // macOS creation attributes position the content area. Correct the
             // persisted outer frame while hidden, then maximize if requested.
             if let Some(position) = requested.and_then(|g| g.outer_position) {
-                native.set_outer_position(astrelis_winit::winit::dpi::PhysicalPosition::new(
+                native.set_outer_position(rxui_host::winit::dpi::PhysicalPosition::new(
                     position[0],
                     position[1],
                 ));
@@ -3003,7 +3003,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         &mut self,
         cx: &mut NativeContext<'_, Wake>,
         id: NativeWindowId,
-    ) -> Result<astrelis_winit::CloseResponse, Self::Error> {
+    ) -> Result<rxui_host::CloseResponse, Self::Error> {
         self.observe_geometry(id, false);
         let handle = WindowHandle {
             life: self.windows[&id].life.clone(),
@@ -3011,10 +3011,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         let response = if let Some(hook) = &mut self.close {
             self.runtime.update(|cx| hook(&handle, cx))
         } else {
-            astrelis_winit::CloseResponse::Close
+            rxui_host::CloseResponse::Close
         };
         #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
-        if response == astrelis_winit::CloseResponse::Close
+        if response == rxui_host::CloseResponse::Close
             && self.commands.dialogs.borrow().busy(handle.id())
         {
             handle.life.closing.set(true);
@@ -3023,7 +3023,7 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 .borrow_mut()
                 .push_back(Command::Close(handle.id()));
             self.progress(cx, None)?;
-            return Ok(astrelis_winit::CloseResponse::KeepOpen);
+            return Ok(rxui_host::CloseResponse::KeepOpen);
         }
         self.progress(cx, None)?;
         Ok(response)
@@ -3230,15 +3230,15 @@ fn create_window(
 ) -> Result<NativeWindowId, ApplicationError> {
     use wgpu::CompositeAlphaMode as Alpha;
     let automatic = surface
-        .surface_options(astrelis_winit::winit::dpi::PhysicalSize::new(1, 1))
+        .surface_options(rxui_host::winit::dpi::PhysicalSize::new(1, 1))
         .alpha_mode
         == Alpha::Auto;
     if attributes.transparent && automatic {
         for mode in [Alpha::PreMultiplied, Alpha::PostMultiplied] {
             match cx.create_window(attributes.clone(), surface.alpha_mode(mode)) {
                 Ok(id) => return Ok(id),
-                Err(astrelis_winit::WindowError::Graphics(
-                    astrelis::Error::UnsupportedPresentation { .. },
+                Err(rxui_host::WindowError::Graphics(
+                    rxui_draw::Error::UnsupportedPresentation { .. },
                 )) => continue,
                 Err(e) => return Err(ApplicationError::Native(Box::new(e))),
             }
@@ -3345,9 +3345,9 @@ fn keyboard_key(key: &Key) -> crate::KeyboardKey {
         other => K::Other(format!("{other:?}")),
     }
 }
-fn physical_key(key: astrelis_winit::winit::keyboard::PhysicalKey) -> crate::PhysicalKey {
+fn physical_key(key: rxui_host::winit::keyboard::PhysicalKey) -> crate::PhysicalKey {
     use crate::PhysicalKey as P;
-    use astrelis_winit::winit::keyboard::{KeyCode, PhysicalKey};
+    use rxui_host::winit::keyboard::{KeyCode, PhysicalKey};
     match key {
         PhysicalKey::Code(code) => match code {
             KeyCode::KeyA => P::KeyA,
@@ -3464,9 +3464,9 @@ fn physical_key(key: astrelis_winit::winit::keyboard::PhysicalKey) -> crate::Phy
     }
 }
 /// Winit icon for a portable cursor; `None` hides the pointer.
-fn native_cursor(cursor: crate::Cursor) -> Option<astrelis_winit::winit::window::CursorIcon> {
+fn native_cursor(cursor: crate::Cursor) -> Option<rxui_host::winit::window::CursorIcon> {
     use crate::Cursor as R;
-    use astrelis_winit::winit::window::CursorIcon as C;
+    use rxui_host::winit::window::CursorIcon as C;
     Some(match cursor {
         R::Default => C::Default,
         R::Pointer => C::Pointer,
@@ -3609,8 +3609,8 @@ mod tests {
         );
         let window = NativeWindowId::from(1);
         for source in [
-            astrelis::GpuEvent::Validation("bad frame".into()),
-            astrelis::GpuEvent::Internal("transient".into()),
+            rxui_draw::GpuEvent::Validation("bad frame".into()),
+            rxui_draw::GpuEvent::Internal("transient".into()),
         ] {
             assert_eq!(
                 error_action(
@@ -3629,8 +3629,8 @@ mod tests {
             ErrorAction::Continue
         }));
         for source in [
-            astrelis::GpuEvent::OutOfMemory("allocation".into()),
-            astrelis::GpuEvent::DeviceLost {
+            rxui_draw::GpuEvent::OutOfMemory("allocation".into()),
+            rxui_draw::GpuEvent::DeviceLost {
                 reason: wgpu::DeviceLostReason::Unknown,
                 message: "lost device".into(),
             },
@@ -3652,7 +3652,7 @@ mod tests {
                 &mut hook,
                 &RunError::Acquisition {
                     window,
-                    source: astrelis::FrameError::Retry
+                    source: rxui_draw::FrameError::Retry
                 },
             ),
             ErrorAction::Exit
@@ -4384,7 +4384,7 @@ mod tests {
     #[test]
     fn every_cursor_has_a_native_icon_except_hidden() {
         use crate::Cursor as C;
-        use astrelis_winit::winit::window::CursorIcon as I;
+        use rxui_host::winit::window::CursorIcon as I;
         let all = [
             C::Default,
             C::Pointer,
@@ -4467,7 +4467,7 @@ mod tests {
     #[test]
     #[ignore = "scans installed fonts; run on a desktop with -- --ignored"]
     fn a_platform_interface_font_is_installed() {
-        let mut fonts = astrelis::TextSystem::new();
+        let mut fonts = rxui_draw::TextSystem::new();
         fonts.load_system_fonts();
         let family = system_ui_family(fonts.fonts().flat_map(|f| f.families));
         assert!(

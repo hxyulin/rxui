@@ -1,9 +1,9 @@
 //! Standalone desktop example: copy this file into a binary using rxui's native feature.
 //! Click controls, Tab/Shift-Tab changes focus, Enter/Space activates, Cmd/Ctrl+W closes.
 //! Background work uses a native completion message; there is no hidden executor.
-use rxui::astrelis_winit::{
+use rxui::host::{
     AppContext as NativeContext, Handler, PrepareAction, Runner, SurfaceSettings, WindowInfo,
-    astrelis::{Frame, wgpu},
+    drawing::{Frame, wgpu},
     winit::{
         dpi::LogicalSize,
         event::WindowEvent,
@@ -194,7 +194,7 @@ impl Handler for App {
         cx: &mut NativeContext<'_, Completion>,
         id: WindowId,
     ) -> Result<(), Self::Error> {
-        let mut painter = UiPainter::new(cx.window(id).unwrap().graphics());
+        let mut painter = UiPainter::with_graphics(cx.window(id).unwrap().graphics());
         // Discovery is explicit and occurs once, before normal frame preparation.
         if painter.fonts_mut().load_system_fonts().is_empty() {
             return Err("No system fonts found; load an application font explicitly".into());

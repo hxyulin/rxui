@@ -1,7 +1,7 @@
 # RXUI guide
 
 This guide tours RXUI feature by feature. RXUI is a declarative desktop UI
-framework over Astrelis, with builder-based composition, persistent typed state,
+framework with an embeddable wgpu renderer, with builder-based composition, persistent typed state,
 and context/closure updates. Taffy is the layout engine. The architecture is recorded in
 [the design document](next-design.md).
 The [declarative core contract](declarative-core.md) describes the implemented
@@ -10,8 +10,8 @@ hosting sequence, identity, resource reuse, input and current limitations.
 This workspace implements typed state, declarative element builders, keyed
 reconciliation, Taffy flex layout, routed pointer/keyboard input, scrollbars and controlled split panes. The default `layout`
 feature works headlessly with host-supplied text measurement. `rendering` adds
-`UiPainter` over Astrelis. `tasks` adds scoped background futures and blocking
-jobs; `native` adds the desktop Application host over astrelis-winit, including
+`UiPainter` over wgpu. `tasks` adds scoped background futures and blocking
+jobs; `native` adds the desktop Application host using rxui-host, including
 those features and lazy native AccessKit integration. `accessibility` adds AccessKit
 translation independently of the native host. Optional `native-menus` adds Muda-backed
 macOS/Windows menu bars, scoped command presentation and vetoable Close/Quit
@@ -93,7 +93,7 @@ handles, close policy and custom hosting. [The task contract](async.md)
 documents `cx.spawn`, live-state completions, cancellation, weak owner bindings,
 error handling and executor customization. The separate
 [custom host example](../crates/rxui/examples/counter_custom_host.rs) implements its own
-astrelis-winit Handler and completion proxy, keeping direct embedding available.
+rxui-host Handler and completion proxy, keeping direct embedding available.
 Both examples are standalone files with no test-only mode or support module.
 
 ## Controlled text input
@@ -352,28 +352,12 @@ The GPU cache test is opt-in on a machine with a native adapter:
 cargo test -p rxui --features rendering painting::tests --locked -- --ignored
 ```
 
-## Astrelis dependency and local development
+## Rendering and embedding
 
-The workspace manifest and lockfile pin both Astrelis crates to
-Git revision
-[`1f773d4a13057db8e15adc768c1d59cf979e65ed`](https://github.com/hxyulin/astrelis/commit/1f773d4a13057db8e15adc768c1d59cf979e65ed).
-An ordinary clone builds against that Git source.
-
-For edits across the sibling repositories, copy the local patch template to the
-ignored configuration file and opt in explicitly:
-
-```sh
-cp .cargo/config.toml.example .cargo/local.toml
-cargo --config .cargo/local.toml test --workspace --all-features
-```
-
-The patch expects `../astrelis` with `crates/astrelis` and
-`crates/astrelis-winit`. The override changes Cargo.lock's source entries when
-used. Save the canonical Git-source lockfile before using the override and restore that
-copy afterward; do not commit the local override. `git restore Cargo.lock` is
-appropriate only when the committed lockfile already contains all dependency changes
-you intend to keep.
-
+RXUI's drawing and host implementations live in this workspace. Enable `rendering`
+for an application-owned wgpu device and encoder; enable `native` for the optional
+desktop host. See [wgpu embedding](wgpu-embedding.md), including external textures,
+custom pipelines and submission-resource lifetimes.
 
 ## Images and custom rendering
 
@@ -385,7 +369,7 @@ with normal control behavior; `.variant(ButtonVariant::Primary)` or Quiet select
 themed appearances.
 
 Implement `CustomElement` and place it with `custom(value)` for leaves that measure,
-hit-test and paint themselves with the Astrelis painter; the
+hit-test and paint themselves with the RXUI drawing context; the
 [custom element contract](custom-elements.md) covers measurement, retained state
 and painting.
 

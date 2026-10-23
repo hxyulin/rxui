@@ -878,7 +878,7 @@ mod access_kit {
 #[cfg(feature = "rendering")]
 mod gpu {
     use super::*;
-    use rxui::astrelis::GraphicsContext;
+    use rxui::drawing::GraphicsContext;
 
     struct Page(Vec<usize>);
     impl View for Page {

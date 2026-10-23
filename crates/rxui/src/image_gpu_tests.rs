@@ -1,6 +1,6 @@
 use super::*;
 use crate::*;
-use astrelis::{FramebufferOptions, wgpu};
+use rxui_draw::{FramebufferOptions, wgpu};
 
 pub(super) struct Page(pub(super) Element);
 impl View for Page {
@@ -19,7 +19,7 @@ pub(super) fn prepare(
 }
 pub(super) fn read_pixel(
     graphics: &GraphicsContext,
-    frame: &mut astrelis::Frame<'_, 'static>,
+    frame: &mut rxui_draw::Frame<'_, 'static>,
     texture: &wgpu::Texture,
 ) -> wgpu::Buffer {
     let buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
@@ -101,7 +101,7 @@ fn shared_images_upload_once_alpha_clips_and_cache_ownership_match_pixels() {
         let other =
             runtime.update(|cx| cx.new(|_| Page(image(asset.clone()).width(10.).height(10.))));
         let mut other_ui = Ui::new(&mut runtime, other).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         let format = target.render_format();
         prepare(&mut runtime, &mut ui, &mut painter, &format);
         prepare(&mut runtime, &mut other_ui, &mut painter, &format);
@@ -175,7 +175,7 @@ fn framebuffer_images_follow_resize_msaa_suspension_and_render_in_the_same_submi
         let root =
             runtime.update(|cx| cx.new(|_| Page(image(asset.clone()).width(32.).height(32.))));
         let mut ui = Ui::new(&mut runtime, root).unwrap();
-        let mut painter = UiPainter::new(&graphics);
+        let mut painter = UiPainter::with_graphics(&graphics);
         prepare(&mut runtime, &mut ui, &mut painter, &target.render_format());
         let layouts = ui.stats().layout_passes;
         for size in [[8, 8], [16, 32], [0, 0], [32, 16]] {
@@ -231,7 +231,7 @@ fn framebuffer_images_follow_resize_msaa_suspension_and_render_in_the_same_submi
                 .unwrap();
             assert!(matches!(
                 painter.paint(&ui, &mut pass, 1.),
-                Err(UiError::Graphics(astrelis::Error::TextureFeedback))
+                Err(UiError::Graphics(rxui_draw::Error::TextureFeedback))
             ));
         }
         drop(frame);
@@ -247,7 +247,7 @@ fn framebuffer_images_follow_resize_msaa_suspension_and_render_in_the_same_submi
             .unwrap();
         assert!(matches!(
             painter.prepare(&foreign_ui, &target.render_format(), 1.),
-            Err(UiError::Graphics(astrelis::Error::DeviceMismatch))
+            Err(UiError::Graphics(rxui_draw::Error::DeviceMismatch))
         ));
         assert!(errors.pop().await.is_none());
     });

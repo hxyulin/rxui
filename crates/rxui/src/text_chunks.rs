@@ -1,7 +1,7 @@
 //! Long wrapped text split into chunks of whole paragraphs, each shaped, laid out
 //! and prepared by its own buffer.
 //!
-//! Astrelis reshapes only changed paragraphs, but each layout snapshot, interaction
+//! RXUI drawing reshapes only changed paragraphs, but each layout snapshot, interaction
 //! index and prepared glyph geometry still covers its whole buffer. A text area of
 //! several thousand lines would rebuild all three for every keystroke. Chunks bound
 //! that work to the paragraphs an edit touches; the rest of the document costs one
@@ -13,7 +13,7 @@
 //! chunk-local units here, so the rest of the painter sees one layout.
 use super::{FamilyMap, TextResource, text_width};
 use crate::{TextRequest, UiError};
-use astrelis::{PreparedText, Rect, TextCaret, TextLayout, TextPosition, TextSystem};
+use rxui_draw::{PreparedText, Rect, TextCaret, TextLayout, TextPosition, TextSystem};
 use std::{ops::Range, sync::Arc};
 
 /// Target paragraphs per chunk. Text with at least twice as many is chunked; a
@@ -220,7 +220,7 @@ impl Chunks {
     /// Prepares glyph geometry for chunks whose layout or raster density changed.
     pub fn prepare(
         &mut self,
-        painter: &mut astrelis::Painter,
+        painter: &mut rxui_draw::Painter,
         raster_scale: f32,
         origin: [f32; 2],
         clip: crate::Bounds,
