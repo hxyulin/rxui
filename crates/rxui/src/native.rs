@@ -2494,9 +2494,11 @@ impl<F> Host<F> {
             .collect();
         for id in accessible {
             self.publish_accessibility(cx, id)?;
+            // One window can resolve a capture ticket that another window will
+            // consume during its semantic preparation. Preserve visual redraw
+            // intent before preparing that next window clears its dirtiness.
+            self.request_dirty_windows(cx, preparing)?;
         }
-        // Semantic preparation can publish a capture for an already prepared UI.
-        self.request_dirty_windows(cx, preparing)?;
         for id in self.windows.keys().copied().collect::<Vec<_>>() {
             if Some(id) != preparing
                 && cx.window(id).is_some()
@@ -3571,102 +3573,112 @@ mod tests {
                 .unwrap()
                 .id
         }
-        let mut runtime = Runtime::new();
-        let (source_root, destination_root) = runtime.update(|cx| {
-            let mut editor = |show| {
-                cx.new(|_| Editor {
-                    show,
-                    handle: TextEditingHandle::new(),
-                    restore: None,
-                })
-            };
-            (editor(true), editor(false))
-        });
-        let mut source = Ui::new(&mut runtime, source_root.clone()).unwrap();
-        let mut destination = Ui::new(&mut runtime, destination_root.clone()).unwrap();
-        prepare(&mut source, &mut runtime);
-        prepare(&mut destination, &mut runtime);
-        let source_field = field(&source);
-        assert!(source.focus(source_field));
-        source
-            .text_input(&mut runtime, TextInputEvent::SelectAll, &mut Measure)
-            .unwrap();
-        let selection = source.text_input_info(source_field).unwrap().selection;
-        let ticket = runtime.update(|cx| {
-            let ticket = source_root.read(cx).handle.capture().unwrap();
-            source_root.update(cx, |state, _| state.show = false);
-            destination_root.update(cx, |state, _| {
-                state.show = true;
-                state.restore = Some(ticket.clone());
+        for accessibility_prepares_destination in [false, true] {
+            let mut runtime = Runtime::new();
+            let (source_root, destination_root) = runtime.update(|cx| {
+                let mut editor = |show| {
+                    cx.new(|_| Editor {
+                        show,
+                        handle: TextEditingHandle::new(),
+                        restore: None,
+                    })
+                };
+                (editor(true), editor(false))
             });
-            ticket
-        });
-        // Destination's redraw arrives first. Accessibility is inactive: there is
-        // no semantic preparation to resolve the source capture on its behalf.
-        prepare(&mut destination, &mut runtime);
-        let destination_field = field(&destination);
-        assert!(ticket.snapshot().is_none());
-        let source_id = NativeWindowId::from(1);
-        let destination_id = NativeWindowId::from(2);
-        let closing_id = NativeWindowId::from(3);
-        let uninitialized_id = NativeWindowId::from(4);
-        let collect =
-            |runtime: &Runtime, source: &Ui<Editor>, destination: &Ui<Editor>, preparing| {
-                dirty_windows(
-                    runtime,
-                    preparing,
-                    [
-                        (source_id, false, Some(source as &dyn HostedUi)),
-                        (destination_id, false, Some(destination as &dyn HostedUi)),
-                        (closing_id, true, Some(destination as &dyn HostedUi)),
-                        (uninitialized_id, false, None),
-                    ],
-                )
-            };
-        // This is progress's pre-accessibility scan while preparing the source.
-        // Repeated pending scans must not schedule a destination polling loop.
-        for _ in 0..2 {
-            assert!(collect(&runtime, &source, &destination, Some(source_id)).is_empty());
-        }
-        prepare(&mut source, &mut runtime);
-        assert!(ticket.snapshot().unwrap().is_ok());
-        assert!(!source.contains_element(source_field));
-        assert_eq!(source.focused_element(), None);
-        assert_eq!(destination.focused_element(), None);
-        assert!(!source.has_text_focus() && !destination.has_text_focus());
-        assert_eq!(runtime.next_wakeup(), None);
-        for ui in [&source, &destination] {
-            let now = Instant::now();
-            assert_eq!(
-                window_deadline(
-                    ui.next_wakeup(&runtime).map(|at| now + at),
-                    ui.has_text_focus()
-                        .then_some(now + Duration::from_millis(500)),
-                ),
-                None,
-                "neither view nor caret timers can rescue this transfer"
-            );
-        }
+            let mut source = Ui::new(&mut runtime, source_root.clone()).unwrap();
+            let mut destination = Ui::new(&mut runtime, destination_root.clone()).unwrap();
+            prepare(&mut source, &mut runtime);
+            prepare(&mut destination, &mut runtime);
+            let source_field = field(&source);
+            assert!(source.focus(source_field));
+            source
+                .text_input(&mut runtime, TextInputEvent::SelectAll, &mut Measure)
+                .unwrap();
+            let selection = source.text_input_info(source_field).unwrap().selection;
+            let ticket = runtime.update(|cx| {
+                let ticket = source_root.read(cx).handle.capture().unwrap();
+                source_root.update(cx, |state, _| state.show = false);
+                destination_root.update(cx, |state, _| {
+                    state.show = true;
+                    state.restore = Some(ticket.clone());
+                });
+                ticket
+            });
+            // Destination's redraw arrives first. Accessibility is inactive: there is
+            // no semantic preparation to resolve the source capture on its behalf.
+            prepare(&mut destination, &mut runtime);
+            let destination_field = field(&destination);
+            assert!(ticket.snapshot().is_none());
+            let source_id = NativeWindowId::from(1);
+            let destination_id = NativeWindowId::from(2);
+            let closing_id = NativeWindowId::from(3);
+            let uninitialized_id = NativeWindowId::from(4);
+            let collect =
+                |runtime: &Runtime, source: &Ui<Editor>, destination: &Ui<Editor>, preparing| {
+                    dirty_windows(
+                        runtime,
+                        preparing,
+                        [
+                            (source_id, false, Some(source as &dyn HostedUi)),
+                            (destination_id, false, Some(destination as &dyn HostedUi)),
+                            (closing_id, true, Some(destination as &dyn HostedUi)),
+                            (uninitialized_id, false, None),
+                        ],
+                    )
+                };
+            // This is progress's pre-accessibility scan while preparing the source.
+            // Repeated pending scans must not schedule a destination polling loop.
+            for _ in 0..2 {
+                assert!(collect(&runtime, &source, &destination, Some(source_id)).is_empty());
+            }
+            prepare(&mut source, &mut runtime);
+            assert!(ticket.snapshot().unwrap().is_ok());
+            assert!(!source.contains_element(source_field));
+            assert_eq!(source.focused_element(), None);
+            assert_eq!(destination.focused_element(), None);
+            assert!(!source.has_text_focus() && !destination.has_text_focus());
+            assert_eq!(runtime.next_wakeup(), None);
+            for ui in [&source, &destination] {
+                let now = Instant::now();
+                assert_eq!(
+                    window_deadline(
+                        ui.next_wakeup(&runtime).map(|at| now + at),
+                        ui.has_text_focus()
+                            .then_some(now + Duration::from_millis(500)),
+                    ),
+                    None,
+                    "neither view nor caret timers can rescue this transfer"
+                );
+            }
 
-        // Use the production candidate collector as the host's fake redraw sink.
-        // Only this post-preparation scan can supply the next event.
-        let mut redraws: VecDeque<_> =
-            collect(&runtime, &source, &destination, Some(source_id)).into();
-        assert_eq!(redraws.pop_front(), Some(destination_id));
-        assert!(redraws.is_empty());
-        assert!(collect(&runtime, &source, &destination, Some(destination_id)).is_empty());
-        prepare(&mut destination, &mut runtime);
-        assert_eq!(ticket.restore_result(destination_field), Some(Ok(())));
-        assert_eq!(
-            destination
-                .text_input_info(destination_field)
-                .unwrap()
-                .selection,
-            selection
-        );
-        assert_eq!(source.focused_element(), None);
-        assert_eq!(destination.focused_element(), None);
-        assert!(collect(&runtime, &source, &destination, None).is_empty());
+            // Use the production candidate collector as the host's fake redraw sink.
+            // Only this post-preparation scan can supply the next event.
+            let mut redraws: VecDeque<_> =
+                collect(&runtime, &source, &destination, Some(source_id)).into();
+            if accessibility_prepares_destination {
+                // Source-first accessibility publication resolves the capture, then
+                // destination semantic preparation consumes its dirtiness before its
+                // visual redraw. The request collected BETWEEN preparations must live.
+                prepare(&mut destination, &mut runtime);
+                assert_eq!(ticket.restore_result(destination_field), Some(Ok(())));
+                assert!(collect(&runtime, &source, &destination, None).is_empty());
+            }
+            assert_eq!(redraws.pop_front(), Some(destination_id));
+            assert!(redraws.is_empty());
+            assert!(collect(&runtime, &source, &destination, Some(destination_id)).is_empty());
+            prepare(&mut destination, &mut runtime);
+            assert_eq!(ticket.restore_result(destination_field), Some(Ok(())));
+            assert_eq!(
+                destination
+                    .text_input_info(destination_field)
+                    .unwrap()
+                    .selection,
+                selection
+            );
+            assert_eq!(source.focused_element(), None);
+            assert_eq!(destination.focused_element(), None);
+            assert!(collect(&runtime, &source, &destination, None).is_empty());
+        }
     }
 
     #[test]
