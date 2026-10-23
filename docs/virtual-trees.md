@@ -50,11 +50,15 @@ its destination. Primary-modifier navigation changes activity only. Space or
 pointer selection with the platform primary modifier toggles in multiple mode;
 Shift selects the inclusive visible anchor range, and Primary+Shift adds it.
 Single mode always keeps at most one selected key. Unicode lowercase prefix
-search uses the host's `Runtime::begin_frame` time (700 ms timeout), with repeated
+search uses actual monotonic input time (700 ms timeout), with repeated
 single characters cycling matches. Extending a prefix keeps the current match;
 an invalid extended prefix falls back to the newest character. No task feature or browser-unsupported wall
-clock is required. A custom host should advance frame time; with a clock fixed at
-zero the search prefix does not expire.
+clock is required. The widget retains a monotonic clock origin in accepted state
+across descriptions (`web_time::Instant` on wasm, `std::time::Instant` elsewhere),
+so prefixes expire during idle periods without frame updates. The pure
+`TreeState::propose(..., time)` API still takes deterministic caller-supplied
+`Duration` values for custom command dispatch and tests. Use `state.input_time()`
+for custom adapters mixed with widget input so both share the same time base.
 
 Collapse preserves selected descendants and hidden anchors, using full domain
 membership. Hidden activity moves to its closest visible ancestor. A hidden

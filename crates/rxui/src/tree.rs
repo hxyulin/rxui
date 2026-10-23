@@ -3,11 +3,15 @@ use crate::{
     AccessibilityHandle, AppContext, Element, IntoElement, Key, KeyboardKey, Listener, Modifiers,
     ReadContext, ScrollError, ScrollHandle, SemanticAction, SemanticRole, column, virtual_list,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
     time::Duration,
 };
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// One domain node. Parents must precede their children in [`TreeData::new`].
 #[derive(Clone, Debug)]
@@ -115,6 +119,7 @@ struct State {
     visible: Rc<HashMap<Key, usize>>,
     search: String,
     search_at: Duration,
+    input_origin: Instant,
 }
 /// Accepted application-owned tree state. Cloning is O(1), including its projection.
 /// Keep separate states for independent selection/expansion, sharing [`TreeData`].
@@ -134,6 +139,7 @@ impl TreeState {
             visible: Rc::new(HashMap::new()),
             search: String::new(),
             search_at: Duration::ZERO,
+            input_origin: Instant::now(),
         };
         state.project();
         Self(Rc::new(state))
@@ -243,7 +249,13 @@ impl TreeState {
         scroll.reveal_row(cx, index, height)?;
         Ok(true)
     }
-    /// Makes a proposal for a command using a browser-safe, host-supplied monotonic
+    /// Monotonic elapsed input time, independent of frames. Custom event adapters
+    /// mixed with [`virtual_tree`] can use this same time base; deterministic
+    /// tests may pass their own consistent timestamps to [`Self::propose`].
+    pub fn input_time(&self) -> Duration {
+        self.0.input_origin.elapsed()
+    }
+    /// Makes a proposal for a command using a browser-safe, caller-supplied monotonic
     /// timestamp. No wall clock, local task, or `Instant::now` is used.
     pub fn propose(
         &self,
@@ -494,6 +506,8 @@ impl TreeProposal {
 /// listeners. The tree owns row input and keeps focus on its persistent root.
 /// Only mounted TreeItems exist in semantics; this is not a virtual accessibility
 /// provider. Unmounted keys cannot receive assistive actions.
+/// Type-ahead uses elapsed monotonic input time from a stable state-owned origin
+/// (`web_time` on wasm), so expiration works while the host's frame loop is idle.
 /// Accept proposals with [`TreeProposal::accept`] in `on_change` to reveal offscreen
 /// keyboard destinations synchronously. Use a bounded height or `fill_height()`.
 /// The renderer runs only for viewport rows plus two overscan rows on each side.
@@ -521,7 +535,7 @@ where
     let key_state = state.clone();
     let key_change = on_change.clone();
     let key_listener = Listener::from_callback(move |event: &crate::KeyInput, cx| {
-        let time = cx.runtime.frames.borrow().1;
+        let time = key_state.input_time();
         if let Some(proposal) = key_state.propose(
             TreeCommand::Key(event.event.key.clone()),
             event.event.modifiers,

@@ -713,3 +713,34 @@ fn invalid_extended_typeahead_falls_back_to_newest_character() {
         assert_eq!(s.active(), Some(&expected.into()));
     }
 }
+#[test]
+fn widget_typeahead_expires_while_frame_clock_is_idle() {
+    let (mut r, root, mut ui) = setup(3);
+    r.update(|cx| {
+        root.update(cx, |s, _| {
+            s.state = TreeState::new(
+                TreeData::new(vec![
+                    node(0, None, false, "Alpha"),
+                    node(1, None, false, "Abacus"),
+                    node(2, None, false, "Beta"),
+                ])
+                .unwrap(),
+                TreeSelectionMode::Single,
+            );
+        })
+    });
+    ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+    let root_id = tree(&ui).id;
+    ui.semantic_action(&mut r, SemanticAction::Focus(root_id), &mut Measure)
+        .unwrap();
+    key(&mut r, &mut ui, KeyboardKey::Character("a".into()));
+    r.update(|cx| assert_eq!(root.read(cx).state.active(), Some(&1.into())));
+    // Preparation recreates descriptions; the state's clock origin must survive.
+    // No begin_frame occurs, including during this idle interval.
+    std::thread::sleep(Duration::from_millis(850));
+    key(&mut r, &mut ui, KeyboardKey::Character("b".into()));
+    r.update(|cx| {
+        assert_eq!(cx.runtime.frames.borrow().1, Duration::ZERO);
+        assert_eq!(root.read(cx).state.active(), Some(&2.into()));
+    });
+}
