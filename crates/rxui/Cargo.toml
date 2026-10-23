@@ -149,6 +149,11 @@ name = "interaction"
 harness = false
 required-features = ["layout"]
 
+[[bench]]
+name = "editing_idle"
+harness = false
+required-features = ["layout"]
+
 [[example]]
 name = "tabs_window"
 required-features = ["native"]

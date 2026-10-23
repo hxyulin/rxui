@@ -1,0 +1,54 @@
+{
+  "measured_at": "2026-10-23T20:20:55.471098+08:00",
+  "baseline_commit": "d808d8ece62064bce56532637628bb762d3360dc",
+  "baseline_changes": "Only added editing_idle benchmark and Cargo registration; production sources unchanged.",
+  "after_changes": "Same benchmark and dependencies; restore-node index in Ui and editing_transfer. Source SHA-256 below identifies after production sources; tests added after the benchmark build do not affect bench artifacts.",
+  "command": "mbx bench -p rxui --bench editing_idle --locked",
+  "repeat_commands": [
+    "/tmp/rxui-editing-idle-d808d8e-before > before-repeat.csv",
+    "target/release/deps/editing_idle-efe4168ff099cc89 > after-repeat.csv"
+  ],
+  "run_order": [
+    "before",
+    "after",
+    "before-repeat",
+    "after-repeat"
+  ],
+  "profile": "bench (optimized), default features (layout), no additional flags",
+  "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "mbx": "mbx 1.26.0",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434",
+  "cpu": "Apple M5 Max",
+  "environment": {
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_INCREMENTAL": null,
+    "CARGO_TARGET_DIR": null,
+    "MBX_CACHE_LINKS": null
+  },
+  "fixture": "16/256/1000 keyed ordinary text_inputs, no editing identity/handle/ticket; mock len*8 by 20 text sizing; 800x600 viewport; initial prepare excluded; 10000 warmup operations then 20 batches of 10000 for each boundary; stats unchanged checked after timings",
+  "boundaries": {
+    "needs_prepare": "Ui::needs_prepare only, black_box Ui, Runtime and result; unwrap included",
+    "idle_prepare": "Ui::prepare only, black_box Ui and Runtime; mock measure; unwrap included"
+  },
+  "limits": "Interactive local machine, no CPU affinity or load isolation. Repeat runs overlap compilation of lib tests. No GPU, shaping, event loop, or native wake measured. Idle prepare retains other per-editor work.",
+  "sha256": {
+    "crates/rxui/benches/editing_idle.rs": "f565d90acfb2579d3eeb35be66737ef33c4fc7250b381f3d2534a3297ac963ef",
+    "crates/rxui/Cargo.toml": "17de2c789f69e1d076998d87058e508c98e7dbc39836cf662e902a2070f1db74",
+    "crates/rxui/src/ui.rs": "fe4d8147ce0b704931b7ca895fa7402f80ae9ef5fbed86d8c9cf37d91af66530",
+    "crates/rxui/src/editing_transfer.rs": "3855551591c3011aa1d8acdb019499f79ebc7ebdc06c90bd52b55dc25f7f9834",
+    "Cargo.lock": "7ce62153632ca0aab13ce6396243809806fcb650d2fd9da0e781c07ea732051b",
+    "Cargo.toml": "b5b4df7aa969d1f896f16f96f49911573ba780c9a3995fb778114f695d8c329c",
+    "rust-toolchain.toml": "a6a0bbd29ffaa8182dc22d1d9149709f1091e47df40ed96eb8a78a711c66a4ce"
+  },
+  "baseline_production_sha256": {
+    "crates/rxui/src/ui.rs": "feeca6c9219332fc3deb45f4b42098fcd6b65b9b61908b94ba82344a9a83b8fa",
+    "crates/rxui/src/editing_transfer.rs": "02bf88b8c2f6fa5ea5f194ea491157fefaf4f1d90b6b948c8505fecb632fcdbd"
+  },
+  "binary_sha256": {
+    "before": "94ae34fc95153143d1a6b4c88cb49b82da7a631ad4f6dfd2afdad8f98687fea9",
+    "after": "91583ed1641d81c57a148a5a6df7d4f4f74a32fe5dc96f2cca3b2d7a5c546ecd"
+  },
+  "after_non_test_editing_transfer_sha256": "645072002bd2a1b96a2f41b16190b97b3417d639adbb20e2ac5434a5f9300af8",
+  "baseline_non_test_editing_transfer_sha256": "aa86c74303f3e34881a8e55da09035e88b55d15d0596f7109ab9a303259a1ed2"
+}

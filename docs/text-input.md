@@ -411,3 +411,26 @@ trusted app memory. They have no serialization or cross-process persistence API.
 Run `mbx run -p rxui --example text_editing_transfer_window --features native --locked`
 for an ordinary app-handler example that splits/merges a dock editor and separately
 opts into focus. Automated tests exercise remounts and separate Uis in both orders.
+
+Restore readiness examines only fields carrying restore tickets. The index is
+refreshed with descriptions after reconciliation; pending captures and explicit
+retries remain observable without scanning ordinary inputs on every
+`Ui::needs_prepare` call. Binding publication still scans editors during refresh.
+
+The deterministic CPU benchmark `mbx bench -p rxui --bench editing_idle --locked`
+measures `needs_prepare` and a complete idle `prepare` separately on 16/256/1,000
+ordinary inputs, without editing handles, identities or tickets. On Apple M5 Max,
+macOS 27.0.1, Rust 1.99.1, optimized default-feature builds, the first run's batch
+medians for readiness were 0.035/0.342/1.493 µs before and
+0.017/0.015/0.016 µs after indexing. Idle preparation was
+0.356/3.718/16.597 µs before and 0.344/3.717/14.996 µs after; it retains other
+per-editor work and still scales with field count. These are local CPU timings,
+not shaping, GPU or native event-loop measurements. Interactive load and test
+compilation affected the repeat pair; the readiness scaling change persisted,
+but full-prepare speedups should not be generalized. Each case warms 10,000
+operations and records 20 batches of 10,000; setup is excluded and retained stats
+are checked unchanged. See [exact metadata](performance/text/editing-idle/metadata.json),
+[before CSV](performance/text/editing-idle/before.csv),
+[after CSV](performance/text/editing-idle/after.csv), and the
+[before](performance/text/editing-idle/before-repeat.csv)/[after](performance/text/editing-idle/after-repeat.csv)
+repeat pair.

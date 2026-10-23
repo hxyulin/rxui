@@ -282,17 +282,22 @@ impl<T: View> Ui<T> {
             });
         }
     }
-    pub(super) fn publish_editing_bindings(&self) {
+    pub(super) fn publish_editing_bindings(&mut self) {
+        // Rebuild after reconciliation, including retained nodes whose restore
+        // property changed. Keep pending and attempted tickets indexed so source
+        // readiness and explicit retries are observed without polling all editors.
+        self.editing_restore_nodes.clear();
         for id in &self.editor_nodes {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
-            let Some(handle) = node
-                .element
-                .text_editing
-                .as_ref()
-                .and_then(|p| p.handle.as_ref())
-            else {
+            let Some(props) = node.element.text_editing.as_ref() else {
+                continue;
+            };
+            if props.restore.is_some() {
+                self.editing_restore_nodes.push(*id);
+            }
+            let Some(handle) = props.handle.as_ref() else {
                 continue;
             };
             let Some(editor) = node.editor.as_ref() else {
@@ -308,14 +313,14 @@ impl<T: View> Ui<T> {
             bindings.push(Binding {
                 target: *id,
                 life: Rc::downgrade(&editor.life),
-                description: Rc::downgrade(&node.element.text_editing.as_ref().unwrap().life),
+                description: Rc::downgrade(&props.life),
                 commands: Rc::downgrade(&self.editing_commands),
             });
         }
     }
     pub(super) fn editing_transfer_pending(&self) -> bool {
         !self.editing_commands.borrow().is_empty()
-            || self.editor_nodes.iter().any(|id| {
+            || self.editing_restore_nodes.iter().any(|id| {
                 self.nodes
                     .get(id)
                     .and_then(|n| n.element.text_editing.as_ref())
@@ -327,7 +332,8 @@ impl<T: View> Ui<T> {
             })
     }
     pub(super) fn restore_editing_requests(&mut self) {
-        for id in self.editor_nodes.clone() {
+        for index in 0..self.editing_restore_nodes.len() {
+            let id = self.editing_restore_nodes[index];
             let Some(capture) = self
                 .nodes
                 .get(&id)
@@ -580,6 +586,69 @@ mod tests {
         }
     }
     #[test]
+    fn removed_restore_properties_and_nodes_stop_readiness_and_rebind() {
+        for remove_node in [false, true] {
+            let mut r = Runtime::new();
+            let (source_root, mut source) = setup(&mut r, false);
+            let (destination_root, mut destination) = setup(&mut r, false);
+            assert!(!destination.needs_prepare(&r).unwrap());
+            let ticket = capture(&mut r, &source_root);
+            r.update(|cx| {
+                destination_root.update(cx, |s, _| s.ticket = Some(ticket.clone()));
+            });
+            prepare(&mut destination, &mut r);
+            let old = field(&destination);
+            assert!(ticket.snapshot().is_none());
+            assert!(!destination.needs_prepare(&r).unwrap());
+
+            r.update(|cx| {
+                destination_root.update(cx, |s, _| {
+                    if remove_node {
+                        s.show = false;
+                    } else {
+                        s.ticket = None;
+                    }
+                });
+            });
+            prepare(&mut destination, &mut r);
+            prepare(&mut source, &mut r);
+            assert!(ticket.snapshot().unwrap().is_ok());
+            assert!(!destination.needs_prepare(&r).unwrap());
+            ticket.retry_restore();
+            assert!(!destination.needs_prepare(&r).unwrap());
+            assert!(ticket.restore_results().is_empty());
+
+            r.update(|cx| {
+                destination_root.update(cx, |s, _| {
+                    s.show = true;
+                    s.ticket = Some(ticket.clone());
+                });
+            });
+            prepare(&mut destination, &mut r);
+            let new = field(&destination);
+            assert_eq!(new == old, !remove_node);
+            assert_eq!(ticket.restore_result(new), Some(Ok(())));
+            assert!(!destination.needs_prepare(&r).unwrap());
+
+            // Replace the ticket on a retained field; the new description must
+            // restore even though this ElementId already handled another ticket.
+            let mut saved = destination.capture_text_editing(new).unwrap();
+            saved.selection = selection();
+            let replacement = TextEditingCapture::from_snapshot(saved);
+            r.update(|cx| {
+                destination_root.update(cx, |s, _| s.ticket = Some(replacement.clone()));
+            });
+            prepare(&mut destination, &mut r);
+            assert_eq!(field(&destination), new);
+            assert_eq!(replacement.restore_result(new), Some(Ok(())));
+            assert_eq!(
+                destination.text_input_info(new).unwrap().selection,
+                selection()
+            );
+            assert!(!destination.needs_prepare(&r).unwrap());
+        }
+    }
+    #[test]
     fn validation_is_atomic_and_failed_ticket_can_retry_without_spinning() {
         let mut r = Runtime::new();
         let (root, mut ui) = setup(&mut r, false);
@@ -617,6 +686,8 @@ mod tests {
         assert!(!ui.needs_prepare(&r).unwrap());
         assert!(ticket.snapshot().unwrap().is_ok());
         r.update(|cx| root.update(cx, |s, _| s.identity = saved.identity.clone()));
+        prepare(&mut ui, &mut r);
+        assert!(!ui.needs_prepare(&r).unwrap());
         ticket.retry_restore();
         assert!(ui.needs_prepare(&r).unwrap());
         prepare(&mut ui, &mut r);
