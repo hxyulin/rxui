@@ -436,3 +436,49 @@ fn callback_panic_is_preserved_even_if_replacement_wake_panics() {
     assert_eq!(wakes.get(), 2);
     assert_eq!(rt.poll_tasks(), 1);
 }
+
+#[test]
+fn callback_unwind_rearms_both_queues_even_if_background_notification_panics() {
+    struct Immediate;
+    impl TaskExecutor for Immediate {
+        fn spawn(&self, future: BackgroundFuture) -> Result<(), SpawnError> {
+            futures_lite::future::block_on(future);
+            Ok(())
+        }
+    }
+    let (mut rt, ex, local_wakes) = setup();
+    let fail_wake = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = fail_wake.clone();
+    rt.configure_tasks(Arc::new(Immediate), move || {
+        assert!(!flag.load(Ordering::SeqCst), "background wake failure");
+    })
+    .unwrap();
+    let delivered = Rc::new(Cell::new(0));
+    let local_seen = delivered.clone();
+    let background_seen = delivered.clone();
+    rt.update(|cx| {
+        cx.spawn_local(async {}, |_, _| panic!("completion failure"))
+            .detach();
+        cx.spawn_local(async {}, move |_, _| local_seen.set(local_seen.get() + 1))
+            .detach();
+        cx.spawn(async {}, move |_, _| {
+            background_seen.set(background_seen.get() + 1)
+        })
+        .detach();
+    });
+    drain(&ex);
+    assert_eq!(local_wakes.get(), 1);
+    fail_wake.store(true, Ordering::SeqCst);
+    let panic =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt.poll_tasks())).unwrap_err();
+    assert_eq!(panic.downcast_ref::<&str>(), Some(&"completion failure"));
+    assert_eq!(
+        local_wakes.get(),
+        2,
+        "local queue needs its own replacement wake"
+    );
+    assert_eq!(rt.pending_tasks(), 2);
+    fail_wake.store(false, Ordering::SeqCst);
+    assert_eq!(rt.poll_tasks(), 2);
+    assert_eq!(delivered.get(), 2);
+}

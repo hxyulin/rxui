@@ -305,18 +305,18 @@ impl Runtime {
         if result.as_ref().map_or(true, |(_, budget)| *budget) {
             // Wake outside registry borrows. Preserve the original callback panic,
             // including if a faulty host's wake callback also unwinds.
-            let wake = || {
-                if let Some(hub) = background {
-                    hub.request_wake();
-                }
-                if let Some(hub) = local {
-                    hub.request_wake();
+            let rearm = |wake: &dyn Fn()| {
+                if result.is_err() {
+                    let _ = std::panic::catch_unwind(AssertUnwindSafe(wake));
+                } else {
+                    wake();
                 }
             };
-            if result.is_err() {
-                let _ = std::panic::catch_unwind(AssertUnwindSafe(wake));
-            } else {
-                wake();
+            if let Some(hub) = background {
+                rearm(&|| hub.request_wake());
+            }
+            if let Some(hub) = local {
+                rearm(&|| hub.request_wake());
             }
         }
         match result {
