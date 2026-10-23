@@ -368,7 +368,10 @@ path does not programmatically activate the destination native window.
 
 A coalesced 8 ms host wake runs only while a native gesture is acquired, independently
 of GPU presentation. Stationary polling does not repeatedly redraw unchanged
-previews. Source closure, deactivation, Escape, native capture loss, source binding
+previews. On macOS the global button mask can lead queued AppKit events: the
+adapter allows a fixed 500 ms for an observed native mouse-up after first seeing
+the mask released. Only that native event authorizes release; a missing up times
+out as cancellation, and explicit native loss still cancels immediately. Source closure, deactivation, Escape, native capture loss, source binding
 changes and suspension cancel. If a native release never receives its matching
 public source release within one second of observation, it cancels. The adapter
 and wake worker are released on completion, cancellation, host errors and shutdown.
@@ -380,6 +383,11 @@ Wayland/X11 orchestration is not included, and opting in on an unsupported platf
 reports an initialization error. Native registration errors are reported; failed
 press verification leaves ordinary placement-local input available without
 attempting cross-window routing.
+
+For release diagnostics, run the example with `RXUI_DOCK_TRACE=1`. This logs
+capture acquisition, native release/loss, source release routing and transfer-token
+availability. The example logs accepted workspace transfers separately. A preview
+alone does not establish that a release reached the application transaction.
 
 ### macOS validation (2026-10-23)
 
@@ -394,9 +402,16 @@ Edited document text survived detach and a native drag back to the main window.
 Screenshots and the native event driver/logs are in the local evidence directory
 `/tmp/rxui-native-docking-validation-20261023`.
 
-This does not validate physical mouse input, monitor transitions/mixed DPI,
-Windows runtime behavior, touch/pen, every capture interruption, or a complete
-accessibility/platform event matrix. Keep the feature opt-in and experimental.
+A follow-up reproduced a queued native release cancellation when dragging the
+second tab: the global button mask changed before AppKit delivered its up event.
+The same 60 ms stalled-event sequence now commits exactly one transfer with the
+adapter ordering fix; the user also confirmed that their physical mouse retry now
+docks correctly. Before/after traces and the native replay script are in
+`/tmp/rxui-native-release-race-20261023`.
+
+This does not validate monitor transitions/mixed DPI, Windows runtime behavior,
+touch/pen, every capture interruption, or a complete accessibility/platform event
+matrix. Keep the feature opt-in and experimental.
 
 ## Cross-window coordination for custom hosts
 

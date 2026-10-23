@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "astrelis"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=829f6bedf6d743ad81d19c4ad6ce910d716ce3d5#829f6bedf6d743ad81d19c4ad6ce910d716ce3d5"
+source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
 dependencies = [
  "bymsdfgen-core",
  "bytemuck",
@@ -248,7 +248,7 @@ dependencies = [
 [[package]]
 name = "astrelis-native-drag"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=829f6bedf6d743ad81d19c4ad6ce910d716ce3d5#829f6bedf6d743ad81d19c4ad6ce910d716ce3d5"
+source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.5",
@@ -261,7 +261,7 @@ dependencies = [
 [[package]]
 name = "astrelis-winit"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=829f6bedf6d743ad81d19c4ad6ce910d716ce3d5#829f6bedf6d743ad81d19c4ad6ce910d716ce3d5"
+source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
 dependencies = [
  "astrelis",
  "log",

@@ -10,6 +10,13 @@ use std::{
     thread,
 };
 
+fn trace(message: fmt::Arguments<'_>) {
+    if std::env::var_os("RXUI_DOCK_TRACE").is_some() {
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr().lock(), "RXUI dock: {message}");
+    }
+}
+
 fn native_error(error: impl Error + 'static) -> ApplicationError {
     ApplicationError::Native(Box::new(error))
 }
@@ -136,9 +143,11 @@ impl<B: Backend> Docking<B> {
     fn begin(&mut self, id: NativeWindowId) -> Result<(), ApplicationError> {
         // Failure to verify a native press leaves ordinary placement-local input
         // intact. Never acquire later from a timer or guess native geometry.
-        if self.adapter.begin_capture(id).is_err() {
+        if let Err(error) = self.adapter.begin_capture(id) {
+            trace(format_args!("acquire failed source={id:?}: {error}"));
             return Ok(());
         }
+        trace(format_args!("acquired source={id:?}"));
         self.source = Some(id);
         let Some(proxy) = self.proxy.clone() else {
             return Ok(());
@@ -168,6 +177,9 @@ impl<B: Backend> Docking<B> {
     fn poll(&mut self) -> Option<Target> {
         let source = self.source?;
         for signal in self.adapter.take_signals() {
+            if !matches!(signal, Signal::Motion { .. }) {
+                trace(format_args!("native {signal:?}"));
+            }
             if let Signal::Released {
                 source: id,
                 position,
@@ -279,6 +291,9 @@ impl<F> Host<F> {
             });
         let target = self.docking.as_mut().unwrap().poll();
         if !eligible || target.is_none() {
+            trace(format_args!(
+                "cancel source={source:?} eligible={eligible} target={target:?}"
+            ));
             return self.cancel_docking(cx);
         }
         let target = target.unwrap();
@@ -376,6 +391,9 @@ impl<F> Host<F> {
                     .native_release_position(position);
             }
             let route = release_route(source, target.unwrap());
+            trace(format_args!(
+                "public release source={source:?} route={route:?}"
+            ));
             if matches!(route, ReleaseRoute::External(_))
                 && !self
                     .windows
@@ -415,6 +433,10 @@ impl<F> Host<F> {
                 .get_mut(&id)
                 .and_then(|w| w.ui.as_mut())
                 .and_then(|ui| ui.take_dock_session());
+            trace(format_args!(
+                "source release completed token={} route={route:?}",
+                token.is_some()
+            ));
             self.clear_dock_previews(cx)?;
             self.docking.as_mut().unwrap().finish();
             if let (ReleaseRoute::External(Some((destination, point))), Some(token)) =
