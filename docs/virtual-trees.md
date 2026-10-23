@@ -49,7 +49,10 @@ child; Left collapses a branch, then moves to its parent. Plain navigation selec
 its destination. Primary-modifier navigation changes activity only. Space or
 pointer selection with the platform primary modifier toggles in multiple mode;
 Shift selects the inclusive visible anchor range, and Primary+Shift adds it.
-Single mode always keeps at most one selected key. Unicode lowercase prefix
+Single mode always keeps at most one selected key. Shifted uppercase type-ahead
+behaves like lowercase input, without range extension. Alt/Option and the
+non-primary Control/Command modifier leave keyboard shortcuts unhandled for the
+application. Unicode lowercase prefix
 search uses actual monotonic input time (700 ms timeout), with repeated
 single characters cycling matches. Extending a prefix keeps the current match;
 an invalid extended prefix falls back to the newest character. No task feature or browser-unsupported wall

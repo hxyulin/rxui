@@ -744,3 +744,90 @@ fn widget_typeahead_expires_while_frame_clock_is_idle() {
         assert_eq!(root.read(cx).state.active(), Some(&2.into()));
     });
 }
+
+#[test]
+fn uppercase_typeahead_selects_its_match_without_extending_a_range() {
+    for shift in [false, true] {
+        let mut s = state();
+        select(&mut s, 0, Modifiers::default());
+        apply(
+            &mut s,
+            TreeCommand::Key(KeyboardKey::Character(if shift { "B" } else { "b" }.into())),
+            Modifiers {
+                shift,
+                ..Modifiers::default()
+            },
+        );
+        assert_eq!(s.active(), Some(&2.into()));
+        assert_eq!(s.selected(), &std::collections::HashSet::from([2.into()]));
+        assert_eq!(s.anchor(), Some(&2.into()));
+    }
+}
+
+#[test]
+fn unsupported_modified_tree_keys_leave_application_shortcuts_unprevented() {
+    let (mut r, model, mut ui) = setup(20);
+    ui.focus(tree(&ui).id);
+    let unsupported = [
+        Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        },
+        Modifiers {
+            control: cfg!(target_os = "macos"),
+            meta: !cfg!(target_os = "macos"),
+            ..Modifiers::default()
+        },
+    ];
+    for modifiers in unsupported {
+        for key in [
+            KeyboardKey::ArrowLeft,
+            KeyboardKey::ArrowDown,
+            KeyboardKey::End,
+            KeyboardKey::Space,
+        ] {
+            let result = ui
+                .key(
+                    &mut r,
+                    KeyEvent {
+                        key,
+                        physical_key: PhysicalKey::Unidentified,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                )
+                .unwrap();
+            assert!(!result.default_prevented);
+            ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
+            r.update(|cx| {
+                let s = model.read(cx);
+                assert_eq!(s.state.active(), Some(&0.into()));
+                assert!(s.state.expanded(&0.into()));
+                assert!(s.state.selected().is_empty());
+            });
+        }
+    }
+    let result = ui
+        .key(
+            &mut r,
+            KeyEvent {
+                key: KeyboardKey::ArrowDown,
+                physical_key: PhysicalKey::Unidentified,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
+            },
+        )
+        .unwrap();
+    assert!(result.default_prevented);
+    r.update(|cx| {
+        assert_eq!(
+            model.read(cx).state.selected(),
+            &std::collections::HashSet::from([0.into(), 1.into()])
+        )
+    });
+}

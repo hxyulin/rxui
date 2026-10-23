@@ -264,6 +264,17 @@ impl TreeState {
         page_rows: usize,
         time: Duration,
     ) -> Option<TreeProposal> {
+        if matches!(&command, TreeCommand::Key(_))
+            && (modifiers.alt
+                || if cfg!(target_os = "macos") {
+                    modifiers.control
+                } else {
+                    modifiers.meta
+                })
+        {
+            return None;
+        }
+        let character_search = matches!(&command, TreeCommand::Key(KeyboardKey::Character(_)));
         let reveal = !matches!(&command, TreeCommand::Expand(_, _));
         let activate = matches!(
             &command,
@@ -368,7 +379,7 @@ impl TreeState {
         if let Some(i) = destination {
             let key = self.node(i).key.clone();
             next.active = Some(key.clone());
-            if next.mode == TreeSelectionMode::Multiple && modifiers.shift {
+            if next.mode == TreeSelectionMode::Multiple && modifiers.shift && !character_search {
                 // A collapsed anchor is retained, but cannot define a visible range.
                 // Fall back to the previous active row without overwriting the anchor.
                 if next.anchor.is_none() {
