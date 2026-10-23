@@ -814,6 +814,24 @@ impl<T: View> HostedUi for Ui<T> {
         self.semantic_action(runtime, action, painter)
     }
 }
+// Collect separately from the native redraw sink so host scheduling can be tested
+// without constructing an event loop, GPU surface or accessibility adapter.
+fn dirty_windows<'a>(
+    runtime: &Runtime,
+    preparing: Option<NativeWindowId>,
+    windows: impl IntoIterator<Item = (NativeWindowId, bool, Option<&'a dyn HostedUi>)>,
+) -> Vec<NativeWindowId> {
+    windows
+        .into_iter()
+        .filter(|(id, closing, ui)| {
+            Some(*id) != preparing
+                && !closing
+                && ui.is_some_and(|ui| ui.dirty(runtime).unwrap_or(true))
+        })
+        .map(|(id, _, _)| id)
+        .collect()
+}
+
 type Factory = dyn FnOnce(&mut Runtime) -> Result<Box<dyn HostedUi>, UiError>;
 enum Command {
     #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
@@ -2204,6 +2222,25 @@ impl<F> Host<F> {
         self.sync_mounts(id);
         Ok(())
     }
+    fn request_dirty_windows(
+        &self,
+        cx: &mut NativeContext<'_, Wake>,
+        preparing: Option<NativeWindowId>,
+    ) -> Result<(), ApplicationError> {
+        for id in dirty_windows(
+            &self.runtime,
+            preparing,
+            self.windows
+                .iter()
+                .map(|(id, window)| (*id, window.life.closing.get(), window.ui.as_deref())),
+        ) {
+            if cx.window(id).is_some() {
+                cx.request_redraw(id)
+                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
+            }
+        }
+        Ok(())
+    }
     fn progress(
         &mut self,
         cx: &mut NativeContext<'_, Wake>,
@@ -2448,19 +2485,7 @@ impl<F> Host<F> {
         // Queue visual work before accessibility preparation consumes component
         // dirtiness. Semantic publication may prepare CPU snapshots for every active
         // adapter; it must not erase another window's shared-model redraw request.
-        for (id, window) in &self.windows {
-            if Some(*id) != preparing
-                && !window.life.closing.get()
-                && window
-                    .ui
-                    .as_ref()
-                    .is_some_and(|ui| ui.dirty(&self.runtime).unwrap_or(true))
-                && cx.window(*id).is_some()
-            {
-                cx.request_redraw(*id)
-                    .map_err(|e| ApplicationError::Native(Box::new(e)))?;
-            }
-        }
+        self.request_dirty_windows(cx, preparing)?;
         let accessible: Vec<_> = self
             .windows
             .iter()
@@ -2470,6 +2495,8 @@ impl<F> Host<F> {
         for id in accessible {
             self.publish_accessibility(cx, id)?;
         }
+        // Semantic preparation can publish a capture for an already prepared UI.
+        self.request_dirty_windows(cx, preparing)?;
         for id in self.windows.keys().copied().collect::<Vec<_>>() {
             if Some(id) != preparing
                 && cx.window(id).is_some()
@@ -2940,6 +2967,9 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         self.sync_mounts(id);
         self.sync_text_platform(cx, id)?;
         self.publish_accessibility(cx, id)?;
+        // Capture readiness can change during this window's preparation, after
+        // progress scanned the other windows. Schedule destinations before idle.
+        self.request_dirty_windows(cx, Some(id))?;
         if self.runtime.animation_frame_requested() {
             for (native, window) in &self.windows {
                 if !window.life.closing.get()
@@ -3495,6 +3525,150 @@ mod tests {
             ErrorAction::Exit
         );
     }
+    #[test]
+    fn destination_first_editing_capture_schedules_redraw_after_source_prepare() {
+        use crate::{
+            TextEditingCapture, TextEditingHandle, TextEditingIdentity, column, text_input,
+        };
+
+        struct Editor {
+            show: bool,
+            handle: TextEditingHandle,
+            restore: Option<TextEditingCapture>,
+        }
+        impl View for Editor {
+            fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+                let mut content = column();
+                if self.show {
+                    let mut field = text_input("abc")
+                        .key("editor")
+                        .text_editing_identity(TextEditingIdentity::new("document", 0))
+                        .text_editing_handle(self.handle.clone());
+                    if let Some(ticket) = &self.restore {
+                        field = field.restore_text_editing(ticket.clone());
+                    }
+                    content = content.child(field);
+                }
+                content
+            }
+        }
+        struct Measure;
+        impl TextMeasure for Measure {
+            fn measure(
+                &mut self,
+                _: ElementId,
+                request: crate::TextRequest<'_>,
+            ) -> Result<[f32; 2], UiError> {
+                Ok([request.text.len() as f32 * 8., 20.])
+            }
+        }
+        fn prepare(ui: &mut Ui<Editor>, runtime: &mut Runtime) {
+            ui.prepare(runtime, [400., 200.], &mut Measure).unwrap();
+        }
+        fn field(ui: &Ui<Editor>) -> ElementId {
+            ui.elements()
+                .find(|element| element.key == Some(&crate::Key::from("editor")))
+                .unwrap()
+                .id
+        }
+        let mut runtime = Runtime::new();
+        let (source_root, destination_root) = runtime.update(|cx| {
+            let mut editor = |show| {
+                cx.new(|_| Editor {
+                    show,
+                    handle: TextEditingHandle::new(),
+                    restore: None,
+                })
+            };
+            (editor(true), editor(false))
+        });
+        let mut source = Ui::new(&mut runtime, source_root.clone()).unwrap();
+        let mut destination = Ui::new(&mut runtime, destination_root.clone()).unwrap();
+        prepare(&mut source, &mut runtime);
+        prepare(&mut destination, &mut runtime);
+        let source_field = field(&source);
+        assert!(source.focus(source_field));
+        source
+            .text_input(&mut runtime, TextInputEvent::SelectAll, &mut Measure)
+            .unwrap();
+        let selection = source.text_input_info(source_field).unwrap().selection;
+        let ticket = runtime.update(|cx| {
+            let ticket = source_root.read(cx).handle.capture().unwrap();
+            source_root.update(cx, |state, _| state.show = false);
+            destination_root.update(cx, |state, _| {
+                state.show = true;
+                state.restore = Some(ticket.clone());
+            });
+            ticket
+        });
+        // Destination's redraw arrives first. Accessibility is inactive: there is
+        // no semantic preparation to resolve the source capture on its behalf.
+        prepare(&mut destination, &mut runtime);
+        let destination_field = field(&destination);
+        assert!(ticket.snapshot().is_none());
+        let source_id = NativeWindowId::from(1);
+        let destination_id = NativeWindowId::from(2);
+        let closing_id = NativeWindowId::from(3);
+        let uninitialized_id = NativeWindowId::from(4);
+        let collect =
+            |runtime: &Runtime, source: &Ui<Editor>, destination: &Ui<Editor>, preparing| {
+                dirty_windows(
+                    runtime,
+                    preparing,
+                    [
+                        (source_id, false, Some(source as &dyn HostedUi)),
+                        (destination_id, false, Some(destination as &dyn HostedUi)),
+                        (closing_id, true, Some(destination as &dyn HostedUi)),
+                        (uninitialized_id, false, None),
+                    ],
+                )
+            };
+        // This is progress's pre-accessibility scan while preparing the source.
+        // Repeated pending scans must not schedule a destination polling loop.
+        for _ in 0..2 {
+            assert!(collect(&runtime, &source, &destination, Some(source_id)).is_empty());
+        }
+        prepare(&mut source, &mut runtime);
+        assert!(ticket.snapshot().unwrap().is_ok());
+        assert!(!source.contains_element(source_field));
+        assert_eq!(source.focused_element(), None);
+        assert_eq!(destination.focused_element(), None);
+        assert!(!source.has_text_focus() && !destination.has_text_focus());
+        assert_eq!(runtime.next_wakeup(), None);
+        for ui in [&source, &destination] {
+            let now = Instant::now();
+            assert_eq!(
+                window_deadline(
+                    ui.next_wakeup(&runtime).map(|at| now + at),
+                    ui.has_text_focus()
+                        .then_some(now + Duration::from_millis(500)),
+                ),
+                None,
+                "neither view nor caret timers can rescue this transfer"
+            );
+        }
+
+        // Use the production candidate collector as the host's fake redraw sink.
+        // Only this post-preparation scan can supply the next event.
+        let mut redraws: VecDeque<_> =
+            collect(&runtime, &source, &destination, Some(source_id)).into();
+        assert_eq!(redraws.pop_front(), Some(destination_id));
+        assert!(redraws.is_empty());
+        assert!(collect(&runtime, &source, &destination, Some(destination_id)).is_empty());
+        prepare(&mut destination, &mut runtime);
+        assert_eq!(ticket.restore_result(destination_field), Some(Ok(())));
+        assert_eq!(
+            destination
+                .text_input_info(destination_field)
+                .unwrap()
+                .selection,
+            selection
+        );
+        assert_eq!(source.focused_element(), None);
+        assert_eq!(destination.focused_element(), None);
+        assert!(collect(&runtime, &source, &destination, None).is_empty());
+    }
+
     #[test]
     fn external_wake_handle_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
