@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "astrelis"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=70467297a33193f425b67ec3bea3bf6241590698#70467297a33193f425b67ec3bea3bf6241590698"
+source = "git+https://github.com/hxyulin/astrelis?rev=829f6bedf6d743ad81d19c4ad6ce910d716ce3d5#829f6bedf6d743ad81d19c4ad6ce910d716ce3d5"
 dependencies = [
  "bymsdfgen-core",
  "bytemuck",
@@ -246,9 +246,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "astrelis-native-drag"
+version = "0.4.0-dev.0"
+source = "git+https://github.com/hxyulin/astrelis?rev=829f6bedf6d743ad81d19c4ad6ce910d716ce3d5#829f6bedf6d743ad81d19c4ad6ce910d716ce3d5"
+dependencies = [
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "windows-sys 0.61.2",
+ "winit",
+]
+
+[[package]]
 name = "astrelis-winit"
 version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=70467297a33193f425b67ec3bea3bf6241590698#70467297a33193f425b67ec3bea3bf6241590698"
+source = "git+https://github.com/hxyulin/astrelis?rev=829f6bedf6d743ad81d19c4ad6ce910d716ce3d5#829f6bedf6d743ad81d19c4ad6ce910d716ce3d5"
 dependencies = [
  "astrelis",
  "log",
@@ -1871,6 +1884,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
  "objc2 0.6.5",
  "objc2-core-foundation",
 ]
@@ -2490,6 +2504,7 @@ dependencies = [
  "accesskit_winit",
  "arboard",
  "astrelis",
+ "astrelis-native-drag",
  "astrelis-winit",
  "async-channel",
  "async-executor",

@@ -1,6 +1,7 @@
 //! Application-owned regions and independent native windows sharing document models.
 //! Detach with a button or release outside all dock regions. Reattach with a button
-//! or close the detached window. Automatic native cross-window dragging is not enabled.
+//! or close the detached window. Enable `native-docking` for experimental native
+//! cross-window dragging; `--two-windows` starts with a separate destination.
 use rxui::{astrelis_winit::CloseResponse, prelude::*};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -151,15 +152,29 @@ impl View for WindowView {
                 });
             }))
             .on_transfer(cx.listener(|s, e: &DockTransferEvent, cx| {
-                s.workspace.update(cx, |w, _| {
-                    if let Err(error) = w.layout.transfer(
+                s.workspace.update(cx, |w, cx| {
+                    match w.layout.transfer(
                         e.source_surface,
                         e.source_group,
                         &e.panel,
                         e.target_surface,
                         e.target,
                     ) {
-                        w.status = error.to_string();
+                        Ok(change) => {
+                            eprintln!("docking transfer accepted: panel={:?}, source={:?}, target={:?}, source_empty={}", e.panel, e.source_surface, e.target_surface, change.source_empty);
+                            w.status =
+                                "Panel transferred; application accepted the checked proposal."
+                                    .into();
+                            if change.source_empty
+                                && let Some(window) = w.windows.remove(&change.source_surface)
+                            {
+                                w.layout.remove_surface(change.source_surface).unwrap();
+                                if let Err(error) = cx.close_window(&window) {
+                                    w.status = error.to_string();
+                                }
+                            }
+                        }
+                        Err(error) => w.status = error.to_string(),
                     }
                 });
             }))
@@ -204,7 +219,7 @@ impl View for WindowView {
             );
         }
         column().fill_width().fill_height().padding(10.).gap(10.)
-            .child(label("Drag tabs between regions. Detach opens an independent window; close it to reattach."))
+            .child(label("Drag tabs between regions or windows with native-docking enabled. Close a detached window to reattach."))
             .child(label("Document text follows the panel. Caret, scroll and focus are placement-local."))
             .child(regions)
             .child(label(workspace.status.clone()))
@@ -213,73 +228,127 @@ impl View for WindowView {
 fn main() -> Result<(), ApplicationError> {
     let state: Rc<RefCell<Option<Entity<Workspace>>>> = Rc::new(RefCell::new(None));
     let close_state = state.clone();
-    Application::new()
-        .close_requested(move |window, cx| {
-            if let Some(workspace) = close_state.borrow().as_ref() {
-                let keep_main = {
-                    let state = workspace.read(cx);
-                    state.main_window.as_ref().is_some_and(|main| main.id() == window.id())
-                        && !state.windows.is_empty()
-                };
-                if keep_main {
-                    workspace.update(cx, |w, _| {
-                        w.status = "Reattach or close the detached windows before closing the main window.".into();
-                    });
+    let two_windows = std::env::args().any(|arg| arg == "--two-windows" || arg == "--smoke");
+    let smoke = std::env::args().any(|arg| arg == "--smoke");
+    let app = Application::new();
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    let app = app.multi_viewport_docking(true);
+    app.window_created(move |window, _| {
+        if two_windows && let Some(native) = window.native_window() {
+            let x = if native.title().contains("destination") {
+                760.
+            } else {
+                40.
+            };
+            native.set_outer_position(rxui::astrelis_winit::winit::dpi::LogicalPosition::new(
+                x, 100.,
+            ));
+        }
+        eprintln!("docking window created: {:?}", window.id());
+    })
+    .close_requested(move |window, cx| {
+        if let Some(workspace) = close_state.borrow().as_ref() {
+            let keep_main = {
+                let state = workspace.read(cx);
+                state
+                    .main_window
+                    .as_ref()
+                    .is_some_and(|main| main.id() == window.id())
+                    && !state.windows.is_empty()
+            };
+            if keep_main {
+                workspace.update(cx, |w, _| {
+                    w.status =
+                        "Reattach or close the detached windows before closing the main window."
+                            .into();
+                });
+                return CloseResponse::KeepOpen;
+            }
+            let surface = workspace
+                .read(cx)
+                .windows
+                .iter()
+                .find_map(|(surface, handle)| (handle.id() == window.id()).then_some(*surface));
+            if let Some(surface) = surface {
+                let result = workspace.update(cx, |w, _| w.reattach(surface));
+                if let Err(error) = result {
+                    workspace.update(cx, |w, _| w.status = error.to_string());
                     return CloseResponse::KeepOpen;
                 }
-                let surface = workspace
-                    .read(cx)
-                    .windows
-                    .iter()
-                    .find_map(|(surface, handle)| (handle.id() == window.id()).then_some(*surface));
-                if let Some(surface) = surface {
-                    let result = workspace.update(cx, |w, _| w.reattach(surface));
-                    if let Err(error) = result {
-                        workspace.update(cx, |w, _| w.status = error.to_string());
-                        return CloseResponse::KeepOpen;
-                    }
-                }
             }
-            CloseResponse::Close
-        })
-        .run(move |cx| {
-            let mut layout = DockWorkspace::new();
-            let home = layout
-                .create_surface(DockTree::from_panels(["editor", "preview"]).unwrap())
-                .unwrap();
-            let side = layout
-                .create_surface(DockTree::from_panels(["output"]).unwrap())
-                .unwrap();
-            let documents = ["editor", "preview", "output"]
-                .into_iter()
-                .map(|name| {
-                    (
-                        Key::from(name),
-                        cx.new(|_| Document(format!("Edit {name}; this text follows its entity."))),
-                    )
-                })
-                .collect();
-            let workspace = cx.new(|_| Workspace {
-                layout,
-                documents,
-                windows: HashMap::new(),
-                main_window: None,
-                home,
-                status: String::new(),
-            });
-            *state.borrow_mut() = Some(workspace.clone());
+        }
+        CloseResponse::Close
+    })
+    .run(move |cx| {
+        let mut layout = DockWorkspace::new();
+        let home = layout
+            .create_surface(DockTree::from_panels(["editor", "preview"]).unwrap())
+            .unwrap();
+        let side = layout
+            .create_surface(DockTree::from_panels(["output"]).unwrap())
+            .unwrap();
+        let documents = ["editor", "preview", "output"]
+            .into_iter()
+            .map(|name| {
+                (
+                    Key::from(name),
+                    cx.new(|_| Document(format!("Edit {name}; this text follows its entity."))),
+                )
+            })
+            .collect();
+        let workspace = cx.new(|_| Workspace {
+            layout,
+            documents,
+            windows: HashMap::new(),
+            main_window: None,
+            home,
+            status: String::new(),
+        });
+        *state.borrow_mut() = Some(workspace.clone());
+        let root = cx.new(|_| WindowView {
+            workspace: workspace.clone(),
+            surfaces: if two_windows {
+                vec![home]
+            } else {
+                vec![home, side]
+            },
+            detached: false,
+        });
+        let window = cx.open_window(
+            WindowOptions::new()
+                .title("RXUI — docking surfaces")
+                .size(if two_windows { 680. } else { 1100. }, 700.),
+            root,
+        )?;
+        workspace.update(cx, |w, _| w.main_window = Some(window));
+        if two_windows {
             let root = cx.new(|_| WindowView {
                 workspace: workspace.clone(),
-                surfaces: vec![home, side],
-                detached: false,
+                surfaces: vec![side],
+                detached: true,
             });
             let window = cx.open_window(
                 WindowOptions::new()
-                    .title("RXUI — docking surfaces")
-                    .size(1100., 700.),
+                    .title("RXUI — docking destination")
+                    .size(650., 480.),
                 root,
             )?;
-            workspace.update(cx, |w, _| w.main_window = Some(window));
-            Ok(())
-        })
+            workspace.update(cx, |w, _| {
+                w.windows.insert(side, window);
+            });
+        }
+        if smoke {
+            cx.spawn(
+                async {
+                    async_io::Timer::after(std::time::Duration::from_secs(3)).await;
+                },
+                |_, cx| {
+                    eprintln!("docking smoke: native creation completed; gestures not tested");
+                    cx.exit().unwrap();
+                },
+            )
+            .detach();
+        }
+        Ok(())
+    })
 }

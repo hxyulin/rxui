@@ -14,6 +14,7 @@ default = ["layout"]
 gles = ["rendering", "astrelis/gles", "astrelis-winit?/gles"]
 rendering = ["layout", "dep:astrelis"]
 native = ["accessibility", "dep:accesskit_winit", "rendering", "tasks", "dep:astrelis-winit", "dep:arboard", "dep:objc2-app-kit", "dep:windows-registry", "dep:zbus"]
+native-docking = ["native", "dep:astrelis-native-drag"]
 native-dialogs = ["native", "dep:rfd"]
 desktop-services = ["native", "dep:opener"]
 native-menus = ["native", "dep:muda", "dep:windows-sys"]
@@ -27,6 +28,7 @@ profiling.workspace = true
 image_codec = { package = "image", version = "0.25.10", default-features = false, features = ["png", "jpeg"], optional = true }
 astrelis = { workspace = true, optional = true }
 astrelis-winit = { workspace = true, optional = true }
+astrelis-native-drag = { workspace = true, optional = true }
 accesskit = { version = "0.25.1", optional = true }
 accesskit_winit = { version = "0.34.1", optional = true }
 taffy = { workspace = true, optional = true }

@@ -184,6 +184,43 @@ impl WindowInput {
         self.sync(ui, painter, window)
     }
 
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    pub(super) fn native_release_position(&mut self, position: [f64; 2]) {
+        if position.iter().all(|n| n.is_finite()) {
+            self.cursor = position;
+        }
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    pub(super) fn cancel_primary(
+        &mut self,
+        runtime: &mut Runtime,
+        ui: &mut dyn HostedUi,
+        painter: &mut UiPainter,
+        scale: f64,
+    ) -> Result<(), UiError> {
+        let held = self.buttons.contains(PointerButton::Primary);
+        self.buttons.set(PointerButton::Primary, false);
+        self.clicks = ClickTracker::default();
+        let release = if held {
+            ui.pointer(
+                runtime,
+                PointerEvent::CancelledUp {
+                    position: self.cursor_position(scale),
+                    button: PointerButton::Primary,
+                    modifiers: self.modifiers(),
+                },
+                painter,
+                false,
+                1,
+            )
+        } else {
+            Ok(false)
+        };
+        let cancel = ui.pointer(runtime, PointerEvent::Cancelled, painter, false, 1);
+        release?;
+        cancel?;
+        Ok(())
+    }
     /// Close and quit requests do not repeat while a save or veto is outstanding.
     pub(super) fn lifecycle(id: CommandId) -> bool {
         use crate::standard_commands::{CloseWindow, Quit};

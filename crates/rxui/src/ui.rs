@@ -757,6 +757,12 @@ pub struct Ui<T: View> {
     links: Option<Box<link_dispatch::State>>,
     dock_drag: Option<Box<dock_dispatch::Drag>>,
     dock_release: Option<Box<dock_dispatch::DockDragSession>>,
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    dock_external_preview: Option<Box<(dock_dispatch::DockDragSession, [f32; 2])>>,
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    dock_native_outside: bool,
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    dock_native_allowed: bool,
     overlays: Option<Box<overlay_dispatch::State>>,
     stats: UiStats,
     active_views: Vec<crate::EntityId>,
@@ -818,6 +824,12 @@ impl<T: View> Ui<T> {
             links: None,
             dock_drag: None,
             dock_release: None,
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            dock_external_preview: None,
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            dock_native_outside: false,
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            dock_native_allowed: false,
             overlays: None,
             stats: UiStats::default(),
             active_views: Vec::new(),

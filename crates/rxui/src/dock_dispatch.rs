@@ -209,6 +209,32 @@ impl<T: View> Ui<T> {
             preview: drag.preview,
         })
     }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    pub(crate) fn native_dock_source(&self) -> bool {
+        self.dock_drag
+            .as_ref()
+            .and_then(|drag| self.dock_config(drag.root))
+            .is_some_and(|config| {
+                config.surface.is_some()
+                    && config.transfer_scope.is_some()
+                    && config.transfer.is_some()
+            })
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    pub(crate) fn native_dock_preview(
+        &mut self,
+        session: Option<(DockDragSession, [f32; 2])>,
+        outside: bool,
+    ) -> bool {
+        let before = self.dock_preview_paint();
+        self.dock_external_preview = session.map(Box::new);
+        self.dock_native_outside = outside;
+        before != self.dock_preview_paint()
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    pub(crate) fn native_dock_feedback(&mut self, allowed: bool) {
+        self.dock_native_allowed = allowed;
+    }
     /// Snapshots an active explicitly bound transfer source for external preview.
     /// A snapshot cannot commit a drop; take a release token to commit it.
     pub fn dock_drag_session(&self) -> Option<DockDragSession> {
@@ -301,6 +327,14 @@ impl<T: View> Ui<T> {
     }
     pub(super) fn dock_cursor(&self) -> Option<Cursor> {
         if let Some(drag) = &self.dock_drag {
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            if drag.active && self.dock_native_outside {
+                return Some(if self.dock_native_allowed {
+                    Cursor::Grabbing
+                } else {
+                    Cursor::NotAllowed
+                });
+            }
             return Some(if !drag.active {
                 Cursor::Grab
             } else if drag.preview.is_some() {
@@ -731,16 +765,33 @@ impl<T: View> Ui<T> {
     }
     #[cfg(feature = "rendering")]
     pub(crate) fn dock_preview_paint(&self) -> Option<(DockDropPreview, Bounds, Color)> {
-        let preview = self.dock_drag()?.preview?;
-        if !self
-            .dock_config(self.dock_drag.as_ref()?.root)?
-            .show_preview
-        {
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        let external = self.dock_external_preview.as_deref();
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        if self.dock_native_outside && external.is_none() {
+            return None;
+        }
+        #[cfg(not(all(feature = "native-docking", not(target_arch = "wasm32"))))]
+        let external: Option<&(DockDragSession, [f32; 2])> = None;
+        let (preview, point, source) = if let Some((session, point)) = external {
+            (
+                self.external_dock_preview(session, *point)?,
+                *point,
+                &session.source,
+            )
+        } else {
+            (
+                self.dock_drag()?.preview?,
+                self.input.position,
+                self.dock_config(self.dock_drag.as_ref()?.root)?,
+            )
+        };
+        if !source.show_preview {
             return None;
         }
         let root = self
-            .pointer_target(self.input.position)
-            .and_then(|hit| self.dock_location(hit))?
+            .pointer_target(point)
+            .and_then(|hit| self.dock_target_location(hit))?
             .0;
         if !self.dock_config(root)?.show_preview {
             return None;

@@ -88,6 +88,7 @@ rxui = { git = "https://github.com/hxyulin/rxui", features = ["native"] }
 | `rendering` | `UiPainter` over Astrelis, for embedding in your own render loop |
 | `gles` | Opt-in GLES backend through Astrelis; native runner supplies the display handle. See [backend selection](docs/application.md#native-backends-and-surface-latency) and [Linux verification](docs/astrelis-followups.md) |
 | `native` | The desktop `Application` host, AccessKit, clipboard and background tasks |
+| `native-docking` | Opt-in experimental cross-window dock dragging on macOS/Windows; see [docking](docs/docking.md#experimental-native-cross-window-dragging) |
 | `native-menus` | Menu bars and Close/Quit handling on macOS and Windows |
 | `native-dialogs` | Parent-bound file and message dialogs |
 | `desktop-services` | Opening URLs and files, and revealing files in the file manager |

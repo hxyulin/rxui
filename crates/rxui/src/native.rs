@@ -133,6 +133,8 @@ pub use geometry::WindowGeometry;
 mod pointer;
 mod preferences;
 pub use pointer::PointerLock;
+#[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+mod docking;
 mod window_input;
 pub use window_input::{WindowInput, WindowInputResult};
 
@@ -527,6 +529,32 @@ impl fmt::Debug for WindowHandle {
     }
 }
 trait HostedUi {
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn native_dock_source(&self) -> bool;
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn native_dock_feedback(&mut self, allowed: bool);
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn allows_external_dock(&self, session: &crate::DockDragSession, point: [f32; 2]) -> bool;
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn dock_session(&self) -> Option<crate::DockDragSession>;
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn arm_dock_release(&mut self) -> bool;
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn take_dock_session(&mut self) -> Option<crate::DockDragSession>;
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn native_dock_preview(
+        &mut self,
+        session: Option<(crate::DockDragSession, [f32; 2])>,
+        outside: bool,
+    ) -> bool;
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn drop_dock_session(
+        &mut self,
+        runtime: &mut Runtime,
+        session: crate::DockDragSession,
+        point: [f32; 2],
+    ) -> Result<(), UiError>;
+
     fn set_theme(&mut self, theme: Theme) -> Result<bool, UiError>;
     fn mounts(&self) -> Vec<crate::MountId>;
     fn is_animating(&self) -> bool;
@@ -629,6 +657,49 @@ trait HostedUi {
     ) -> Result<bool, UiError>;
 }
 impl<T: View> HostedUi for Ui<T> {
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn native_dock_source(&self) -> bool {
+        self.native_dock_source()
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn native_dock_feedback(&mut self, allowed: bool) {
+        self.native_dock_feedback(allowed);
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn allows_external_dock(&self, session: &crate::DockDragSession, point: [f32; 2]) -> bool {
+        self.external_dock_preview(session, point).is_some()
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn dock_session(&self) -> Option<crate::DockDragSession> {
+        self.dock_drag_session()
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn arm_dock_release(&mut self) -> bool {
+        self.prepare_external_dock_release()
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn take_dock_session(&mut self) -> Option<crate::DockDragSession> {
+        self.take_dock_drag_session()
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn native_dock_preview(
+        &mut self,
+        session: Option<(crate::DockDragSession, [f32; 2])>,
+        outside: bool,
+    ) -> bool {
+        self.native_dock_preview(session, outside)
+    }
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    fn drop_dock_session(
+        &mut self,
+        runtime: &mut Runtime,
+        session: crate::DockDragSession,
+        point: [f32; 2],
+    ) -> Result<(), UiError> {
+        self.drop_external_dock(runtime, session, point)?;
+        Ok(())
+    }
+
     fn set_theme(&mut self, theme: Theme) -> Result<bool, UiError> {
         self.set_theme(theme)
     }
@@ -1324,6 +1395,8 @@ fn error_action(
 /// Runtime/Ui/UiPainter remain usable in custom hosts. Initialization runs once,
 /// model/task progression continues independently of surface availability.
 pub struct Application {
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    multi_viewport_docking: bool,
     #[cfg(feature = "native-menus")]
     menu_bar: Option<crate::NativeMenuBar>,
     theme: Theme,
@@ -1363,6 +1436,8 @@ impl Application {
     /// two async workers and two separate blocking workers, created only at run.
     pub fn new() -> Self {
         Self {
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            multi_viewport_docking: false,
             theme: Theme::default(),
             theme_mode: Some(ThemeMode::System),
             themes: ThemeSet::default(),
@@ -1392,6 +1467,18 @@ impl Application {
             menu_bar: None,
             exiting: None,
         }
+    }
+    /// Enables experimental native docking between this application's windows.
+    /// Requires explicitly bound dock surfaces with a shared transfer scope and
+    /// an application transfer listener. Native initialization/registration errors
+    /// are reported instead of falling back to geometric window guesses.
+    /// Currently supported by the adapter on macOS and Windows; interactive
+    /// platform validation is still required. Disabled by default.
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    #[must_use]
+    pub fn multi_viewport_docking(mut self, enabled: bool) -> Self {
+        self.multi_viewport_docking = enabled;
+        self
     }
     /// Explicit default theme for windows without a WindowOptions theme. It
     /// replaces the default [`ThemeMode::System`], so the system appearance no
@@ -1715,7 +1802,14 @@ impl Application {
             *commands.theme.borrow_mut() = theme;
         }
         *runtime.inner.native.borrow_mut() = Some(commands.clone());
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        let docking = self
+            .multi_viewport_docking
+            .then(|| docking::Docking::new(runner.proxy()))
+            .transpose()?;
         let mut host = Host {
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            docking,
             runtime,
             commands,
             initialize: Some(initialize),
@@ -1774,6 +1868,8 @@ impl ApplicationWakeHandle {
     }
 }
 enum Wake {
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    Docking,
     External,
     Geometry(NativeWindowId),
     /// Pushed preference snapshot (the Linux/BSD portal watcher).
@@ -1877,6 +1973,8 @@ fn deliver_preferences(
     true
 }
 struct Host<F> {
+    #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+    docking: Option<docking::Docking>,
     focused_window: Option<NativeWindowId>,
     #[cfg(all(
         feature = "native-menus",
@@ -1923,6 +2021,8 @@ impl<F> Drop for Host<F> {
             any(target_os = "macos", target_os = "windows")
         ))]
         drop(self.menus.take());
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        drop(self.docking.take());
         for (_, mut window) in self.windows.drain() {
             drop(window.accessibility.take());
             window.life.alive.set(false);
@@ -2352,6 +2452,8 @@ impl<F> Host<F> {
                             .map(|(id, _)| *id)
                         {
                             self.observe_geometry(native, false);
+                            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+                            self.cancel_docking(cx)?;
                             cx.close_window(native)
                                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
                         }
@@ -2520,6 +2622,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     type Message = Wake;
     type Error = ApplicationError;
     fn error(&mut self, _cx: &mut NativeContext<'_, Wake>, error: &RunError) -> ErrorAction {
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        let _ = self.cancel_docking(_cx);
         // The runner logs failures and drains shared-device diagnostics before
         // invoking this hook; draining here would hide events from that policy.
         error_action(&mut self.runtime, &mut self.error, error)
@@ -2548,6 +2652,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
     }
     fn suspended(&mut self, cx: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
         self.active = false;
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        self.cancel_docking(cx)?;
         self.progress(cx, None)
     }
     fn window_created(
@@ -2571,6 +2677,10 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
                 painter.set_sans_serif_family(family);
             }
             self.painter = Some(painter);
+        }
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        if let Some(docking) = &mut self.docking {
+            docking.register(cx.window(id).unwrap().window())?;
         }
         let window = self.windows.get_mut(&id).unwrap();
         let native = cx.window(id).unwrap().window();
@@ -2634,6 +2744,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         if self.windows.get(&id).is_none_or(|w| w.life.closing.get()) {
             return self.progress(cx, None);
         }
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        self.poll_docking(cx)?;
         if let Some(hook) = &mut self.window_event {
             let handle = WindowHandle {
                 life: self.windows[&id].life.clone(),
@@ -2699,6 +2811,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             key_prevented = status != CommandStatus::Unhandled;
             changed |= status == CommandStatus::Handled;
         }
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        let external = self.before_dock_input(cx, id, &event)?;
         let Some(window) = self.windows.get_mut(&id) else {
             return Ok(());
         };
@@ -2725,6 +2839,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
             cx.request_redraw(id)
                 .map_err(|e| ApplicationError::Native(Box::new(e)))?;
         }
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        self.after_dock_input(cx, id, &event, external)?;
         self.sync_text_platform(cx, id)?;
         if let WindowEvent::Focused(active) = event {
             let handle = WindowHandle {
@@ -2759,6 +2875,14 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         event: Wake,
     ) -> Result<(), Self::Error> {
         match event {
+            #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+            Wake::Docking => {
+                if let Some(docking) = &self.docking {
+                    docking.acknowledged_wake();
+                }
+                self.poll_docking(cx)?;
+                self.progress(cx, None)
+            }
             Wake::Geometry(id) => {
                 if let Some(window) = self.windows.get_mut(&id) {
                     window.geometry_pending = false;
@@ -3039,6 +3163,11 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         if self.focused_window == Some(id) {
             self.focused_window = None;
         }
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        if self.docking.is_some() {
+            self.cancel_docking(cx)?;
+            self.docking.as_mut().unwrap().unregister(id)?;
+        }
         if let Some(mut window) = self.windows.remove(&id) {
             drop(window.accessibility.take());
             if let Some(ui) = &mut window.ui
@@ -3069,6 +3198,8 @@ impl<F: FnOnce(&mut AppContext<'_>) -> Result<(), ApplicationError>> Handler for
         self.progress(cx, None)
     }
     fn exiting(&mut self, _: &mut NativeContext<'_, Wake>) -> Result<(), Self::Error> {
+        #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+        drop(self.docking.take());
         self.commands.exited.set(true);
         #[cfg(all(feature = "native-dialogs", not(target_arch = "wasm32")))]
         self.commands.dialogs.borrow_mut().abandon();

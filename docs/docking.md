@@ -338,9 +338,68 @@ preserve document data; mount-local caret, scroll, focus, tasks and `use_state`
 do not automatically follow. `KeepMounted` preserves inactive content within a
 surviving parent; it is not a placement-transfer guarantee.
 
+## Experimental native cross-window dragging
+
+Enable the `native-docking` feature, then opt in with
+`Application::new().multi_viewport_docking(true)`. Each dock still needs its
+`surface`, shared `transfer_scope`, and `on_transfer` listener. The application
+accepts the proposal with `DockWorkspace::transfer`; RXUI never mutates the
+workspace or closes an empty window on its own.
+
+```sh
+mbx run -p rxui --example docking_surfaces_window --features native-docking --locked -- --two-windows
+# Bounded creation/registration/shutdown check, without a gesture:
+mbx run -p rxui --example docking_surfaces_window --features native-docking --locked -- --smoke
+```
+
+The example closes an emptied detached source only after an accepted transfer.
+A release over no native window may propose application-controlled detach. Foreign
+windows, decorations, unknown targets, rejected policy and blocked destination
+content permit neither transfer nor detach. A different owned window must have an
+eligible dock at the release position. Same-window docking keeps its normal rules.
+
+RXUI registers windows before native input and acquires the Astrelis adapter only
+after normal primary-down listeners/defaults have armed a bound dock header.
+Native release targeting is sampled before platform defaults. RXUI then routes the
+normal source release through capture listeners and honors prevention/errors before
+extracting a once-only transfer token. Destination geometry and both policies are
+checked again before invoking the source listener. Focus is placement-local; this
+path does not programmatically activate the destination native window.
+
+A coalesced 8 ms host wake runs only while a native gesture is acquired, independently
+of GPU presentation. Stationary polling does not repeatedly redraw unchanged
+previews. Source closure, deactivation, Escape, native capture loss, source binding
+changes and suspension cancel. If a native release never receives its matching
+public source release within one second of observation, it cancels. The adapter
+and wake worker are released on completion, cancellation, host errors and shutdown.
+
+This uses the safe `astrelis-native-drag::Adapter` directly so the Application can
+own its lifecycle without a self-borrowing `CapturedDrag`. The OS bindings stay in
+Astrelis; RXUI adds no unsafe code. macOS and Windows adapters are experimental.
+Wayland/X11 orchestration is not included, and opting in on an unsupported platform
+reports an initialization error. Native registration errors are reported; failed
+press verification leaves ordinary placement-local input available without
+attempting cross-window routing.
+
+### macOS validation (2026-10-23)
+
+On macOS 27.0.1, one 1512×982 logical display at 2×, real native windows rendered
+through RXUI and received CoreGraphics-posted mouse/key events. Checked forward
+and reverse cross-window transfers, live clipped destination preview, an edge
+split, movement immediately after native up, Escape cancellation, and fresh
+windows created by the detach button. A separate process placed a floating native
+window over the destination: the release was blocked, with no transfer or detach.
+Moving the final panel out of a detached source closed that window after acceptance.
+Edited document text survived detach and a native drag back to the main window.
+Screenshots and the native event driver/logs are in the local evidence directory
+`/tmp/rxui-native-docking-validation-20261023`.
+
+This does not validate physical mouse input, monitor transitions/mixed DPI,
+Windows runtime behavior, touch/pen, every capture interruption, or a complete
+accessibility/platform event matrix. Keep the feature opt-in and experimental.
+
 ## Cross-window coordination for custom hosts
 
-Automatic native cross-window dragging is not installed by `Application`.
 Custom hosts can use the explicit `DockDragSession` bridge between separate Uis:
 
 1. During motion, query `source.dock_drag_session()`, then
@@ -385,7 +444,7 @@ clear gain (about 3% slower in the sampled 16-group cases); no GPU frame-pacing
 claim follows from these CPU measurements. The benchmark separates these paths
 so later indexing or invalidation work can be justified by evidence.
 
-Undo/persistence, retained placement transfer, automatic native window targeting,
+Undo/persistence, generic retained placement transfer, additional native backends,
 per-group sizing and custom header composition remain separate work.
 
 Applications that need committed built-in field selection and bounded undo/redo to

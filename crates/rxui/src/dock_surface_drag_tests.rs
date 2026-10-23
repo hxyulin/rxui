@@ -18,6 +18,7 @@ struct Surfaces {
     accept: bool,
     releases: usize,
     prevent_release: bool,
+    prevent_press: bool,
     fail_release: bool,
     transfers: Vec<DockTransferEvent>,
     detaches: Vec<DockDetachEvent>,
@@ -85,6 +86,11 @@ impl View for Surfaces {
                     .pointer_events(PointerEvents::Block),
             );
         }
+        let root = root.on_pointer_down(cx.listener(|s, e: &PointerInput, _| {
+            if s.prevent_press {
+                e.prevent_default();
+            }
+        }));
         let root = root.on_pointer_up(cx.listener(|s, e: &PointerInput, _| {
             s.releases += 1;
             if s.prevent_release {
@@ -123,6 +129,7 @@ fn setup() -> (Runtime, Entity<Surfaces>, Ui<Surfaces>) {
                 accept: false,
                 releases: 0,
                 prevent_release: false,
+                prevent_press: false,
                 fail_release: false,
                 transfers: Vec::new(),
                 detaches: Vec::new(),
@@ -786,4 +793,72 @@ fn untaken_external_release_expires_on_source_input_and_deactivation() {
         }
         assert!(ui.take_dock_drag_session().is_none(), "mode {mode}");
     }
+}
+
+#[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+#[test]
+fn native_source_acquires_after_default_press_before_threshold_and_requires_binding() {
+    for bound in [true, false] {
+        for prevent in [true, false] {
+            let (mut runtime, entity, mut ui) = setup();
+            runtime.update(|cx| {
+                entity.update(cx, |state, _| {
+                    state.bind = bound;
+                    state.prevent_press = prevent;
+                })
+            });
+            prepare(&mut runtime, &mut ui);
+            assert!(!ui.native_dock_source());
+            let bounds = ui.element(header(&ui, "a")).unwrap().bounds;
+            ui.pointer(
+                &mut runtime,
+                PointerEvent::Pressed([
+                    bounds.x + bounds.width * 0.5,
+                    bounds.y + bounds.height * 0.5,
+                ]),
+            )
+            .unwrap();
+            assert_eq!(ui.native_dock_source(), bound && !prevent);
+            assert!(ui.dock_drag_session().is_none());
+            ui.pointer(&mut runtime, PointerEvent::Cancelled).unwrap();
+            assert!(!ui.native_dock_source());
+        }
+    }
+}
+
+#[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
+#[test]
+fn native_preview_paints_destination_policy_and_clears_without_repeated_redraw() {
+    let (mut runtime, entity, mut source) = setup();
+    let mut destination = Ui::new(&mut runtime, entity.clone()).unwrap();
+    prepare(&mut runtime, &mut destination);
+    start(&mut runtime, &mut source);
+    source
+        .pointer(&mut runtime, PointerEvent::Moved([450., 170.]))
+        .unwrap();
+    assert!(source.dock_preview_paint().is_some());
+    assert!(source.native_dock_preview(None, true));
+    assert!(source.dock_preview_paint().is_none());
+    source.native_dock_feedback(false);
+    assert_eq!(source.cursor(), Cursor::NotAllowed);
+    source.native_dock_feedback(true);
+    assert_eq!(source.cursor(), Cursor::Grabbing);
+    assert!(!source.native_dock_preview(None, true));
+    let snapshot = source.dock_drag_session().unwrap();
+    let expected = destination
+        .external_dock_preview(&snapshot, [450., 170.])
+        .unwrap();
+    assert!(destination.native_dock_preview(Some((snapshot, [450., 170.])), false));
+    assert_eq!(destination.dock_preview_paint().unwrap().0, expected);
+    assert!(!destination.native_dock_preview(
+        Some((source.dock_drag_session().unwrap(), [450., 170.])),
+        false
+    ));
+    runtime.update(|cx| entity.update(cx, |state, _| state.deny_target = true));
+    prepare(&mut runtime, &mut destination);
+    assert!(destination.dock_preview_paint().is_none());
+    destination.native_dock_preview(None, false);
+    prepare(&mut runtime, &mut source);
+    assert!(source.dock_preview_paint().is_none());
+    assert!(runtime.update(|cx| entity.read(cx).transfers.is_empty()));
 }
