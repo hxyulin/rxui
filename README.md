@@ -53,14 +53,14 @@ fn main() -> Result<(), ApplicationError> {
 | State | Shared `Entity<T>` state, weak listeners, dependency tracking and explicit flush boundaries |
 | Composition | Element builders, keyed reconciliation, components and per-window placements |
 | Layout | Flex rows and columns, stacks, absolute overlays, scroll areas, split panes and virtual lists |
-| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, rich text with links, tabs, menus, popovers, modals and docking |
+| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, rich text with links, tabs, menus, popovers, modals, docking and virtualized trees |
 | Input | Pointer and keyboard routing, capture, focus scopes, Tab traversal and typed commands with shortcuts |
 | Styling | Light, dark and high-contrast themes, compact density, inherited text styles and state paints |
 | Animation | Implicit state and theme transitions, overlay enter/exit, springs and animated values, reduce motion |
 | Accessibility | Roles, names and actions, published through AccessKit only while assistive technology is active |
 | Graphics | Images, live framebuffers, group opacity and hooks to record your own Astrelis passes |
 | Desktop | Multiple windows, native menus, file dialogs, clipboard, file drop and saved window geometry |
-| Async | Scoped background futures and blocking jobs that finish into live state |
+| Async | Scoped local and background futures, plus blocking jobs that finish into live state |
 
 ## Status
 
@@ -119,6 +119,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Declarative core](docs/declarative-core.md) | Hosting sequence, identity, reuse and input |
 | [Application](docs/application.md) and [async](docs/async.md) | Windows, close policy, custom hosts and tasks |
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |
+| [Virtual lists](docs/virtual-lists.md) and [trees](docs/virtual-trees.md) | Bounded row construction, hierarchical navigation and controlled selection |
 | [Text input](docs/text-input.md), [fonts](docs/fonts.md) and [semantics](docs/semantics.md) | Editing, IME, font registration and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
 | [Animation](docs/animation.md) | Transitions, overlay motion, smooth scrolling, animated values and reduce motion |
