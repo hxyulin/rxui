@@ -164,6 +164,7 @@ impl<T: View> Ui<T> {
     }
     pub(super) fn cancel_capture(&mut self, reason: PointerCancelReason) {
         self.dock_drag = None;
+        self.dock_release = None;
         let Some(capture) = self.input.capture else {
             return;
         };
@@ -319,6 +320,7 @@ impl<T: View> Ui<T> {
         modifiers: Modifiers,
         source: WheelSource,
     ) -> Result<InputResult, UiError> {
+        self.dock_release = None;
         if position.iter().chain(delta.iter()).any(|v| !v.is_finite()) {
             return Err(UiError::InvalidGeometry);
         }
@@ -565,7 +567,28 @@ impl<T: View> Ui<T> {
         event: PointerEvent,
         click_count: u8,
     ) -> Result<bool, UiError> {
+        let release = event.parts().0 == 2;
+        let result = self.pointer_general_inner(runtime, event, click_count);
+        if release && result.is_err() {
+            // A native release still ends the gesture when a routed callback
+            // fails. Never let a later release commit an armed stale drag.
+            self.cancel_capture(PointerCancelReason::Host);
+            self.pressed = None;
+            self.clear_link_pointer(false);
+            // Preserve the original routing error if cancellation also fails.
+            let _ = self.flush_input_cancellations(runtime);
+        }
+        result
+    }
+    fn pointer_general_inner(
+        &mut self,
+        runtime: &mut Runtime,
+        event: PointerEvent,
+        click_count: u8,
+    ) -> Result<bool, UiError> {
         runtime.is_dirty(&self.owner)?;
+        // External release tokens are available only until the next source input.
+        self.dock_release = None;
         self.input.prevented = false;
         let (kind, position, button, modifiers) = event.parts();
         self.input.click_count = if kind == 0 && button == Some(PointerButton::Primary) {
@@ -722,6 +745,7 @@ impl<T: View> Ui<T> {
     /// default_prevented before their own text/control defaults. Escape cancels
     /// explicit capture unless prevented. Key-up has no control default here.
     pub fn key(&mut self, runtime: &mut Runtime, event: KeyEvent) -> Result<InputResult, UiError> {
+        self.dock_release = None;
         profiling::scope!("rxui::dispatch_key");
         runtime.is_dirty(&self.owner)?;
         if !self.is_prepared() || (!self.active && event.pressed) {

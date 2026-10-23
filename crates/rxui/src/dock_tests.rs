@@ -235,6 +235,7 @@ struct Workspace {
     tree: DockTree,
     docs: std::collections::HashMap<Key, Entity<Document>>,
     accept: bool,
+    allow_drop: bool,
     events: Vec<DockEvent>,
     policy: TabContentPolicy,
     minimum: [f32; 2],
@@ -242,6 +243,7 @@ struct Workspace {
 }
 impl View for Workspace {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        let allow_drop = self.allow_drop;
         dock(&self.tree, |key| {
             dock_panel(format!("{key:?}"), self.docs[key].clone()).closable(true)
         })
@@ -249,6 +251,7 @@ impl View for Workspace {
         .content_policy(self.policy)
         .min_pane_size(self.minimum[0], self.minimum[1])
         .divider_size(self.divider)
+        .drop_policy(move |_| allow_drop)
         .on_event(cx.listener(|s, e: &DockEvent, _| {
             s.events.push(e.clone());
             if s.accept {
@@ -301,6 +304,7 @@ fn setup() -> (
             tree,
             docs,
             accept: true,
+            allow_drop: true,
             events: Vec::new(),
             policy: TabContentPolicy::KeepMounted,
             minimum: [120., 100.],

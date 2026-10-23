@@ -4,7 +4,6 @@ use crate::{
     TabCloseEvent, TabContentPolicy, TabSelectEvent, dock::DockNodeId, split_column, split_row,
     stack, tab, tabs,
 };
-use std::collections::HashMap;
 use taffy::prelude::{AlignItems, JustifyItems, TaffyAuto, fr, length, minmax};
 
 /// Request to open an application-provided menu for a dock header.
@@ -23,14 +22,47 @@ pub struct DockContextEvent {
 #[must_use]
 pub struct DockPanel {
     title: String,
-    content: Element,
+    content: PanelContent,
     closable: bool,
 }
 /// Describes content for a panel key supplied by the dock resolver.
 pub fn dock_panel(title: impl Into<String>, content: impl IntoElement) -> DockPanel {
     DockPanel {
         title: title.into(),
-        content: content.into_element(),
+        content: PanelContent::Eager(content.into_element()),
+        closable: false,
+    }
+}
+// Eager panels are the existing common path. Keep their Element inline to avoid
+// adding one allocation per resolved panel merely to shrink the lazy variant.
+#[allow(clippy::large_enum_variant)]
+enum PanelContent {
+    Eager(Element),
+    Lazy(Box<dyn FnOnce() -> Element>),
+}
+impl PanelContent {
+    fn into_element(self, mount: bool) -> Element {
+        match self {
+            Self::Eager(content) => content,
+            Self::Lazy(build) if mount => build(),
+            Self::Lazy(_) => stack(),
+        }
+    }
+}
+/// Describes a panel whose content is built only when its mounting policy needs it.
+/// The resolver still runs eagerly for every live key, providing all header titles.
+/// The closure runs during Dock conversion; with MountSelected, inactive closures
+/// are dropped without being called. KeepMounted builds every panel on conversion.
+/// Read dependencies through cx in the eager resolver and move owned values into
+/// this closure; a stored 'static closure cannot borrow the view context.
+/// Content may be rebuilt on each view evaluation; this is not a content cache.
+pub fn dock_panel_lazy<E: IntoElement>(
+    title: impl Into<String>,
+    content: impl FnOnce() -> E + 'static,
+) -> DockPanel {
+    DockPanel {
+        title: title.into(),
+        content: PanelContent::Lazy(Box::new(move || content().into_element())),
         closable: false,
     }
 }
@@ -44,7 +76,12 @@ impl DockPanel {
 }
 #[derive(Clone)]
 pub(crate) struct Properties {
+    pub surface: Option<crate::DockSurfaceId>,
+    pub transfer_scope: Option<Key>,
+    pub transfer: Option<Listener<crate::DockTransferEvent>>,
+    pub detach: Option<Listener<crate::DockDetachEvent>>,
     pub context_menu: Option<Listener<DockContextEvent>>,
+    pub drop_policy: Option<crate::dock_policy::DockDropPolicy>,
     pub min_pane_size: [f32; 2],
     pub divider_size: f32,
     pub drag_threshold: f32,
@@ -74,7 +111,7 @@ impl Metadata {
         }
     }
 }
-/// Owned dock description. Takes a tree snapshot at construction; it never mutates
+/// Owned dock description. Takes a composition snapshot at construction; it never mutates
 /// that model. A resolver runs once per panel in tree order and must describe every
 /// live key, including inactive panels. Only selected descriptions mount under
 /// MountSelected. Read document data through cx in the resolver to track dependencies.
@@ -94,8 +131,7 @@ impl Metadata {
 #[must_use = "attach the dock to a parent or return it from View::view"]
 pub struct Dock {
     root: Element,
-    tree: Option<DockTree>,
-    panels: HashMap<Key, DockPanel>,
+    composition: Option<Composition>,
     listener: Option<Listener<DockEvent>>,
     policy: TabContentPolicy,
     activation: TabActivation,
@@ -106,25 +142,6 @@ pub struct Dock {
 /// with an event listener and a 6-unit movement threshold. The dock fills its bounded
 /// parent; undersized viewports clip panes at their recursively combined minima.
 pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock {
-    fn collect(
-        node: &DockNode,
-        resolve: &mut impl FnMut(&Key) -> DockPanel,
-        panels: &mut HashMap<Key, DockPanel>,
-    ) {
-        match node {
-            DockNode::Tabs(n) => {
-                for key in n.panels() {
-                    panels.insert(key.clone(), resolve(key));
-                }
-            }
-            DockNode::Split(n) => {
-                collect(n.first(), resolve, panels);
-                collect(n.second(), resolve, panels);
-            }
-        }
-    }
-    let mut panels = HashMap::new();
-    collect(tree.root(), &mut resolve, &mut panels);
     Dock {
         root: stack()
             .fill_width()
@@ -140,13 +157,17 @@ pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock
                 s.align_items = AlignItems::STRETCH;
                 s.justify_items = JustifyItems::STRETCH;
             }),
-        tree: Some(tree.clone()),
-        panels,
+        composition: Some(Composition::resolve(tree.root(), &mut resolve)),
         listener: None,
         policy: TabContentPolicy::KeepMounted,
         activation: TabActivation::Automatic,
         props: Properties {
+            surface: None,
+            transfer_scope: None,
+            transfer: None,
+            detach: None,
             context_menu: None,
+            drop_policy: None,
             min_pane_size: [96., 96.],
             divider_size: 8.,
             drag_threshold: 6.,
@@ -156,7 +177,75 @@ pub fn dock(tree: &DockTree, mut resolve: impl FnMut(&Key) -> DockPanel) -> Dock
         },
     }
 }
+// Own exactly the data needed after resolving. Keys move straight into tabs;
+// neither a second topology clone nor an all-panel hash table is needed.
+enum Composition {
+    Tabs {
+        id: DockNodeId,
+        selected: Option<usize>,
+        panels: Vec<(Key, DockPanel)>,
+    },
+    Split {
+        id: DockNodeId,
+        axis: crate::Axis,
+        position: crate::SplitPosition,
+        children: Box<[Composition; 2]>,
+    },
+}
+impl Composition {
+    fn resolve(node: &DockNode, resolve: &mut impl FnMut(&Key) -> DockPanel) -> Self {
+        match node {
+            DockNode::Tabs(n) => Self::Tabs {
+                id: n.id(),
+                selected: n.panels().iter().position(|key| Some(key) == n.selected()),
+                panels: n
+                    .panels()
+                    .iter()
+                    .map(|key| (key.clone(), resolve(key)))
+                    .collect(),
+            },
+            DockNode::Split(n) => Self::Split {
+                id: n.id(),
+                axis: n.axis(),
+                position: n.position(),
+                children: Box::new([
+                    Self::resolve(n.first(), resolve),
+                    Self::resolve(n.second(), resolve),
+                ]),
+            },
+        }
+    }
+}
 impl Dock {
+    /// Binds this placement to an application-owned workspace surface.
+    pub fn surface(mut self, surface: crate::DockSurfaceId) -> Self {
+        self.props.surface = Some(surface);
+        self
+    }
+    /// Allows transfers between explicitly bound surfaces sharing this scope.
+    /// Choose a distinct key for each independent workspace in the same Ui.
+    pub fn transfer_scope(mut self, scope: impl Into<Key>) -> Self {
+        self.props.transfer_scope = Some(scope.into());
+        self
+    }
+    /// Receives proposals to transfer into another surface in the same Ui.
+    /// The source application validates and accepts with DockWorkspace::transfer.
+    pub fn on_transfer(mut self, listener: Listener<crate::DockTransferEvent>) -> Self {
+        self.props.transfer = Some(listener);
+        self
+    }
+    /// Receives release-time proposals outside visible dock surfaces.
+    /// Requires a surface binding. The application decides whether to create a
+    /// window; position is in source-window logical coordinates.
+    pub fn on_detach(mut self, listener: Listener<crate::DockDetachEvent>) -> Self {
+        self.props.detach = Some(listener);
+        self
+    }
+    /// Filters proposed drops using application policy before accepting a target.
+    pub fn drop_policy(mut self, policy: impl Fn(&crate::DockDropQuery) -> bool + 'static) -> Self {
+        self.props.drop_policy = Some(std::rc::Rc::new(policy));
+        self
+    }
     /// Receives secondary-button or keyboard context-menu requests from headers.
     /// The application supplies controlled menu content and open state.
     pub fn on_context_menu(mut self, listener: Listener<DockContextEvent>) -> Self {
@@ -191,7 +280,8 @@ impl Dock {
         self.props.divider_size = size;
         self
     }
-    /// Enables header dragging within this dock placement. Requires on_event.
+    /// Enables header dragging within this dock placement. Requires an event
+    /// listener, or a surface binding with a transfer/detach listener.
     /// Defaults to true; ordinary header clicking/keyboard navigation remains available.
     pub fn draggable(mut self, value: bool) -> Self {
         self.props.draggable = value;
@@ -253,23 +343,29 @@ impl Dock {
         self.root = self.root.layout(configure);
         self
     }
-    fn describe(&mut self, node: &DockNode) -> (Element, [f32; 2]) {
-        let id: DockNodeId = node.id();
+    fn describe(&self, node: Composition) -> (Element, [f32; 2]) {
         match node {
-            DockNode::Tabs(n) => {
+            Composition::Tabs {
+                id,
+                selected,
+                panels,
+            } => {
                 let mut group = tabs()
                     .key(id.key())
                     .content_policy(self.policy)
                     .activation(self.activation)
                     .min_width(self.props.min_pane_size[0])
                     .min_height(self.props.min_pane_size[1]);
-                if let Some(key) = n.selected() {
-                    group = group.selected(key.clone());
+                if let Some(index) = selected {
+                    group = group.selected(panels[index].0.clone());
                 }
-                for key in n.panels() {
-                    let panel = self.panels.remove(key).expect("resolved dock panel");
-                    group = group
-                        .tab(tab(key.clone(), panel.title, panel.content).closable(panel.closable));
+                for (index, (key, panel)) in panels.into_iter().enumerate() {
+                    let mount =
+                        self.policy == TabContentPolicy::KeepMounted || selected == Some(index);
+                    group = group.tab(
+                        tab(key, panel.title, panel.content.into_element(mount))
+                            .closable(panel.closable),
+                    );
                 }
                 if let Some(listener) = &self.listener {
                     group = group
@@ -293,10 +389,16 @@ impl Dock {
                     Some(Box::new(Metadata::Group(id)));
                 (element, self.props.min_pane_size)
             }
-            DockNode::Split(n) => {
-                let (first, a) = self.describe(n.first());
-                let (second, b) = self.describe(n.second());
-                let axis = n.axis().index();
+            Composition::Split {
+                id,
+                axis,
+                position,
+                children,
+            } => {
+                let [first, second] = *children;
+                let (first, a) = self.describe(first);
+                let (second, b) = self.describe(second);
+                let axis = axis.index();
                 let mut split = if axis == 0 {
                     split_row(first, second)
                 } else {
@@ -304,7 +406,7 @@ impl Dock {
                 }
                 .fill_width()
                 .fill_height()
-                .position(n.position())
+                .position(position)
                 .min_first(a[axis])
                 .min_second(b[axis])
                 .divider_size(self.props.divider_size);
@@ -325,8 +427,8 @@ impl Dock {
 }
 impl IntoElement for Dock {
     fn into_element(mut self) -> Element {
-        let tree = self.tree.take().expect("owned dock snapshot");
-        let (content, _) = self.describe(tree.root());
+        let composition = self.composition.take().expect("owned dock snapshot");
+        let (content, _) = self.describe(composition);
         self.props.listener = self.listener;
         self.root.input.get_or_insert_with(Default::default).dock =
             Some(Box::new(Metadata::Root(self.props)));

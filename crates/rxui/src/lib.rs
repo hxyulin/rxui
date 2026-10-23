@@ -131,7 +131,13 @@ mod custom;
 #[cfg(feature = "layout")]
 mod dock;
 #[cfg(feature = "layout")]
+mod dock_policy;
+#[cfg(feature = "layout")]
+mod dock_transfer;
+#[cfg(feature = "layout")]
 mod dock_view;
+#[cfg(feature = "layout")]
+mod dock_workspace;
 #[cfg(feature = "layout")]
 mod editing;
 #[cfg(feature = "layout")]
@@ -211,7 +217,13 @@ pub use dock::{
     DockTree,
 };
 #[cfg(feature = "layout")]
-pub use dock_view::{Dock, DockContextEvent, DockPanel, dock, dock_panel};
+pub use dock_policy::DockDropQuery;
+#[cfg(feature = "layout")]
+pub use dock_transfer::{DockDetachEvent, DockTransferEvent};
+#[cfg(feature = "layout")]
+pub use dock_view::{Dock, DockContextEvent, DockPanel, dock, dock_panel, dock_panel_lazy};
+#[cfg(feature = "layout")]
+pub use dock_workspace::{DockSurfaceId, DockTransfer, DockWorkspace, DockWorkspaceError};
 #[cfg(feature = "layout")]
 pub use editing::SubmitShortcut;
 #[cfg(feature = "layout")]
@@ -292,7 +304,7 @@ pub use typography::{FontFace, LinkEvent, ResolvedSpan, TextSpan, link, span};
 #[cfg(feature = "layout")]
 pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow, TextStyle};
 #[cfg(feature = "layout")]
-pub use ui::dock_dispatch::{DockDragInfo, DockDropPreview};
+pub use ui::dock_dispatch::{DockDragInfo, DockDragSession, DockDropPreview};
 #[cfg(feature = "layout")]
 pub use ui::focus::{FocusError, FocusHandle, FocusPlacement, FocusScope};
 #[cfg(feature = "layout")]
@@ -360,9 +372,10 @@ pub mod prelude {
         MessageLevel, MessageResponse,
     };
     pub use crate::{
-        Dock, DockContextEvent, DockDragInfo, DockDropPreview, DockDropTarget, DockError,
-        DockEvent, DockNode, DockNodeId, DockPanel, DockSide, DockSplit, DockTabs, DockTree, dock,
-        dock_panel,
+        Dock, DockContextEvent, DockDetachEvent, DockDragInfo, DockDragSession, DockDropPreview,
+        DockDropQuery, DockDropTarget, DockError, DockEvent, DockNode, DockNodeId, DockPanel,
+        DockSide, DockSplit, DockSurfaceId, DockTabs, DockTransfer, DockTransferEvent, DockTree,
+        DockWorkspace, DockWorkspaceError, dock, dock_panel, dock_panel_lazy,
     };
     pub use crate::{
         FocusError, FocusHandle, FocusPlacement, FocusScope, Key, Tab, TabActivation,
@@ -421,7 +434,11 @@ mod text_client_tests;
 mod control_tests;
 
 #[cfg(all(test, feature = "layout"))]
+mod dock_surface_drag_tests;
+#[cfg(all(test, feature = "layout"))]
 mod dock_tests;
+#[cfg(all(test, feature = "layout"))]
+mod dock_workspace_tests;
 #[cfg(all(test, feature = "layout"))]
 mod focus_tab_tests;
 

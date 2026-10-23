@@ -1,7 +1,8 @@
-//! Placement-local header drag defaults and geometric docking previews.
+//! Header drag defaults, opt-in surface transfers and geometric docking previews.
 use super::*;
 use crate::{
-    DockDropTarget, DockEvent, DockNodeId, DockSide, SplitPosition,
+    DockDetachEvent, DockDropQuery, DockDropTarget, DockEvent, DockNodeId, DockSide, DockSurfaceId,
+    DockTransferEvent, SplitPosition,
     dock_view::{Metadata, Properties},
     input::{Cursor, InputResult, PointerButton, PointerCancelReason},
 };
@@ -30,15 +31,47 @@ pub struct DockDragInfo<'a> {
     /// Current destination, absent outside eligible groups/over blocked content.
     pub preview: Option<DockDropPreview>,
 }
+#[derive(Clone)]
 pub(super) struct Drag {
     root: ElementId,
     header: ElementId,
     group: DockNodeId,
     panel: Key,
+    surface: Option<DockSurfaceId>,
+    scope: Option<Key>,
     press: [f32; 2],
     active: bool,
+    external_release: bool,
     pub(super) inside: bool,
     pub(super) preview: Option<DockDropPreview>,
+}
+/// Owned source description for a custom host coordinating separate `Ui`s.
+/// Obtain a preview snapshot with [`Ui::dock_drag_session`], then take the
+/// release token with [`Ui::take_dock_drag_session`]. The host chooses the actual
+/// native destination and converts its pointer position into destination logical
+/// coordinates. This type does not infer desktop positions or window stacking.
+pub struct DockDragSession {
+    drag: Drag,
+    source: Properties,
+    released: bool,
+}
+impl DockDragSession {
+    /// Explicit source workspace surface.
+    pub fn source_surface(&self) -> DockSurfaceId {
+        self.source.surface.unwrap()
+    }
+    /// Original source group, revalidated by application transfer acceptance.
+    pub fn source_group(&self) -> DockNodeId {
+        self.drag.group
+    }
+    /// Application panel identity.
+    pub fn panel(&self) -> &Key {
+        &self.drag.panel
+    }
+    /// Explicit transfer scope shared by participating surfaces.
+    pub fn transfer_scope(&self) -> &Key {
+        self.source.transfer_scope.as_ref().unwrap()
+    }
 }
 impl<T: View> Ui<T> {
     fn dock_metadata(&self, id: ElementId) -> Option<&Metadata> {
@@ -93,7 +126,10 @@ impl<T: View> Ui<T> {
         let (root, group, key) = self.dock_header(header)?;
         let config = self.dock_config(root)?;
         (config.draggable
-            && config.listener.is_some()
+            && (config.listener.is_some()
+                || (config.surface.is_some()
+                    && (config.detach.is_some()
+                        || (config.transfer_scope.is_some() && config.transfer.is_some()))))
             && self.input_available(header)
             && self.input_available(root))
         .then_some((root, group, key))
@@ -173,6 +209,96 @@ impl<T: View> Ui<T> {
             preview: drag.preview,
         })
     }
+    /// Snapshots an active explicitly bound transfer source for external preview.
+    /// A snapshot cannot commit a drop; take a release token to commit it.
+    pub fn dock_drag_session(&self) -> Option<DockDragSession> {
+        let drag = self
+            .dock_drag
+            .as_ref()
+            .filter(|d| d.active && self.is_prepared())?;
+        let source = self.dock_config(drag.root)?;
+        source.surface?;
+        source.transfer_scope.as_ref()?;
+        source.transfer.as_ref()?;
+        Some(DockDragSession {
+            drag: (**drag).clone(),
+            source: source.clone(),
+            released: false,
+        })
+    }
+    /// Arms an active gesture for a host-selected external destination. Call just
+    /// before routing the native primary release through normal source input.
+    /// Release listeners retain capture routing and may prevent the transfer.
+    /// After successful routing, take the release token before the next input.
+    pub fn prepare_external_dock_release(&mut self) -> bool {
+        self.refresh_dock_drag();
+        if self.dock_drag_session().is_none() {
+            return false;
+        }
+        self.dock_drag.as_mut().unwrap().external_release = true;
+        true
+    }
+    /// Takes the token produced by a normally routed, unprevented primary release
+    /// after `prepare_external_dock_release`. Capture has already ended before a
+    /// destination can dispatch. Request a source redraw to erase its preview.
+    /// Dropping the token cancels. Cancellation, prevented release, or another
+    /// source pointer/key/wheel input yields no token. This never consumes an
+    /// in-progress gesture.
+    pub fn take_dock_drag_session(&mut self) -> Option<DockDragSession> {
+        self.dock_release.take().map(|session| *session)
+    }
+    /// Queries a custom host's actual destination in this prepared `Ui`.
+    /// Both source snapshot and current destination policies must accept.
+    /// The host owns native hit testing, overlap/occlusion and DPI conversion.
+    pub fn external_dock_preview(
+        &self,
+        session: &DockDragSession,
+        position: [f32; 2],
+    ) -> Option<DockDropPreview> {
+        if !self.is_prepared() || position.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        self.dock_destination_at(&session.drag, &session.source, None, position)
+    }
+    /// Consumes a release token and rechecks the destination before dispatching
+    /// its transfer to the original source listener. No model changes happen
+    /// automatically; applications must validate source membership on acceptance.
+    /// Preview snapshots cannot commit, and tokens cannot be cloned or reused.
+    pub fn drop_external_dock(
+        &mut self,
+        runtime: &mut Runtime,
+        session: DockDragSession,
+        position: [f32; 2],
+    ) -> Result<InputResult, UiError> {
+        if !session.released {
+            return Ok(InputResult::default());
+        }
+        let Some(preview) = self.external_dock_preview(&session, position) else {
+            return Ok(InputResult::default());
+        };
+        let root = self
+            .pointer_target(position)
+            .and_then(|hit| self.dock_location(hit))
+            .unwrap()
+            .0;
+        let event = DockTransferEvent {
+            source_surface: session.source_surface(),
+            source_group: session.source_group(),
+            panel: session.drag.panel.clone(),
+            target_surface: self.dock_config(root).unwrap().surface.unwrap(),
+            target: preview.target,
+        };
+        let listener = session.source.transfer.unwrap();
+        if runtime.update(|cx| listener.dispatch(&event, cx))? != Dispatch::TargetGone {
+            self.focus_state
+                .get_or_insert_with(Default::default)
+                .drop_focus = Some(Box::new((root, event.panel)));
+        }
+        Ok(InputResult {
+            changed: true,
+            default_prevented: true,
+        })
+    }
     pub(super) fn dock_cursor(&self) -> Option<Cursor> {
         if let Some(drag) = &self.dock_drag {
             return Some(if !drag.active {
@@ -188,16 +314,63 @@ impl<T: View> Ui<T> {
             .map(|_| Cursor::Grab)
     }
     fn dock_destination(&self, drag: &Drag) -> Option<DockDropPreview> {
-        let point = self.input.position;
-        if !drag.inside {
+        self.dock_destination_at(
+            drag,
+            self.dock_config(drag.root)?,
+            Some(drag.root),
+            self.input.position,
+        )
+    }
+    fn dock_target_location(
+        &self,
+        mut hit: ElementId,
+    ) -> Option<(ElementId, ElementId, DockNodeId)> {
+        loop {
+            // Dock groups intentionally block pointer fallthrough. Only their
+            // descendants can shield the group from becoming a drop target.
+            if matches!(self.dock_metadata(hit), Some(Metadata::Group(_))) {
+                return self.dock_location(hit);
+            }
+            let node = self.nodes.get(&hit)?;
+            if node.element.pointer_events == crate::PointerEvents::Block
+                || !self.input_available(hit)
+                || self.is_overlay(hit)
+            {
+                return None;
+            }
+            hit = node.parent?;
+        }
+    }
+    fn dock_destination_at(
+        &self,
+        drag: &Drag,
+        source: &Properties,
+        source_root: Option<ElementId>,
+        point: [f32; 2],
+    ) -> Option<DockDropPreview> {
+        if source_root.is_some() && !drag.inside {
             return None;
         }
         let hit = self.pointer_target(point)?;
-        let (root, group, id) = self.dock_location(hit)?;
-        if root != drag.root || !self.input_available(group) {
+        let (root, group, id) = self.dock_target_location(hit)?;
+        let config = self.dock_config(root)?;
+        let cross = Some(root) != source_root;
+        if !self.input_available(root) || !self.input_available(group) {
             return None;
         }
-        let config = self.dock_config(root)?;
+        if !cross && source.listener.is_none() {
+            return None;
+        }
+        if cross
+            && !(source.surface.is_some()
+                && config.surface.is_some()
+                && source.surface != config.surface
+                && source.transfer.is_some()
+                && source.transfer_scope.is_some()
+                && source.transfer_scope == config.transfer_scope)
+        {
+            return None;
+        }
         let n = &self.nodes[&group];
         let pane = n.bounds;
         let visible = pane
@@ -214,6 +387,18 @@ impl<T: View> Ui<T> {
             .iter()
             .position(|child| self.nodes[child].element.key.as_ref() == Some(&drag.panel));
         let make = |target, bounds: Bounds, insertion| {
+            let query = DockDropQuery {
+                source: drag.group,
+                panel: drag.panel.clone(),
+                source_surface: source.surface,
+                target_surface: config.surface,
+                target,
+            };
+            if source.drop_policy.as_ref().is_some_and(|p| !p(&query))
+                || (cross && config.drop_policy.as_ref().is_some_and(|p| !p(&query)))
+            {
+                return None;
+            }
             let bounds = bounds.intersection(visible);
             (bounds.width > 0. && bounds.height > 0.).then_some(DockDropPreview {
                 target,
@@ -229,9 +414,9 @@ impl<T: View> Ui<T> {
                     point[0] < b.x + b.width * 0.5
                 })
                 .unwrap_or(entries.len());
-            let index =
-                slot - usize::from(id == drag.group && source_index.is_some_and(|i| i < slot));
-            if id == drag.group && source_index == Some(index) {
+            let index = slot
+                - usize::from(!cross && id == drag.group && source_index.is_some_and(|i| i < slot));
+            if !cross && id == drag.group && source_index == Some(index) {
                 return None;
             }
             let x = entries
@@ -281,7 +466,7 @@ impl<T: View> Ui<T> {
                 )
             });
         if let Some(side) = side {
-            if id == drag.group && entries.len() < 2 {
+            if !cross && id == drag.group && entries.len() < 2 {
                 return None;
             }
             let horizontal = matches!(side, DockSide::Left | DockSide::Right);
@@ -313,7 +498,7 @@ impl<T: View> Ui<T> {
                 false,
             );
         }
-        if id == drag.group {
+        if !cross && id == drag.group {
             return None;
         }
         make(
@@ -325,6 +510,32 @@ impl<T: View> Ui<T> {
             false,
         )
     }
+    // A rejected drop is never a request to create a window. Require a release
+    // outside every visible dock root, with no overlay or blocking hit ancestor.
+    fn dock_detach_allowed(&self, point: [f32; 2]) -> bool {
+        if self.order.iter().any(|id| {
+            self.dock_config(*id).is_some()
+                && self.nodes[id].visible
+                && self.nodes[id]
+                    .bounds
+                    .intersection(self.nodes[id].clip_bounds)
+                    .contains(point)
+        }) {
+            return false;
+        }
+        let mut current = self.pointer_target(point);
+        while let Some(id) = current {
+            let node = &self.nodes[&id];
+            if self.is_overlay(id)
+                || node.element.pointer_events == crate::PointerEvents::Block
+                || !self.input_available(id)
+            {
+                return false;
+            }
+            current = node.parent;
+        }
+        true
+    }
     pub(super) fn refresh_dock_drag(&mut self) {
         let Some(drag) = self.dock_drag.as_ref() else {
             return;
@@ -333,7 +544,12 @@ impl<T: View> Ui<T> {
             && self
                 .dock_source(drag.header)
                 .is_some_and(|(root, group, panel)| {
-                    root == drag.root && group == drag.group && panel == drag.panel
+                    root == drag.root
+                        && group == drag.group
+                        && panel == drag.panel
+                        && self.dock_config(root).is_some_and(|p| {
+                            p.surface == drag.surface && p.transfer_scope == drag.scope
+                        })
                 });
         if !valid {
             self.cancel_capture(PointerCancelReason::TargetUnavailable);
@@ -387,8 +603,11 @@ impl<T: View> Ui<T> {
                 header,
                 group,
                 panel,
+                surface: self.dock_config(root).unwrap().surface,
+                scope: self.dock_config(root).unwrap().transfer_scope.clone(),
                 press: self.input.position,
                 active: false,
+                external_release: false,
                 inside: true,
                 preview: None,
             }));
@@ -443,20 +662,62 @@ impl<T: View> Ui<T> {
                 });
             }
             self.pressed = None;
-            if let Some(preview) = preview
-                && let Some(listener) = self.dock_config(drag.root).and_then(|p| p.listener.clone())
-            {
-                let completion = (drag.root, drag.panel.clone());
-                let event = DockEvent::Drop {
-                    source: drag.group,
-                    panel: drag.panel,
-                    target: preview.target,
+            if drag.external_release {
+                let source = self.dock_config(drag.root).unwrap().clone();
+                self.dock_release = Some(Box::new(DockDragSession {
+                    drag: *drag,
+                    source,
+                    released: true,
+                }));
+                return Ok(InputResult {
+                    changed: true,
+                    default_prevented: true,
+                });
+            }
+            if let Some(preview) = preview {
+                let destination = self
+                    .pointer_target(self.input.position)
+                    .and_then(|hit| self.dock_location(hit))
+                    .map(|(root, _, _)| root)
+                    .unwrap();
+                let completion = (destination, drag.panel.clone());
+                let config = self.dock_config(drag.root).unwrap();
+                let dispatched = if destination != drag.root {
+                    let listener = config.transfer.clone().unwrap();
+                    let event = DockTransferEvent {
+                        source_surface: config.surface.unwrap(),
+                        source_group: drag.group,
+                        panel: drag.panel,
+                        target_surface: self.dock_config(destination).unwrap().surface.unwrap(),
+                        target: preview.target,
+                    };
+                    runtime.update(|cx| listener.dispatch(&event, cx))?
+                } else if let Some(listener) = config.listener.clone() {
+                    let event = DockEvent::Drop {
+                        source: drag.group,
+                        panel: drag.panel,
+                        target: preview.target,
+                    };
+                    runtime.update(|cx| listener.dispatch(&event, cx))?
+                } else {
+                    Dispatch::TargetGone
                 };
-                if runtime.update(|cx| listener.dispatch(&event, cx))? != Dispatch::TargetGone {
+                if dispatched != Dispatch::TargetGone {
                     self.focus_state
                         .get_or_insert_with(Default::default)
                         .drop_focus = Some(Box::new(completion));
                 }
+            } else if self.dock_detach_allowed(self.input.position)
+                && let Some(config) = self.dock_config(drag.root)
+                && let (Some(surface), Some(listener)) = (config.surface, config.detach.clone())
+            {
+                let event = DockDetachEvent {
+                    source_surface: surface,
+                    source_group: drag.group,
+                    panel: drag.panel,
+                    position: self.input.position,
+                };
+                runtime.update(|cx| listener.dispatch(&event, cx))?;
             }
             return Ok(InputResult {
                 changed: true,
@@ -471,7 +732,16 @@ impl<T: View> Ui<T> {
     #[cfg(feature = "rendering")]
     pub(crate) fn dock_preview_paint(&self) -> Option<(DockDropPreview, Bounds, Color)> {
         let preview = self.dock_drag()?.preview?;
-        let root = self.dock_drag.as_ref()?.root;
+        if !self
+            .dock_config(self.dock_drag.as_ref()?.root)?
+            .show_preview
+        {
+            return None;
+        }
+        let root = self
+            .pointer_target(self.input.position)
+            .and_then(|hit| self.dock_location(hit))?
+            .0;
         if !self.dock_config(root)?.show_preview {
             return None;
         }

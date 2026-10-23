@@ -116,8 +116,9 @@ numeric ranges, pointer capture, Escape cancellation and keyboard defaults apply
 There is no additional dock-specific accessibility role or renderer.
 
 Model lookups/edits scan the tree and panel sequences rather than maintaining a
-second mutable index. Building a dock description clones the topology and visits
-each node/panel once, plus the application resolver's own work. This happens when
+second mutable index. Building a dock description takes linear work in the nodes
+and panels and stores an ordered composition snapshot, plus the resolver's own work.
+It does not clone a second `DockTree` or build an all-panel hash map. This happens when
 the owning view evaluates, not as an independent per-frame dock update. Drawing
 uses existing retained UI preparation and rendering; no extra framebuffer or
 composition pass is introduced by the docking tree. Large panel collections and
@@ -132,7 +133,8 @@ buttons and nested ordinary tab groups never start dock drags. `.draggable(false
 disables the gesture while retaining normal tab selection/keyboard behavior.
 `.drag_threshold(value)` changes the finite, nonnegative threshold.
 
-Destinations are restricted to the same dock root and window:
+By default destinations are restricted to the same dock root and window. Explicit
+surface bindings can opt into transfers between regions, as described below:
 
 - Header strips show an insertion marker before/after the nearest header midpoint.
   The proposal's index is adjusted for source removal, including same-group reorder.
@@ -173,8 +175,9 @@ extra framebuffer or pass and does not participate in hit testing. Use
 `.drop_preview(false)` to paint custom feedback from `Ui::dock_drag()`; gesture
 recognition, cursor feedback and drop proposals remain enabled.
 
-This is a pointer gesture within one dock placement. It does not pick/drop panels
-through keyboard accessibility actions or native cross-window drag sessions.
+The stock gesture operates within one `Ui`, including explicitly bound regions.
+It does not pick/drop panels through keyboard accessibility actions or automatically
+coordinate native cross-window drag sessions.
 Ordinary tab keyboard behavior remains available, and application buttons/commands
 can expose checked reorder/move/split operations. Overflowing header strips retain
 their existing wheel scrolling; stationary edge autoscroll and drag ghosts are
@@ -250,6 +253,137 @@ the standalone example in a normal background-created window, which was closed
 afterward. Held-drag preview pixels and cancellation are covered by the automated
 tests above.
 
-This stage provides the tree, checked programmatic edits and pointer header drops
-with previews. Undo/persistence, placement transfer and native cross-window detach
-remain separate work.
+## Lazy content and application drop policy
+
+`dock_panel_lazy(title, move || content)` defers content construction until the dock
+is converted into an element. With `MountSelected`, inactive closures are dropped
+without running. `KeepMounted` constructs all content. Header resolution remains
+eager, once per live panel in tree order, including inactive panels. Existing
+`dock_panel` remains eager. This is deferred construction, not memoization: later
+view evaluations may construct the content again. Read entity dependencies through
+`cx` in the eager resolver and move owned values into the `'static` closure.
+
+`.drop_policy(move |query: &DockDropQuery| ...)` filters stock targets before a
+preview appears and again at release. The query includes panel, original group,
+target, and optional source/destination surface IDs. For example, match `panel`
+to keep a tool in its region, or reject `DockDropTarget::Split` to allow tab-only
+transfers. Between regions both source and destination policies must accept.
+Policies should be inexpensive and free of side effects. They read snapshots
+captured during description; final event acceptance remains application-owned.
+Rejecting a target never turns that target into a detach request.
+
+## Multiple surfaces, regions and independent windows
+
+`DockWorkspace` owns several `DockTree`s and enforces unique panel keys across
+all surfaces. `DockSurfaceId` is an opaque in-process identity. Trees are exposed
+read-only through `surface` and `surfaces`; edits use `apply`, `select`, `insert`,
+`split`, `transfer` and `detach`. `create_surface` accepts an owned tree;
+`remove_surface` returns its owned tree and does not destroy document entities or
+close a native window. Snapshot cloning retains surface and node IDs.
+
+```rust
+use rxui::prelude::*;
+let mut workspace = DockWorkspace::new();
+let left = workspace.create_surface(DockTree::from_panels(["editor", "preview"])?)?;
+let right = workspace.create_surface(DockTree::new())?;
+let source = workspace.surface(left).unwrap().group_for(&Key::from("preview")).unwrap();
+let target = workspace.surface(right).unwrap().root().id();
+let change = workspace.transfer(left, source, &Key::from("preview"), right,
+    DockDropTarget::Tab { group: target, index: 0 })?;
+assert_eq!(change.destination_surface, right);
+# Ok::<(), DockWorkspaceError>(())
+```
+
+Transfers validate original source membership. Failed transfers leave both trees
+unchanged. Accepted cross-surface transfers stage only the two affected trees;
+same-surface operations use the existing checked edit directly. The result reports
+destination group, whether anything changed, and whether the source is empty.
+An empty source surface remains until explicitly removed. Detach creates a new
+surface atomically and returns the same result; reattach is an ordinary transfer.
+Windows, document models, undo storage and persistence remain application-owned.
+
+For stock dragging between regions in one `Ui`, bind each dock with
+`.surface(surface_id).transfer_scope(workspace_key)` and attach `.on_transfer(...)`
+to the source. Scope keys must distinguish independent workspaces within that Ui.
+Unbound docks retain their original isolation. `DockTransferEvent` carries both
+surface IDs, original group, panel and target. Accept it with:
+
+```rust,ignore
+.on_transfer(cx.listener(|s, e: &DockTransferEvent, _| {
+    let _ = s.workspace.transfer(e.source_surface, e.source_group, &e.panel,
+        e.target_surface, e.target);
+}))
+```
+
+`.surface(id).on_detach(...)` opts into `DockDetachEvent` on a completed drag
+released outside every visible dock root. Its position is in logical source-window
+coordinates, including coordinates outside the client area; it is not a desktop
+position. Blocked, denied and invalid destinations do not detach. The gesture and
+capture clear before callbacks. Decide whether to create a native window at release,
+then publish the detached layout. Creating/focusing a window during motion can
+cancel source capture. Keep the old layout if window queueing fails, and handle
+later native creation failures through the host's normal error lifecycle.
+
+The [docking_surfaces_window example](../crates/rxui/examples/docking_surfaces_window.rs)
+shows two regions, independent native window layouts, shared editable document
+entities, detach buttons/gestures, and reattachment on button or window close.
+The main window stays open while detached windows still need a return destination.
+
+```sh
+mbx run -p rxui --example docking_surfaces_window --features native --locked
+```
+
+Cross-group/surface/window transfers can remount content. Strong document entities
+preserve document data; mount-local caret, scroll, focus, tasks and `use_state`
+do not automatically follow. `KeepMounted` preserves inactive content within a
+surviving parent; it is not a placement-transfer guarantee.
+
+## Cross-window coordination for custom hosts
+
+Automatic native cross-window dragging is not installed by `Application`.
+Custom hosts can use the explicit `DockDragSession` bridge between separate Uis:
+
+1. During motion, query `source.dock_drag_session()`, then
+   `destination.external_dock_preview(&snapshot, destination_logical_position)`.
+   The snapshot cannot commit. Paint any external preview through the host.
+2. At native primary-button release, arm the source with
+   `source.prepare_external_dock_release()`, then route the normal release through
+   source `WindowInput`. Its captured listeners receive the release and can prevent
+   transfer. Normal release routing clears capture, pressed state and host button
+   bookkeeping, and suppresses local drop/detach when an external release is armed.
+3. Call `source.take_dock_drag_session()` immediately after routing to obtain the
+   non-cloneable commit token. Cancellation or prevention yields no token; another
+   source pointer, key or wheel input expires an untaken token, as does deactivation.
+   Request a source redraw to erase feedback.
+   Call `destination.drop_external_dock(runtime, token, position)`,
+   then request destination preparation/redraw. The token is consumed; dropping it
+   cancels. Destination geometry and policy are checked again before invoking the
+   original source listener. The application must accept through checked transfer.
+
+The bridge requires explicit surface/scope bindings. Source policy is captured in
+the session; destination policy is current. Source deactivation/removal before
+release retains normal cancellation. Hosts must determine the actual
+native destination, including occlusion/stacking, and map coordinates correctly.
+Raw window rectangles cannot establish native z-order or foreign-window occlusion.
+macOS window origins from winit must be normalized for each window's scale before
+mixed-DPI mapping; Wayland does not expose general global window coordinates.
+Pointer locking/confinement is not a substitute for cross-window drag routing.
+
+## CPU measurements
+
+`mbx bench -p rxui --bench docking` emits CSV batches for description, selection,
+resize and preparation using deterministic CPU text measurement. Description
+timing includes construction, conversion and destruction. Local medians for 256
+tabs in one group changed from 541.54 to 371.82 microseconds with `KeepMounted`
+(31% lower), and from 358.87 to 189.49 with `MountSelected` (47% lower). An added
+32-label-per-panel case measured 873.47 microseconds eager versus 174.83 lazy with
+`MountSelected`; this compares two content construction APIs after the refactor.
+
+These are illustrative local measurements, not portable thresholds. Concurrent
+build activity and repeated runs varied timings. Resize/preparation showed no
+clear gain (about 3% slower in the sampled 16-group cases); no GPU frame-pacing
+claim follows from these CPU measurements. The benchmark separates these paths
+so later indexing or invalidation work can be justified by evidence.
+
+Undo/persistence, retained placement transfer, automatic native window targeting,
+per-group sizing and custom header composition remain separate work.

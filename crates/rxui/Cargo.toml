@@ -158,6 +158,10 @@ name = "docking_window"
 required-features = ["native"]
 
 [[example]]
+name = "docking_surfaces_window"
+required-features = ["native"]
+
+[[example]]
 name = "desktop_window"
 required-features = ["native"]
 
@@ -224,3 +228,8 @@ required-features = ["native"]
 [[example]]
 name = "measured_rows_window"
 required-features = ["native"]
+
+[[bench]]
+name = "docking"
+harness = false
+required-features = ["layout"]

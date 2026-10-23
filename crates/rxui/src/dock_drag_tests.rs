@@ -608,3 +608,27 @@ fn failing_application_callbacks_cannot_leave_header_capture_stuck() {
         assert!(ui.captured_pointer().is_none());
     }
 }
+
+#[test]
+fn drop_policy_suppresses_preview_and_is_checked_again_at_release() {
+    let (mut r, e, mut ui, _, output) = setup();
+    let target = middle(body(&ui, "output"));
+    start(&mut r, &mut ui, "preview");
+    move_to(&mut r, &mut ui, target);
+    r.update(|cx| e.update(cx, |s, _| s.allow_drop = false));
+    prepare(&mut r, &mut ui);
+    assert!(ui.dock_drag().unwrap().preview.is_none());
+    ui.pointer(&mut r, PointerEvent::Released(target)).unwrap();
+    assert!(drops(&mut r, &e).is_empty());
+    assert_ne!(
+        r.update(|cx| e.read(cx).tree.group_for(&key("preview"))),
+        Some(output)
+    );
+
+    start(&mut r, &mut ui, "preview");
+    ui.pointer(&mut r, PointerEvent::Moved(target)).unwrap();
+    assert!(ui.dock_drag().unwrap().preview.is_none());
+    ui.pointer(&mut r, PointerEvent::Released(target)).unwrap();
+    assert!(drops(&mut r, &e).is_empty());
+    assert!(ui.captured_pointer().is_none());
+}

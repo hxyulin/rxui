@@ -104,6 +104,7 @@ cargo run -p rxui --example counter_window --features native    # the program ab
 cargo run -p rxui --example text_input_window --features native # controlled editing
 cargo run -p rxui --example text_area_window --features native  # multiline editing
 cargo run -p rxui --example docking_window --features native    # tabs, splits and drag-to-dock
+mbx run -p rxui --example docking_surfaces_window --features native # regions, detach and reattach
 cargo run -p rxui --example counter_state                       # the state runtime in a terminal
 ```
 
