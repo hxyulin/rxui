@@ -408,8 +408,18 @@ impl AccessKitTree {
             if semantic.clips_children {
                 node.set_clips_children();
             }
+            if semantic.multiselectable {
+                node.set_multiselectable();
+            }
             if semantic.focusable {
                 node.add_action(Action::Focus);
+            }
+            if semantic.activatable && semantic.role == SemanticRole::TreeItem {
+                match semantic.expanded {
+                    Some(true) => node.add_action(Action::Collapse),
+                    Some(false) => node.add_action(Action::Expand),
+                    None => {}
+                }
             }
             if semantic.activatable {
                 node.add_action(Action::Click);
@@ -628,7 +638,10 @@ impl AccessKitTree {
         }
         Some(match request.action {
             Action::Focus => SemanticAction::Focus(target),
+            Action::Click if node.role() == Role::TreeItem => SemanticAction::Select(target),
             Action::Click => SemanticAction::Activate(target),
+            Action::Expand => SemanticAction::Expand(target),
+            Action::Collapse => SemanticAction::Collapse(target),
             Action::ScrollIntoView => SemanticAction::ScrollIntoView(target),
             Action::Increment | Action::Decrement => {
                 let value = node.numeric_value()?

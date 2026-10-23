@@ -1223,6 +1223,8 @@ impl Element {
     /// `SemanticAction::Activate` for an assistive click and
     /// `SemanticAction::SetNumericValue` for a new value, including increments by the
     /// numeric step. It replaces the built-in handling of those two actions here.
+    /// Mounted collection items also receive `Select`, and disclosures receive
+    /// `Expand`/`Collapse` when their selected/expanded properties support them.
     /// Pointer and keyboard input still use the ordinary listeners.
     pub fn on_semantic_action(mut self, listener: Listener<crate::SemanticAction>) -> Self {
         self.semantics.get_or_insert_with(Default::default).action = Some(listener);

@@ -174,6 +174,8 @@ mod testing;
 #[cfg(feature = "layout")]
 mod theme;
 #[cfg(feature = "layout")]
+mod tree;
+#[cfg(feature = "layout")]
 mod typography;
 #[cfg(feature = "layout")]
 mod ui;
@@ -301,6 +303,11 @@ pub use theme::{
     ThemeColors, ThemeMetrics, rgb8, rgba8,
 };
 #[cfg(feature = "layout")]
+pub use tree::{
+    TreeCommand, TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow, TreeSelectionMode,
+    TreeState, virtual_tree,
+};
+#[cfg(feature = "layout")]
 pub use typography::{FontFace, LinkEvent, ResolvedSpan, TextSpan, link, span};
 #[cfg(feature = "layout")]
 pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow, TextStyle};
@@ -357,9 +364,10 @@ pub mod prelude {
     };
     pub use crate::{
         Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollBehavior,
-        ScrollError, ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition,
+        ScrollError, ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, TreeCommand,
+        TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow, TreeSelectionMode, TreeState,
         VariableList, VirtualList, VirtualRows, scroll_area, scrollbar, split_column, split_row,
-        variable_list, virtual_list,
+        variable_list, virtual_list, virtual_tree,
     };
     pub use crate::{
         Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
@@ -463,3 +471,5 @@ mod animation_tests;
 
 #[cfg(all(test, feature = "layout"))]
 mod scroll_motion_tests;
+#[cfg(all(test, feature = "layout"))]
+mod tree_tests;

@@ -141,6 +141,7 @@ pub(crate) struct Properties {
     pub hidden: bool,
     pub disabled: bool,
     pub selected: Option<bool>,
+    pub multiselectable: bool,
     pub checked: Option<Checked>,
     pub expanded: Option<bool>,
     pub level: Option<usize>,
@@ -165,6 +166,8 @@ pub struct SemanticNode<'a> {
     pub modal: bool,
     /// Explicit semantic selection state, including tab headers.
     pub selected: Option<bool>,
+    /// Whether this collection accepts multiple selected items.
+    pub multiselectable: bool,
     /// Check state of a check box, radio button or switch.
     pub checked: Option<Checked>,
     /// Whether a combo box, tree item or other disclosure is expanded.
@@ -272,6 +275,12 @@ pub enum SemanticAction {
     /// Use the same button listener as pointer/keyboard activation, or the element's
     /// `on_semantic_action` listener.
     Activate(ElementId),
+    /// Expand a mounted disclosure through its semantic listener.
+    Expand(ElementId),
+    /// Collapse a mounted disclosure through its semantic listener.
+    Collapse(ElementId),
+    /// Select a mounted collection item (distinct from text SetSelection).
+    Select(ElementId),
     /// Propose a complete controlled input value through its on_change listener.
     SetValue {
         /// Input to update.
@@ -323,7 +332,12 @@ pub enum SemanticAction {
 impl SemanticAction {
     pub(crate) fn target(&self) -> ElementId {
         match *self {
-            Self::Focus(id) | Self::Activate(id) | Self::ScrollIntoView(id) => id,
+            Self::Focus(id)
+            | Self::Activate(id)
+            | Self::Expand(id)
+            | Self::Collapse(id)
+            | Self::Select(id)
+            | Self::ScrollIntoView(id) => id,
             Self::SetValue { target, .. }
             | Self::SetSelection { target, .. }
             | Self::Scroll { target, .. }

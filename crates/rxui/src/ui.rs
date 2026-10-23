@@ -3951,6 +3951,7 @@ impl<T: View> Ui<T> {
             scroll_range: node.scroll_range,
             text_scroll_x: node.editor.as_ref().map_or(0., |e| e.scroll_x),
             selected: properties.and_then(|p| p.selected),
+            multiselectable: properties.is_some_and(|p| p.multiselectable),
             checked: properties.and_then(|p| p.checked),
             expanded: properties.and_then(|p| p.expanded),
             level: properties.and_then(|p| p.level),
@@ -4118,8 +4119,21 @@ impl<T: View> Ui<T> {
         {
             return Ok(false);
         }
-        if let crate::SemanticAction::Activate(_) | crate::SemanticAction::SetNumericValue { .. } =
-            action
+        let properties = self.nodes[&id].element.semantics.as_ref();
+        let unsupported_collection_action = match action {
+            crate::SemanticAction::Expand(_) => properties.and_then(|p| p.expanded) != Some(false),
+            crate::SemanticAction::Collapse(_) => properties.and_then(|p| p.expanded) != Some(true),
+            crate::SemanticAction::Select(_) => properties.and_then(|p| p.selected).is_none(),
+            _ => false,
+        };
+        if unsupported_collection_action {
+            return Ok(false);
+        }
+        if let crate::SemanticAction::Activate(_)
+        | crate::SemanticAction::Expand(_)
+        | crate::SemanticAction::Collapse(_)
+        | crate::SemanticAction::Select(_)
+        | crate::SemanticAction::SetNumericValue { .. } = action
             && let Some(listener) = self.nodes[&id]
                 .element
                 .semantics
@@ -4150,6 +4164,9 @@ impl<T: View> Ui<T> {
                 Ok(self.flush_focus_notifications(runtime)? || changed || revealed)
             }
             crate::SemanticAction::Activate(_) => self.activate(runtime, id),
+            crate::SemanticAction::Expand(_)
+            | crate::SemanticAction::Collapse(_)
+            | crate::SemanticAction::Select(_) => Ok(false),
             crate::SemanticAction::SetValue {
                 value: proposed, ..
             } => {

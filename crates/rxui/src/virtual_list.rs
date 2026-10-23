@@ -30,6 +30,7 @@ pub struct VirtualList<F> {
     row_height: f32,
     overscan: usize,
     render: F,
+    plain: bool,
 }
 
 /// Creates a fixed-height virtual list using an application-owned scroll handle.
@@ -71,6 +72,7 @@ where
         row_height,
         overscan: 2,
         render,
+        plain: false,
     }
 }
 
@@ -152,6 +154,10 @@ macro_rules! list_builders {
 }
 impl<F> VirtualList<F> {
     list_builders!();
+    pub(crate) fn plain(mut self) -> Self {
+        self.plain = true;
+        self
+    }
 }
 impl<F, E> IntoElement for VirtualList<F>
 where
@@ -161,6 +167,9 @@ where
     fn into_element(mut self) -> Element {
         let total = extent(self.count, self.row_height);
         let mut content = list_content(total, self.count);
+        if self.plain {
+            content.semantics = None;
+        }
         if let Some(total) = total {
             for index in range(
                 self.count,
@@ -172,9 +181,11 @@ where
                 let mut row = (self.render)(index).into_element();
                 let key = row.key.take().unwrap_or_else(|| index.into());
                 let top = (index as f64 * f64::from(self.row_height)) as f32;
-                content
-                    .children
-                    .push(slot(row, key, index, top, self.row_height));
+                let mut placed = slot(row, key, index, top, self.row_height);
+                if self.plain {
+                    placed.semantics = None;
+                }
+                content.children.push(placed);
             }
         }
         self.area.with_content(content).into_element()

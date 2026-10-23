@@ -1,39 +1,54 @@
-//! Narrow fixed-height tree rows with long labels. Resize and scroll to either end.
+//! A real controlled hierarchy: 100 folders, each containing 1,000 leaf records.
+//! Arrow keys navigate; Right/Left expand/collapse; Shift extends selection;
+//! Command/Control-click toggles selection. All rows keep focus on the tree root.
 use rxui::prelude::*;
 const HEIGHT: f32 = 24.;
 struct Tree {
     scroll: ScrollHandle,
-    selected: usize,
+    state: TreeState,
 }
 impl View for Tree {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
-        let width = self.scroll.state(cx).map_or(260., |s| s.viewport[0]);
+        let change = cx.listener(|s, proposal: &TreeProposal, cx| {
+            // Applications may reject a proposal by leaving accepted state unchanged.
+            proposal
+                .accept(&mut s.state, &s.scroll, HEIGHT, cx)
+                .unwrap();
+        });
         column()
             .fill_width()
             .fill_height()
             .padding(8.)
             .gap(8.)
-            .child(label("Undo history — resize this window"))
+            .child(label("Files — arrows navigate, Right/Left expand/collapse"))
+            .child(label(format!(
+                "{} visible, {} selected",
+                self.state.rows().len(),
+                self.state.selected().len()
+            )))
             .child(
-                virtual_list(160, HEIGHT, &self.scroll, cx, |index| {
-                    button(format!(
-                        "▾ {index}: restore a deeply nested undo state with a long description"
-                    ))
-                    .key(index)
-                    .font_size(12.5)
-                    .height(HEIGHT)
-                    .padding_y(0.)
-                    .padding_left((12. + (index % 32) as f32 * 14.).min(width * 0.35))
-                    .padding_right(12.)
-                    .text_overflow(rxui::TextOverflow::Ellipsis)
-                    .radius(0.)
-                    .variant(if self.selected == index {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Quiet
-                    })
-                    .on_click(cx.listener(move |s, _, _| s.selected = index))
-                })
+                virtual_tree(
+                    &self.state,
+                    HEIGHT,
+                    &self.scroll,
+                    cx,
+                    change,
+                    |_, node, _| {
+                        // Render passive content; the tree supplies indentation/disclosure.
+                        label(format!(
+                            "{}{}",
+                            if self.state.selected().contains(&node.key) {
+                                "✓ "
+                            } else {
+                                ""
+                            },
+                            node.label
+                        ))
+                        .font_size(12.5)
+                        .text_overflow(rxui::TextOverflow::Ellipsis)
+                    },
+                )
+                .accessibility_label("Files")
                 .fill_width()
                 .fill_height(),
             )
@@ -41,14 +56,34 @@ impl View for Tree {
 }
 fn main() -> Result<(), ApplicationError> {
     Application::new().run(|cx| {
+        let mut nodes = Vec::new();
+        for folder in 0..100usize {
+            let key = folder * 1001;
+            nodes.push(TreeNode {
+                key: key.into(),
+                parent: None,
+                label: format!("Folder {folder:03}"),
+                branch: true,
+            });
+            for child in 1..=1000 {
+                nodes.push(TreeNode {
+                    key: (key + child).into(),
+                    parent: Some(key.into()),
+                    label: format!("Record {folder:03}/{child:04} — application-owned data"),
+                    branch: false,
+                });
+            }
+        }
+        let mut state = TreeState::new(TreeData::new(nodes).unwrap(), TreeSelectionMode::Multiple);
+        state.set_expanded((0..100usize).map(|folder| (folder * 1001).into()));
         let root = cx.new(|_| Tree {
             scroll: ScrollHandle::new(),
-            selected: 0,
+            state,
         });
         cx.open_window(
             WindowOptions::new()
-                .title("RXUI — narrow tree regression")
-                .size(280., 420.),
+                .title("RXUI — virtual tree (100,100 nodes)")
+                .size(520., 480.),
             root,
         )?;
         Ok(())

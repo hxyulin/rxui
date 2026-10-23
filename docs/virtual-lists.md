@@ -213,3 +213,6 @@ cargo run -p rxui --example workspace_window --features native --locked
 cargo test -p rxui --all-features virtual --locked
 cargo bench -p rxui --bench virtual_list --locked
 ```
+
+For a controlled keyed hierarchy with expansion, selection, keyboard navigation
+and Tree/TreeItem semantics, see [virtual trees](virtual-trees.md).
