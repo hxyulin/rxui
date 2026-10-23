@@ -8,15 +8,15 @@ publish = false
 
 [features]
 gles = ["rxui-draw/gles"]
-x11-drag = ["dep:x11rb"]
-desktop-drag = ["dep:rxui-native-drag"]
+x11-drag = ["dep:x11rb", "dep:draglet", "draglet/x11"]
+desktop-drag = ["dep:draglet"]
 
 [dependencies]
 log = "0.4.34"
 rxui-draw = { path = "../rxui-draw" }
 profiling.workspace = true
 winit.workspace = true
-rxui-native-drag = { workspace = true, optional = true }
+draglet = { workspace = true, optional = true, features = ["appkit", "win32"] }
 pollster = "1.0.1"
 x11rb = { version = "0.13.2", optional = true, features = ["shape", "xtest"] }
 

@@ -1,28 +1,36 @@
 //! Thread-bound native mouse capture and cross-window targeting for winit.
 //!
 //! This crate has no RXUI, graphics, GPU or event-loop ownership dependency.
-//! macOS and Windows are supported; other platforms return an initialization error.
+//! Features select macOS/Windows native observation, X11 protocol capture, and
+//! compositor-driven Wayland drag routing. [`Adapter`] is the macOS/Windows
+//! convenience API; Linux users select the `x11` or `wayland` adapter explicitly.
 //!
 //! Only the audited OS modules allow unsafe code. The rendering and winit
 //! integration crates retain their workspace-wide unsafe-code prohibition.
 //! Native callbacks only latch state/signals, never invoke application UI code.
-//! Native release targeting is sampled before normal platform/winit release.
+//! AppKit/Win32 release targeting is sampled before normal platform/winit release.
 use std::{error::Error as StdError, fmt, marker::PhantomData, rc::Rc, sync::Arc};
 use winit::window::{Window, WindowId};
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "appkit"))]
 #[allow(unsafe_code)]
 mod macos;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "appkit"))]
 use macos as platform;
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "win32"))]
 #[allow(unsafe_code)]
 mod windows;
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "win32"))]
 use windows as platform;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    all(target_os = "macos", feature = "appkit"),
+    all(target_os = "windows", feature = "win32")
+)))]
 mod unsupported;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    all(target_os = "macos", feature = "appkit"),
+    all(target_os = "windows", feature = "win32")
+)))]
 use unsupported as platform;
 
 /// Platform initialization, registration, or capture failure.
@@ -93,12 +101,12 @@ pub enum Signal {
 ///
 /// ```compile_fail
 /// fn requires_send<T: Send>() {}
-/// requires_send::<rxui_native_drag::Adapter>();
+/// requires_send::<draglet::Adapter>();
 /// ```
 ///
 /// ```compile_fail
 /// fn requires_sync<T: Sync>() {}
-/// requires_sync::<rxui_native_drag::Adapter>();
+/// requires_sync::<draglet::Adapter>();
 /// ```
 ///
 /// Register on the window thread before input; begin only after the primary press.
@@ -154,6 +162,25 @@ mod tests {
         let error = super::Adapter::new()
             .err()
             .expect("unsupported adapter must fail");
-        assert!(error.to_string().contains("macOS and Windows"));
+        assert!(error.to_string().contains("disabled or unavailable"));
     }
+}
+
+/// Compositor-driven same-client Wayland dragging on the application's connection.
+#[cfg(all(feature = "wayland", unix))]
+#[allow(unsafe_code)]
+pub mod wayland;
+/// Safe X11 protocol backend. Must be armed before the initiating press.
+#[cfg(feature = "x11")]
+pub mod x11;
+
+/// Backend capabilities; unavailable guarantees must never be inferred from OS name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Can identify registered targets authoritatively during its drag session.
+    pub authoritative_targeting: bool,
+    /// Can explicitly capture the pointer without confinement.
+    pub pointer_capture: bool,
+    /// Can report capture cancellation/loss.
+    pub capture_loss_notification: bool,
 }

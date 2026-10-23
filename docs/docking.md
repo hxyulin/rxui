@@ -376,8 +376,8 @@ changes and suspension cancel. If a native release never receives its matching
 public source release within one second of observation, it cancels. The adapter
 and wake worker are released on completion, cancellation, host errors and shutdown.
 
-This uses the safe `rxui_native_drag::Adapter` directly so the Application can
-own its lifecycle without a self-borrowing `CapturedDrag`. The OS bindings live in the separate `rxui-native-drag` workspace crate;
+This uses the safe `draglet::Adapter` directly so the Application can
+own its lifecycle without a self-borrowing `CapturedDrag`. The OS bindings live in the separate `draglet` workspace crate;
 RXUI's UI and host crates add no unsafe code. macOS and Windows adapters are experimental.
 Wayland/X11 orchestration is not included, and opting in on an unsupported platform
 reports an initialization error. Native registration errors are reported; failed

@@ -3,6 +3,7 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
+use x11rb::protocol::xproto::{self, ConnectionExt, EventMask, GrabMode, GrabStatus};
 use x11rb::protocol::{
     shape::{ConnectionExt as _, SK, SO},
     xtest::ConnectionExt as _,
@@ -46,8 +47,8 @@ fn window(c: &RustConnection, root: u32, x: i16, y: i16, w: u16, h: u16) -> u32 
     id
 }
 fn fixture() -> Fixture {
-    let display = std::env::var("ASTRELIS_X11_TEST_DISPLAY")
-        .expect("set ASTRELIS_X11_TEST_DISPLAY to an isolated Xvfb server");
+    let display = std::env::var("DRAGLET_X11_TEST_DISPLAY")
+        .expect("set DRAGLET_X11_TEST_DISPLAY to an isolated Xvfb server");
     KEEPALIVE.get_or_init(|| Arc::new(x11rb::connect(Some(&display)).unwrap().0));
     let (owner, screen) = x11rb::connect(Some(&display)).unwrap();
     let owner = Arc::new(owner);
@@ -135,7 +136,7 @@ fn wait_drag(
 }
 
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_stacking_foreign_occlusion_and_destination_scale() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -148,7 +149,7 @@ fn server_stacking_foreign_occlusion_and_destination_scale() {
         }
     );
     let (foreign_client, _) =
-        x11rb::connect(Some(&std::env::var("ASTRELIS_X11_TEST_DISPLAY").unwrap())).unwrap();
+        x11rb::connect(Some(&std::env::var("DRAGLET_X11_TEST_DISPLAY").unwrap())).unwrap();
     let foreign = window(&foreign_client, f.root, 340, 50, 100, 100);
     assert_eq!(f.host.target_at_pointer(), NativeDragTarget::Foreign);
     f.owner
@@ -174,12 +175,12 @@ fn server_stacking_foreign_occlusion_and_destination_scale() {
     );
 }
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_input_shapes_and_unregistered_decorations_block_correctly() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
     let (foreign_client, _) =
-        x11rb::connect(Some(&std::env::var("ASTRELIS_X11_TEST_DISPLAY").unwrap())).unwrap();
+        x11rb::connect(Some(&std::env::var("DRAGLET_X11_TEST_DISPLAY").unwrap())).unwrap();
     let foreign = window(&foreign_client, f.root, 330, 30, 100, 100);
     f.owner
         .shape_rectangles(
@@ -223,7 +224,7 @@ fn server_input_shapes_and_unregistered_decorations_block_correctly() {
     f.owner.destroy_window(frame).unwrap().check().unwrap();
 }
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_capture_delivers_outside_release_and_raii_releases_grab() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -298,7 +299,7 @@ fn server_capture_delivers_outside_release_and_raii_releases_grab() {
         .unwrap();
 }
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_unmap_cancels_and_never_commits_later_release() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -316,7 +317,7 @@ fn server_unmap_cancels_and_never_commits_later_release() {
     drop(drag);
 }
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_cannot_take_over_winit_like_implicit_grab_after_press() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -342,7 +343,7 @@ fn server_cannot_take_over_winit_like_implicit_grab_after_press() {
     assert!(f.host.acquire_capture(WindowId::from(1)).is_err());
 }
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_rejects_ended_press_and_does_not_reuse_hover() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -367,7 +368,7 @@ fn server_rejects_ended_press_and_does_not_reuse_hover() {
 }
 
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_release_rejects_new_foreign_occlusion_and_drop_releases_active_capture() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -384,7 +385,7 @@ fn server_release_rejects_new_foreign_occlusion_and_drop_releases_active_capture
         NativeDragTarget::Window { .. }
     ));
     let (foreign_client, _) =
-        x11rb::connect(Some(&std::env::var("ASTRELIS_X11_TEST_DISPLAY").unwrap())).unwrap();
+        x11rb::connect(Some(&std::env::var("DRAGLET_X11_TEST_DISPLAY").unwrap())).unwrap();
     let foreign = window(&foreign_client, f.root, 340, 50, 100, 100);
     f.owner
         .xtest_fake_input(xproto::BUTTON_RELEASE_EVENT, 1, 0, f.root, 0, 0, 0)
@@ -423,7 +424,7 @@ fn server_release_rejects_new_foreign_occlusion_and_drop_releases_active_capture
         .unwrap();
 }
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_destroy_and_disconnect_cancel_without_drop() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -455,7 +456,7 @@ fn server_destroy_and_disconnect_cancel_without_drop() {
 }
 
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_queued_release_and_unmap_remap_cannot_revive_an_old_press() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -485,7 +486,7 @@ fn server_queued_release_and_unmap_remap_cannot_revive_an_old_press() {
 }
 
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_unregister_handles_unpolled_press_and_preserves_another_sources_grab() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     let mut f = fixture();
@@ -547,7 +548,7 @@ fn server_unregister_handles_unpolled_press_and_preserves_another_sources_grab()
 }
 
 #[test]
-#[ignore = "requires an isolated X server; set ASTRELIS_X11_TEST_DISPLAY"]
+#[ignore = "requires an isolated X server; set DRAGLET_X11_TEST_DISPLAY"]
 fn server_lost_capture_cleanup_preserves_a_newer_passive_gesture_and_its_release() {
     let _serial = SERVER.lock().unwrap_or_else(|e| e.into_inner());
     for drop_without_poll in [false, true] {

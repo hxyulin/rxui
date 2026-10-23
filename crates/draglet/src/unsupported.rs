@@ -3,7 +3,7 @@ pub(crate) struct Adapter;
 impl Adapter {
     pub(crate) fn new() -> Result<Self, Error> {
         Err(Error(
-            "desktop adapter is only available on macOS and Windows".into(),
+            "desktop capture backend is disabled or unavailable; enable appkit/win32 or use the x11/wayland adapter".into(),
         ))
     }
     pub(crate) fn register(&mut self, _: &Arc<Window>) -> Result<(), Error> {

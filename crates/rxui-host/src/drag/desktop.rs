@@ -6,10 +6,10 @@
 //! capture, and supply cancellation that winit does not publicly expose.
 
 use super::*;
-use rxui_native_drag::{Adapter, CaptureState, Signal, Target};
+use draglet::{Adapter, CaptureState, Signal, Target};
 use std::{cell::RefCell, sync::Arc};
 
-pub use rxui_native_drag::Error;
+pub use draglet::Error;
 
 /// Thread-bound native host for registered AppKit or Win32 windows.
 /// Construction fails on other platforms. This feature is experimental: see the
