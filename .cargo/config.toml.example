@@ -1,5 +1,2 @@
-# Optional override for the experimental native drag service only.
-# Drawing and hosting are RXUI-owned workspace packages.
-# Copy to .cargo/local.toml and opt in with --config .cargo/local.toml.
-[patch."https://github.com/hxyulin/astrelis"]
-astrelis-native-drag = { path = "../astrelis/crates/astrelis-native-drag" }
+# Drawing, hosting and native drag are local workspace packages.
+# No sibling checkout or dependency source overrides are required.

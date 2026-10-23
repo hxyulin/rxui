@@ -1,7 +1,7 @@
 //! Native primary-drag orchestration. Platform hooks never dispatch RXUI callbacks.
 use super::*;
-use astrelis_native_drag::{Adapter, CaptureState, Signal, Target};
 use rxui_host::winit::event::{ElementState, MouseButton};
+use rxui_native_drag::{Adapter, CaptureState, Signal, Target};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -78,14 +78,14 @@ pub(super) trait Backend {
     fn target_at_pointer(&mut self) -> Target;
 }
 impl Backend for Adapter {
-    type Error = astrelis_native_drag::Error;
-    fn register(&mut self, w: &Arc<Window>) -> Result<(), astrelis_native_drag::Error> {
+    type Error = rxui_native_drag::Error;
+    fn register(&mut self, w: &Arc<Window>) -> Result<(), rxui_native_drag::Error> {
         self.register(w)
     }
-    fn unregister(&mut self, id: NativeWindowId) -> Result<(), astrelis_native_drag::Error> {
+    fn unregister(&mut self, id: NativeWindowId) -> Result<(), rxui_native_drag::Error> {
         self.unregister(id)
     }
-    fn begin_capture(&mut self, id: NativeWindowId) -> Result<(), astrelis_native_drag::Error> {
+    fn begin_capture(&mut self, id: NativeWindowId) -> Result<(), rxui_native_drag::Error> {
         self.begin_capture(id)
     }
     fn end_capture(&mut self, id: NativeWindowId) {

@@ -358,7 +358,7 @@ windows, decorations, unknown targets, rejected policy and blocked destination
 content permit neither transfer nor detach. A different owned window must have an
 eligible dock at the release position. Same-window docking keeps its normal rules.
 
-RXUI registers windows before native input and acquires the Astrelis adapter only
+RXUI registers windows before native input and acquires the native drag adapter only
 after normal primary-down listeners/defaults have armed a bound dock header.
 Native release targeting is sampled before platform defaults. RXUI then routes the
 normal source release through capture listeners and honors prevention/errors before
@@ -376,9 +376,9 @@ changes and suspension cancel. If a native release never receives its matching
 public source release within one second of observation, it cancels. The adapter
 and wake worker are released on completion, cancellation, host errors and shutdown.
 
-This uses the safe `astrelis-native-drag::Adapter` directly so the Application can
-own its lifecycle without a self-borrowing `CapturedDrag`. The OS bindings stay in
-Astrelis; RXUI adds no unsafe code. macOS and Windows adapters are experimental.
+This uses the safe `rxui_native_drag::Adapter` directly so the Application can
+own its lifecycle without a self-borrowing `CapturedDrag`. The OS bindings live in the separate `rxui-native-drag` workspace crate;
+RXUI's UI and host crates add no unsafe code. macOS and Windows adapters are experimental.
 Wayland/X11 orchestration is not included, and opting in on an unsupported platform
 reports an initialization error. Native registration errors are reported; failed
 press verification leaves ordinary placement-local input available without

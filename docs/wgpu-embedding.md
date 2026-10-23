@@ -92,5 +92,5 @@ application renderers without forcing them into RXUI's drawing helpers.
 available under `rxui::drawing`, and lifecycle helpers under `rxui::host`. Their
 frames, contexts and framebuffer types are optional conveniences, not prerequisites
 for embedding. The external Astrelis renderer and window runner are no longer
-dependencies; only the optional experimental native-drag service remains separately
-pinned to that repository.
+dependencies. The optional experimental native-drag service also lives in this
+workspace as `rxui-native-drag`; no Astrelis repository dependency remains.

@@ -230,19 +230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astrelis-native-drag"
-version = "0.4.0-dev.0"
-source = "git+https://github.com/hxyulin/astrelis?rev=4e360d5a3ad5dbe8bff11baf3eaa512a9241db21#4e360d5a3ad5dbe8bff11baf3eaa512a9241db21"
-dependencies = [
- "block2 0.6.2",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "windows-sys 0.61.2",
- "winit",
-]
-
-[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2475,7 +2462,6 @@ dependencies = [
  "accesskit_consumer",
  "accesskit_winit",
  "arboard",
- "astrelis-native-drag",
  "async-channel",
  "async-executor",
  "async-io",
@@ -2490,6 +2476,7 @@ dependencies = [
  "rfd",
  "rxui-draw",
  "rxui-host",
+ "rxui-native-drag",
  "taffy",
  "unicode-segmentation",
  "web-time",
@@ -2520,13 +2507,25 @@ dependencies = [
 name = "rxui-host"
 version = "0.2.0-dev.0"
 dependencies = [
- "astrelis-native-drag",
  "log",
  "pollster 1.0.1",
  "profiling",
  "rxui-draw",
+ "rxui-native-drag",
  "winit",
  "x11rb",
+]
+
+[[package]]
+name = "rxui-native-drag"
+version = "0.2.0-dev.0"
+dependencies = [
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "windows-sys 0.61.2",
+ "winit",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rxui", "crates/rxui-draw", "crates/rxui-host"]
+members = ["crates/rxui", "crates/rxui-draw", "crates/rxui-host", "crates/rxui-native-drag"]
 default-members = ["crates/rxui"]
 
 [workspace.package]
@@ -16,7 +16,7 @@ wgpu = { version = "30.0.1", default-features = false, features = ["std", "parki
 winit = "0.30.13"
 rxui-draw = { path = "crates/rxui-draw" }
 rxui-host = { path = "crates/rxui-host" }
-astrelis-native-drag = { git = "https://github.com/hxyulin/astrelis", rev = "4e360d5a3ad5dbe8bff11baf3eaa512a9241db21", version = "0.4.0-dev.0" }
+rxui-native-drag = { path = "crates/rxui-native-drag" }
 taffy = { version = "0.15.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 profiling = { version = "1.0.18", default-features = false }
 
