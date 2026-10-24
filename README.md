@@ -118,7 +118,7 @@ application pipelines and draw through the raw wgpu pass.
 
 See [the embedding contract](docs/wgpu-embedding.md) and the standalone example:
 
-```sh
+```shell
 cargo run -p rxui --example wgpu_app --no-default-features --features rendering
 ```
 
@@ -148,15 +148,15 @@ With `--no-default-features`, only the state runtime remains.
 
 Each example is one standalone file:
 
-```sh
-cargo run -p rxui --example gallery --features native           # every built-in component
-cargo run -p rxui --example counter_window --features native    # the program above, plus a background task
-cargo run -p rxui --example text_input_window --features native # controlled editing
-cargo run -p rxui --example text_area_window --features native  # multiline editing
-cargo run -p rxui --example docking_window --features native    # tabs, splits and drag-to-dock
+```shell
+cargo run -p rxui --example gallery --features native                 # every built-in component
+cargo run -p rxui --example counter_window --features native          # the program above, plus a background task
+cargo run -p rxui --example text_input_window --features native       # controlled editing
+cargo run -p rxui --example text_area_window --features native        # multiline editing
+cargo run -p rxui --example docking_window --features native          # tabs, splits and drag-to-dock
 cargo run -p rxui --example docking_surfaces_window --features native # regions, detach and reattach
-cargo run -p rxui --example command_palette --features native   # Primary+Shift+P opens a command palette
-cargo run -p rxui --example counter_state                       # the state runtime in a terminal
+cargo run -p rxui --example command_palette --features native         # Primary+Shift+P opens a command palette
+cargo run -p rxui --example counter_state                             # the state runtime in a terminal
 ```
 
 The full set is in [`crates/rxui/examples`](crates/rxui/examples).
@@ -186,15 +186,8 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 
 ## Acknowledgements
 
-RXUI's application API is modeled on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui),
-the framework behind the Zed editor. Designing for Rust's ownership rules led to
-the same shape GPUI had already settled on: state owned by the application,
-`Entity<T>` handles, context-based updates and `cx.listener` callbacks. RXUI
-then used GPUI as its reference for naming and API. The two diverge below that
-layer. RXUI tracks dependencies automatically instead of requiring explicit
-notification, reconciles a retained element tree by key, and renders through
-RXUI-owned drawing code on wgpu, recording into an application-owned encoder.
-The initial drawing algorithms were ported from [Astrelis](https://github.com/hxyulin/astrelis).
+RXUI's API is inspired by [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui),
+the framework behind the Zed editor.
 
 ## Contributing
 

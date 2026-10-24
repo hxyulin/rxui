@@ -42,7 +42,7 @@ then choose the adapter matching the event loop's actual display backend.
 
 From this repository:
 
-```sh
+```shell
 # macOS (use --features win32 on Windows)
 cargo run -p draglet --example native_drag --no-default-features --features appkit
 
@@ -66,7 +66,7 @@ still decides whether a target accepts its payload. The Wayland example reports
 
 To run without the RXUI workspace:
 
-```sh
+```shell
 cd crates/draglet
 cargo run --example wayland_drag --no-default-features --features wayland
 ```
@@ -95,7 +95,7 @@ in your UI. Draglet supplies native mechanics, not a widget or payload registry.
 
 Create an adapter and register your existing windows:
 
-```no_run
+```rust,no_run
 # fn setup(window: &std::sync::Arc<winit::window::Window>) -> Result<(), draglet::Error> {
 let mut adapter = draglet::Adapter::new()?;
 adapter.register(window)?;
@@ -210,7 +210,7 @@ promise:
 Run normal tests with `cargo test -p draglet --all-features`. To include the X11
 server tests, use a disposable display, never an active user's desktop:
 
-```sh
+```shell
 xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' sh -c \
   'DRAGLET_X11_TEST_DISPLAY="$DISPLAY" cargo test -p draglet --all-features -- --include-ignored --test-threads=1'
 ```
