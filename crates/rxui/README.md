@@ -35,3 +35,7 @@ The example needs the `native` feature. See the
 [repository README](https://github.com/hxyulin/rxui/blob/main/README.md) for features and screenshots, the
 [guide](https://github.com/hxyulin/rxui/blob/main/docs/guide.md), and the
 [examples](https://github.com/hxyulin/rxui/blob/main/crates/rxui/examples).
+
+The built-in icons are a subset of [Lucide](https://lucide.dev), licensed under
+ISC, with icons derived from Feather under MIT. The full notice is in
+[`src/icons/LICENSE-lucide.txt`](https://github.com/hxyulin/rxui/blob/main/crates/rxui/src/icons/LICENSE-lucide.txt).
