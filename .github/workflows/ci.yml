@@ -33,12 +33,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
+      - name: Install isolated X11 test server
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
+      - name: Draglet X11 protocol tests
+        run: >-
+          xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' sh -c
+          'DRAGLET_X11_TEST_DISPLAY="$DISPLAY" cargo test -p draglet --all-features --locked x11::tests -- --ignored --test-threads=1'
       - run: cargo test --workspace --no-default-features --locked
       - run: cargo doc --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: Verify standalone draglet package
+        run: cargo package -p draglet --locked
 
   platforms:
     name: All features (${{ matrix.os }})

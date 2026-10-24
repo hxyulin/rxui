@@ -1,10 +1,11 @@
 //! Opt-in X11 core-pointer host using a separate safe Rust protocol connection.
 //!
-//! Call [`X11Adapter::arm`] **before** the initiating press. It installs a passive
+//! Call [`X11Adapter::arm`](crate::x11::X11Adapter::arm) **before** the initiating press. It installs a passive
 //! primary-button grab: primary input then arrives on this host's connection,
-//! not winit's. Route [`X11Input`] into your UI, and pump the host while armed.
+//! not winit's. Route [`X11Input`](crate::x11::X11Input) into your UI, and pump the host while armed.
 //! Starting after an ordinary winit press cannot take over winit's implicit grab.
-//! Wayland and AppKit/Win32 windows are rejected. See `docs/native-drag-x11.md`.
+//! Wayland and AppKit/Win32 windows are rejected. See the crate documentation
+//! and the `x11_drag` example for a standalone integration.
 use crate::{Capabilities, Target};
 use std::{
     collections::{HashMap, VecDeque},

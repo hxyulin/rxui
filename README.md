@@ -18,6 +18,10 @@ Taffy, routes input, publishes accessibility trees through AccessKit, and paints
 with its own wgpu drawing implementation. You can supply your device, queue,
 encoder and target views, or use the optional desktop host.
 
+The independently versioned [draglet](crates/draglet/README.md) crate supplies
+native drag mechanics for any winit application, with standalone AppKit/Win32,
+X11 and Wayland demos. It has no RXUI or renderer dependency.
+
 ```rust
 use rxui::prelude::*;
 

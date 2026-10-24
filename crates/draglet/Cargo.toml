@@ -9,7 +9,7 @@ repository = "https://github.com/hxyulin/rxui"
 readme = "README.md"
 keywords = ["drag", "winit", "wayland", "x11", "desktop"]
 categories = ["gui"]
-include = ["src/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "Cargo.toml"]
+include = ["src/**", "examples/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "Cargo.toml"]
 
 [features]
 default = ["appkit", "win32", "x11", "wayland"]
@@ -52,3 +52,7 @@ softbuffer = "0.4.8"
 [[example]]
 name = "wayland_drag"
 required-features = ["wayland"]
+
+[[example]]
+name = "x11_drag"
+required-features = ["x11"]

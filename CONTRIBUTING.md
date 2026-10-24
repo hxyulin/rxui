@@ -36,7 +36,7 @@ and run `cargo fmt`. On push, they run clippy with warnings denied.
 accepts application-owned wgpu handles; see [embedding](docs/wgpu-embedding.md).
 Drawing algorithms were ported from Astrelis; provenance is recorded in
 `crates/rxui-draw/PORTING.md`. Changes here do not require a sibling checkout.
-The optional experimental native drag service is the local `draglet`
+The optional native drag service is the independently versioned local `draglet`
 workspace package. It depends on winit and platform bindings, without a renderer
 or RXUI dependency. It has its own `0.1.0` version and `appkit`, `win32`, `x11`,
 and `wayland` backend features. No Astrelis checkout or Git dependency is required.

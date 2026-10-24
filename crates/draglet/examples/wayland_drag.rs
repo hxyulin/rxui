@@ -1,38 +1,19 @@
 //! Two ordinary winit/softbuffer windows with compositor-routed drag events.
 //! Run on a Wayland session: cargo run -p draglet --example wayland_drag --features wayland
 #[cfg(all(unix, not(target_os = "macos")))]
+#[path = "support/mod.rs"]
+mod support;
+#[cfg(all(unix, not(target_os = "macos")))]
 mod demo {
+    use super::support::Canvas;
     use draglet::{CaptureState, wayland::WaylandAdapter};
-    use std::{
-        num::NonZeroU32,
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
     use winit::{
         application::ApplicationHandler,
         event::{ElementState, MouseButton, WindowEvent},
         event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-        window::{Window, WindowId},
+        window::WindowId,
     };
-    struct Canvas {
-        window: Arc<Window>,
-        surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
-        _context: softbuffer::Context<Arc<Window>>,
-        color: u32,
-    }
-    impl Canvas {
-        fn draw(&mut self) {
-            let size = self.window.inner_size();
-            if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
-            {
-                self.surface.resize(w, h).unwrap();
-                let mut buffer = self.surface.buffer_mut().unwrap();
-                buffer.fill(self.color);
-                self.window.pre_present_notify();
-                buffer.present().unwrap();
-            }
-        }
-    }
     #[derive(Default)]
     struct App {
         adapter: Option<WaylandAdapter>,
@@ -45,32 +26,22 @@ mod demo {
             }
             let mut adapter = WaylandAdapter::new(event_loop.owned_display_handle()).unwrap();
             for (title, color) in [("draglet blue", 0x003355bb), ("draglet green", 0x00339955)] {
-                let window = Arc::new(
-                    event_loop
-                        .create_window(
-                            Window::default_attributes()
-                                .with_title(title)
-                                .with_inner_size(winit::dpi::LogicalSize::new(300., 240.)),
-                        )
-                        .unwrap(),
-                );
-                let context = softbuffer::Context::new(window.clone()).unwrap();
-                let surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
-                adapter.register(&window).unwrap();
-                eprintln!("REGISTER {:?}", window.id());
-                window.request_redraw();
-                self.windows.push(Canvas {
-                    window,
-                    surface,
-                    _context: context,
-                    color,
-                });
+                let canvas = Canvas::new(event_loop, title, color);
+                adapter.register(&canvas.window).unwrap();
+                eprintln!("REGISTER {:?}", canvas.window.id());
+                self.windows.push(canvas);
             }
             self.adapter = Some(adapter);
         }
         fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
             match event {
-                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::CloseRequested => {
+                    let adapter = self.adapter.as_mut().unwrap();
+                    for canvas in &self.windows {
+                        adapter.unregister(canvas.window.id());
+                    }
+                    event_loop.exit();
+                }
                 WindowEvent::RedrawRequested | WindowEvent::Resized(_) => {
                     if let Some(c) = self.windows.iter_mut().find(|c| c.window.id() == id) {
                         c.draw();
@@ -107,6 +78,9 @@ mod demo {
         }
     }
     pub fn run() {
+        eprintln!(
+            "Arrange the two windows side by side, then drag between their colored areas. Events appear here. Close either window to exit."
+        );
         use winit::platform::wayland::EventLoopBuilderExtWayland;
         let event_loop = EventLoop::builder().with_wayland().build().unwrap();
         event_loop.run_app(&mut App::default()).unwrap();

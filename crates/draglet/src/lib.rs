@@ -1,14 +1,5 @@
-//! Thread-bound native mouse capture and cross-window targeting for winit.
-//!
-//! This crate has no RXUI, graphics, GPU or event-loop ownership dependency.
-//! Features select macOS/Windows native observation, X11 protocol capture, and
-//! compositor-driven Wayland drag routing. [`Adapter`] is the macOS/Windows
-//! convenience API; Linux users select the `x11` or `wayland` adapter explicitly.
-//!
-//! Only the audited OS modules allow unsafe code. The rendering and winit
-//! integration crates retain their workspace-wide unsafe-code prohibition.
-//! Native callbacks only latch state/signals, never invoke application UI code.
-//! AppKit/Win32 release targeting is sampled before normal platform/winit release.
+#![doc = include_str!("../README.md")]
+
 use std::{error::Error as StdError, fmt, marker::PhantomData, rc::Rc, sync::Arc};
 use winit::window::{Window, WindowId};
 
