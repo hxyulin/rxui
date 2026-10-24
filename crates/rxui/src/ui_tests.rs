@@ -1028,12 +1028,12 @@ fn views_reading_the_theme_reevaluate_when_their_placement_theme_changes() {
             .unwrap()
             .to_owned()
     };
-    assert_eq!(size(&ui), "14");
+    assert_eq!(size(&ui), "13");
     assert_eq!((read.get(), ignored.get()), (1, 1));
     ui.set_theme(Theme::dark().compact()).unwrap();
     ui.prepare(&mut runtime, [400., 300.], &mut measure)
         .unwrap();
-    assert_eq!(size(&ui), "13");
+    assert_eq!(size(&ui), "12");
     assert_eq!((read.get(), ignored.get()), (2, 1));
     // A palette-only switch leaves the font size alone but still changes the theme.
     ui.set_theme(Theme::light().compact()).unwrap();
@@ -1269,4 +1269,58 @@ fn window_deadlines_include_nested_mounts_and_route_only_due_placements() {
     drop(b);
     assert_eq!(r.next_wakeup(), None);
     assert!(!r.begin_frame(Duration::from_millis(100)));
+}
+#[test]
+fn padded_text_wraps_to_its_content_width_not_its_border_box() {
+    #[derive(Default)]
+    struct Recording {
+        inner: Measure,
+        widths: Vec<f32>,
+    }
+    impl TextMeasure for Recording {
+        fn measure(&mut self, id: ElementId, text: TextRequest<'_>) -> Result<[f32; 2], UiError> {
+            if let TextWidth::Available(width) = text.width {
+                self.widths.push(width);
+            }
+            self.inner.measure(id, text)
+        }
+        fn generation(&self) -> u64 {
+            self.inner.generation()
+        }
+    }
+    struct Notes;
+    impl View for Notes {
+        fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+            column().child(
+                text_area("word ".repeat(40))
+                    .key("notes")
+                    .width(140.)
+                    .padding(11.)
+                    .font_size(10.),
+            )
+        }
+    }
+    let mut runtime = Runtime::new();
+    let root = runtime.update(|cx| cx.new(|_| Notes));
+    let mut ui = Ui::new(&mut runtime, root).unwrap();
+    let mut measure = Recording::default();
+    ui.prepare(&mut runtime, [400., 300.], &mut measure)
+        .unwrap();
+    let notes = ui
+        .elements()
+        .find(|e| e.key == Some(&"notes".into()))
+        .unwrap();
+    let content = notes.content_bounds;
+    assert!(content.width < notes.bounds.width);
+    assert!(
+        measure.widths.iter().all(|width| *width <= content.width),
+        "measured at {:?} for a {} content box",
+        measure.widths,
+        content.width
+    );
+    // 200 characters at 5 units each wrap into nine lines of the content width,
+    // above the area's minimum height; the border-box width would give eight.
+    let lines = (200. * 5. / content.width).ceil();
+    assert_eq!(lines, 9.);
+    assert_eq!(content.height, lines * 10.);
 }

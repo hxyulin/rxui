@@ -2,6 +2,7 @@
 //! Arrow keys navigate; Right/Left expand/collapse; Shift extends selection;
 //! Command/Control-click toggles selection. All rows keep focus on the tree root.
 use rxui::prelude::*;
+/// The balanced theme's list row height, so slots match `list_row` rows.
 const HEIGHT: f32 = 24.;
 struct Tree {
     scroll: ScrollHandle,
@@ -34,18 +35,9 @@ impl View for Tree {
                     cx,
                     change,
                     |_, node, _| {
-                        // Render passive content; the tree supplies indentation/disclosure.
-                        label(format!(
-                            "{}{}",
-                            if self.state.selected().contains(&node.key) {
-                                "✓ "
-                            } else {
-                                ""
-                            },
-                            node.label
-                        ))
-                        .font_size(12.5)
-                        .text_overflow(rxui::TextOverflow::Ellipsis)
+                        // Render passive content; the tree supplies indentation,
+                        // disclosure and the theme's row selection.
+                        label(node.label.clone()).text_overflow(rxui::TextOverflow::Ellipsis)
                     },
                 )
                 .accessibility_label("Files")

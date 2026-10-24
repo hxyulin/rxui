@@ -101,6 +101,23 @@ pub enum TextOverflow {
     /// breaks end the visible line. Inputs and selectable labels keep their editing behavior.
     Ellipsis,
 }
+/// Step of the theme's type scale; see [`crate::ThemeMetrics`]. Set it with
+/// [`crate::Element::text_role`], which resolves the size and weight in the
+/// element's theme and follows theme switches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextRole {
+    /// Small secondary text, such as hints and status bar items.
+    Caption,
+    /// Ordinary text at the theme's font size, the default.
+    #[default]
+    Body,
+    /// Smallest heading, such as a group or panel header.
+    Subheading,
+    /// Section heading.
+    Heading,
+    /// Page or dialog title.
+    Title,
+}
 /// Resolved text attributes of one element, besides its size and color.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
@@ -138,11 +155,15 @@ pub(crate) struct Overrides {
     pub line_height: Option<f32>,
     pub align: Option<TextAlign>,
     pub overflow: Option<TextOverflow>,
+    /// Own type-scale role. It never inherits: descendants inherit the size and
+    /// weight it resolves to instead.
+    pub role: Option<TextRole>,
 }
 impl Overrides {
-    /// This element's overrides layered over inherited ones.
+    /// This element's overrides layered over inherited ones, without its role.
     pub fn over(&self, inherited: &Self) -> Self {
         Self {
+            role: None,
             family: self.family.clone().or_else(|| inherited.family.clone()),
             weight: self.weight.or(inherited.weight),
             style: self.style.or(inherited.style),

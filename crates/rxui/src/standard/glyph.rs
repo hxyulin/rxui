@@ -75,5 +75,9 @@ impl CustomElement for Glyph {
 
 /// A decorative glyph leaf, hidden from assistive technology.
 pub(crate) fn glyph(kind: Glyph, size: f32) -> Element {
-    custom(kind).size(size, size).accessibility_hidden(true)
+    mark_glyph(kind).size(size, size)
+}
+/// A decorative glyph leaf without a size, for a theme-sized part to size.
+pub(crate) fn mark_glyph(kind: Glyph) -> Element {
+    custom(kind).accessibility_hidden(true)
 }

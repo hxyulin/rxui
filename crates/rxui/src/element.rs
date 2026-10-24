@@ -54,13 +54,31 @@ integer_keys!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, i128);
 /// Default control appearance; explicit paint builders/state patches override it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ButtonVariant {
-    /// Bordered control with neutral state fills.
+    /// Bordered control with neutral state fills, medium-weight text and the
+    /// theme's [`crate::Elevation::Control`] shadow.
     #[default]
     Default,
-    /// Accent fill for the primary action.
+    /// Accent fill without a visible border, for the primary action.
     Primary,
-    /// Text/content without a resting fill/border; hover/pressed still show feedback.
+    /// Muted text without a resting fill or border. Hover and press brighten the
+    /// text and show a row-like fill.
     Quiet,
+    /// Destructive action: danger-colored text and border on no fill, with a
+    /// tinted fill while hovered or pressed.
+    Danger,
+}
+/// Theme-resolved default paint of a non-control element; see
+/// [`Element::raised`] and [`Element::list_row`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Surface {
+    #[default]
+    Plain,
+    Raised(crate::Elevation),
+    Row {
+        selected: bool,
+    },
+    /// A standard control part sized and rounded from the theme's metrics.
+    Part(crate::standard::Part),
 }
 /// Pointer participation of an element and its subtree. Keyboard/semantic focus is separate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -79,7 +97,8 @@ pub struct ClickEvent;
 
 /// Linear RGBA color used by element painting.
 pub type Color = [f32; 4];
-/// Axes with retained scroll offsets; overflow is clipped to the container content box.
+/// Axes with retained scroll offsets. Like a CSS scroll container, overflow is clipped
+/// to the padding box and the end padding is part of the scrollable extent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollAxes {
     /// Vertical scrolling only.
@@ -145,6 +164,7 @@ pub struct Element {
     pub(crate) text_style: Option<Box<crate::typography::Overrides>>,
     pub(crate) layout_overrides: u8,
     pub(crate) button_variant: ButtonVariant,
+    pub(crate) surface: Surface,
     pub(crate) z_index: i32,
     pub(crate) pointer_events: PointerEvents,
     pub(crate) inert: bool,
@@ -202,6 +222,7 @@ impl Element {
             text_style: None,
             layout_overrides: 0,
             button_variant: ButtonVariant::Default,
+            surface: Surface::Plain,
             z_index: 0,
             pointer_events: PointerEvents::Auto,
             inert: false,
@@ -758,6 +779,20 @@ impl Element {
         self.font_size = Some(value);
         self
     }
+    /// Inherited size and weight of a step on the theme's type scale, resolved in
+    /// this element's theme and again on theme switches. An explicit
+    /// [`Self::font_size`] or [`Self::font_weight`] on the same element wins.
+    ///
+    /// ```
+    /// use rxui::prelude::*;
+    /// let header = column()
+    ///     .child(label("Settings").text_role(TextRole::Title))
+    ///     .child(label("Changes apply immediately").text_role(TextRole::Caption));
+    /// ```
+    pub fn text_role(mut self, role: crate::TextRole) -> Self {
+        self.text_overrides().role = Some(role);
+        self
+    }
     /// Inherited preferred font family. Load named families through the painter's fonts.
     pub fn font_family(mut self, family: impl Into<crate::FontFamily>) -> Self {
         self.text_overrides().family = Some(family.into());
@@ -872,9 +907,16 @@ impl Element {
             .corner_radii(top_left, top_right, bottom_right, bottom_left);
         self
     }
-    /// Blurred box shadow behind the background, following the corner radii.
-    pub fn shadow(mut self, shadow: crate::BoxShadow) -> Self {
+    /// Blurred box shadow behind the background, following the corner radii. Accepts
+    /// a literal [`crate::BoxShadow`] or a theme [`crate::Elevation`].
+    pub fn shadow(mut self, shadow: impl Into<crate::StyleShadow>) -> Self {
         self.paint = self.paint.shadow(shadow);
+        self
+    }
+    /// The nearest theme's shadow for `level`, re-resolved on theme switches. Flat
+    /// levels, such as every level of the high-contrast preset, paint no shadow.
+    pub fn elevation(mut self, level: crate::Elevation) -> Self {
+        self.paint = self.paint.elevation(level);
         self
     }
     /// Paint-only hovered-control patch, applied after ordinary explicit overrides.
@@ -924,7 +966,8 @@ impl Element {
         self.scroll_behavior = behavior;
         self
     }
-    /// Retained vertical scrolling. Give the container a bounded height.
+    /// Retained vertical scrolling. Give the container a bounded height. Content
+    /// scrolls under the padding, which stays reachable at both ends.
     pub fn scroll_y(self) -> Self {
         self.scrolling(ScrollAxes::Vertical)
     }
@@ -983,6 +1026,61 @@ impl Element {
             "variant requires a button"
         );
         self.button_variant = variant;
+        self
+    }
+    /// Paints a floating surface at `level`: the theme's raised fill, a 1-unit
+    /// divider-colored border, the large corner radius and the level's shadow, all
+    /// resolved in the nearest theme and again on theme switches. Explicit paint
+    /// builders override each part. Popovers, menus and dialogs use it.
+    ///
+    /// ```
+    /// use rxui::prelude::*;
+    /// let card = column().padding(12.).raised(Elevation::Popover).child(label("Details"));
+    /// ```
+    pub fn raised(mut self, level: crate::Elevation) -> Self {
+        if self.layout_overrides & 8 == 0 {
+            self = self.layout(|s| {
+                s.border = taffy::geometry::Rect {
+                    left: length(1.),
+                    right: length(1.),
+                    top: length(1.),
+                    bottom: length(1.),
+                }
+            });
+        }
+        self.surface = Surface::Raised(level);
+        self
+    }
+    /// Paints this element as a list, tree or menu row: no box at rest,
+    /// [`crate::ThemeColor::RowHover`] while hovered, pressed or showing keyboard
+    /// focus, and when `selected`, [`crate::ThemeColor::RowSelected`] while focus is
+    /// within the row's list, otherwise [`crate::ThemeColor::RowSelectedInactive`].
+    /// The list is the nearest focusable ancestor, or else the nearest scrolling
+    /// one. Text keeps its color, the focus ring is drawn inside the row, and a
+    /// button row drops its variant's fill and border. Hover needs a pointer
+    /// target, such as a button or an element with a pointer listener.
+    ///
+    /// Without an explicit height or minimum height, the row is at least
+    /// [`crate::ThemeMetrics::row_height`] tall; without explicit padding it has
+    /// `row_padding_x` on each side and none vertically.
+    ///
+    /// ```
+    /// use rxui::prelude::*;
+    /// struct Files { names: Vec<String>, selected: usize }
+    /// impl View for Files {
+    ///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+    ///         let mut list = column();
+    ///         for (index, name) in self.names.iter().enumerate() {
+    ///             list = list.child(button(name.clone()).key(index)
+    ///                 .list_row(index == self.selected)
+    ///                 .on_click(cx.listener(move |this, _, _| this.selected = index)));
+    ///         }
+    ///         list
+    ///     }
+    /// }
+    /// ```
+    pub fn list_row(mut self, selected: bool) -> Self {
+        self.surface = Surface::Row { selected };
         self
     }
     /// Image aspect mapping into its content box.
@@ -1494,6 +1592,7 @@ pub fn button(content: impl IntoElement) -> Element {
         && content.semantics.is_none()
         && content.theme.is_none()
         && content.states.is_none()
+        && content.surface == Surface::Plain
         && content.children.is_empty()
         && !content.clip
         && content.scroll.is_none()

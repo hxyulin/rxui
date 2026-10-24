@@ -6,7 +6,8 @@ use std::any::TypeId;
 /// Leaf measurement input in logical units, excluding padding and border.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CustomMeasure {
-    /// Width and height already fixed by styles or the parent, if any.
+    /// Content-box width and height already fixed by styles or the parent, if
+    /// any. Padding and border are already subtracted.
     pub known: [Option<f32>; 2],
     /// Space the parent offers along each axis.
     pub available: [taffy::AvailableSpace; 2],

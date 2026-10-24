@@ -168,18 +168,23 @@ pub fn tooltip<T>(
     wrapper = wrapper.child(target);
     if visible {
         let dismiss = state.clone();
-        let mut overlay = popover(anchor, label(text).color(ThemeColor::Text).font_size(12.))
-            .key("tooltip")
-            .padding(6.)
-            .autofocus(false)
-            .on_dismiss(callback(move |_: &DismissEvent, cx| {
-                update(&dismiss, cx, |s| {
-                    !std::mem::replace(&mut s.suppressed, true)
-                })
-            }))
-            .into_element()
-            .pointer_events(PointerEvents::None)
-            .accessibility_hidden(true);
+        let mut overlay = popover(
+            anchor,
+            label(text)
+                .color(ThemeColor::Text)
+                .text_role(crate::TextRole::Caption),
+        )
+        .key("tooltip")
+        .padding(6.)
+        .autofocus(false)
+        .on_dismiss(callback(move |_: &DismissEvent, cx| {
+            update(&dismiss, cx, |s| {
+                !std::mem::replace(&mut s.suppressed, true)
+            })
+        }))
+        .into_element()
+        .pointer_events(PointerEvents::None)
+        .accessibility_hidden(true);
         if let Some(surface) = overlay.children.first_mut() {
             surface.input.get_or_insert_with(Default::default).focusable = Some(false);
         }

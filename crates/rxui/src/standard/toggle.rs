@@ -1,9 +1,8 @@
 //! Controlled check boxes and switches.
-use super::glyph::{Glyph, glyph};
-use super::{ToggleEvent, caption, indicator_colors, root_builders};
+use super::glyph::{Glyph, mark_glyph};
+use super::{Part, ToggleEvent, caption, indicator_colors, part, quiet_root, root_builders};
 use crate::{
-    ButtonVariant, Checked, ClickEvent, Element, IntoElement, Listener, SemanticRole, button, row,
-    stack,
+    Checked, ClickEvent, Element, IntoElement, Listener, SemanticRole, button, row, stack,
 };
 use taffy::prelude::{AlignItems, JustifyContent};
 
@@ -52,7 +51,7 @@ pub fn switch(on: bool, label: impl Into<String>) -> Toggle {
 impl Toggle {
     fn new(kind: Kind, checked: Checked, label: String) -> Self {
         Self {
-            root: button(row()).variant(ButtonVariant::Quiet).padding_x(4.),
+            root: quiet_root(button(row())).padding_x(4.),
             kind,
             checked,
             label,
@@ -80,9 +79,7 @@ impl IntoElement for Toggle {
         let [fill, border, mark] = indicator_colors(on, self.disabled);
         let indicator = match self.kind {
             Kind::CheckBox => {
-                let mut indicator = stack()
-                    .size(16., 16.)
-                    .radius(3.)
+                let mut indicator = part(stack(), Part::CheckBox)
                     .background(fill)
                     .border(1., border)
                     .align_items(AlignItems::CENTER)
@@ -93,14 +90,12 @@ impl IntoElement for Toggle {
                     } else {
                         Glyph::Check
                     };
-                    indicator = indicator.child(glyph(kind, 14.).color(mark));
+                    indicator =
+                        indicator.child(part(mark_glyph(kind), Part::Mark).key("mark").color(mark));
                 }
                 indicator
             }
-            Kind::Switch => row()
-                .size(34., 20.)
-                .radius(10.)
-                .padding(3.)
+            Kind::Switch => part(row(), Part::Switch)
                 .background(fill)
                 .border(1., border)
                 .align_items(AlignItems::CENTER)
@@ -109,7 +104,7 @@ impl IntoElement for Toggle {
                 } else {
                     JustifyContent::START
                 })
-                .child(row().size(12., 12.).radius(6.).background(mark)),
+                .child(part(row(), Part::Knob).key("knob").background(mark)),
         };
         let mut content = row()
             .gap(8.)

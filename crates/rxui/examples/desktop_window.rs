@@ -176,7 +176,7 @@ impl View for Desktop {
                 modal(
                     column()
                         .gap(12.)
-                        .child(label("Restore the workspace layout?").font_size(22.))
+                        .child(label("Restore the workspace layout?").text_role(TextRole::Heading))
                         .child(label("Document edits remain in application state."))
                         .child(row().gap(8.).child(confirm.button()).child(cancel.button())),
                 )

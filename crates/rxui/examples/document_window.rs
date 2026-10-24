@@ -232,7 +232,7 @@ impl View for Document {
             .on_command(open.clone())
             .on_command(save.clone())
             .on_command(save_as.clone())
-            .child(label("Native document workflow").font_size(28.))
+            .child(label("Native document workflow").text_role(TextRole::Title))
             .child(label(
                 "Single-line text documents. Open and Save use native dialogs.",
             ))

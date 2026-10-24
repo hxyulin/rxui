@@ -49,7 +49,7 @@ impl View for Document {
             } else {
                 FocusScope::Group
             })
-            .child(label(format!("Document {}", self.id)).font_size(24.))
+            .child(label(format!("Document {}", self.id)).text_role(TextRole::Title))
             .child(name)
             .child(note)
             .child(cycle)

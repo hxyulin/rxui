@@ -44,7 +44,7 @@ impl View for Editor {
             .padding(24.)
             .gap(16.)
             .on_command(save.clone())
-            .child(label("Native menus and scoped commands").font_size(26.))
+            .child(label("Native menus and scoped commands").text_role(TextRole::Title))
             .child(label(
                 "Use File → New Window to test independent documents and focused-window routing.",
             ))

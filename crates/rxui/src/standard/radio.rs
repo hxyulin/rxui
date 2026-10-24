@@ -1,8 +1,11 @@
 //! Controlled radio groups with roving focus and arrow-key selection.
-use super::{Choice, ChoiceEvent, callback, caption, indicator_colors, propose, root_builders};
+use super::{
+    Choice, ChoiceEvent, Part, callback, caption, indicator_colors, part, propose, quiet_root,
+    root_builders,
+};
 use crate::{
-    Axis, ButtonVariant, ClickEvent, Dispatch, Element, FocusHandle, IntoElement, Key, KeyInput,
-    KeyboardKey, Listener, Modifiers, SemanticRole, ThemeColor, button, column, row, stack,
+    Axis, ClickEvent, Dispatch, Element, FocusHandle, IntoElement, Key, KeyInput, KeyboardKey,
+    Listener, Modifiers, SemanticRole, button, column, row, stack,
 };
 use std::rc::Rc;
 use taffy::prelude::AlignItems;
@@ -123,20 +126,14 @@ impl IntoElement for RadioGroup {
         for (index, option) in self.options.into_iter().enumerate() {
             let checked = selected == Some(index);
             let disabled = !enabled[index];
-            let [_, border, _] = indicator_colors(checked, disabled);
-            let mut circle = stack()
-                .size(16., 16.)
-                .radius(8.)
-                .background(if disabled {
-                    ThemeColor::ControlDisabled
-                } else {
-                    ThemeColor::Input
-                })
-                .border(if checked { 2. } else { 1. }, border)
+            let [fill, border, mark] = indicator_colors(checked, disabled);
+            let mut circle = part(stack(), Part::Radio)
+                .background(fill)
+                .border(1., border)
                 .align_items(AlignItems::CENTER)
                 .justify_items(AlignItems::CENTER);
             if checked {
-                circle = circle.child(row().size(6., 6.).radius(3.).background(border));
+                circle = circle.child(part(row(), Part::RadioDot).key("dot").background(mark));
             }
             let mut content = row()
                 .gap(8.)
@@ -145,9 +142,8 @@ impl IntoElement for RadioGroup {
             if let Some(text) = caption(&option.label) {
                 content = content.child(text.key("caption"));
             }
-            let mut radio = button(content)
+            let mut radio = quiet_root(button(content))
                 .key(option.key.clone())
-                .variant(ButtonVariant::Quiet)
                 .padding_x(4.)
                 .disabled(disabled)
                 .tab_stop(stop == Some(index))

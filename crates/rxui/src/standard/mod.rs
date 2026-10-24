@@ -110,6 +110,8 @@ pub(crate) fn propose<E: 'static>(
 }
 
 /// Indicator fill, border and mark colors for a resting or checked control.
+/// Unchecked outlines use TextMuted: input borders are soft and stay below the
+/// 3:1 non-text contrast an indicator's boundary needs.
 pub(crate) fn indicator_colors(on: bool, disabled: bool) -> [ThemeColor; 3] {
     match (on, disabled) {
         (true, false) => [
@@ -119,7 +121,7 @@ pub(crate) fn indicator_colors(on: bool, disabled: bool) -> [ThemeColor; 3] {
         ],
         (false, false) => [
             ThemeColor::Input,
-            ThemeColor::InputBorder,
+            ThemeColor::TextMuted,
             ThemeColor::TextMuted,
         ],
         (true, true) => [
@@ -133,6 +135,114 @@ pub(crate) fn indicator_colors(on: bool, disabled: bool) -> [ThemeColor; 3] {
             ThemeColor::TextDisabled,
         ],
     }
+}
+
+/// A part of a standard control sized from [`crate::ThemeMetrics`] while its
+/// theme resolves, so density switches resize it the way they resize buttons.
+/// Check boxes and radios follow `indicator_size`; switches, slider thumbs and
+/// rails and progress bars follow the switch metrics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Part {
+    /// Check box square.
+    CheckBox,
+    /// Tick or dash filling a check box's content box.
+    Mark,
+    /// Radio circle.
+    Radio,
+    /// Dot of a selected radio.
+    RadioDot,
+    /// Switch track.
+    Switch,
+    /// Switch knob inside the track's padding.
+    Knob,
+    /// Slider content, as tall as the thumb.
+    SliderBody,
+    /// Slider rail, centered on the thumb.
+    Rail,
+    /// Slider thumb, centered on its inset.
+    Thumb,
+    /// Progress bar track.
+    Progress,
+}
+impl Part {
+    /// Switch knob side: five eighths of the track height.
+    fn knob(m: &crate::ThemeMetrics) -> f32 {
+        (m.switch_height * 5. / 8.).round()
+    }
+    /// Slider rail thickness: three eighths of the thumb.
+    fn rail(m: &crate::ThemeMetrics) -> f32 {
+        (m.switch_height * 3. / 8.).round()
+    }
+    /// Progress bar thickness: half the switch height.
+    fn progress(m: &crate::ThemeMetrics) -> f32 {
+        (m.switch_height / 2.).floor()
+    }
+    /// Uniform corner radius; rounded parts are fully round.
+    pub(crate) fn radius(self, m: &crate::ThemeMetrics) -> f32 {
+        let s = m.indicator_size;
+        match self {
+            Self::CheckBox => s * 3. / 14.,
+            Self::Mark | Self::SliderBody => 0.,
+            Self::Radio => s / 2.,
+            Self::RadioDot => s * 3. / 14.,
+            Self::Switch | Self::Thumb => m.switch_height / 2.,
+            Self::Knob => Self::knob(m) / 2.,
+            Self::Rail => Self::rail(m) / 2.,
+            Self::Progress => Self::progress(m) / 2.,
+        }
+    }
+    /// Writes the part's sizes into its layout, keeping a width, height or
+    /// padding the element sets explicitly (`overrides` bits 2, 4 and 1).
+    pub(crate) fn layout(self, m: &crate::ThemeMetrics, style: &mut taffy::Style, overrides: u8) {
+        use taffy::prelude::{auto, length};
+        let (s, h) = (m.indicator_size, m.switch_height);
+        let mark = (s - 2.).max(0.);
+        let [width, height] = match self {
+            Self::CheckBox | Self::Radio => [Some(s); 2],
+            Self::Mark => [Some(mark); 2],
+            Self::RadioDot => [Some(s * 3. / 7.); 2],
+            Self::Switch => [Some(m.switch_width), Some(h)],
+            Self::Knob => [Some(Self::knob(m)); 2],
+            Self::Thumb => [Some(h); 2],
+            Self::SliderBody => [None, Some(h)],
+            Self::Rail => [None, Some(Self::rail(m))],
+            Self::Progress => [None, Some(Self::progress(m))],
+        };
+        if let Some(width) = width
+            && overrides & 2 == 0
+        {
+            style.size.width = length(width);
+        }
+        if let Some(height) = height
+            && overrides & 4 == 0
+        {
+            style.size.height = length(height);
+        }
+        match self {
+            // The knob sits inside the one-unit border and an even padding.
+            Self::Switch if overrides & 1 == 0 => {
+                let pad = length(((h - 2. - Self::knob(m)) / 2.).max(0.));
+                style.padding = taffy::Rect {
+                    left: pad,
+                    right: pad,
+                    top: pad,
+                    bottom: pad,
+                };
+            }
+            Self::Rail => {
+                style.inset.top = length((h - Self::rail(m)) / 2.);
+                style.inset.bottom = auto();
+            }
+            Self::Thumb => style.margin.left = length(-h / 2.),
+            _ => {}
+        }
+    }
+}
+
+/// Marks `element` as a theme-sized [`Part`].
+pub(crate) fn part(mut element: Element, part: Part) -> Element {
+    element.surface = crate::element::Surface::Part(part);
+    element
 }
 
 /// Forwards identity, sizing and naming builders to a control's root element.
@@ -191,6 +301,15 @@ macro_rules! root_builders {
     };
 }
 pub(crate) use root_builders;
+
+/// A quiet button whose caption keeps the ordinary text color, for controls
+/// whose indicator rather than their caption shows the state.
+pub(crate) fn quiet_root(button: Element) -> Element {
+    button
+        .variant(crate::ButtonVariant::Quiet)
+        .color(ThemeColor::Text)
+        .disabled_style(crate::PaintStyle::new().color(ThemeColor::TextDisabled))
+}
 
 /// Placement-local state slot shared by the stateful builders.
 #[track_caller]

@@ -109,7 +109,10 @@ the window is not provided.
 ## Scroll references and visible controls
 
 Existing `.scroll_y()`, `.scroll_x()` and `.scroll()` builders continue to provide
-retained scrolling without a visible bar. Attach `.scroll_handle(handle.clone())`
+retained scrolling without a visible bar. As in CSS, a scroll container's padding
+belongs to the scrollable area: content clips at the padding box and scrolls under
+the padding, the end padding is reachable, and focus reveal keeps the padding
+between a revealed child and the edge. Attach `.scroll_handle(handle.clone())`
 to a scroll-enabled viewport for commands/metrics, or use a stock scroll area:
 
 ```rust
@@ -150,8 +153,8 @@ button("Top").on_click(cx.listener(|this, _, cx| {
 }))
 ```
 
-`state(cx)` returns `Option<ScrollState>` with logical offsets, ranges, viewport
-size and bounds. It is absent before the first layout or after removal. Reading
+`state(cx)` returns `Option<ScrollState>` with logical offsets, ranges, and the
+size and bounds of the scrollport (the viewport's padding box). It is absent before the first layout or after removal. Reading
 it in a `ViewContext` subscribes that mount to metrics; normal successful evaluation
 replaces the read set, so stopping the read unsubscribes it. Listener/update reads
 are snapshots and do not subscribe. First layout and queued commands can require

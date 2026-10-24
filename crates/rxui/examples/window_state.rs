@@ -57,7 +57,7 @@ impl View for Workspace {
             .fill_height()
             .padding(24.)
             .gap(14.)
-            .child(label("Window placement and file drops").font_size(26.))
+            .child(label("Window placement and file drops").text_role(TextRole::Title))
             .child(label(placement))
             .child(label(format!(
                 "Placement is saved on exit to {}",

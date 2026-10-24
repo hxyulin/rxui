@@ -3,6 +3,9 @@
 //! These types are portable data: the native host detects them, while headless
 //! hosts and tests construct them directly. [`ThemeSet::resolve`] turns a mode and
 //! a preference snapshot into the theme a following window uses.
+use crate::theme_seed::{
+    AccentFill, HOVER_STEP, PRESSED_STEP, away_from, from_oklch, oklch, reach,
+};
 use crate::{Color, Theme};
 
 /// Light or dark system appearance.
@@ -104,8 +107,16 @@ impl ThemeSet {
     /// Light and Dark always pick their theme unchanged. System picks by the
     /// reported scheme (dark when unknown), switches to the high-contrast theme when
     /// the user asks for more contrast, and otherwise applies the system accent
-    /// when [`Self::follow_accent`] is set. The derived accent keeps accent text,
-    /// hover/pressed fills and the focus ring readable against the theme.
+    /// when [`Self::follow_accent`] is set. The high-contrast theme never takes the
+    /// system accent.
+    ///
+    /// Following an accent keeps the theme's accent text (white in the presets)
+    /// and moves the accent's OKLCH lightness, keeping its hue and chroma, until
+    /// the text reaches 4.5:1; hover and pressed step further away. Only when that
+    /// would cost the accent more than 0.25 of lightness, as for the macOS yellow,
+    /// does the text flip to black. The focus ring keeps 3:1 against the surfaces,
+    /// and the selection and selected rows take the accent's hue at the theme's
+    /// lightness with their text kept at 4.5:1.
     pub fn resolve(&self, mode: ThemeMode, preferences: &SystemPreferences) -> Theme {
         let scheme = match mode {
             ThemeMode::Light => return self.light.clone(),
@@ -140,55 +151,53 @@ pub(crate) fn contrast(a: Color, b: Color) -> f32 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
-fn mix(a: Color, b: Color, t: f32) -> Color {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-        1.,
-    ]
-}
-/// Moves `color` toward `target` until it reaches `min` contrast with every fill.
-fn ensure_contrast(mut color: Color, fills: &[Color], min: f32, target: Color) -> Color {
-    for _ in 0..20 {
-        if fills.iter().all(|f| contrast(color, *f) >= min) {
-            break;
-        }
-        color = mix(color, target, 0.1);
-    }
-    color
-}
-const WHITE: Color = [1., 1., 1., 1.];
-const BLACK: Color = [0., 0., 0., 1.];
-
+/// The theme with its accent-derived tokens rebuilt from the system `accent`.
+///
+/// The fill keeps the accent's OKLCH hue and as much chroma as the gamut allows,
+/// moving only in lightness until the theme's own accent text reaches 4.5:1; see
+/// [`AccentFill`] for when the text flips to black or white instead. Hover and
+/// pressed step further from the text. The focus ring starts at the accent and
+/// lightens (dark) or darkens (light) until it has 3:1 against the surfaces and
+/// controls. Selection and selected rows keep the theme's OKLCH lightness and
+/// chroma and take the accent's hue, with the chroma scaled down for accents less
+/// colorful than the theme's (graphite gives neutral rows), then move away from
+/// their text until it reads at 4.5:1.
 fn with_accent(theme: &Theme, accent: Color) -> Theme {
-    let accent = [accent[0], accent[1], accent[2], 1.];
+    let [l, c, h] = oklch(accent);
     let dark = ColorScheme::of(theme) == ColorScheme::Dark;
-    theme.clone().colors(|c| {
-        // White text where it reads at least as well as black, as system buttons do.
-        let text = if contrast(WHITE, accent) >= contrast(BLACK, accent) {
-            WHITE
-        } else {
-            BLACK
-        };
-        let away = if text == WHITE { BLACK } else { WHITE };
-        let base = ensure_contrast(accent, &[text], 4.5, away);
-        // Hover/pressed step away from the text color so states stay readable.
-        let hover = ensure_contrast(mix(base, away, 0.08), &[text], 4.5, away);
-        let pressed = ensure_contrast(mix(base, away, 0.18), &[text], 4.5, away);
+    let fill = AccentFill::new([l, c, h], theme.palette().accent_text);
+    let tint = (c / oklch(theme.palette().accent)[1].max(1e-3)).min(1.);
+    // A theme token at its own lightness and scaled chroma in the accent's hue,
+    // readable under `text`.
+    let retint = |token: Color, text: Color| {
+        let [tl, tc, _] = oklch(token);
+        let tc = tc * tint;
+        let away = away_from(text) * 0.01;
+        let mut color = from_oklch(reach(tl, tc, h, away, &[text], 4.5), tc, h);
+        color[3] = token[3];
+        color
+    };
+    theme.clone().colors(|p| {
         let fills = [
-            c.background,
-            c.surface,
-            c.control,
-            c.control_hover,
-            c.control_pressed,
-            c.input,
+            p.background,
+            p.surface,
+            p.control,
+            p.control_hover,
+            p.control_pressed,
+            p.input,
         ];
-        c.focus = ensure_contrast(accent, &fills, 3., if dark { WHITE } else { BLACK });
-        c.accent = base;
-        c.accent_hover = hover;
-        c.accent_pressed = pressed;
-        c.accent_text = text;
+        p.focus = from_oklch(
+            reach(l, c, h, if dark { 0.01 } else { -0.01 }, &fills, 3.),
+            c,
+            h,
+        );
+        p.accent = fill.step(0.);
+        p.accent_hover = fill.step(HOVER_STEP);
+        p.accent_pressed = fill.step(PRESSED_STEP);
+        p.accent_text = fill.text;
+        p.selection = retint(p.selection, p.selection_text);
+        p.row_selected = retint(p.row_selected, p.text);
+        p.row_selected_inactive = retint(p.row_selected_inactive, p.text);
     })
 }
 
@@ -196,6 +205,7 @@ fn with_accent(theme: &Theme, accent: Color) -> Theme {
 mod tests {
     use super::*;
     use crate::rgb8;
+    use crate::theme_seed::{BLACK, WHITE};
 
     fn prefs(scheme: Option<ColorScheme>) -> SystemPreferences {
         SystemPreferences {
@@ -232,32 +242,80 @@ mod tests {
     #[test]
     fn system_accents_keep_text_states_and_focus_readable() {
         let themes = ThemeSet::default();
+        // Approximate macOS accents and whether they keep the presets' white text.
         let accents = [
-            rgb8(0, 122, 255),   // macOS blue
-            rgb8(255, 199, 0),   // macOS yellow
-            rgb8(152, 152, 157), // macOS graphite
-            rgb8(98, 186, 70),   // macOS green
-            rgb8(255, 255, 255),
-            rgb8(0, 0, 0),
+            ("blue", rgb8(0, 122, 255), true),
+            ("purple", rgb8(149, 61, 150), true),
+            ("pink", rgb8(247, 79, 158), true),
+            ("red", rgb8(224, 56, 62), true),
+            ("orange", rgb8(247, 130, 27), true),
+            ("yellow", rgb8(255, 198, 0), false),
+            ("green", rgb8(98, 186, 70), true),
+            ("graphite", rgb8(140, 140, 140), true),
+            ("white", rgb8(255, 255, 255), false),
+            ("black", rgb8(0, 0, 0), true),
         ];
         for scheme in [ColorScheme::Light, ColorScheme::Dark] {
-            for accent in accents {
+            let preset = match scheme {
+                ColorScheme::Light => Theme::light(),
+                ColorScheme::Dark => Theme::dark(),
+            };
+            for (name, accent, white) in accents {
                 let mut p = prefs(Some(scheme));
                 p.accent_color = Some(accent);
                 let theme = themes.resolve(ThemeMode::System, &p);
                 theme.validate().unwrap();
                 let c = theme.palette();
+                let case = format!("{scheme:?} {name}");
+                let text = if white { WHITE } else { BLACK };
+                assert_eq!(c.accent_text, text, "{case}");
                 for fill in [c.accent, c.accent_hover, c.accent_pressed] {
-                    assert!(
-                        contrast(c.accent_text, fill) >= 4.5,
-                        "{scheme:?} {accent:?}"
-                    );
+                    assert!(contrast(c.accent_text, fill) >= 4.5, "{case}");
                 }
+                assert_ne!(c.accent_hover, c.accent, "{case}");
+                assert_ne!(c.accent_pressed, c.accent_hover, "{case}");
+                // States step away from the text: darker under white text.
+                let away = |fill: Color| contrast(c.accent_text, fill);
+                assert!(away(c.accent_hover) > away(c.accent), "{case}");
+                assert!(away(c.accent_pressed) > away(c.accent_hover), "{case}");
                 for fill in [c.background, c.surface, c.control, c.input] {
-                    assert!(contrast(c.focus, fill) >= 3., "{scheme:?} {accent:?}");
+                    assert!(contrast(c.focus, fill) >= 3., "{case}");
+                }
+                assert!(contrast(c.selection_text, c.selection) >= 4.5, "{case}");
+                for row in [c.row_selected, c.row_selected_inactive] {
+                    assert!(contrast(c.text, row) >= 4.5, "{case}");
+                }
+                // Colorful accents keep their hue and tint the selection with it.
+                let [_, chroma, hue] = oklch(accent);
+                if chroma > 0.05 {
+                    for token in [c.accent, c.focus, c.selection, c.row_selected] {
+                        let [_, tc, th] = oklch(token);
+                        let turn = (th - hue).rem_euclid(360.);
+                        assert!(tc > 0.02 && turn.min(360. - turn) < 6., "{case} {token:?}");
+                    }
+                    assert_ne!(c.selection, preset.palette().selection, "{case}");
+                } else {
+                    // Neutral accents give neutral selections.
+                    assert!(oklch(c.row_selected)[1] < 0.01, "{case}");
                 }
                 assert_eq!(ColorScheme::of(&theme), scheme);
             }
+        }
+        // An accent equal to the preset's reproduces its accent-tinted tokens.
+        for preset in [Theme::light(), Theme::dark()] {
+            let followed = with_accent(&preset, preset.palette().accent);
+            let (a, b) = (followed.palette(), preset.palette());
+            for (x, y) in [
+                (a.accent, b.accent),
+                (a.selection, b.selection),
+                (a.row_selected, b.row_selected),
+            ] {
+                assert!(
+                    x.iter().zip(y).all(|(x, y)| (x - y).abs() < 0.01),
+                    "{x:?} {y:?}"
+                );
+            }
+            assert_eq!(a.accent_text, WHITE);
         }
         let blue = SystemPreferences {
             accent_color: Some(rgb8(0, 122, 255)),

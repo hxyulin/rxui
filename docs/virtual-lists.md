@@ -12,8 +12,10 @@ heights; see [variable heights](#variable-heights).
 struct Files { scroll: ScrollHandle, names: Vec<String>, selected: usize }
 impl View for Files {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
-        virtual_list(self.names.len(), 32., &self.scroll, cx, |index| {
+        let row_height = cx.theme().sizes().row_height;
+        virtual_list(self.names.len(), row_height, &self.scroll, cx, |index| {
             button(self.names[index].clone()).key(self.names[index].clone())
+                .list_row(index == self.selected)
                 .on_click(cx.listener(move |this, _, _| this.selected = index))
         }).overscan(3).height(400.)
     }
@@ -23,6 +25,8 @@ impl View for Files {
 Use `rxui::prelude::*` for these imports. Supply unique stable data keys when the
 items can reorder or change; absent explicit keys, row indices are used. A fixed
 slot includes all row spacing; draw padding within it rather than adding list gaps.
+`list_row` rows fill the slot with their horizontal padding, so the theme's
+`row_height` (24 balanced, 22 compact) gives the standard desktop list density.
 Rows fill the slot and clip overflowing content. Give the list bounded height via
 its parent or `.height(...)`, just as for a normal scroll area. `.scrollbars(false)`
 hides the gutter while preserving wheel/programmatic scrolling.

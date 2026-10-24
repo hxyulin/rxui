@@ -125,11 +125,15 @@ impl Overlay {
         Self {
             surface: column()
                 .padding(8.)
-                .background(ThemeColor::Raised)
-                .border(1., ThemeColor::Border)
-                .radius(6.)
+                .raised(if modal {
+                    Elevation::Modal
+                } else {
+                    Elevation::Popover
+                })
                 .clip()
                 .scroll_y()
+                // The surface only holds focus for its scope; its items show focus.
+                .paint_style(PaintStyle::new().focus_width(0.))
                 .focusable(true)
                 .tab_stop(false)
                 .focus_scope(FocusScope::Cycle)
@@ -242,7 +246,7 @@ impl Element {
 /// Builds a menu container. Up/Down/Home/End navigate eligible MenuItem descendants;
 /// Enter/Space use ordinary activation. Put it inside a popover for dismissal/focus.
 pub fn menu() -> Element {
-    let mut element = column().gap(2.).accessibility_role(SemanticRole::Menu);
+    let mut element = column().gap(1.).accessibility_role(SemanticRole::Menu);
     element.input.get_or_insert_with(Default::default).menu = true;
     element
 }
@@ -252,6 +256,6 @@ pub fn menu_item<C: Command>(action: &CommandAction<C>) -> Element {
     action
         .button()
         .accessibility_role(SemanticRole::MenuItem)
-        .variant(ButtonVariant::Quiet)
+        .list_row(false)
         .fill_width()
 }

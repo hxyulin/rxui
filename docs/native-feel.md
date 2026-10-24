@@ -30,10 +30,10 @@ custom hosts and tests use the same rule:
   `contrast` setting).
 - Otherwise System applies the system accent color when `follow_accent` is set
   (the default). The accent drives `accent`, `accent_hover`, `accent_pressed`,
-  `accent_text` and `focus`. Accent text is white or black, whichever reads
-  better, and the states are adjusted until accent text keeps 4.5:1 on every
-  accent fill and the focus ring keeps 3:1 against the theme's fills. Selection
-  colors keep their theme values.
+  `accent_text`, `focus`, `selection`, `row_selected` and
+  `row_selected_inactive`; see [styling](styling.md#following-the-system-accent).
+  Accent text stays the theme's (white in the presets) for every macOS accent
+  except yellow, which takes black.
 
 An explicit theme wins. `Application::theme(theme)` and `cx.set_theme(theme)`
 switch the application to that theme and stop following the system;
@@ -210,8 +210,8 @@ then opaque. Paint opaque backgrounds where the content needs them.
 
 ## Testing
 
-Headless tests cover theme resolution and accent contrast for six accents in both
-schemes (`appearance`), preference delivery through an injected source including
+Headless tests cover theme resolution and accent contrast for the eight macOS
+accents, white and black in both schemes (`appearance`), preference delivery through an injected source including
 the change hook, explicit-theme precedence and title-bar scheme selection
 (`native`), cursor mapping, window option validation, interface-font selection,
 dialog ordering (`conventions`), and focus-visible modality, drag-region routing

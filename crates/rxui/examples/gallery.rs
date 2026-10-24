@@ -4,7 +4,6 @@ use rxui::prelude::*;
 use rxui::taffy::AlignItems;
 
 const ROWS: usize = 1_000;
-const ROW_HEIGHT: f32 = 32.;
 
 struct NewWindow;
 impl Command for NewWindow {}
@@ -170,6 +169,7 @@ impl View for Gallery {
                     button("Cancel").on_click(cx.listener(|s, _, _| s.status = "Cancelled".into())),
                 )
                 .child(button("Reset").variant(ButtonVariant::Quiet))
+                .child(button("Delete").variant(ButtonVariant::Danger))
                 .child(button("Export").disabled(true)),
         );
 
@@ -277,18 +277,19 @@ impl View for Gallery {
                 .radius(6.)
                 .clip()
                 .child(
-                    virtual_list(ROWS, ROW_HEIGHT, &self.list, cx, |index| {
-                        button(format!("file_{index:04}.rs"))
-                            .key(index)
-                            .fill_width()
-                            .radius(0.)
-                            .variant(if self.selected == index {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Quiet
-                            })
-                            .on_click(cx.listener(move |s, _, _| s.selected = index))
-                    })
+                    virtual_list(
+                        ROWS,
+                        self.theme().sizes().row_height,
+                        &self.list,
+                        cx,
+                        |index| {
+                            button(format!("file_{index:04}.rs"))
+                                .key(index)
+                                .fill_width()
+                                .list_row(self.selected == index)
+                                .on_click(cx.listener(move |s, _, _| s.selected = index))
+                        },
+                    )
                     .fill_width()
                     .fill_height(),
                 ),
@@ -468,7 +469,7 @@ impl View for Gallery {
                     .padding(28.)
                     .gap(16.)
                     .scroll_y()
-                    .child(label("Component gallery").font_size(22.))
+                    .child(label("Component gallery").text_role(TextRole::Heading))
                     .child(label(self.status.clone()).color(ThemeColor::TextMuted))
                     .child(columns),
             );
@@ -477,7 +478,7 @@ impl View for Gallery {
                 modal(
                     column()
                         .gap(12.)
-                        .child(label("Discard unsaved changes?").font_size(18.))
+                        .child(label("Discard unsaved changes?").text_role(TextRole::Subheading))
                         .child(
                             label("theme.rs has edits that have not been saved.")
                                 .color(ThemeColor::TextMuted),
@@ -489,7 +490,7 @@ impl View for Gallery {
                                     button("Cancel")
                                         .on_click(cx.listener(|s, _, _| s.dialog = false)),
                                 )
-                                .child(button("Discard").variant(ButtonVariant::Primary).on_click(
+                                .child(button("Discard").variant(ButtonVariant::Danger).on_click(
                                     cx.listener(|s, _, _| {
                                         s.dialog = false;
                                         s.status = "Changes discarded".into();

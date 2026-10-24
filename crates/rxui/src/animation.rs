@@ -434,6 +434,7 @@ impl Interpolate for crate::ResolvedPaint {
             radii: std::array::from_fn(|i| lerp(self.radii[i], to.radii[i], t).max(0.)),
             focus_color: self.focus_color.interpolate(&to.focus_color, t),
             focus_width: lerp(self.focus_width, to.focus_width, t).max(0.),
+            focus_offset: lerp(self.focus_offset, to.focus_offset, t),
             selection_color: self.selection_color.interpolate(&to.selection_color, t),
             selection_text_color: self
                 .selection_text_color

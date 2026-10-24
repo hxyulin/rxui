@@ -25,7 +25,7 @@ impl View for Chart {
             .scroll_y()
             .child(
                 label("Application-owned GPU chart")
-                    .font_size(26.)
+                    .text_role(TextRole::Title)
                     .accessibility_role(SemanticRole::Heading),
             )
             .child(

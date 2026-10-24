@@ -64,7 +64,7 @@ fn cards(alpha: f32, nested: bool, per_child: bool, icon: &Image) -> Element {
 impl View for Demo {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         column().fill_width().fill_height().padding(24.).gap(16.)
-            .child(label("True group opacity").font_size(28.).accessibility_role(SemanticRole::Heading))
+            .child(label("True group opacity").text_role(TextRole::Title).accessibility_role(SemanticRole::Heading))
             .child(label("The left subtree is flattened, then faded once. The right cards fade separately; their overlap blends differently."))
             .child(row().gap(12.)
                 .child(button(format!("Opacity: {:.0}% — cycle",self.alpha*100.))

@@ -172,12 +172,12 @@ impl View for Showcase {
             .padding(24.)
             .gap(16.)
             .fill_width()
-            .child(label("Follows your system").font_size(22.))
+            .child(label("Follows your system").text_role(TextRole::Heading))
             .child(facts)
             .child(modes)
-            .child(label("Cursors").font_size(18.))
+            .child(label("Cursors").text_role(TextRole::Subheading))
             .child(tiles)
-            .child(label("Dialog button order for this platform").font_size(18.))
+            .child(label("Dialog button order for this platform").text_role(TextRole::Subheading))
             .child(row().gap(8.).children(actions))
             .child(label(
                 "Tab moves focus with a visible ring; clicking a button hides it again.",

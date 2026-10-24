@@ -139,6 +139,10 @@ impl SplitterProps {
 }
 /// Standalone scrollbar for a viewport handle. Bind the handle to a viewport in the
 /// same UI. Keyboard arrows/pages/Home/End and assistive numeric actions adjust it.
+///
+/// The track has no fill by default. The thumb is half the bar's thickness (at
+/// least 4 units), centered, and painted in the bar's text color, TextMuted by
+/// default, at 45% opacity, or 75% while hovered or dragged.
 pub fn scrollbar(handle: ScrollHandle, axis: Axis) -> Element {
     let mut e = Element::new(crate::element::ElementKind::Scrollbar(Box::new(
         ScrollbarProps {
@@ -147,9 +151,7 @@ pub fn scrollbar(handle: ScrollHandle, axis: Axis) -> Element {
             min_thumb: 20.,
         },
     )))
-    .background(ThemeColor::Surface)
-    .color(ThemeColor::Border)
-    .hover_style(PaintStyle::new().color(ThemeColor::TextMuted))
+    .color(ThemeColor::TextMuted)
     .accessibility_label("Scroll position");
     if axis == Axis::Vertical {
         e = e.width(12.).fill_height();
@@ -388,7 +390,8 @@ impl Split {
         self.props.min_second = size;
         self
     }
-    /// Divider hit width/height; its visible center line remains narrower.
+    /// Divider hit width/height; its visible center line is one unit wide, in the
+    /// divider's text color: Divider, or TextMuted while hovered.
     pub fn divider_size(mut self, size: f32) -> Self {
         self.props.divider = size;
         self
@@ -445,8 +448,7 @@ impl IntoElement for Split {
             self.props.clone(),
         )))
         .key("divider")
-        .background(ThemeColor::Surface)
-        .color(ThemeColor::Border)
+        .color(ThemeColor::Divider)
         .hover_style(PaintStyle::new().color(ThemeColor::TextMuted))
         .accessibility_label("Pane size")
         .fill_width()

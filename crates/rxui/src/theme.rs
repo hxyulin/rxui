@@ -40,15 +40,15 @@ pub enum ThemeColor {
     TextMuted,
     /// Disabled control text.
     TextDisabled,
-    /// Control boundary.
+    /// Strong control boundary.
     Border,
     /// Disabled boundary.
     BorderDisabled,
     /// Text input fill.
     Input,
-    /// Text input boundary; stronger than Border.
+    /// Text input boundary.
     InputBorder,
-    /// Subtle separator between regions.
+    /// Subtle separator between regions, weaker than Border.
     Divider,
     /// Primary action fill.
     Accent,
@@ -68,6 +68,25 @@ pub enum ThemeColor {
     Caret,
     /// IME composition underline.
     Preedit,
+    /// Hover fill of list, tree and menu rows; may be translucent.
+    RowHover,
+    /// Selected row fill while its list has focus. Row text stays Text.
+    RowSelected,
+    /// Selected row fill while its list is unfocused.
+    RowSelectedInactive,
+    /// Error foreground, also used for borders and icons.
+    Danger,
+    /// Warning foreground, also used for borders and icons.
+    Warning,
+    /// Success foreground, also used for borders and icons.
+    Success,
+    /// Tinted, possibly translucent, danger background for badges, banners and the
+    /// hovered danger button.
+    DangerSubtle,
+    /// Tinted, possibly translucent, warning background.
+    WarningSubtle,
+    /// Tinted, possibly translucent, success background.
+    SuccessSubtle,
     /// Application-defined color from [`Theme::define_color`]. A name the theme
     /// does not define resolves to transparent.
     Custom(&'static str),
@@ -134,7 +153,7 @@ pub struct ThemeColors {
     pub text_muted: Color,
     /// Disabled control text.
     pub text_disabled: Color,
-    /// Control boundary.
+    /// Strong control boundary.
     pub border: Color,
     /// Disabled boundary.
     pub border_disabled: Color,
@@ -142,7 +161,7 @@ pub struct ThemeColors {
     pub input: Color,
     /// Text input boundary.
     pub input_border: Color,
-    /// Subtle separator between regions.
+    /// Subtle separator between regions, weaker than border.
     pub divider: Color,
     /// Primary action fill.
     pub accent: Color,
@@ -162,9 +181,27 @@ pub struct ThemeColors {
     pub caret: Color,
     /// IME underline.
     pub preedit: Color,
+    /// Row hover fill; may be translucent.
+    pub row_hover: Color,
+    /// Selected row fill while its list has focus.
+    pub row_selected: Color,
+    /// Selected row fill while its list is unfocused.
+    pub row_selected_inactive: Color,
+    /// Error foreground.
+    pub danger: Color,
+    /// Warning foreground.
+    pub warning: Color,
+    /// Success foreground.
+    pub success: Color,
+    /// Tinted danger background; may be translucent.
+    pub danger_subtle: Color,
+    /// Tinted warning background; may be translucent.
+    pub warning_subtle: Color,
+    /// Tinted success background; may be translucent.
+    pub success_subtle: Color,
 }
 impl ThemeColors {
-    fn values(&self) -> [Color; 24] {
+    fn values(&self) -> [Color; 33] {
         [
             self.background,
             self.surface,
@@ -190,6 +227,15 @@ impl ThemeColors {
             self.selection_text,
             self.caret,
             self.preedit,
+            self.row_hover,
+            self.row_selected,
+            self.row_selected_inactive,
+            self.danger,
+            self.warning,
+            self.success,
+            self.danger_subtle,
+            self.warning_subtle,
+            self.success_subtle,
         ]
     }
 }
@@ -199,10 +245,33 @@ impl ThemeColors {
 /// Text lines are `font_size * line_height` tall (1.4 in the presets), so a button is
 /// `font_size * line_height + 2 * (button_padding_y + border_width)` tall. The presets
 /// pick paddings that make buttons exactly `input_height`, so they line up in a row.
+/// List rows are denser: [`crate::Element::list_row`] gives rows at least
+/// `row_height` (24 balanced, 22 compact) and `row_padding_x` of horizontal padding.
+///
+/// The type scale sizes [`crate::TextRole`]s: `caption_size` for secondary small
+/// text, `font_size` for body text, and `subheading_size`, `heading_size` and
+/// `title_size` (drawn at `heading_weight`) for headings. The radius scale pairs
+/// `radius` for controls with `radius_small` for small chips and indicators and
+/// `radius_large` for popovers and dialogs.
+///
+/// `indicator_size`, `switch_width` and `switch_height` size the standard check
+/// boxes, radios, switches, sliders and progress bars, so [`ThemeMetrics::compact`]
+/// shrinks them with the text. They stay below the text line, so a captioned
+/// check box or switch is as tall as a button.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeMetrics {
-    /// Root/inherited text size; strictly positive.
+    /// Root/inherited body text size; strictly positive.
     pub font_size: f32,
+    /// Caption text size; strictly positive.
+    pub caption_size: f32,
+    /// Smallest heading size; strictly positive.
+    pub subheading_size: f32,
+    /// Section heading size; strictly positive.
+    pub heading_size: f32,
+    /// Page or dialog title size; strictly positive.
+    pub title_size: f32,
+    /// Weight of the heading roles, in `1..=1000`.
+    pub heading_weight: crate::FontWeight,
     /// Default line height as a multiple of the font size; strictly positive.
     pub line_height: f32,
     /// Default horizontal button padding.
@@ -217,48 +286,113 @@ pub struct ThemeMetrics {
     pub input_width: f32,
     /// Default input height.
     pub input_height: f32,
+    /// Minimum height of an [`crate::Element::list_row`] without an explicit
+    /// height, tighter than `input_height` as desktop lists are.
+    pub row_height: f32,
+    /// Default horizontal padding of a list row; rows have no vertical padding.
+    pub row_padding_x: f32,
     /// Uniform control border width, included in layout.
     pub border_width: f32,
-    /// Control corner radius; painting only.
+    /// Control corner radius, the middle of the radius scale; painting only.
     pub radius: f32,
-    /// Focus stroke width, inside the box; painting only.
+    /// Small corner radius for chips, badges and indicators; painting only.
+    pub radius_small: f32,
+    /// Large corner radius for popovers, menus and dialogs; painting only.
+    pub radius_large: f32,
+    /// Focus ring width; painting only.
     pub focus_width: f32,
+    /// Gap between the border box and the focus ring, which surrounds the box
+    /// outside it. A negative value of `-focus_width` draws the ring inside the
+    /// box instead, as list rows do; painting only.
+    pub focus_offset: f32,
+    /// Side of check boxes and radio buttons; their marks scale with it.
+    pub indicator_size: f32,
+    /// Width of a switch track.
+    pub switch_width: f32,
+    /// Height of a switch track. Its knob, the slider thumb, the slider rail and
+    /// progress bars scale with it.
+    pub switch_height: f32,
     /// Durations of implicit paint transitions and overlay motion.
     pub motion: crate::ThemeMotion,
 }
 impl ThemeMetrics {
-    /// Default desktop density: 14pt text and 36-unit controls.
+    /// Default desktop-tool density: 13pt text and 28-unit controls.
     pub fn balanced() -> Self {
         Self {
-            font_size: 14.,
+            font_size: 13.,
+            caption_size: 11.,
+            subheading_size: 15.,
+            heading_size: 18.,
+            title_size: 24.,
+            heading_weight: crate::FontWeight::SEMIBOLD,
             line_height: 1.4,
-            button_padding_x: 14.,
-            button_padding_y: 7.2,
-            input_padding_x: 12.,
-            input_padding_y: 7.2,
-            input_width: 240.,
-            input_height: 36.,
+            button_padding_x: 12.,
+            button_padding_y: 3.9,
+            input_padding_x: 10.,
+            input_padding_y: 3.9,
+            input_width: 220.,
+            input_height: 28.,
+            row_height: 24.,
+            row_padding_x: 8.,
             border_width: 1.,
             radius: 6.,
+            radius_small: 4.,
+            radius_large: 8.,
             focus_width: 2.,
+            focus_offset: 1.,
+            indicator_size: 14.,
+            switch_width: 26.,
+            switch_height: 16.,
             motion: Default::default(),
         }
     }
-    /// Dense preset for tool-heavy windows: 13pt text and 28-unit controls.
+    /// Dense preset for tool-heavy windows: 12pt text and 24-unit controls.
     pub fn compact() -> Self {
         Self {
-            font_size: 13.,
+            font_size: 12.,
+            caption_size: 11.,
+            subheading_size: 14.,
+            heading_size: 16.,
+            title_size: 20.,
+            heading_weight: crate::FontWeight::SEMIBOLD,
             line_height: 1.4,
-            button_padding_x: 10.,
-            button_padding_y: 3.9,
+            button_padding_x: 8.,
+            button_padding_y: 2.6,
             input_padding_x: 8.,
-            input_padding_y: 3.9,
+            input_padding_y: 2.6,
             input_width: 200.,
-            input_height: 28.,
+            input_height: 24.,
+            row_height: 22.,
+            row_padding_x: 6.,
             border_width: 1.,
-            radius: 4.,
+            radius: 5.,
+            radius_small: 3.,
+            radius_large: 8.,
             focus_width: 2.,
+            focus_offset: 1.,
+            indicator_size: 12.,
+            switch_width: 22.,
+            switch_height: 13.,
             motion: Default::default(),
+        }
+    }
+    /// Font size of a text role on this scale.
+    pub fn role_size(&self, role: crate::TextRole) -> f32 {
+        match role {
+            crate::TextRole::Caption => self.caption_size,
+            crate::TextRole::Body => self.font_size,
+            crate::TextRole::Subheading => self.subheading_size,
+            crate::TextRole::Heading => self.heading_size,
+            crate::TextRole::Title => self.title_size,
+        }
+    }
+    /// Font weight of a text role: `heading_weight` for headings, normal otherwise.
+    pub fn role_weight(&self, role: crate::TextRole) -> crate::FontWeight {
+        match role {
+            crate::TextRole::Caption | crate::TextRole::Body => crate::FontWeight::NORMAL,
+            crate::TextRole::Subheading | crate::TextRole::Heading | crate::TextRole::Title => {
+                self.heading_weight
+            }
         }
     }
 }
@@ -267,10 +401,91 @@ impl Default for ThemeMetrics {
         Self::balanced()
     }
 }
+/// Theme-defined shadow level. Elements bound to a level with
+/// [`crate::Element::elevation`] resolve it in their nearest theme and follow theme
+/// switches, as [`ThemeColor`] tokens do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Elevation {
+    /// Resting controls such as buttons; subtle or absent.
+    Control,
+    /// Menus, popovers, tooltips and dropdowns.
+    Popover,
+    /// Modal dialogs, deeper than popovers.
+    Modal,
+}
+/// Shadow of each [`Elevation`]. `None` paints no shadow at that level, as in the
+/// dark control level and every high-contrast level. Mutate with [`Theme::shadows`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemeShadows {
+    /// Shadow under resting controls.
+    pub control: Option<BoxShadow>,
+    /// Shadow under popovers and menus.
+    pub popover: Option<BoxShadow>,
+    /// Shadow under modal dialogs.
+    pub modal: Option<BoxShadow>,
+}
+impl ThemeShadows {
+    /// No shadow at any level; themes that rely on borders, such as high contrast.
+    pub fn none() -> Self {
+        Self {
+            control: None,
+            popover: None,
+            modal: None,
+        }
+    }
+    /// The light preset's shadows: soft, cool-tinted and translucent, matching
+    /// CSS `0 1px 2px`, `0 6px 20px` and `0 16px 40px` in `rgba(16, 24, 40, a)`
+    /// at 6%, 18% and 22% opacity.
+    ///
+    /// Blur radii follow CSS, but RXUI blends in linear light, where a dark
+    /// translucent shadow over a light surface looks about half as strong as the
+    /// same alpha blended in sRGB by browsers. Each alpha is therefore raised to
+    /// the linear alpha that darkens a white surface as much as the CSS one does.
+    pub fn light() -> Self {
+        let shadow = |y, blur, css_alpha: f32| {
+            let mut color = rgb8(16, 24, 40);
+            // The sRGB green channel CSS shows over white, converted to linear;
+            // green dominates luminance.
+            let shown = 1. - css_alpha * (1. - 24. / 255.);
+            let shown = ((shown + 0.055) / 1.055).powf(2.4);
+            color[3] = (1. - shown) / (1. - color[1]);
+            Some(BoxShadow::new(color).offset(0., y).blur(blur))
+        };
+        Self {
+            control: shadow(1., 2., 0.06),
+            popover: shadow(6., 20., 0.18),
+            modal: shadow(16., 40., 0.22),
+        }
+    }
+    /// The dark preset's shadows: no control shadow and dense black overlays.
+    pub fn dark() -> Self {
+        let shadow = |y, blur, alpha| {
+            Some(
+                BoxShadow::new(rgba8(0, 0, 0, alpha))
+                    .offset(0., y)
+                    .blur(blur),
+            )
+        };
+        Self {
+            control: None,
+            popover: shadow(8., 24., 128),
+            modal: shadow(16., 48., 153),
+        }
+    }
+    /// Shadow of one level.
+    pub fn get(&self, level: Elevation) -> Option<BoxShadow> {
+        match level {
+            Elevation::Control => self.control,
+            Elevation::Popover => self.popover,
+            Elevation::Modal => self.modal,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 struct Data {
     colors: ThemeColors,
     metrics: ThemeMetrics,
+    shadows: ThemeShadows,
     custom_colors: Vec<(&'static str, Color)>,
     custom_metrics: Vec<(&'static str, f32)>,
 }
@@ -283,7 +498,7 @@ struct Data {
 /// let theme = Theme::dark().colors(|colors| colors.focus = rgb8(180, 215, 255));
 /// assert_ne!(theme, Theme::dark());
 /// let dense = Theme::light().compact();
-/// assert_eq!(dense.sizes().input_height, 28.);
+/// assert_eq!(dense.sizes().input_height, 24.);
 /// ```
 #[derive(Clone, Debug)]
 pub struct Theme(Arc<Data>);
@@ -321,12 +536,13 @@ impl Theme {
             .get_or_init(|| Self::preset(Preset::HighContrast))
             .clone()
     }
-    /// Switches to [`ThemeMetrics::compact`], keeping this theme's focus width and
+    /// Switches to [`ThemeMetrics::compact`], keeping this theme's focus ring and
     /// motion.
     pub fn compact(self) -> Self {
         self.metrics(|m| {
             *m = ThemeMetrics {
                 focus_width: m.focus_width,
+                focus_offset: m.focus_offset,
                 motion: m.motion.clone(),
                 ..ThemeMetrics::compact()
             }
@@ -334,93 +550,142 @@ impl Theme {
     }
     fn preset(preset: Preset) -> Self {
         let hex = |v: u32| rgb8((v >> 16) as u8, (v >> 8) as u8, v as u8);
+        // A status color at `alpha` (linear, out of 255) for subtle tinted fills.
+        let tint = |v: u32, alpha: u8| rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, alpha);
         let mut metrics = ThemeMetrics::default();
-        let colors = match preset {
-            Preset::Light => ThemeColors {
-                background: hex(0xF3F4F6),
-                surface: hex(0xFFFFFF),
-                raised: hex(0xFFFFFF),
-                control: hex(0xFFFFFF),
-                control_hover: hex(0xF1F2F4),
-                control_pressed: hex(0xE4E6EA),
-                control_disabled: hex(0xF3F4F6),
-                text: hex(0x17181C),
-                text_muted: hex(0x5B606A),
-                text_disabled: hex(0xA0A4AB),
-                border: hex(0xC3C7CE),
-                border_disabled: hex(0xDDE0E4),
-                input: hex(0xFFFFFF),
-                input_border: hex(0x8F949D),
-                divider: hex(0xE3E5E9),
-                accent: hex(0x2563EB),
-                accent_hover: hex(0x1D4FD8),
-                accent_pressed: hex(0x1E44B8),
-                accent_text: hex(0xFFFFFF),
-                focus: hex(0x2563EB),
-                selection: hex(0xCFE0FF),
-                selection_text: hex(0x17181C),
-                caret: hex(0x17181C),
-                preedit: hex(0x17181C),
-            },
-            Preset::Dark => ThemeColors {
-                background: hex(0x131418),
-                surface: hex(0x1B1C21),
-                raised: hex(0x23252B),
-                control: hex(0x25272D),
-                control_hover: hex(0x2E3037),
-                control_pressed: hex(0x383A42),
-                control_disabled: hex(0x1E1F24),
-                text: hex(0xECEDF0),
-                text_muted: hex(0xA3A7B0),
-                text_disabled: hex(0x60646C),
-                border: hex(0x3E414A),
-                border_disabled: hex(0x2C2E34),
-                input: hex(0x16171B),
-                input_border: hex(0x6A6E78),
-                divider: hex(0x2A2C32),
-                accent: hex(0x2563EB),
-                accent_hover: hex(0x1F5AE0),
-                accent_pressed: hex(0x1A4CC2),
-                accent_text: hex(0xFFFFFF),
-                focus: hex(0x6EA2FF),
-                selection: hex(0x2B4E8F),
-                selection_text: hex(0xFFFFFF),
-                caret: hex(0xECEDF0),
-                preedit: hex(0xECEDF0),
-            },
+        let (colors, shadows) = match preset {
+            Preset::Light => (
+                ThemeColors {
+                    background: hex(0xF6F6F7),
+                    surface: hex(0xFFFFFF),
+                    raised: hex(0xFFFFFF),
+                    control: hex(0xFFFFFF),
+                    control_hover: hex(0xF3F3F5),
+                    control_pressed: hex(0xEAEBEE),
+                    control_disabled: hex(0xF6F6F7),
+                    text: hex(0x1A1B1E),
+                    text_muted: hex(0x646770),
+                    text_disabled: hex(0xA4A6AD),
+                    border: hex(0xD3D5DA),
+                    border_disabled: hex(0xE4E5E8),
+                    input: hex(0xFFFFFF),
+                    input_border: hex(0xC9CBD1),
+                    divider: hex(0xE4E5E8),
+                    accent: hex(0x2F6BEB),
+                    accent_hover: hex(0x245FDD),
+                    accent_pressed: hex(0x1F52C2),
+                    accent_text: hex(0xFFFFFF),
+                    focus: hex(0x2F6BEB),
+                    selection: hex(0xCFDDFB),
+                    selection_text: hex(0x1A1B1E),
+                    caret: hex(0x1A1B1E),
+                    preedit: hex(0x1A1B1E),
+                    row_hover: rgba8(0, 0, 0, 10),
+                    row_selected: hex(0xE3ECFF),
+                    row_selected_inactive: hex(0xEDEEF0),
+                    danger: hex(0xD93036),
+                    warning: hex(0xC27C0E),
+                    success: hex(0x218358),
+                    danger_subtle: tint(0xD93036, 31),
+                    warning_subtle: tint(0xC27C0E, 31),
+                    success_subtle: tint(0x218358, 31),
+                },
+                ThemeShadows::light(),
+            ),
+            Preset::Dark => (
+                ThemeColors {
+                    background: hex(0x111214),
+                    surface: hex(0x17181B),
+                    raised: hex(0x1E1F23),
+                    control: hex(0x24262A),
+                    control_hover: hex(0x2C2E33),
+                    control_pressed: hex(0x33353B),
+                    control_disabled: hex(0x1B1C1F),
+                    text: hex(0xE6E7EA),
+                    text_muted: hex(0x9A9DA5),
+                    text_disabled: hex(0x5C5F66),
+                    border: hex(0x34363C),
+                    border_disabled: hex(0x26282C),
+                    input: hex(0x0D0E10),
+                    input_border: hex(0x34363C),
+                    divider: hex(0x26282C),
+                    accent: hex(0x3A6FE5),
+                    // Darker than the accent so white text keeps 4.5:1 on hover.
+                    accent_hover: hex(0x2F63DB),
+                    accent_pressed: hex(0x335FC8),
+                    accent_text: hex(0xFFFFFF),
+                    focus: hex(0x4A7CEF),
+                    selection: hex(0x2B4580),
+                    selection_text: hex(0xFFFFFF),
+                    caret: hex(0xE6E7EA),
+                    preedit: hex(0xE6E7EA),
+                    row_hover: rgba8(255, 255, 255, 12),
+                    row_selected: hex(0x22314F),
+                    row_selected_inactive: hex(0x26282D),
+                    danger: hex(0xE5484D),
+                    warning: hex(0xF5A524),
+                    success: hex(0x30A46C),
+                    danger_subtle: tint(0xE5484D, 41),
+                    warning_subtle: tint(0xF5A524, 41),
+                    success_subtle: tint(0x30A46C, 41),
+                },
+                ThemeShadows::dark(),
+            ),
             Preset::HighContrast => {
                 metrics.focus_width = 3.;
-                ThemeColors {
-                    background: hex(0x000000),
-                    surface: hex(0x000000),
-                    raised: hex(0x000000),
-                    control: hex(0x000000),
-                    control_hover: hex(0x1F1F1F),
-                    control_pressed: hex(0x3A3A3A),
-                    control_disabled: hex(0x000000),
-                    text: hex(0xFFFFFF),
-                    text_muted: hex(0xE6E6E6),
-                    text_disabled: hex(0x9A9A9A),
-                    border: hex(0xFFFFFF),
-                    border_disabled: hex(0x9A9A9A),
-                    input: hex(0x000000),
-                    input_border: hex(0xFFFFFF),
-                    divider: hex(0xFFFFFF),
-                    accent: hex(0xFFD400),
-                    accent_hover: hex(0xFFE34D),
-                    accent_pressed: hex(0xE6BF00),
-                    accent_text: hex(0x000000),
-                    focus: hex(0xFFD400),
-                    selection: hex(0x00E5FF),
-                    selection_text: hex(0x000000),
-                    caret: hex(0xFFFFFF),
-                    preedit: hex(0xFFFFFF),
-                }
+                (
+                    ThemeColors {
+                        background: hex(0x000000),
+                        surface: hex(0x000000),
+                        raised: hex(0x000000),
+                        control: hex(0x000000),
+                        control_hover: hex(0x1F1F1F),
+                        control_pressed: hex(0x3A3A3A),
+                        control_disabled: hex(0x000000),
+                        text: hex(0xFFFFFF),
+                        text_muted: hex(0xE6E6E6),
+                        text_disabled: hex(0x9A9A9A),
+                        border: hex(0xFFFFFF),
+                        border_disabled: hex(0x9A9A9A),
+                        input: hex(0x000000),
+                        input_border: hex(0xFFFFFF),
+                        divider: hex(0xFFFFFF),
+                        accent: hex(0xFFD400),
+                        accent_hover: hex(0xFFE34D),
+                        accent_pressed: hex(0xE6BF00),
+                        accent_text: hex(0x000000),
+                        focus: hex(0xFFD400),
+                        selection: hex(0x00E5FF),
+                        selection_text: hex(0x000000),
+                        caret: hex(0xFFFFFF),
+                        preedit: hex(0xFFFFFF),
+                        // Opaque fills: a saturated blue selection keeps white row
+                        // text readable while standing out clearly from black.
+                        row_hover: hex(0x1F1F1F),
+                        row_selected: hex(0x0050FF),
+                        row_selected_inactive: hex(0x3A3A3A),
+                        danger: hex(0xFF4040),
+                        warning: hex(0xFF9900),
+                        success: hex(0x00E060),
+                        danger_subtle: hex(0x400000),
+                        warning_subtle: hex(0x402600),
+                        success_subtle: hex(0x003818),
+                    },
+                    ThemeShadows::none(),
+                )
             }
         };
+        Self::from_parts(colors, metrics, shadows)
+    }
+    pub(crate) fn from_parts(
+        colors: ThemeColors,
+        metrics: ThemeMetrics,
+        shadows: ThemeShadows,
+    ) -> Self {
         Self(Arc::new(Data {
             colors,
             metrics,
+            shadows,
             custom_colors: Vec::new(),
             custom_metrics: Vec::new(),
         }))
@@ -433,6 +698,20 @@ impl Theme {
     /// Customizes default typography/control metrics, preserving existing clones.
     pub fn metrics(mut self, f: impl FnOnce(&mut ThemeMetrics)) -> Self {
         f(&mut Arc::make_mut(&mut self.0).metrics);
+        self
+    }
+    /// Customizes the elevation shadows, preserving existing clones.
+    ///
+    /// ```
+    /// use rxui::{BoxShadow, Elevation, Theme, rgba8};
+    /// let theme = Theme::dark().shadows(|s| {
+    ///     s.control = Some(BoxShadow::new(rgba8(0, 0, 0, 64)).offset(0., 1.).blur(2.));
+    /// });
+    /// assert!(theme.shadow(Elevation::Control).is_some());
+    /// assert_eq!(Theme::dark().shadow(Elevation::Control), None);
+    /// ```
+    pub fn shadows(mut self, f: impl FnOnce(&mut ThemeShadows)) -> Self {
+        f(&mut Arc::make_mut(&mut self.0).shadows);
         self
     }
     /// Defines or replaces an application color token, used through
@@ -489,6 +768,14 @@ impl Theme {
     pub fn sizes(&self) -> &ThemeMetrics {
         &self.0.metrics
     }
+    /// Current elevation shadows.
+    pub fn elevations(&self) -> &ThemeShadows {
+        &self.0.shadows
+    }
+    /// The shadow of one elevation level, or `None` when the level is flat.
+    pub fn shadow(&self, level: Elevation) -> Option<BoxShadow> {
+        self.0.shadows.get(level)
+    }
     /// Resolves one semantic color.
     pub fn color(&self, color: ThemeColor) -> Color {
         let c = self.palette();
@@ -517,20 +804,42 @@ impl Theme {
             ThemeColor::SelectionText => c.selection_text,
             ThemeColor::Caret => c.caret,
             ThemeColor::Preedit => c.preedit,
+            ThemeColor::RowHover => c.row_hover,
+            ThemeColor::RowSelected => c.row_selected,
+            ThemeColor::RowSelectedInactive => c.row_selected_inactive,
+            ThemeColor::Danger => c.danger,
+            ThemeColor::Warning => c.warning,
+            ThemeColor::Success => c.success,
+            ThemeColor::DangerSubtle => c.danger_subtle,
+            ThemeColor::WarningSubtle => c.warning_subtle,
+            ThemeColor::SuccessSubtle => c.success_subtle,
             ThemeColor::Custom(name) => self.custom_color(name).unwrap_or([0.; 4]),
         }
     }
-    /// Checks finite/ranged colors and nonnegative metrics. Installation is fallible
-    /// so invalid customization cannot replace a placement's working theme.
+    /// Checks finite/ranged colors, positive text sizes, nonnegative metrics, font
+    /// weights in `1..=1000` and valid shadows. Installation is fallible so invalid
+    /// customization cannot replace a placement's working theme.
     pub fn validate(&self) -> Result<(), UiError> {
         let m = self.sizes();
+        let s = self.elevations();
         if !self.palette().values().into_iter().all(valid_color)
             || !self.0.custom_colors.iter().all(|(_, c)| valid_color(*c))
             || self.0.custom_metrics.iter().any(|(_, v)| !v.is_finite())
-            || !m.font_size.is_finite()
-            || m.font_size <= 0.
-            || !m.line_height.is_finite()
-            || m.line_height <= 0.
+            || [
+                m.font_size,
+                m.caption_size,
+                m.subheading_size,
+                m.heading_size,
+                m.title_size,
+                m.line_height,
+            ]
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.)
+            || !(1..=1000).contains(&m.heading_weight.0)
+            || [s.control, s.popover, s.modal]
+                .iter()
+                .flatten()
+                .any(|s| !s.valid())
             || [
                 m.button_padding_x,
                 m.button_padding_y,
@@ -538,13 +847,21 @@ impl Theme {
                 m.input_padding_y,
                 m.input_width,
                 m.input_height,
+                m.row_height,
+                m.row_padding_x,
                 m.border_width,
                 m.radius,
+                m.radius_small,
+                m.radius_large,
                 m.focus_width,
+                m.indicator_size,
+                m.switch_width,
+                m.switch_height,
             ]
             .iter()
             .any(|v| !v.is_finite() || *v < 0.)
             || !m.motion.overlay_offset.is_finite()
+            || !m.focus_offset.is_finite()
         {
             return Err(UiError::InvalidStyle);
         }
@@ -563,11 +880,12 @@ pub struct PaintStyle {
     pub(crate) radii: Option<[f32; 4]>,
     pub(crate) focus_color: Option<StyleColor>,
     pub(crate) focus_width: Option<f32>,
+    pub(crate) focus_offset: Option<f32>,
     pub(crate) selection: Option<StyleColor>,
     pub(crate) selection_text: Option<StyleColor>,
     pub(crate) caret: Option<StyleColor>,
     pub(crate) preedit: Option<StyleColor>,
-    pub(crate) shadow: Option<Option<BoxShadow>>,
+    pub(crate) shadow: Option<Option<StyleShadow>>,
 }
 /// Blurred shadow cast by an element's rounded box, painted behind its background.
 /// It follows the element's corner radii and is clipped like the element itself;
@@ -622,6 +940,53 @@ impl BoxShadow {
             && self.blur.is_finite()
             && self.blur >= 0.
             && self.color.valid()
+    }
+    fn resolve(self, theme: &Theme) -> ResolvedShadow {
+        ResolvedShadow {
+            offset: self.offset,
+            blur: self.blur,
+            spread: self.spread,
+            color: self.color.resolve(theme),
+        }
+    }
+}
+/// A literal [`BoxShadow`] or a theme [`Elevation`]. Elevations resolve again on a
+/// theme switch, like [`StyleColor::Theme`]; a flat level paints no shadow.
+///
+/// ```
+/// use rxui::prelude::*;
+/// let menu = column().radius(8.).background(ThemeColor::Raised).elevation(Elevation::Popover);
+/// let card = column().shadow(BoxShadow::new(rgba8(0, 0, 0, 64)).blur(4.));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StyleShadow {
+    /// Explicit shadow; theme-bound colors still follow the theme.
+    Literal(BoxShadow),
+    /// Shadow of a level in the nearest theme.
+    Theme(Elevation),
+}
+impl From<BoxShadow> for StyleShadow {
+    fn from(shadow: BoxShadow) -> Self {
+        Self::Literal(shadow)
+    }
+}
+impl From<Elevation> for StyleShadow {
+    fn from(level: Elevation) -> Self {
+        Self::Theme(level)
+    }
+}
+impl StyleShadow {
+    pub(crate) fn resolve(self, theme: &Theme) -> Option<ResolvedShadow> {
+        match self {
+            Self::Literal(shadow) => Some(shadow.resolve(theme)),
+            Self::Theme(level) => theme.shadow(level).map(|s| s.resolve(theme)),
+        }
+    }
+    fn valid(&self) -> bool {
+        match self {
+            Self::Literal(shadow) => shadow.valid(),
+            Self::Theme(_) => true,
+        }
     }
 }
 /// A [`BoxShadow`] with its color resolved in the element's theme.
@@ -700,9 +1065,15 @@ impl PaintStyle {
         self.focus_color = Some(color.into());
         self
     }
-    /// Inside focus stroke width, independent of box metrics.
+    /// Focus ring width, independent of box metrics.
     pub fn focus_width(mut self, width: f32) -> Self {
         self.focus_width = Some(width);
+        self
+    }
+    /// Gap between the border box and the focus ring; see
+    /// [`ThemeMetrics::focus_offset`]. `-width` places the ring inside the box.
+    pub fn focus_offset(mut self, offset: f32) -> Self {
+        self.focus_offset = Some(offset);
         self
     }
     /// Opaque/readable selection fill drawn behind ordinary text.
@@ -725,10 +1096,14 @@ impl PaintStyle {
         self.preedit = Some(color.into());
         self
     }
-    /// Box shadow behind the element's background.
-    pub fn shadow(mut self, shadow: BoxShadow) -> Self {
-        self.shadow = Some(Some(shadow));
+    /// Box shadow behind the element's background, literal or a theme elevation.
+    pub fn shadow(mut self, shadow: impl Into<StyleShadow>) -> Self {
+        self.shadow = Some(Some(shadow.into()));
         self
+    }
+    /// The theme's shadow for `level`; the same as `shadow(level)`.
+    pub fn elevation(self, level: Elevation) -> Self {
+        self.shadow(level)
     }
     /// Explicitly remove an earlier shadow, for example in a state patch.
     pub fn no_shadow(mut self) -> Self {
@@ -744,6 +1119,7 @@ impl PaintStyle {
             radii,
             focus_color,
             focus_width,
+            focus_offset,
             selection,
             selection_text,
             caret,
@@ -772,6 +1148,7 @@ impl PaintStyle {
                 .flatten()
                 .chain(self.focus_width)
                 .any(|v| !v.is_finite() || v < 0.)
+            || self.focus_offset.is_some_and(|v| !v.is_finite())
         {
             return Err(UiError::InvalidStyle);
         }
@@ -796,6 +1173,9 @@ impl PaintStyle {
         if let Some(v) = self.focus_width {
             paint.focus_width = v;
         }
+        if let Some(v) = self.focus_offset {
+            paint.focus_offset = v;
+        }
         if let Some(c) = self.selection {
             paint.selection_color = c.resolve(theme);
         }
@@ -809,12 +1189,7 @@ impl PaintStyle {
             paint.preedit_color = c.resolve(theme);
         }
         if let Some(shadow) = self.shadow {
-            paint.shadow = shadow.map(|s| ResolvedShadow {
-                offset: s.offset,
-                blur: s.blur,
-                spread: s.spread,
-                color: s.color.resolve(theme),
-            });
+            paint.shadow = shadow.and_then(|s| s.resolve(theme));
         }
     }
 }
@@ -841,8 +1216,11 @@ pub struct ResolvedPaint {
     pub radii: [f32; 4],
     /// Focus outline color.
     pub focus_color: Color,
-    /// Inside focus stroke width.
+    /// Focus ring width.
     pub focus_width: f32,
+    /// Gap between the border box and the focus ring; negative values move the
+    /// ring inward. See [`ThemeMetrics::focus_offset`].
+    pub focus_offset: f32,
     /// Selection fill, drawn behind text.
     pub selection_color: Color,
     /// Text over the selection fill.
@@ -855,6 +1233,20 @@ pub struct ResolvedPaint {
     pub shadow: Option<ResolvedShadow>,
 }
 impl ResolvedPaint {
+    /// Logical area a focus ring around `bounds` covers, or `None` when the ring
+    /// is empty. It extends beyond `bounds` unless the ring is inside the box.
+    pub fn focus_extent(&self, bounds: crate::Bounds) -> Option<crate::Bounds> {
+        if self.focus_width <= 0. || bounds.width <= 0. || bounds.height <= 0. {
+            return None;
+        }
+        let grow = (self.focus_offset + self.focus_width).max(0.);
+        Some(crate::Bounds {
+            x: bounds.x - grow,
+            y: bounds.y - grow,
+            width: bounds.width + 2. * grow,
+            height: bounds.height + 2. * grow,
+        })
+    }
     pub(crate) fn new(theme: &Theme, color: Color) -> Self {
         let c = theme.palette();
         Self {
@@ -864,6 +1256,7 @@ impl ResolvedPaint {
             radii: [0.; 4],
             focus_color: c.focus,
             focus_width: theme.sizes().focus_width,
+            focus_offset: theme.sizes().focus_offset,
             selection_color: c.selection,
             selection_text_color: c.selection_text,
             caret_color: c.caret,

@@ -190,8 +190,12 @@ warm-cache costs and the initial-tree boundary.
 ## Themes and styling
 
 `Application::new().theme(Theme::dark())` chooses the default. `Theme::light()` and
-`Theme::high_contrast()` use matching metrics; `.compact()` switches any preset to the
-dense metrics. Elements accept semantic tokens such as `.color(ThemeColor::TextMuted)`
+`Theme::high_contrast()` use matching metrics (13-unit text, 28-unit buttons and
+inputs, focus rings drawn just outside the box); `.compact()` switches any preset to
+the dense metrics, and `Theme::generate(ThemeSeed::new(scheme, accent))` derives a
+complete theme from an accent. `.text_role(TextRole::Title)` and the other roles size
+text from the theme's type scale, and `.elevation(Elevation::Popover)` adds the
+theme's shadow for that level. Elements accept semantic tokens such as `.color(ThemeColor::TextMuted)`
 and `.background(ThemeColor::Surface)`, or literal linear RGBA values. `rgb8`/`rgba8`
 convert sRGB byte colors for the renderer. Text color, size, family, weight, slope,
 line height and alignment inherit across component boundaries (`.font_family(...)`,
@@ -365,8 +369,8 @@ Keep shared `Image` handles in state, then use
 `image(source.clone()).width(240.).height(160.).fit(ImageFit::Cover)`. Sources can
 be RGBA pixels, optional decoded PNG/JPEG bytes, textures/views or a live framebuffer
 color output. `button(row().child(image(icon)).child(label("Save")))` composes content
-with normal control behavior; `.variant(ButtonVariant::Primary)` or Quiet selects
-themed appearances.
+with normal control behavior; `.variant(ButtonVariant::Primary)`, Quiet or Danger
+selects themed appearances, and `.list_row(selected)` paints a list row.
 
 Implement `CustomElement` and place it with `custom(value)` for leaves that measure,
 hit-test and paint themselves with the RXUI drawing context; the

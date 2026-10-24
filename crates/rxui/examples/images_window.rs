@@ -1,6 +1,6 @@
 //! Standalone image fitting and composed-button example. Each placement shares one
 //! Image handle; tint/fit/filter changes reuse its uploaded pixels. No external assets.
-use rxui::prelude::*;
+use rxui::{prelude::*, taffy::prelude::AlignItems};
 
 struct Gallery {
     image: Image,
@@ -28,7 +28,7 @@ impl View for Gallery {
             .scroll_y()
             .child(
                 label("Shared images & composed controls")
-                    .font_size(26.)
+                    .text_role(TextRole::Title)
                     .accessibility_role(SemanticRole::Heading),
             )
             .child(
@@ -66,6 +66,7 @@ impl View for Gallery {
                         button(
                             row()
                                 .gap(8.)
+                                .align_items(AlignItems::CENTER)
                                 .child(
                                     image(self.image.clone())
                                         .width(24.)
@@ -91,6 +92,7 @@ impl View for Gallery {
                 button(
                     row()
                         .gap(8.)
+                        .align_items(AlignItems::CENTER)
                         .child(
                             image(self.image.clone())
                                 .width(24.)
@@ -111,7 +113,7 @@ impl View for Gallery {
                     cx.open_window(
                         WindowOptions::new()
                             .title("RXUI — shared images")
-                            .size(780., 500.)
+                            .size(780., 540.)
                             .theme(Theme::light()),
                         root,
                     )
@@ -142,7 +144,7 @@ fn main() -> Result<(), ApplicationError> {
             clicks: 0,
         });
         cx.open_window(
-            WindowOptions::new().title("RXUI — images").size(780., 500.),
+            WindowOptions::new().title("RXUI — images").size(780., 540.),
             root,
         )?;
         Ok(())

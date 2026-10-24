@@ -129,7 +129,7 @@ impl View for Workspace {
             .gap(16.)
             .child(
                 label("Hover documentation")
-                    .font_size(22.)
+                    .text_role(TextRole::Heading)
                     .accessibility_role(SemanticRole::Heading),
             )
             .child(
@@ -143,7 +143,7 @@ impl View for Workspace {
             )
             .child(
                 label("Diagnostics")
-                    .font_size(22.)
+                    .text_role(TextRole::Heading)
                     .accessibility_role(SemanticRole::Heading),
             )
             .child(column().fill_width().gap(10.).children(diagnostics))

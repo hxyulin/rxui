@@ -585,6 +585,8 @@ pub(crate) struct InkExtent {
     pub(crate) content: Bounds,
     /// Whether any interaction state paints a box shadow.
     pub(crate) shadow: bool,
+    /// Extent of a visible focus ring, which can reach outside `bounds`.
+    pub(crate) focus: Option<Bounds>,
 }
 /// Painter-relevant content of one visible node; see [`Ui::visible_content`].
 #[cfg(feature = "rendering")]
@@ -638,6 +640,22 @@ pub(crate) struct Node {
 }
 
 impl Node {
+    /// The box a clipping element clips its descendants to. Like a CSS scrollport, a
+    /// scroll container clips at its padding box, so content scrolls under the
+    /// padding; other clipping elements clip at their content box.
+    pub(crate) fn descendant_clip_box(&self) -> Bounds {
+        if self.element.scroll.is_none() {
+            return self.content_bounds;
+        }
+        let [left, right, top, bottom] = self.border;
+        let b = self.bounds;
+        Bounds {
+            x: b.x + left,
+            y: b.y + top,
+            width: (b.width - left - right).max(0.),
+            height: (b.height - top - bottom).max(0.),
+        }
+    }
     fn displayed_text(&self) -> Option<&str> {
         self.editor
             .as_ref()
@@ -698,6 +716,103 @@ impl Node {
             revision: self.text_revision,
         }
     }
+}
+/// Theme defaults of an element's paint and, for controls and rows, of its hover,
+/// pressed and disabled states, before explicit paint and state patches.
+fn default_paint(
+    element: &Element,
+    theme: &Theme,
+    color: crate::Color,
+) -> (ResolvedPaint, Option<[ResolvedPaint; 3]>) {
+    use crate::element::Surface;
+    let c = theme.palette();
+    let m = theme.sizes();
+    let mut paint = ResolvedPaint::new(theme, color);
+    let button = matches!(element.kind, ElementKind::Button { .. });
+    let input = matches!(element.kind, ElementKind::TextInput { .. });
+    match element.surface {
+        Surface::Raised(level) => {
+            paint.background = Some(c.raised);
+            paint.border_color = Some(c.divider);
+            paint.radii = [m.radius_large; 4];
+            paint.shadow = crate::StyleShadow::Theme(level).resolve(theme);
+        }
+        Surface::Row { selected } => {
+            paint.background = selected.then_some(c.row_selected);
+            paint.radii = [m.radius_small; 4];
+            // Rows abut their list's clip, so the ring stays inside them.
+            paint.focus_offset = -paint.focus_width;
+            let mut states = [paint; 3];
+            for state in &mut states[..2] {
+                state.background = Some(if selected {
+                    c.row_selected
+                } else {
+                    c.row_hover
+                });
+            }
+            states[2].color = c.text_disabled;
+            return (paint, Some(states));
+        }
+        Surface::Part(part) => paint.radii = [part.radius(m); 4],
+        Surface::Plain => {}
+    }
+    if !button && !input {
+        return (paint, element.states.is_some().then_some([paint; 3]));
+    }
+    paint.radii = [m.radius; 4];
+    if input {
+        paint.background = Some(c.input);
+        paint.border_color = Some(c.input_border);
+    } else {
+        match element.button_variant {
+            crate::ButtonVariant::Default => {
+                paint.background = Some(c.control);
+                paint.border_color = Some(c.border);
+                paint.shadow = crate::StyleShadow::Theme(crate::Elevation::Control).resolve(theme);
+            }
+            crate::ButtonVariant::Primary => {
+                // The fill covers the border, so the button has no visible edge.
+                paint.background = Some(c.accent);
+                paint.color = c.accent_text;
+            }
+            crate::ButtonVariant::Quiet => paint.color = c.text_muted,
+            crate::ButtonVariant::Danger => {
+                paint.color = c.danger;
+                paint.border_color = Some(c.danger);
+            }
+        }
+    }
+    let mut states = [paint; 3];
+    let [hover, pressed, disabled] = &mut states;
+    disabled.background = Some(c.control_disabled);
+    disabled.color = c.text_disabled;
+    disabled.border_color = Some(c.border_disabled);
+    disabled.shadow = None;
+    match (input, element.button_variant) {
+        // Inputs keep their fill; focus, not hover, changes their border.
+        (true, _) => {}
+        (false, crate::ButtonVariant::Default) => {
+            hover.background = Some(c.control_hover);
+            pressed.background = Some(c.control_pressed);
+        }
+        (false, crate::ButtonVariant::Primary) => {
+            hover.background = Some(c.accent_hover);
+            pressed.background = Some(c.accent_pressed);
+        }
+        (false, crate::ButtonVariant::Quiet) => {
+            hover.background = Some(c.row_hover);
+            pressed.background = Some(c.control_pressed);
+            hover.color = c.text;
+            pressed.color = c.text;
+            disabled.background = None;
+            disabled.border_color = None;
+        }
+        (false, crate::ButtonVariant::Danger) => {
+            hover.background = Some(c.danger_subtle);
+            pressed.background = Some(c.danger_subtle);
+        }
+    }
+    (paint, Some(states))
 }
 /// Whether an element retains editing state: every text input, and labels marked
 /// selectable.
@@ -1214,6 +1329,19 @@ impl<T: View> Ui<T> {
                         let Some(id) = context.as_deref() else {
                             return Size::ZERO;
                         };
+                        // Taffy passes the border-box known size but expects a
+                        // content-box measurement; its available space already
+                        // excludes padding and border, so known axes take it.
+                        let known = Size {
+                            width: known
+                                .width
+                                .and(available.width.into_option())
+                                .map(|width| width.max(0.)),
+                            height: known
+                                .height
+                                .and(available.height.into_option())
+                                .map(|height| height.max(0.)),
+                        };
                         let node = &nodes[id];
                         if let ElementKind::Image(props) = &node.element.kind {
                             let [w, h] = [
@@ -1449,7 +1577,8 @@ impl<T: View> Ui<T> {
                         .and_then(|p| p.overlay.as_ref())
                         .map(|p| p.modal);
             node.layout_dirty |= node.element.style != element.style
-                || node.element.layout_overrides != element.layout_overrides;
+                || node.element.layout_overrides != element.layout_overrides
+                || node.element.surface != element.surface;
             if node.element.style != element.style
                 || node.element.paint != element.paint
                 || node.element.font_size != element.font_size
@@ -1458,6 +1587,7 @@ impl<T: View> Ui<T> {
                 || node.element.inert != element.inert
                 || node.element.pointer_events != element.pointer_events
                 || node.element.button_variant != element.button_variant
+                || node.element.surface != element.surface
                 || node.element.states != element.states
                 || image_properties(&node.element) != image_properties(&element)
                 || node.element.layout_overrides != element.layout_overrides
@@ -1859,12 +1989,30 @@ impl<T: View> Ui<T> {
         let element = &node.element;
         let theme = element.theme.as_ref().unwrap_or(parent_theme).clone();
         let color = element.paint.color.unwrap_or(parent_color);
-        let font = element.font_size.or(parent_font);
+        let own_text = element.text_style.as_deref();
+        let role = own_text.and_then(|own| own.role);
+        // A role resolves to concrete values here, which descendants inherit.
+        let font = element
+            .font_size
+            .or(role.map(|r| theme.sizes().role_size(r)))
+            .or(parent_font);
         let font_size = font.unwrap_or(theme.sizes().font_size);
-        let text_binding = element
-            .text_style
-            .as_deref()
-            .map_or_else(|| parent_text.clone(), |own| own.over(parent_text));
+        let mut text_binding =
+            own_text.map_or_else(|| parent_text.clone(), |own| own.over(parent_text));
+        if let Some(role) = role
+            && own_text.and_then(|own| own.weight).is_none()
+        {
+            text_binding.weight = Some(theme.sizes().role_weight(role));
+        }
+        // Bordered and filled buttons label in medium weight unless a weight is
+        // set on them or inherited.
+        if matches!(element.kind, ElementKind::Button { .. })
+            && element.surface == crate::element::Surface::Plain
+            && element.button_variant != crate::ButtonVariant::Quiet
+            && text_binding.weight.is_none()
+        {
+            text_binding.weight = Some(crate::FontWeight::MEDIUM);
+        }
         let mut text_style = text_binding.resolve(&theme);
         let control = matches!(
             element.kind,
@@ -1875,8 +2023,18 @@ impl<T: View> Ui<T> {
             text_style.overflow = crate::TextOverflow::Wrap;
         }
         let metrics = theme.sizes();
-        let layout = if node.layout_dirty || (control && metrics != node.resolved_theme.sizes()) {
+        let part = match element.surface {
+            crate::element::Surface::Part(part) => Some(part),
+            _ => None,
+        };
+        let list_row = matches!(element.surface, crate::element::Surface::Row { .. });
+        let layout = if node.layout_dirty
+            || ((control || part.is_some() || list_row) && metrics != node.resolved_theme.sizes())
+        {
             let mut layout = element.style.clone();
+            if let Some(part) = part {
+                part.layout(metrics, &mut layout, element.layout_overrides);
+            }
             if control {
                 use taffy::geometry::Rect;
                 let all = |x, y| Rect {
@@ -1909,62 +2067,34 @@ impl<T: View> Ui<T> {
                     }
                 }
             }
+            if list_row {
+                // Rows are denser than controls: no vertical padding, and a minimum
+                // height that taller content may exceed.
+                if element.layout_overrides & 1 == 0 {
+                    let x = length(metrics.row_padding_x);
+                    let y = length(0.);
+                    layout.padding = taffy::geometry::Rect {
+                        left: x,
+                        right: x,
+                        top: y,
+                        bottom: y,
+                    };
+                }
+                if element.layout_overrides & 4 == 0
+                    && layout.min_size.height == LengthPercentageAuto::auto()
+                {
+                    layout.min_size.height = length(metrics.row_height);
+                }
+            }
             Some(layout)
         } else {
             None
         };
-        let mut paint = ResolvedPaint::new(&theme, color.resolve(&theme));
-        if control {
-            let c = theme.palette();
-            let (fill, border) = if input {
-                (c.input, c.input_border)
-            } else {
-                (c.control, c.border)
-            };
-            paint.background = Some(fill);
-            paint.border_color = Some(border);
-            paint.radii = [metrics.radius; 4];
-        }
-        if matches!(element.kind, ElementKind::Button { .. }) {
-            match element.button_variant {
-                crate::ButtonVariant::Primary => {
-                    paint.background = Some(theme.palette().accent);
-                    paint.color = theme.palette().accent_text;
-                    paint.border_color = Some(theme.palette().accent);
-                    paint.focus_color = theme.palette().accent_text;
-                }
-                crate::ButtonVariant::Quiet => {
-                    paint.background = None;
-                    paint.border_color = None;
-                }
-                crate::ButtonVariant::Default => {}
-            }
-        }
-        let states = if control || element.states.is_some() {
-            let mut states = [paint; 3];
-            if control {
-                states[0].background = Some(theme.palette().control_hover);
-                states[1].background = Some(theme.palette().control_pressed);
-                states[2].background = Some(theme.palette().control_disabled);
-                states[2].color = theme.palette().text_disabled;
-                states[2].border_color = Some(theme.palette().border_disabled);
-            }
-            if matches!(element.kind, ElementKind::Button { .. }) {
-                match element.button_variant {
-                    crate::ButtonVariant::Primary => {
-                        states[0].background = Some(theme.palette().accent_hover);
-                        states[0].border_color = Some(theme.palette().accent_hover);
-                        states[1].background = Some(theme.palette().accent_pressed);
-                        states[1].border_color = Some(theme.palette().accent_pressed);
-                        states[2].focus_color = theme.palette().focus;
-                    }
-                    crate::ButtonVariant::Quiet => {
-                        states[2].background = None;
-                        states[2].border_color = None;
-                    }
-                    crate::ButtonVariant::Default => {}
-                }
-            }
+        let (mut paint, states) = default_paint(element, &theme, color.resolve(&theme));
+        // A row's ring stays inside it at any explicit width.
+        let inside_ring = matches!(element.surface, crate::element::Surface::Row { .. })
+            && element.paint.focus_offset.is_none();
+        let states = states.map(|mut states| {
             for state in &mut states {
                 element.paint.apply(&theme, state);
             }
@@ -1973,11 +2103,17 @@ impl<T: View> Ui<T> {
                 patches.pressed.apply(&theme, &mut states[1]);
                 patches.disabled.apply(&theme, &mut states[2]);
             }
-            Some(Box::new(states))
-        } else {
-            None
-        };
+            if inside_ring {
+                for state in &mut states {
+                    state.focus_offset = -state.focus_width;
+                }
+            }
+            Box::new(states)
+        });
         element.paint.apply(&theme, &mut paint);
+        if inside_ring {
+            paint.focus_offset = -paint.focus_width;
+        }
         let children = node.children.clone();
         let layout_id = node.layout;
         if let Some(layout) = layout
@@ -2206,13 +2342,11 @@ impl<T: View> Ui<T> {
                     node.scroll_offset[axis].clamp(0., node.scroll_range[axis]);
             }
         }
-        node.clip_bounds = if node.element.clip {
-            clip.intersection(bounds)
-        } else {
-            clip
-        };
+        // A clipping element clips its descendants, not its own painting: its
+        // shadow and outside focus ring extend beyond its box.
+        node.clip_bounds = clip;
         let child_clip = if node.element.clip {
-            clip.intersection(node.content_bounds)
+            clip.intersection(node.descendant_clip_box())
         } else {
             clip
         };
@@ -2235,7 +2369,7 @@ impl<T: View> Ui<T> {
         if !node.element.clip || node.paint.radii.iter().all(|r| *r <= 0.) {
             return node.rounded_clip;
         }
-        let (b, c) = (node.bounds, node.content_bounds);
+        let (b, c) = (node.bounds, node.descendant_clip_box());
         let [left, top] = [c.x - b.x, c.y - b.y];
         let [right, bottom] = [
             b.x + b.width - c.x - c.width,
@@ -2363,7 +2497,29 @@ impl<T: View> Ui<T> {
                     .as_ref()
                     .is_some_and(|states| states.iter().any(|p| p.shadow.is_some()))
                 || self.motion_shadow(id),
+            focus: self
+                .focus_visible(id)
+                .then(|| Self::focus_ring_extent(node))
+                .flatten(),
         })
+    }
+    /// Union of the focus ring extents of a node's interaction states, so the
+    /// ring is never culled whichever state paints it.
+    #[cfg(feature = "rendering")]
+    fn focus_ring_extent(node: &Node) -> Option<Bounds> {
+        let mut extent = node.paint.focus_extent(node.bounds)?;
+        for state in node.state_paints.iter().flat_map(|s| s.iter()) {
+            if let Some(b) = state.focus_extent(node.bounds) {
+                let (x, y) = (extent.x.min(b.x), extent.y.min(b.y));
+                extent = Bounds {
+                    x,
+                    y,
+                    width: (extent.x + extent.width).max(b.x + b.width) - x,
+                    height: (extent.y + extent.height).max(b.y + b.height) - y,
+                };
+            }
+        }
+        Some(extent)
     }
     /// A visible node's parent for composition (`None` for roots and overlays,
     /// which composite on their own) and its opacity. `None` for hidden nodes.
@@ -2607,6 +2763,26 @@ impl<T: View> Ui<T> {
                 node.paint
             }
         });
+        // A focused input outlines itself in its focus color, under the ring.
+        if !disabled
+            && self.focused == Some(id)
+            && matches!(node.element.kind, ElementKind::TextInput { .. })
+            && node.element.paint.border_color.is_none()
+            && paint.border_color.is_some()
+        {
+            paint.border_color = Some(paint.focus_color);
+        }
+        if let crate::element::Surface::Row { selected } = node.element.surface
+            && !disabled
+        {
+            let c = node.resolved_theme.palette();
+            if selected && paint.background == Some(c.row_selected) && !self.row_list_focused(id) {
+                paint.background = Some(c.row_selected_inactive);
+            } else if !selected && paint.background.is_none() && self.focus_visible(id) {
+                // Keyboard focus highlights a row like hover, as in menus.
+                paint.background = Some(c.row_hover);
+            }
+        }
         if let Some(owner) = node.button_owner
             && node.control_color
         {
@@ -2629,6 +2805,43 @@ impl<T: View> Ui<T> {
             }
         }
         paint
+    }
+    /// Whether focus is within the list that owns row `id`: its nearest focusable
+    /// ancestor, or else its nearest scrolling ancestor, or else its parent.
+    fn row_list_focused(&self, id: ElementId) -> bool {
+        let Some(focused) = self.focused else {
+            return false;
+        };
+        let parent = self.nodes.get(&id).and_then(|n| n.parent);
+        let mut scrolling = None;
+        let mut current = parent;
+        let mut list = None;
+        while let Some(ancestor) = current {
+            let n = &self.nodes[&ancestor];
+            let focusable = n.element.input.as_ref().and_then(|p| p.focusable);
+            if focusable.unwrap_or(matches!(
+                n.element.kind,
+                ElementKind::Button { .. } | ElementKind::TextInput { .. }
+            )) {
+                list = Some(ancestor);
+                break;
+            }
+            if scrolling.is_none() && n.element.scroll.is_some() {
+                scrolling = Some(ancestor);
+            }
+            current = n.parent;
+        }
+        let Some(list) = list.or(scrolling).or(parent) else {
+            return focused == id;
+        };
+        let mut current = Some(focused);
+        while let Some(node) = current {
+            if node == list {
+                return true;
+            }
+            current = self.nodes.get(&node).and_then(|n| n.parent);
+        }
+        false
     }
     /// Topmost enabled focusable target within the logical viewport and ancestor clips,
     /// using the current retained scroll offsets.

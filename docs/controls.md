@@ -190,25 +190,31 @@ the button foreground, including the disabled text color.
 
 | Part | Resting | Checked or filled | Disabled |
 | --- | --- | --- | --- |
-| Check box, radio, switch indicator | Input fill, InputBorder outline | Accent fill or ring, AccentText mark | ControlDisabled with BorderDisabled; TextDisabled when checked |
-| Slider rail and thumb | Input fill, InputBorder outline | Accent fill | ControlDisabled, BorderDisabled, TextDisabled fill |
-| Progress track | Input fill, InputBorder outline | Accent fill | (not interactive) |
-| Select list | Raised popover | Selection fill, SelectionText for the highlight | TextDisabled options |
-| Tooltip | Raised popover, Border outline, 12-unit text | | |
+| Check box, radio, switch indicator | Input fill, TextMuted outline and switch knob | Accent fill, AccentText mark | ControlDisabled with BorderDisabled; TextDisabled when checked |
+| Slider rail and thumb | Input fill, TextMuted outline | Accent fill | ControlDisabled, BorderDisabled, TextDisabled fill |
+| Progress track | Input fill, TextMuted outline | Accent fill | (not interactive) |
+| Select list | Raised popover with a Divider outline and popover shadow | RowHover for the highlight, a check for the selection | TextDisabled options |
+| Tooltip | Raised popover, Caption text | | |
 
 Rails and tracks are outlined rather than filled with the border color so the
 accent fill stays distinct in high contrast, where Border is white and the accent
-is yellow. Tests verify for every preset that the accent has at least 3:1
-contrast against Background, Surface and the Input fill, that InputBorder has at
-least 3:1 against Input and Surface, AccentText at least 4.5:1 on the accent and
-SelectionText at least 7:1 on Selection. Two pairs fall short and are recorded
-rather than hidden: dark's accent on the Raised popover fill is 2.96:1, and light's
-InputBorder on the Background canvas is 2.77:1 (on Surface it is 3.05:1), the same
-as text inputs.
+is yellow. Input borders are soft boundaries below 3:1 in light and dark, so
+unchecked indicators, rails and tracks outline themselves with TextMuted. Tests
+verify for every preset that the accent has at least 3:1 contrast against
+Background, Surface and the Input fill, that the unchecked outline and switch knob
+have at least 3:1 against Input and Surface, and AccentText at least 4.5:1 on the
+accent. Dark's accent on the Raised popover fill is 2.96:1, recorded rather than
+hidden.
 
-Indicator sizes are fixed (16-unit boxes and radios, a 34×20 switch, a 16-unit
-slider thumb) and control padding is set explicitly, so the compact density does
-not shrink them yet.
+Indicators follow the theme's metrics: `indicator_size` sizes check boxes and
+radios (14 units balanced, 12 compact), and `switch_width` × `switch_height`
+sizes switches (26×16, 22×13). The slider thumb is as tall as a switch, its rail
+three eighths of that, and progress bars half (8 units balanced, 6 compact; an
+explicit `.height` wins). Marks and dots scale with their box, and a theme or
+density switch resizes them live. Captioned rows stay as tall as a button. The
+slider's thumb travel stays 8 units inside its ends at every density, so a
+compact thumb stops just short of them. See
+[styling](styling.md#default-appearance-and-accessibility-targets).
 
 ![Standard controls in the dark theme, with a tooltip shown](images/controls-dark-validation.png)
 ![Standard controls in the light theme, with the select list open](images/controls-light-validation.png)
@@ -261,5 +267,5 @@ cargo test -p rxui --features rendering standard::gpu_tests --locked -- --ignore
 cargo run -p rxui --example gallery --features native --locked
 ```
 
-The screenshots above were rendered headlessly through `TestUi` with the bundled
-Source Sans test font, and inspected visually. They are not native window captures.
+The screenshots above were rendered headlessly through `TestUi` at raster scale one
+with the system UI font, and inspected visually. They are not native window captures.

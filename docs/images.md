@@ -153,6 +153,6 @@ for CPU preparation/reconciliation costs and their limits.
 Native validation captures: [dark image gallery](images/images-dark-validation.png),
 [shared light placement](images/images-light-validation.png), and
 [offscreen chart](images/framebuffer-validation.png). The shared placements have
-active accessibility adapters and show the same changed tint. The host queues
+active accessibility adapters and share tint, filter and click state. The host queues
 redraws before semantic preparation consumes component dirtiness, preserving
 shared-window visual updates while publishing semantics.

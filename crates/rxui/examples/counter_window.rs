@@ -52,12 +52,12 @@ impl View for Counter {
             .fill_width()
             .padding(24.)
             .gap(12.)
-            .child(label("RXUI application and tasks").font_size(28.))
+            .child(label("RXUI application and tasks").text_role(TextRole::Title))
             .child(
                 label("Click or use Tab and Enter. Scroll the items below.")
-                    .color([0.65, 0.72, 0.84, 1.]),
+                    .color(ThemeColor::TextMuted),
             )
-            .child(label(format!("Counter: {}", self.count)).font_size(22.))
+            .child(label(format!("Counter: {}", self.count)).text_role(TextRole::Heading))
             .child(
                 row()
                     .gap(12.)
@@ -128,17 +128,13 @@ impl View for Counter {
                     .fill_width()
                     .scroll_y()
                     .key("items-viewport")
-                    .gap(6.)
-                    .background([0.035, 0.055, 0.08, 1.])
+                    .padding(6.)
+                    .background(ThemeColor::Surface)
                     .children(self.items.iter().map(|item| {
                         let id = *item;
                         button(format!("Item {id}"))
                             .key(id)
-                            .background(if self.selected == Some(id) {
-                                [0.08, 0.3, 0.25, 1.]
-                            } else {
-                                [0.10, 0.16, 0.24, 1.]
-                            })
+                            .list_row(self.selected == Some(id))
                             .on_click(cx.listener(move |this, _, _| this.selected = Some(id)))
                     })),
             )

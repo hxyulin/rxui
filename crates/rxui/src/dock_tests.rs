@@ -382,7 +382,13 @@ fn dock_nested_layout_resize_and_semantics_keep_placement_identity() {
         && n.bounds.height.is_finite()
         && n.bounds.width >= 0.
         && n.bounds.height >= 0.));
-    assert!(ui.semantics().filter_map(|n| n.range).all(|n| n.read_only));
+    // Panes are pinned at their minimum size, so no splitter can move. Their
+    // content still scrolls.
+    assert!(
+        ui.semantics()
+            .filter(|n| n.role == SemanticRole::Splitter)
+            .all(|n| n.range.is_some_and(|r| r.read_only))
+    );
 }
 #[test]
 fn dock_selection_reorder_and_close_are_controlled_and_same_group_state_is_retained() {

@@ -74,6 +74,9 @@ fn viewport_overlays_escape_clips_z_and_opacity_with_msaa_dpi_and_modal_backdrop
         let mut runtime = Runtime::new();
         let entity = runtime.update(|cx| cx.new(|_| Page(description(0))));
         let mut ui = Ui::new(&mut runtime, entity.clone()).unwrap();
+        // Surface shadows would tint the probed pixels around the overlays.
+        ui.set_theme(Theme::dark().shadows(|s| *s = ThemeShadows::none()))
+            .unwrap();
         let mut painter = UiPainter::with_graphics(&graphics);
         for stage in 0..3 {
             runtime.update(|cx| entity.update(cx, |s, _| s.0 = description(stage)));

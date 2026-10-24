@@ -155,10 +155,8 @@ fn overlay_scrollbars_reserve_no_gutter_and_classic_bars_do() {
         assert_eq!(bar.bounds.width, bar_width, "{style:?}");
         assert_eq!(bar.bounds.x + bar.bounds.width, 300., "{style:?}");
         assert_eq!(bar.bounds.height, 200., "{style:?}");
-        assert_eq!(
-            bar.paint.background.is_none(),
-            style == ScrollbarStyle::Overlay
-        );
+        // Neither style fills its track.
+        assert_eq!(bar.paint.background, None);
         let content = ui
             .elements()
             .find(|e| e.key == Some(&Key::from("content")))

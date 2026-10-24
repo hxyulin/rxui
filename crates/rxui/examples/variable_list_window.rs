@@ -88,7 +88,7 @@ impl View for Tree {
             .fill_height()
             .gap(8.)
             .padding(16.)
-            .child(label(format!("{} rows", self.rows.len())).font_size(22.))
+            .child(label(format!("{} rows", self.rows.len())).text_role(TextRole::Heading))
             .child(
                 row()
                     .gap(8.)
@@ -133,7 +133,7 @@ impl View for Tree {
                                 column().child(name).child(
                                     label("warning: unused variable")
                                         .color(ThemeColor::TextMuted)
-                                        .font_size(12.),
+                                        .text_role(TextRole::Caption),
                                 )
                             } else {
                                 column().child(name)

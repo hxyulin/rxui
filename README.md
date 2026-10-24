@@ -49,7 +49,7 @@ fn main() -> Result<(), ApplicationError> {
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/theme-dark-validation.png">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/theme-light-validation.png">
-    <img src="docs/images/theme-light-validation.png" alt="The RXUI theme gallery: dark and light previews of buttons and text fields side by side, with local style overrides below." width="640">
+    <img src="docs/images/theme-light-validation.png" alt="The RXUI theme gallery: dark, light and high-contrast previews of primary, default, quiet and disabled buttons and text fields, at balanced and compact density, with local style overrides below." width="640">
   </picture>
 </p>
 

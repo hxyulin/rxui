@@ -21,7 +21,7 @@ fn preview(theme: Theme, title: &str, value: &str, cx: &mut ViewContext<'_, Gall
         .accessibility_label(title)
         .child(
             label(title)
-                .font_size(22.)
+                .text_role(TextRole::Heading)
                 .accessibility_role(SemanticRole::Heading),
         )
         .child(label("Secondary text inherits the local palette").color(ThemeColor::TextMuted))
@@ -65,7 +65,7 @@ fn next_theme(current: &Theme) -> Theme {
 impl View for Gallery {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         column().fill_width().fill_height().padding(24.).gap(16.).scroll_y()
-            .child(label("RXUI theme gallery").font_size(28.).accessibility_role(SemanticRole::Heading))
+            .child(label("RXUI theme gallery").text_role(TextRole::Title).accessibility_role(SemanticRole::Heading))
             .child(label("Hover, press, use Tab, and select text. Focus stays visible over pointer states.")
                 .color(ThemeColor::TextMuted))
             .child(row().gap(12.)
@@ -89,7 +89,7 @@ impl View for Gallery {
                 .child(preview(Theme::dark().compact(), "Dark compact", &self.name, cx))
                 .child(preview(Theme::light().compact(), "Light compact", &self.name, cx))
                 .child(preview(Theme::high_contrast().compact(), "High contrast compact", &self.name, cx)))
-            .child(label("Local overrides").font_size(22.))
+            .child(label("Local overrides").text_role(TextRole::Heading))
             .child(row().gap(12.)
                 .child(button("Custom interaction paints")
                     .background(ThemeColor::Control)

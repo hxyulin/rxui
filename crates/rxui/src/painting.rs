@@ -1037,11 +1037,23 @@ impl UiPainter {
         {
             return true;
         }
+        if element.focus_visible
+            && let Some(ring) = element.paint.focus_extent(b)
+        {
+            let fringe = 1. / scale;
+            if visible(Bounds {
+                x: ring.x - fringe,
+                y: ring.y - fringe,
+                width: ring.width + 2. * fringe,
+                height: ring.height + 2. * fringe,
+            }) {
+                return true;
+            }
+        }
         if (element.paint.background.is_some()
             || element.paint.border_color.is_some()
             || element.range.is_some()
-            || element.kind == crate::ElementType::Custom
-            || (element.focus_visible && element.paint.focus_width > 0.))
+            || element.kind == crate::ElementType::Custom)
             && b.width > 0.
             && b.height > 0.
         {
@@ -1114,7 +1126,7 @@ impl UiPainter {
                     clip[2] > 0 && clip[3] > 0
                 };
                 let fringe = 1. / scale;
-                let b = ink.bounds;
+                let b = ink.focus.unwrap_or(ink.bounds);
                 !(ink.shadow
                     || visible(Bounds {
                         x: b.x - fringe,
@@ -1268,25 +1280,40 @@ impl UiPainter {
                 }
                 if let Some(range) = element.range {
                     if let Some(thumb) = range.thumb_bounds {
-                        paint.fill_rounded_rect(
-                            Rect::new(thumb.x, thumb.y, thumb.width, thumb.height),
-                            4.,
-                            appearance.color,
-                        )?;
+                        // A slim translucent pill centered across the bar, stronger
+                        // while hovered or dragged.
+                        let vertical = range.axis == crate::Axis::Vertical;
+                        let cross = if vertical { thumb.width } else { thumb.height };
+                        let slim = (cross * 0.5).max(4.).min(cross);
+                        let inset = (cross - slim) / 2.;
+                        let pill = if vertical {
+                            Rect::new(thumb.x + inset, thumb.y, slim, thumb.height)
+                        } else {
+                            Rect::new(thumb.x, thumb.y + inset, thumb.width, slim)
+                        };
+                        let mut color = appearance.color;
+                        color[3] *= if element.hovered || element.pressed {
+                            0.75
+                        } else {
+                            0.45
+                        };
+                        paint.fill_rounded_rect(pill, slim / 2., color)?;
                     } else {
+                        // A one-unit line on whole device pixels stays crisp.
+                        let snap = |v: f32| (v * scale).round() / scale;
                         let line = if range.axis == crate::Axis::Horizontal {
                             Rect::new(
-                                bounds.x + (bounds.width - 2.) / 2.,
+                                snap(bounds.x + (bounds.width - 1.) / 2.),
                                 bounds.y,
-                                2.,
+                                1.,
                                 bounds.height,
                             )
                         } else {
                             Rect::new(
                                 bounds.x,
-                                bounds.y + (bounds.height - 2.) / 2.,
+                                snap(bounds.y + (bounds.height - 1.) / 2.),
                                 bounds.width,
-                                2.,
+                                1.,
                             )
                         };
                         paint.fill_rect(line, appearance.color)?;
@@ -1596,15 +1623,27 @@ impl UiPainter {
                             )?;
                         }
                     }
-                } else if element.focus_visible
-                    && appearance.focus_width > 0.
-                    && bounds.width > 0.
-                    && bounds.height > 0.
-                {
-                    paint.draw_shape(
-                        ShapeDraw::rounded_rect_corners(rect, radii, appearance.focus_color)
-                            .stroke(Stroke::new(appearance.focus_width).inside()),
-                    )?;
+                } else if element.focus_visible && appearance.focus_extent(bounds).is_some() {
+                    // The ring surrounds the box at the offset, following its corners;
+                    // a negative offset moves it inside, as for list rows.
+                    let gap = appearance.focus_offset;
+                    let ring = Rect::new(
+                        bounds.x - gap,
+                        bounds.y - gap,
+                        bounds.width + 2. * gap,
+                        bounds.height + 2. * gap,
+                    );
+                    if ring.width > 0. && ring.height > 0. {
+                        let radii = corner_radii(
+                            appearance
+                                .radii
+                                .map(|r| if r > 0. { (r + gap).max(0.) } else { 0. }),
+                        );
+                        paint.draw_shape(
+                            ShapeDraw::rounded_rect_corners(ring, radii, appearance.focus_color)
+                                .stroke(Stroke::new(appearance.focus_width).outside()),
+                        )?;
+                    }
                 }
             }
             // Drag feedback is a destination overlay, recorded once after all
@@ -3282,10 +3321,20 @@ mod tests {
             let root = runtime.update(|cx| cx.new(|_| BoxView));
             let mut ui = Ui::new(&mut runtime, root).unwrap();
             let mut painter = UiPainter::with_graphics(&graphics);
-            for (theme, surface, border) in [
-                (crate::Theme::dark(), [27_u8, 28, 33], [62_u8, 65, 74]),
-                (crate::Theme::light(), [255, 255, 255], [195, 199, 206]),
-            ] {
+            // The palette's linear colors, as the sRGB target stores them.
+            let srgb = |c: crate::Color| {
+                c.map(|v| {
+                    let v = if v <= 0.003_130_8 {
+                        v * 12.92
+                    } else {
+                        1.055 * v.powf(1. / 2.4) - 0.055
+                    };
+                    (v * 255.).round() as u8
+                })
+            };
+            for theme in [crate::Theme::dark(), crate::Theme::light()] {
+                let surface = srgb(theme.palette().surface);
+                let border = srgb(theme.palette().border);
                 ui.set_theme(theme).unwrap();
                 ui.prepare(&mut runtime, [64., 64.], &mut painter).unwrap();
                 painter.prepare(&ui, &target.render_format(), 1.).unwrap();

@@ -129,8 +129,11 @@ between zero and one. Native hosting records the extra passes automatically;
 custom hosts use `UiPainter::compose` with their own frame and destination pass.
 See [the composition contract](compositing.md) for alpha, bounds, caching and cost.
 Images and application framebuffers retain their explicit preparation/rendering
-contract. A clipping or scrolling container with corner radii clips its descendants'
-painting to its rounded content box; hit testing stays rectangular. General
+contract. A clipping container clips its descendants to its content box. A
+scrolling container follows the CSS scrollport model instead: it clips at its padding
+box, so content scrolls under the padding rather than vanishing at the content edge,
+and its end padding is part of the scroll range. With corner radii either clip is
+rounded; hit testing stays rectangular. General
 subtree transforms and filters are separate future work.
 
 ## Examples and verification

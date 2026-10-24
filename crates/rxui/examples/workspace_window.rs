@@ -1,6 +1,6 @@
 //! Standalone scrolling and controlled splits. Shared model data has separate
 //! scroll/capture/focus in each window. Resize listeners retain the requested sizes.
-use rxui::{Element, prelude::*};
+use rxui::{Element, prelude::*, taffy::prelude::AlignItems};
 
 struct Workspace {
     sidebar: SplitPosition,
@@ -61,7 +61,10 @@ impl Workspace {
                     })
                     .accessibility_role(SemanticRole::Group)
                     .accessibility_label("Draggable card")
-                    .child(label(format!("Selected file {:03}", self.selected)).font_size(20.))
+                    .child(
+                        label(format!("Selected file {:03}", self.selected))
+                            .text_role(TextRole::Heading),
+                    )
                     .child(label("Pointer capture demo").color(ThemeColor::TextMuted))
                     .on_pointer_down(cx.listener(|s, e: &PointerInput, _| {
                         if e.button == Some(PointerButton::Primary) {
@@ -95,24 +98,30 @@ impl Workspace {
 }
 impl View for Workspace {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        // Virtual list slots match the theme's list row height.
+        let row_height = cx.theme().sizes().row_height;
         let files = column()
             .fill_width()
             .fill_height()
             .min_width(0.)
             .min_height(0.)
             .background(ThemeColor::Surface)
-            .child(label("Files").font_size(20.).padding(12.))
-            .child(virtual_list(160, 40., &self.files, cx, |i| {
-                button(format!("File {i:03}"))
-                    .key(i)
+            .child(label("Files").text_role(TextRole::Heading).padding(12.))
+            .child(
+                // Rows sit 6 units in from the pane edges, as in desktop sidebars.
+                column()
                     .fill_width()
-                    .variant(if self.selected == i {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Quiet
-                    })
-                    .on_click(cx.listener(move |s, _, _| s.selected = i))
-            }))
+                    .flex_grow(1.)
+                    .flex_basis(0.)
+                    .min_height(0.)
+                    .padding_x(6.)
+                    .child(virtual_list(160, row_height, &self.files, cx, |i| {
+                        button(format!("File {i:03}"))
+                            .key(i)
+                            .list_row(self.selected == i)
+                            .on_click(cx.listener(move |s, _, _| s.selected = i))
+                    })),
+            )
             .child(
                 row()
                     .padding(8.)
@@ -140,19 +149,20 @@ impl View for Workspace {
                 row()
                     .padding(8.)
                     .gap(12.)
-                    .child(label("Output").font_size(20.))
+                    .child(label("Output").text_role(TextRole::Heading))
                     .child(button("Clear scroll").on_click(cx.listener(|s, _, cx| {
                         s.output
                             .scroll_to(cx, [0.; 2])
                             .expect("live output viewport");
                     }))),
             )
-            .child(virtual_list(120, 28., &self.output, cx, |i| {
+            .child(virtual_list(120, row_height, &self.output, cx, |i| {
                 label(format!(
                     "{i:03}  Virtual output line — only nearby rows are mounted."
                 ))
                 .key(i)
-                .padding(4.)
+                .padding_x(8.)
+                .padding_y(3.)
             }));
         column()
             .fill_width()
@@ -163,6 +173,7 @@ impl View for Workspace {
                     .fill_width()
                     .padding(12.)
                     .gap(12.)
+                    .align_items(AlignItems::CENTER)
                     .child(
                         text_input(self.name.clone())
                             .width(200.)

@@ -61,7 +61,8 @@ fn scroll_thumbs_split_lines_and_isolated_clipping_follow_live_geometry() {
         let mut ui = Ui::new(&mut runtime, root).unwrap();
         ui.set_theme(Theme::dark().colors(|c| {
             c.surface = [0., 0., 0., 1.];
-            c.border = [1.; 4];
+            c.divider = [1.; 4];
+            c.text_muted = [1.; 4];
         }))
         .unwrap();
         let mut painter = UiPainter::with_graphics(&graphics);
@@ -98,22 +99,28 @@ fn scroll_thumbs_split_lines_and_isolated_clipping_follow_live_geometry() {
                 }
             );
             assert_eq!(at(48, 10), [0, 0, 255, 255]);
-            assert_eq!(at(27, 10), [255; 4]);
+            // The divider's one-unit line is centered in its 8-unit hit area at
+            // x 24..32 and snapped to whole pixels; the rest is unfilled.
+            assert_eq!(at(28, 10), [255; 4]);
+            assert_eq!(at(27, 10), [0, 0, 0, 255]);
+            // The 45% thumb is a 6-unit pill centered in the 12-unit bar at
+            // x 12..24, under the scroll area's 50% group opacity.
             assert_eq!(
                 at(18, 10),
                 if scrolled {
                     [0, 0, 0, 255]
                 } else {
-                    [128, 128, 128, 255]
+                    [58, 58, 58, 255]
                 }
             );
+            assert_eq!(at(13, 10), [0, 0, 0, 255]);
             assert_eq!(at(2, 10), [0, 0, 0, 255]);
             assert_eq!(ui.stats(), stats);
         }
-        ui.pointer(&mut runtime, PointerEvent::Pressed([27., 10.]))
+        ui.pointer(&mut runtime, PointerEvent::Pressed([28., 10.]))
             .unwrap();
         ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
-        ui.pointer(&mut runtime, PointerEvent::Moved([35., 10.]))
+        ui.pointer(&mut runtime, PointerEvent::Moved([36., 10.]))
             .unwrap();
         ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
         assert_eq!(
@@ -215,6 +222,96 @@ fn virtual_rows_render_fractional_slots_after_large_jumps_with_msaa_and_opacity(
             );
             assert_eq!(at(40), [0, 128, 0, 255]);
         }
+        assert!(errors.pop().await.is_none());
+    });
+}
+
+struct Rings;
+impl View for Rings {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column()
+            .padding(10.)
+            .gap(10.)
+            .child(button(row()).key("plain").padding(0.).size(20., 20.))
+            // The group's layer must reserve the ring around its only button.
+            .child(
+                column()
+                    .opacity(0.5)
+                    .child(button(row()).key("grouped").padding(0.).size(20., 20.)),
+            )
+    }
+}
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn focus_rings_paint_outside_the_box_survive_culling_and_fit_group_layers() {
+    pollster::block_on(async {
+        let graphics = GraphicsContext::headless().await.unwrap();
+        let errors = graphics
+            .device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut target = graphics
+            .create_framebuffer(
+                FramebufferOptions::new(64, 64)
+                    .usage(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC),
+            )
+            .unwrap();
+        let mut runtime = Runtime::new();
+        let root = runtime.update(|cx| cx.new(|_| Rings));
+        let mut ui = Ui::new(&mut runtime, root).unwrap();
+        ui.set_theme(Theme::dark().colors(|c| {
+            c.control = [0., 0., 1., 1.];
+            c.border = [0., 0., 1., 1.];
+            c.focus = [1.; 4];
+        }))
+        .unwrap();
+        ui.set_focus_ring_policy(FocusRingPolicy::Always);
+        let mut painter = UiPainter::with_graphics(&graphics);
+        ui.prepare(&mut runtime, [64.; 2], &mut painter).unwrap();
+        let key = |ui: &Ui<Rings>, key: &str| {
+            let key = Key::from(key);
+            ui.elements().find(|e| e.key == Some(&key)).unwrap().id
+        };
+        let mut render = |ui: &Ui<Rings>, scissor: [u32; 4]| {
+            painter.prepare(ui, &target.render_format(), 1.).unwrap();
+            let texture = target.color_texture().unwrap().clone();
+            let mut frame = target.begin_frame().unwrap();
+            painter
+                .compose(ui, &mut frame, 1., |frame, composed| {
+                    let mut pass = frame
+                        .render_pass()
+                        .clear_color(wgpu::Color::BLACK)
+                        .begin()?;
+                    pass.set_scissor_rect(scissor[0], scissor[1], scissor[2], scissor[3])?;
+                    composed.paint(&mut pass)
+                })
+                .unwrap();
+            let buffer = read_pixel(&graphics, &mut frame, &texture);
+            pixels(&graphics, &buffer, frame.finish().unwrap())
+        };
+        let at = |bytes: &[u8], x: usize, y: usize| bytes[y * 256 + x * 4..][..4].to_vec();
+
+        // The plain button spans x 10..30; its 2-unit ring covers x 7..9 and
+        // 31..33 after a 1-unit gap.
+        assert!(ui.focus(key(&ui, "plain")));
+        let bytes = render(&ui, [0, 0, 64, 64]);
+        assert_eq!(at(&bytes, 7, 20), [255; 4]);
+        assert_eq!(at(&bytes, 8, 20), [255; 4]);
+        assert_eq!(at(&bytes, 9, 20), [0, 0, 0, 255]);
+        assert_eq!(at(&bytes, 10, 20), [0, 0, 255, 255]);
+        assert_eq!(at(&bytes, 30, 20), [0, 0, 0, 255]);
+        assert_eq!(at(&bytes, 31, 20), [255; 4]);
+        assert_eq!(at(&bytes, 32, 20), [255; 4]);
+        assert_eq!(at(&bytes, 20, 7), [255; 4]);
+        // A clip that excludes the box but not the ring still paints the ring.
+        let bytes = render(&ui, [0, 0, 9, 64]);
+        assert_eq!(at(&bytes, 8, 20), [255; 4]);
+
+        // The grouped button spans y 40..60; its ring is composited at half opacity.
+        assert!(ui.focus(key(&ui, "grouped")));
+        let bytes = render(&ui, [0, 0, 64, 64]);
+        assert_eq!(at(&bytes, 8, 50), [128, 128, 128, 255]);
+        assert_eq!(at(&bytes, 20, 37), [128, 128, 128, 255]);
+        assert_eq!(at(&bytes, 8, 20), [0, 0, 0, 255]);
         assert!(errors.pop().await.is_none());
     });
 }

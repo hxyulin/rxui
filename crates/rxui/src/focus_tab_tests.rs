@@ -792,3 +792,11 @@ fn removed_component_focus_listeners_are_weak_and_other_windows_keep_focus() {
     assert!(b.focused_element().is_none());
     assert!(r.update(|cx| child.try_read(cx).is_ok()));
 }
+#[test]
+fn tab_headers_only_border_their_indicator_side() {
+    let (_, _, ui) = setup(TabContentPolicy::KeepMounted);
+    for name in ["Doc 0", "Doc 1"] {
+        let info = ui.element(header(&ui, name)).unwrap();
+        assert_eq!(info.border, [0., 0., 0., 2.], "{name}");
+    }
+}

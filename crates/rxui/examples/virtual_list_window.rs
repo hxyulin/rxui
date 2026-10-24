@@ -1,7 +1,8 @@
 //! A hundred thousand fixed-height rows, with independent scrolling in shared windows.
 use rxui::prelude::*;
 const ROWS: usize = 100_000;
-const HEIGHT: f32 = 32.;
+/// The balanced theme's list row height, so slots match `list_row` rows.
+const HEIGHT: f32 = 24.;
 struct Files {
     scroll: ScrollHandle,
     selected: usize,
@@ -14,7 +15,10 @@ impl View for Files {
             .fill_height()
             .gap(8.)
             .padding(16.)
-            .child(label(format!("{ROWS} files — selected {}", self.selected)).font_size(22.))
+            .child(
+                label(format!("{ROWS} files — selected {}", self.selected))
+                    .text_role(TextRole::Heading),
+            )
             .child(
                 row()
                     .gap(8.)
@@ -48,12 +52,7 @@ impl View for Files {
                 virtual_list(ROWS, HEIGHT, &self.scroll, cx, |index| {
                     button(format!("File {index:05}.rs"))
                         .key(index)
-                        .padding(6.)
-                        .variant(if self.selected == index {
-                            ButtonVariant::Primary
-                        } else {
-                            ButtonVariant::Quiet
-                        })
+                        .list_row(self.selected == index)
                         .on_click(cx.listener(move |s, _, _| s.selected = index))
                 })
                 .overscan(3),

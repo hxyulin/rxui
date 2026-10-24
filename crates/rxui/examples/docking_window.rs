@@ -23,7 +23,7 @@ impl View for Document {
             .min_height(0.)
             .padding(12.)
             .gap(10.)
-            .child(label(self.title.clone()).font_size(22.))
+            .child(label(self.title.clone()).text_role(TextRole::Heading))
             .child(note)
             .child(scroll_area(rows).handle(self.scroll.clone()))
     }

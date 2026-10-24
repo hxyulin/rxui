@@ -174,6 +174,8 @@ mod testing;
 #[cfg(feature = "layout")]
 mod theme;
 #[cfg(feature = "layout")]
+mod theme_seed;
+#[cfg(feature = "layout")]
 mod tree;
 #[cfg(feature = "layout")]
 mod typography;
@@ -299,9 +301,11 @@ pub use tasks::{ThreadPoolExecutor, sleep};
 pub use testing::TestUi;
 #[cfg(feature = "layout")]
 pub use theme::{
-    BoxShadow, PaintStyle, ResolvedPaint, ResolvedShadow, StyleColor, Theme, ThemeColor,
-    ThemeColors, ThemeMetrics, rgb8, rgba8,
+    BoxShadow, Elevation, PaintStyle, ResolvedPaint, ResolvedShadow, StyleColor, StyleShadow,
+    Theme, ThemeColor, ThemeColors, ThemeMetrics, ThemeShadows, rgb8, rgba8,
 };
+#[cfg(feature = "layout")]
+pub use theme_seed::ThemeSeed;
 #[cfg(feature = "layout")]
 pub use tree::{
     TreeCommand, TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow, TreeSelectionMode,
@@ -310,7 +314,9 @@ pub use tree::{
 #[cfg(feature = "layout")]
 pub use typography::{FontFace, LinkEvent, ResolvedSpan, TextSpan, link, span};
 #[cfg(feature = "layout")]
-pub use typography::{FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow, TextStyle};
+pub use typography::{
+    FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow, TextRole, TextStyle,
+};
 #[cfg(feature = "layout")]
 pub use ui::dock_dispatch::{DockDragInfo, DockDragSession, DockDropPreview};
 #[cfg(feature = "layout")]
@@ -344,12 +350,13 @@ pub use native::{DesktopError, DesktopResult};
 pub mod prelude {
     pub use crate::{
         AccessibilityHandle, BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor,
-        Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Image, ImageAlpha,
-        ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput, KeyboardKey, Listener,
-        LivePoliteness, Modifiers, PaintStyle, PhysicalKey, PointerButton, PointerButtons,
-        PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole, TextAlign,
-        TextChangeEvent, TextOverflow, TextSubmitEvent, Theme, ThemeColor, Ui, View, ViewContext,
-        WheelInput, WheelSource, button, column, image, label, rgb8, rgba8, row, stack, text_input,
+        Elevation, Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Image,
+        ImageAlpha, ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput,
+        KeyboardKey, Listener, LivePoliteness, Modifiers, PaintStyle, PhysicalKey, PointerButton,
+        PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole,
+        TextAlign, TextChangeEvent, TextOverflow, TextRole, TextSubmitEvent, Theme, ThemeColor, Ui,
+        View, ViewContext, WheelInput, WheelSource, button, column, image, label, rgb8, rgba8, row,
+        stack, text_input,
     };
     pub use crate::{
         AnchorHandle, Command, CommandAction, CommandId, CommandInfo, CommandRegistration,
@@ -447,6 +454,8 @@ mod editing_tests;
 #[cfg(all(test, feature = "layout"))]
 mod semantic_tests;
 
+#[cfg(all(test, feature = "layout"))]
+mod default_paint_tests;
 #[cfg(all(test, feature = "layout"))]
 mod theme_tests;
 

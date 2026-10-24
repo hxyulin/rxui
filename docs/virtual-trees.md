@@ -80,8 +80,11 @@ focusable elements, or children with input listeners inside a row. This is a
 renderer contract, not an automatic sanitizer. The tree owns row input and a
 persistent focusable root; individual rows are not Tab stops. Put interactive
 controls outside the tree. A primary pointer press selects a row and focuses the
-root. The tree supplies 16-pixel indentation per level and a 20-pixel disclosure
-region before custom content. A primary disclosure press expands/collapses a
+root. Rows are `Element::list_row`s with the theme's `row_padding_x` on each side.
+Inside it, the tree supplies 16-pixel indentation per level and a 20-pixel
+disclosure before custom content, centering both vertically in the row; pass the
+theme's `row_height` (24 balanced, 22 compact) as the row height to match other
+lists. A primary disclosure press expands/collapses a
 branch without changing selection; other row presses select, respecting modifiers.
 Expansion is also available through Right/Left and semantic actions. Built-in
 scrollbars retain pointer input, with keyboard focus and scrolling on the root.

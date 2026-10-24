@@ -1,6 +1,6 @@
 //! Determinate and indeterminate progress indicators.
 use super::glyph::{Glyph, SPOKES, glyph};
-use super::root_builders;
+use super::{Part, part, root_builders};
 use crate::{
     Element, IntoElement, NumericValue, SemanticRole, ThemeColor, ViewContext, column, row,
 };
@@ -35,15 +35,15 @@ pub struct ProgressBar {
     phase: Option<f32>,
 }
 
-/// Creates a 0..=1 progress bar, 200 logical units wide and 8 tall.
+/// Creates a 0..=1 progress bar, 200 logical units wide and half the theme's
+/// `switch_height` tall: 8 units at balanced density and 6 at compact.
 pub fn progress_bar(value: impl Into<Option<f32>>) -> ProgressBar {
     ProgressBar {
-        root: column()
+        root: part(column(), Part::Progress)
             .width(200.)
-            .height(8.)
-            .radius(4.)
             .background(ThemeColor::Input)
-            .border(1., ThemeColor::InputBorder)
+            // Input borders stay below the 3:1 a rail's boundary needs.
+            .border(1., ThemeColor::TextMuted)
             .clip()
             .accessibility_role(SemanticRole::ProgressIndicator),
         value: value.into(),
@@ -71,7 +71,7 @@ impl ProgressBar {
         }
         self
     }
-    /// Fixed logical height.
+    /// Fixed logical height, replacing the theme's.
     pub fn height(mut self, height: f32) -> Self {
         self.root = self.root.height(height);
         self

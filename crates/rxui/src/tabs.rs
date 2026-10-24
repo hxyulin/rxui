@@ -1,7 +1,7 @@
 //! Controlled tab selection, close proposals and panel mounting policy.
 use crate::{
-    Axis, ButtonVariant, ClickEvent, Element, FocusScope, IntoElement, Key, Listener, SemanticRole,
-    ThemeColor, UiError, button, column, row, stack,
+    Axis, ButtonVariant, ClickEvent, Element, FocusScope, IntoElement, Key, Listener, PaintStyle,
+    SemanticRole, ThemeColor, UiError, button, column, row, stack,
 };
 use taffy::prelude::{AlignItems, JustifyItems, TaffyAuto, fr, length, minmax};
 
@@ -278,14 +278,27 @@ impl IntoElement for Tabs {
         headers = headers
             .key("headers")
             .gap(2.)
-            .padding(4.)
             .flex_shrink(0.)
             .background(ThemeColor::Surface)
+            .border_color(ThemeColor::Divider)
             .accessibility_role(SemanticRole::TabList);
-        headers = if self.axis == Axis::Horizontal {
-            headers.min_width(0.).scroll_x()
+        // A divider separates the strip from the panels. Headers sit on it, so the
+        // selected tab's indicator meets the line.
+        let horizontal = self.axis == Axis::Horizontal;
+        headers = if horizontal {
+            headers
+                .padding_x(4.)
+                .layout(|s| s.padding.top = length(4.))
+                .border_bottom(1.)
+                .min_width(0.)
+                .scroll_x()
         } else {
-            headers.min_height(0.).scroll_y()
+            headers
+                .padding_y(4.)
+                .layout(|s| s.padding.left = length(4.))
+                .border_right(1.)
+                .min_height(0.)
+                .scroll_y()
         };
         headers = metadata(
             headers,
@@ -324,14 +337,31 @@ impl IntoElement for Tabs {
                 next_selection,
             };
             let close = entry.closable.then(|| self.close.clone()).flatten();
+            // Unboxed tabs: muted captions, and the selected one in the text color
+            // over a 2-unit accent indicator on the strip's divider side.
             let mut header = button(entry.title.clone())
                 .key("tab")
                 .disabled(entry.disabled)
-                .variant(if selected {
-                    ButtonVariant::Default
-                } else {
-                    ButtonVariant::Quiet
-                })
+                .variant(ButtonVariant::Quiet);
+            // Buttons start with a border on every side; only the indicator's
+            // side keeps one, so the selected accent never outlines the header.
+            header = header
+                .border_left(0.)
+                .border_right(0.)
+                .border_top(0.)
+                .border_bottom(0.);
+            header = if horizontal {
+                header.border_bottom(2.).corner_radii(4., 4., 0., 0.)
+            } else {
+                header.border_right(2.).corner_radii(4., 0., 0., 4.)
+            };
+            if selected {
+                header = header
+                    .color(ThemeColor::Text)
+                    .border_color(ThemeColor::Accent)
+                    .disabled_style(PaintStyle::new().color(ThemeColor::TextDisabled));
+            }
+            header = header
                 .tab_stop(
                     selected || (self.selected.is_none() && first.as_ref() == Some(&entry.key)),
                 )

@@ -17,9 +17,9 @@ pub struct ScrollState {
     pub offset: [f32; 2],
     /// Maximum offsets.
     pub range: [f32; 2],
-    /// Visible content-box dimensions.
+    /// Visible scrollport dimensions: the padding box, which content scrolls under.
     pub viewport: [f32; 2],
-    /// Absolute logical content box.
+    /// Absolute logical scrollport (padding box).
     pub bounds: Bounds,
 }
 /// Scroll reference resolution/command failure.
@@ -574,11 +574,12 @@ impl<T: View> Ui<T> {
                 }
                 continue;
             }
+            let scrollport = n.descendant_clip_box();
             let state = ScrollState {
                 offset: n.scroll_offset,
                 range: n.scroll_range,
-                viewport: [n.content_bounds.width, n.content_bounds.height],
-                bounds: n.content_bounds,
+                viewport: [scrollport.width, scrollport.height],
+                bounds: scrollport,
             };
             let mut data = handle.0.borrow_mut();
             if data

@@ -28,7 +28,7 @@ impl View for Demo {
         let reduce = cx.reduce_motion();
         let controls = column()
             .gap(12.)
-            .child(label("Implicit state transitions").font_size(18.))
+            .child(label("Implicit state transitions").text_role(TextRole::Subheading))
             .child(
                 row()
                     .gap(8.)
@@ -87,7 +87,7 @@ impl View for Demo {
                         })),
                     ),
             )
-            .child(label("Animated values").font_size(18.))
+            .child(label("Animated values").text_role(TextRole::Subheading))
             .child(
                 row()
                     .gap(8.)
@@ -163,7 +163,7 @@ impl View for Demo {
                 modal(
                     column()
                         .gap(12.)
-                        .child(label("Discard changes?").font_size(18.))
+                        .child(label("Discard changes?").text_role(TextRole::Subheading))
                         .child(label(
                             "The dialog fades out after closing; focus returns at once.",
                         ))

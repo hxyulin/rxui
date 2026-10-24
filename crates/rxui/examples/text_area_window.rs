@@ -21,7 +21,7 @@ impl View for Notes {
             FontFamily::SansSerif
         };
         column().fill_width().fill_height().padding(24.).gap(12.)
-            .child(label("Text areas").font_size(28.).accessibility_role(SemanticRole::Heading))
+            .child(label("Text areas").text_role(TextRole::Title).accessibility_role(SemanticRole::Heading))
             .child(label("Enter inserts a line break; Up/Down keep the column, Home/End stay on the visual line, \
                 Page Up/Down move by the visible height. The caret stays visible in the scrolling column.")
                 .selectable(true))

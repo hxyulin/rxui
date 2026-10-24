@@ -94,7 +94,8 @@ subtrees themselves.
 
 Layers are cropped to the union of the subtree's visible paint bounds, including
 overflowing descendants and actual prepared glyph ink. Control boxes reserve space
-for hover, focus and editing decorations. Ancestor/viewport clips bound storage;
+for hover, focus and editing decorations, and focusable elements also reserve
+their focus ring, which surrounds the box outside it, whether or not it is shown. Ancestor/viewport clips bound storage;
 DPI rounding expands bounds outward to whole physical pixels. A structural
 container's empty box does not by itself expand the layer to the entire viewport.
 Very distant visible descendants can still make a large union rectangle.

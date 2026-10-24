@@ -526,7 +526,9 @@ impl TreeProposal {
 /// supplies 16px indentation per level and a 20px disclosure region before content.
 /// A branch disclosure press proposes expansion without selecting the row; the
 /// remainder selects. Built-in scrollbars support pointer scrolling, but the tree
-/// root owns keyboard focus and scrolling.
+/// root owns keyboard focus and scrolling. Rows paint as [`Element::list_row`]s:
+/// hovered rows and selected rows use the theme's row colors, and selection dims
+/// to RowSelectedInactive while focus is outside the tree.
 pub fn virtual_tree<F, E>(
     state: &TreeState,
     row_height: f32,
@@ -563,36 +565,36 @@ where
     let mut rows = virtual_list(state.rows().len(), row_height, scroll, cx, |index| {
         let node = state.node(index);
         let info = &state.rows()[index];
-        let pointer_state = state.clone();
-        let pointer_key = node.key.clone();
-        let pointer_change = on_change.clone();
         let branch = node.branch;
         let expanded = state.expanded(&node.key);
         let indent = (info.level - 1) as f32 * 16.;
-        let focus = root_focus.clone();
-        let pointer = Listener::from_callback(move |event: &crate::PointerInput, cx| {
-            if event.button != Some(crate::PointerButton::Primary) {
-                return Ok(crate::Dispatch::Unchanged);
-            }
-            event.prevent_default();
-            event.stop_propagation();
-            focus.focus_bound(cx);
-            let command = if branch
-                && event.local_position[0] >= indent
-                && event.local_position[0] < indent + 20.
-            {
-                TreeCommand::Expand(pointer_key.clone(), !expanded)
-            } else {
-                TreeCommand::Select(pointer_key.clone())
-            };
-            if let Some(proposal) =
-                pointer_state.propose(command, event.modifiers, page, Duration::ZERO)
-            {
-                pointer_change.dispatch(&proposal, cx)
-            } else {
-                Ok(crate::Dispatch::Unchanged)
-            }
-        });
+        // The row selects; a branch's disclosure, which stops propagation, toggles.
+        let pointer = |disclosure: bool| {
+            let pointer_state = state.clone();
+            let pointer_key = node.key.clone();
+            let pointer_change = on_change.clone();
+            let focus = root_focus.clone();
+            Listener::from_callback(move |event: &crate::PointerInput, cx| {
+                if event.button != Some(crate::PointerButton::Primary) {
+                    return Ok(crate::Dispatch::Unchanged);
+                }
+                event.prevent_default();
+                event.stop_propagation();
+                focus.focus_bound(cx);
+                let command = if disclosure {
+                    TreeCommand::Expand(pointer_key.clone(), !expanded)
+                } else {
+                    TreeCommand::Select(pointer_key.clone())
+                };
+                if let Some(proposal) =
+                    pointer_state.propose(command, event.modifiers, page, Duration::ZERO)
+                {
+                    pointer_change.dispatch(&proposal, cx)
+                } else {
+                    Ok(crate::Dispatch::Unchanged)
+                }
+            })
+        };
         let semantic_state = state.clone();
         let semantic_key = node.key.clone();
         let semantic_change = on_change.clone();
@@ -619,22 +621,29 @@ where
             .accessibility_label(node.label.clone())
             .accessibility_level(info.level)
             .accessibility_selected(state.selected().contains(&node.key))
-            .on_pointer_down(pointer)
+            .list_row(state.selected().contains(&node.key))
+            .on_pointer_down(pointer(false))
             .on_semantic_action(semantic)
             .child(
                 crate::row()
                     .fill_width()
                     .fill_height()
                     .padding_left(indent)
-                    .child(
-                        crate::label(if node.branch {
+                    // Center text lines in rows taller than them.
+                    .align_items(taffy::AlignItems::CENTER)
+                    .child({
+                        let disclosure = crate::label(if node.branch {
                             if expanded { "▾" } else { "▸" }
                         } else {
                             ""
                         })
-                        .width(20.)
-                        .fill_height(),
-                    )
+                        .width(20.);
+                        if branch {
+                            disclosure.on_pointer_down(pointer(true))
+                        } else {
+                            disclosure
+                        }
+                    })
                     .child(
                         render(index, node, info)
                             .into_element()

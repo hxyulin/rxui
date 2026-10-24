@@ -510,6 +510,13 @@ impl UiPainter {
         {
             bounds = nonempty(e.bounds.intersection(e.clip_bounds));
         }
+        // Reserve the focus ring, which surrounds the box, whether or not it is
+        // shown now; focus changes keep the cached plan.
+        if e.focusable
+            && let Some(ring) = e.paint.focus_extent(e.bounds)
+        {
+            bounds = union(bounds, nonempty(ring.intersection(e.clip_bounds)));
+        }
         if let Some(shadow) = e.paint.shadow
             && e.bounds.width > 0.
             && e.bounds.height > 0.

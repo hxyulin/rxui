@@ -1,5 +1,5 @@
 //! Controlled horizontal sliders.
-use super::{callback, propose, root_builders};
+use super::{Part, callback, part, propose, root_builders};
 use crate::{
     ButtonVariant, Dispatch, Element, IntoElement, KeyInput, KeyboardKey, Listener, NumericValue,
     PaintStyle, PointerButton, PointerInput, SemanticAction, SemanticRole, ThemeColor, button, row,
@@ -36,8 +36,11 @@ pub struct SliderEvent {
 
 /// Horizontal space between the border box and the ends of the rail.
 const PAD: f32 = 2.;
-const THUMB: f32 = 16.;
-const INSET: f32 = PAD + THUMB / 2.;
+/// Inset of the thumb's center travel inside the content box: half the balanced
+/// thumb. It does not change with density, so pointer positions map to values
+/// without the theme; a smaller compact thumb stops a little short of the ends.
+const TRAVEL: f32 = 8.;
+const INSET: f32 = PAD + TRAVEL;
 
 /// Controlled slider builder. It is a focusable button with the Slider role and
 /// a numeric value: dragging captures the pointer, arrow keys move by the step,
@@ -184,7 +187,8 @@ impl IntoElement for Slider {
         };
         let fraction = if valid { range.fraction(value) } else { 0. };
         // Outlined rail and thumb keep the filled part distinct in every preset,
-        // including high contrast where the accent and border are both light.
+        // including high contrast where the accent and border are both light. The
+        // outline is TextMuted, since input borders stay below 3:1.
         let (surface, edge, fill) = if self.disabled {
             (
                 ThemeColor::ControlDisabled,
@@ -192,29 +196,22 @@ impl IntoElement for Slider {
                 ThemeColor::TextDisabled,
             )
         } else {
-            (
-                ThemeColor::Input,
-                ThemeColor::InputBorder,
-                ThemeColor::Accent,
-            )
+            (ThemeColor::Input, ThemeColor::TextMuted, ThemeColor::Accent)
         };
-        let content = stack().fill_width().height(THUMB).child(
+        let content = part(stack(), Part::SliderBody).fill_width().child(
             stack()
                 .key("rail")
                 .absolute()
-                .left(THUMB / 2.)
-                .right(THUMB / 2.)
+                .left(TRAVEL)
+                .right(TRAVEL)
                 .top(0.)
                 .bottom(0.)
                 .child(
-                    row()
+                    part(row(), Part::Rail)
                         .key("track")
                         .absolute()
                         .left(0.)
                         .right(0.)
-                        .top(THUMB / 2. - 3.)
-                        .height(6.)
-                        .radius(3.)
                         .background(surface)
                         .border(1., edge)
                         .clip()
@@ -227,17 +224,14 @@ impl IntoElement for Slider {
                         ),
                 )
                 .child(
-                    row()
+                    part(row(), Part::Thumb)
                         .key("thumb")
                         .absolute()
                         .top(0.)
-                        .size(THUMB, THUMB)
-                        .radius(THUMB / 2.)
                         .background(surface)
                         .border(1., edge)
                         .layout(|s| {
                             s.inset.left = taffy::LengthPercentageAuto::percent(fraction);
-                            s.margin.left = taffy::LengthPercentageAuto::length(-THUMB / 2.);
                         }),
                 ),
         );

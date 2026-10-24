@@ -49,6 +49,7 @@ pub struct VirtualList<F> {
 ///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
 ///         virtual_list(self.names.len(), 32., &self.scroll, cx, |index| {
 ///             button(self.names[index].clone()).key(self.names[index].clone())
+///                 .list_row(index == self.selected)
 ///                 .on_click(cx.listener(move |this, _, _| this.selected = index))
 ///         }).overscan(3)
 ///     }

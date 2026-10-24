@@ -132,7 +132,7 @@ impl View for Scratch {
             .fill_width()
             .padding(24.)
             .gap(12.)
-            .child(label("Custom text input client").font_size(24.))
+            .child(label("Custom text input client").text_role(TextRole::Title))
             .child(label(mode).color(ThemeColor::TextMuted))
             .child(
                 column()

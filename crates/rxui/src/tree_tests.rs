@@ -628,6 +628,8 @@ fn press(r: &mut Runtime, ui: &mut Ui<Demo>, name: &str, x: f32, modifiers: Modi
 fn stock_disclosure_pointer_commands_preserve_selection_modifiers_and_root_focus() {
     let (mut r, root, mut ui) = setup(12);
     let root_id = tree(&ui).id;
+    // The disclosure follows the row's leading padding.
+    let disclosure = ThemeMetrics::balanced().row_padding_x + 5.;
     // The label region selects; the branch stays expanded.
     press(&mut r, &mut ui, "Node 0", 40., Modifiers::default());
     r.update(|cx| {
@@ -658,7 +660,7 @@ fn stock_disclosure_pointer_commands_preserve_selection_modifiers_and_root_focus
         &mut r,
         &mut ui,
         "Node 0",
-        5.,
+        disclosure,
         Modifiers {
             shift: true,
             ..primary()
@@ -673,7 +675,7 @@ fn stock_disclosure_pointer_commands_preserve_selection_modifiers_and_root_focus
             &std::collections::HashSet::from([3.into(), 4.into()])
         );
     });
-    press(&mut r, &mut ui, "Node 0", 5., Modifiers::default());
+    press(&mut r, &mut ui, "Node 0", disclosure, Modifiers::default());
     assert_eq!(ui.focused_element(), Some(root_id));
     r.update(|cx| assert!(root.read(cx).state.expanded(&0.into())));
     // Reject a disclosure with unrelated offscreen activity. No reveal is queued.
@@ -681,7 +683,7 @@ fn stock_disclosure_pointer_commands_preserve_selection_modifiers_and_root_focus
     scroll(&mut r, &mut ui, 0.);
     r.update(|cx| root.update(cx, |s, _| s.reject = true));
     ui.prepare(&mut r, [200., 100.], &mut Measure).unwrap();
-    press(&mut r, &mut ui, "Node 0", 5., Modifiers::default());
+    press(&mut r, &mut ui, "Node 0", disclosure, Modifiers::default());
     r.update(|cx| {
         let s = &root.read(cx).state;
         assert!(s.expanded(&0.into()));

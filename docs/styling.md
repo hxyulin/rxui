@@ -69,8 +69,12 @@ Backgrounds, borders, radii, padding and dimensions do not inherit.
 For a control, resolution combines its theme defaults and inherited text styling,
 then ordinary explicit paint builders, then the active local state patch.
 `disabled_style` takes precedence over `pressed_style`, which takes precedence over
-`hover_style`. Focus remains a separate outline over whichever state is active;
-its color/width can be customized with PaintStyle or the theme. It is drawn only
+`hover_style`. Focus remains a separate ring over whichever state is active. It
+surrounds the border box outside it, `ThemeMetrics::focus_offset` (one unit)
+away, following the corner radii; list rows draw it inside instead. Its
+color, width and offset can be customized with PaintStyle or the theme. Like a
+shadow, the ring is clipped by clipping ancestors. A focused text input also
+outlines its border in the focus color. The ring is drawn only
 when `ElementInfo::focus_visible` is set: after keyboard navigation and on text
 inputs, not after a pointer press (see [focus rings](native-feel.md#platform-conventions)
 and `FocusRingPolicy::Always`). Inactive native
@@ -123,7 +127,8 @@ each corner; `radius` sets all four.
 shadow of the element's rounded box behind its background. The color can be a
 theme token. Shadows are paint-only: they follow the ancestor clip, do not change
 layout or hit testing, and keep an element visible to culling while only its shadow
-is on screen. `PaintStyle::shadow` and `PaintStyle::no_shadow` change it per state,
+is on screen; a visible focus ring does the same. `elevation(Elevation::Popover)`
+binds the theme's shadow for a level instead. `PaintStyle::shadow` and `PaintStyle::no_shadow` change it per state,
 for example a stronger shadow on hover.
 
 ## Typography
@@ -195,49 +200,142 @@ offsets to new geometry, as with ordinary reflow.
 ## Default appearance and accessibility targets
 
 `Theme::dark()` (default), `Theme::light()` and `Theme::high_contrast()` share the
-balanced metrics: 14 logical-unit text, 36-unit buttons and inputs (14×7.2 button
-padding, 12×7.2 input padding), a 240-unit default input width, one-unit borders,
-six-unit radii and two-unit inside focus outlines (three in high contrast).
-`Theme::compact()` switches any preset to 13-unit text and 28-unit controls while
-keeping its focus width; `ThemeMetrics::compact()` and `ThemeMetrics::balanced()`
+balanced metrics: 13 logical-unit text, 28-unit buttons and inputs (12×3.9 button
+padding, 10×3.9 input padding), a 220-unit default input width, one-unit borders,
+six-unit control radii (four for small parts, eight for popovers and dialogs) and
+two-unit focus rings one unit outside the box (three units in high contrast).
+`Theme::compact()` switches any preset to 12-unit text and 24-unit controls while
+keeping its focus ring; `ThemeMetrics::compact()` and `ThemeMetrics::balanced()`
 are the raw presets. Text lines are `font_size × line_height` tall, with
 `ThemeMetrics::line_height` 1.4 in every preset, so the preset paddings make buttons
 and inputs the same height. A theme with a different line height should adjust the
 button padding to keep that alignment. A caption button given a fixed height or
 less padding keeps its caption vertically centered in the space it has. Composed
-content (`button(row()...)`) is laid out by flexbox alignment instead. Font loading
-remains the painter's policy.
+content (`button(row()...)`) is laid out by flexbox alignment instead; give such a
+row `.align_items(AlignItems::CENTER)` so an icon and its label share a center line.
+Font loading remains the painter's policy.
 
-Primary buttons use the accent fill. Inputs use their own fill and a stronger
-border than buttons. Popovers use the raised fill.
+`.text_role(TextRole::...)` sizes text from the theme's type scale and follows
+theme switches: Caption 11, Body 13, Subheading 15, Heading 18 and Title 24 in the
+balanced metrics (11/12/14/16/20 compact), with the heading roles semibold.
+`Theme::generate(ThemeSeed::new(scheme, accent))` builds a complete theme from a
+scheme and accent, with `.neutral(hue, chroma)` choosing the tint of its neutrals;
+it uses the balanced metrics and the preset shadows of its scheme. Its accent
+text follows the same rule as the system accent below.
+
+Check boxes and radios are `ThemeMetrics::indicator_size` square (14 balanced,
+12 compact) and switches `switch_width` × `switch_height` (26×16 and 22×13). The
+switch height also sizes the switch knob (five eighths of it), the slider thumb
+(equal to it), the slider rail (three eighths) and progress bars (half, rounded
+down): 16/6/8 units balanced and 13/5/6 compact. Check marks, radio dots and
+corner radii scale with their box. These parts resolve from the nearest theme,
+so a density switch resizes them live, and they stay shorter than a caption
+line, so a captioned check box or switch is as tall as a button. Validation
+rejects negative or non-finite values, as for the other box metrics.
+
+List rows are denser than controls. An `Element::list_row` without its own height
+or minimum height is at least `ThemeMetrics::row_height` tall (24 balanced, 22
+compact), and without its own padding has `row_padding_x` on each side (8 and 6)
+and no vertical padding; taller content grows the row. A button row keeps its
+caption centered in that height. Use `cx.theme().sizes().row_height` as the slot
+height of virtual lists and trees so their rows match.
+
+Default buttons use the Control fill, a one-unit Border outline, medium-weight
+captions and the theme's `Elevation::Control` shadow (only light has one). Primary
+buttons use the accent fill with no visible border, Quiet buttons have muted text
+and a RowHover fill while hovered, and Danger buttons have Danger text and border
+over no fill, tinted with DangerSubtle while hovered or pressed. Text inputs look
+different from buttons: the Input fill (darker than the surface in dark, white in
+light), an InputBorder outline that keeps its fill on hover, and a Focus-colored
+border while focused.
+
+Popovers, menus, select lists, tooltips and dialogs are `Element::raised`
+surfaces: the Raised fill, a one-unit Divider outline, the large radius and the
+`Elevation::Popover` shadow, or `Elevation::Modal` for dialogs. Their surfaces
+scope focus without a ring of their own; their items show focus. A clipping
+element clips only its descendants, so its own shadow and focus ring extend past
+its box. Menu items, tree
+rows and other `Element::list_row`s paint no box at rest, RowHover while hovered,
+pressed or keyboard-focused, and RowSelected when selected, dimming to
+RowSelectedInactive while focus is outside their list. Tabs are unboxed: muted
+captions, with the selected tab in the text color over a two-unit accent
+indicator, on a strip separated from its panels by a Divider line. Scrollbars
+have no track fill and a slim, translucent TextMuted thumb that strengthens while
+hovered or dragged; split and dock dividers are a one-unit Divider line.
+
+Light shadows match CSS `0 1px 2px`, `0 6px 20px` and `0 16px 40px` in
+`rgba(16, 24, 40, a)` at 6%, 18% and 22% for the control, popover and modal
+levels; dark uses black at 50% and 60% for popovers (`0 8px 24px`) and modals
+(`0 16px 48px`) with flat controls. Blur radii follow CSS (the Gaussian deviation
+is half the blur), but RXUI blends in linear light, where a dark translucent
+shadow over a light surface looks about half as strong as the same CSS alpha.
+`ThemeShadows::light` therefore stores the linear alpha that darkens white as
+much as the CSS value does (about 0.13, 0.36 and 0.43). Over dark surfaces the
+two blends nearly agree, so the dark alphas are unconverted. Custom
+`BoxShadow`s are taken literally.
 
 | Token (sRGB) | Dark | Light | High contrast |
 | --- | --- | --- | --- |
-| Background | #131418 | #F3F4F6 | #000000 |
-| Surface | #1B1C21 | #FFFFFF | #000000 |
-| Raised | #23252B | #FFFFFF | #000000 |
-| Control | #25272D | #FFFFFF | #000000 |
-| Hover | #2E3037 | #F1F2F4 | #1F1F1F |
-| Pressed | #383A42 | #E4E6EA | #3A3A3A |
-| Main text | #ECEDF0 | #17181C | #FFFFFF |
-| Secondary text | #A3A7B0 | #5B606A | #E6E6E6 |
-| Disabled text | #60646C | #A0A4AB | #9A9A9A |
-| Border | #3E414A | #C3C7CE | #FFFFFF |
-| Input / input border | #16171B / #6A6E78 | #FFFFFF / #8F949D | #000000 / #FFFFFF |
-| Divider | #2A2C32 | #E3E5E9 | #FFFFFF |
-| Accent / hover / pressed | #2563EB / #1F5AE0 / #1A4CC2 | #2563EB / #1D4FD8 / #1E44B8 | #FFD400 / #FFE34D / #E6BF00 |
+| Background | #111214 | #F6F6F7 | #000000 |
+| Surface | #17181B | #FFFFFF | #000000 |
+| Raised | #1E1F23 | #FFFFFF | #000000 |
+| Control | #24262A | #FFFFFF | #000000 |
+| Hover | #2C2E33 | #F3F3F5 | #1F1F1F |
+| Pressed | #33353B | #EAEBEE | #3A3A3A |
+| Main text | #E6E7EA | #1A1B1E | #FFFFFF |
+| Secondary text | #9A9DA5 | #646770 | #E6E6E6 |
+| Disabled text | #5C5F66 | #A4A6AD | #9A9A9A |
+| Border | #34363C | #D3D5DA | #FFFFFF |
+| Input / input border | #0D0E10 / #34363C | #FFFFFF / #C9CBD1 | #000000 / #FFFFFF |
+| Divider | #26282C | #E4E5E8 | #FFFFFF |
+| Accent / hover / pressed | #3A6FE5 / #2F63DB / #335FC8 | #2F6BEB / #245FDD / #1F52C2 | #FFD400 / #FFE34D / #E6BF00 |
 | Accent text | #FFFFFF | #FFFFFF | #000000 |
-| Focus | #6EA2FF | #2563EB | #FFD400 |
-| Selection / selected text | #2B4E8F / #FFFFFF | #CFE0FF / #17181C | #00E5FF / #000000 |
+| Focus | #4A7CEF | #2F6BEB | #FFD400 |
+| Selection / selected text | #2B4580 / #FFFFFF | #CFDDFB / #1A1B1E | #00E5FF / #000000 |
+| Row hover | white at 12/255 | black at 10/255 | #1F1F1F |
+| Row selected / inactive | #22314F / #26282D | #E3ECFF / #EDEEF0 | #0050FF / #3A3A3A |
+| Danger / warning / success | #E5484D / #F5A524 / #30A46C | #D93036 / #C27C0E / #218358 | #FF4040 / #FF9900 / #00E060 |
 
-Tests verify, for every preset, main text at least 7:1 and secondary text at least
-4.5:1 against background/surface/normal/hover/pressed fills; focus at least 3:1
-against those fills; input borders at least 3:1 against the input fill; selected
-text at least 7:1; and accent text at least 4.5:1 on every accent state. Button
-borders, the selection fill against controls, and disabled text are deliberately
-softer in light and dark; use `Theme::high_contrast()` when every boundary must
-stand out. Arbitrary custom colors and inherited/local combinations are not
-automatically contrast-corrected.
+Tests verify, for every preset and for generated themes, main text at least 4.5:1
+against background, surface, raised, control, hover, pressed and row fills;
+secondary text at least 4.5:1 against background and surface; focus at least 3:1
+against background, surface, control and input fills; accent text at least 4.5:1
+on the accent, its hover and pressed states; selected text at least 4.5:1; and
+status colors at least 3:1 against the surface. Button and input borders,
+dividers and disabled text are deliberately softer in light and dark, so
+check boxes, radios, switches and rails outline themselves with Secondary text
+instead; use `Theme::high_contrast()` when every boundary must stand out.
+Arbitrary custom colors and inherited/local combinations are not automatically
+contrast-corrected.
+
+### Following the system accent
+
+In `ThemeMode::System` with `ThemeSet::follow_accent` (the default), the light or
+dark theme takes the operating system's accent; the high-contrast theme never
+does. The accent fill keeps the system color's OKLCH hue and as much chroma as the
+sRGB gamut allows, and only its lightness moves until the theme's own
+`accent_text` (white in the presets) reaches 4.5:1. Hover and pressed step a
+further 0.04 and 0.08 of lightness away from the text, darker under white text,
+so they stay distinct and readable.
+
+The text flips to black (or to white, for a theme with dark accent text) only
+when keeping it would cost the accent more than 0.25 of OKLCH lightness. Beyond
+that, light yellows and limes darken into olive and brown and lose their
+identity. The approximate macOS accents need these lightness drops for white
+text: blue 0.03, purple 0, pink 0.09, red 0.01, orange 0.15, green 0.16 and
+graphite 0.08, so all of them keep white text in both schemes and become, for
+example, #0072EE for blue, #B85C00 for orange and #2F8700 for green. Yellow
+(#FFC600) would need 0.29 and takes black text on its own color, with lighter
+hover and pressed states. A white accent also takes black text.
+
+The focus ring starts at the system color and lightens (dark) or darkens (light)
+until it has 3:1 against the background, surface, control and input fills.
+`selection`, `row_selected` and `row_selected_inactive` keep the theme's OKLCH
+lightness and chroma and take the accent's hue. Their chroma is scaled down when
+the accent is less colorful than the theme's own, so graphite gives neutral
+selections. Each then moves away from its text (`selection_text`, or `text`
+for rows) until that reads at 4.5:1. An accent equal to the theme's reproduces
+its tokens. Other tokens, including status colors, keep their theme values.
 
 These are design targets informed by [W3C text contrast guidance](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum),
 [enhanced contrast](https://www.w3.org/WAI/WCAG21/Understanding/contrast-enhanced)
@@ -279,11 +377,11 @@ button and opened its windows without activation. Accessibility actions changed
 application/window themes, opened an explicit light window and updated shared text.
 The inheriting window became dark while the explicit window stayed light; toggling
 that window changed its own appearance. Shared text survived each switch, and its
-button updated the shared counter. The probe exited through AXPress. Captures were
-visually inspected: [dark window](images/theme-dark-validation.png) and
-[explicit light window](images/theme-light-validation.png). The probe used a fixed
-Source Sans font and an ASCII value for deterministic capture; the normal gallery
-uses Application's system-font discovery. Existing user windows were untouched.
+button updated the shared counter. The probe exited through AXPress. Existing user
+windows were untouched. The current captures show the unmodified gallery with
+system fonts and the macOS blue accent: [dark window](images/theme-dark-validation.png)
+and [explicit light window](images/theme-light-validation.png). Each shows the
+dark, light and high-contrast presets at balanced and compact density.
 
 ```sh
 cargo run -p rxui --example theme_gallery --features native --locked
@@ -319,8 +417,11 @@ An explicit `.color(...)` on a descendant overrides that inheritance. Image tint
 independent; bind `.tint(ThemeColor::Text)` or provide an application tint when needed.
 Pointer/focus state changes select cached paint without layout or new descriptions.
 Default is the neutral bordered control, Primary inverts the foreground/background,
-and Quiet removes resting fill/border while keeping hover/pressed/focus feedback.
+Quiet removes resting fill/border while keeping hover/pressed/focus feedback, and
+Danger marks destructive actions with danger-colored text and border.
 All use the same box metrics, retaining a stable border inset even for Quiet.
+`.list_row(selected)` instead paints a button, or any pointer-target element, as a
+list row with the denser row metrics.
 Explicit paint/state builders override variant defaults, following normal precedence.
 Composition adds retained nodes and accessible-name work; the caption fast path
 remains useful for large simple lists. See [measurements](performance/images.md).

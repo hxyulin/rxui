@@ -442,10 +442,9 @@ impl IntoElement for Select {
                     item = item.accessibility_disabled(true);
                     item = item.color(ThemeColor::TextDisabled);
                 } else {
+                    // Rows highlight like menu items; the check marks the selection.
                     if lit {
-                        item = item
-                            .background(ThemeColor::Selection)
-                            .color(ThemeColor::SelectionText);
+                        item = item.background(ThemeColor::RowHover);
                     }
                     let hover_state = state.clone();
                     let hover_key = option.key.clone();

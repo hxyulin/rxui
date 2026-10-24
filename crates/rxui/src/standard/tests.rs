@@ -527,8 +527,9 @@ fn selects_open_a_listbox_keep_focus_and_choose_with_keys_type_ahead_and_pointer
         h.ui.semantic_node(apple).unwrap().role,
         SemanticRole::ListBoxOption
     );
-    let selection = Theme::dark().palette().selection;
-    assert_eq!(h.ui.element(apple).unwrap().background, Some(selection));
+    // The highlighted option is a hovered row; a check marks the selection.
+    let highlight = Theme::dark().palette().row_hover;
+    assert_eq!(h.ui.element(apple).unwrap().background, Some(highlight));
 
     // Arrows skip the disabled option and stop at the ends.
     for _ in 0..4 {
@@ -536,7 +537,7 @@ fn selects_open_a_listbox_keep_focus_and_choose_with_keys_type_ahead_and_pointer
     }
     assert_eq!(
         h.ui.element(h.id("cherry")).unwrap().background,
-        Some(selection)
+        Some(highlight)
     );
     h.key(KeyboardKey::ArrowUp);
     assert!(h.key(KeyboardKey::Enter).default_prevented);
@@ -556,12 +557,12 @@ fn selects_open_a_listbox_keep_focus_and_choose_with_keys_type_ahead_and_pointer
     h.key(KeyboardKey::ArrowDown);
     assert_eq!(
         h.ui.element(h.id("cherry")).unwrap().background,
-        Some(selection)
+        Some(highlight)
     );
     h.key(KeyboardKey::Character("a".into()));
     assert_eq!(
         h.ui.element(h.id("apple")).unwrap().background,
-        Some(selection)
+        Some(highlight)
     );
     h.key(KeyboardKey::Escape);
     assert!(h.find("list").is_none());
@@ -584,7 +585,7 @@ fn selects_open_a_listbox_keep_focus_and_choose_with_keys_type_ahead_and_pointer
     }
     let apple = h.id("apple");
     h.pointer(PointerEvent::Moved(h.center(apple)));
-    assert_eq!(h.ui.element(apple).unwrap().background, Some(selection));
+    assert_eq!(h.ui.element(apple).unwrap().background, Some(highlight));
     h.click(h.center(apple));
     assert_eq!(h.read(|s| s.language.clone()), Some(Key::from("apple")));
     assert!(h.find("list").is_none());
@@ -708,6 +709,78 @@ fn tooltip_wrappers_keep_the_target_flex_item_layout_and_cover_disabled_targets(
 }
 
 #[test]
+fn compact_density_shrinks_indicators_marks_and_rails_and_switches_back_live() {
+    let mut h = Harness::new(Form {
+        agree: Checked::True,
+        wifi: true,
+        ..Form::default()
+    });
+    // Box, mark, switch, knob, radio, dot, slider thumb and rail, progress bar.
+    let sizes = |h: &Harness| {
+        [
+            ("agree", "indicator"),
+            ("agree", "mark"),
+            ("wifi", "indicator"),
+            ("wifi", "knob"),
+            ("size", "indicator"),
+            ("size", "dot"),
+            ("volume", "thumb"),
+            ("volume", "track"),
+        ]
+        .map(|(root, key)| {
+            let b = h.bounds(h.within(root, key));
+            [b.width, b.height]
+        })
+    };
+    let balanced = sizes(&h);
+    assert_eq!(
+        balanced,
+        [
+            [14., 14.],
+            [12., 12.],
+            [26., 16.],
+            [10., 10.],
+            [14., 14.],
+            [6., 6.],
+            [16., 16.],
+            [200., 6.],
+        ]
+    );
+    assert_eq!(h.bounds(h.id("progress")).height, 8.);
+
+    h.ui.set_theme(Theme::dark().compact()).unwrap();
+    h.prepare();
+    let compact = sizes(&h);
+    assert_eq!(compact[0], [12., 12.]);
+    assert_eq!(compact[1], [10., 10.]);
+    assert_eq!(compact[2], [22., 13.]);
+    assert_eq!(compact[3], [8., 8.]);
+    assert_eq!(compact[6], [13., 13.]);
+    assert_eq!(compact[7][1], 5.);
+    for (compact, balanced) in compact.iter().zip(&balanced) {
+        assert!(compact[1] < balanced[1], "{compact:?} {balanced:?}");
+    }
+    assert_eq!(h.bounds(h.id("progress")).height, 6.);
+    // The knob stays centered in its track, and the rail on the thumb.
+    let track = h.bounds(h.within("wifi", "indicator"));
+    let knob = h.bounds(h.within("wifi", "knob"));
+    let center = |b: Bounds| b.y + b.height / 2.;
+    assert!((center(track) - center(knob)).abs() < 0.01);
+    let thumb = h.bounds(h.within("volume", "thumb"));
+    assert!((center(thumb) - center(h.bounds(h.within("volume", "track")))).abs() < 0.01);
+    // Indicators stay within a caption line, so captioned rows keep control height.
+    for theme in [Theme::dark(), Theme::dark().compact()] {
+        let m = theme.sizes();
+        let line = m.font_size * m.line_height;
+        assert!(m.indicator_size < line && m.switch_height < line);
+    }
+
+    h.ui.set_theme(Theme::dark()).unwrap();
+    h.prepare();
+    assert_eq!(sizes(&h), balanced);
+}
+
+#[test]
 fn indicator_colors_meet_non_text_contrast_in_every_preset() {
     fn luminance(c: Color) -> f32 {
         c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722
@@ -723,9 +796,14 @@ fn indicator_colors_meet_non_text_contrast_in_every_preset() {
         for surface in [c.background, c.surface] {
             assert!(contrast(c.accent, surface) >= 3.);
         }
-        // Unchecked indicators, rails and thumbs are outlined like text inputs.
-        assert!(contrast(c.input_border, c.input) >= 3.);
-        assert!(contrast(c.input_border, c.surface) >= 3.);
+        // Input borders are soft boundaries below 3:1, so unchecked indicators,
+        // rails and thumbs use an outline that reaches it.
+        let [fill, outline, knob] = super::indicator_colors(false, false);
+        for token in [outline, knob] {
+            for back in [theme.color(fill), c.input, c.surface] {
+                assert!(contrast(theme.color(token), back) >= 3.);
+            }
+        }
         // The fill stays distinct from an outlined rail's interior.
         assert!(contrast(c.accent, c.input) >= 3.);
         // Marks on a checked indicator and the select highlight.

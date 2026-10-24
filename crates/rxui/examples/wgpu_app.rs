@@ -20,7 +20,7 @@ impl View for Panel {
         column()
             .padding(24.)
             .gap(16.)
-            .child(label("RXUI inside your wgpu app").font_size(28.))
+            .child(label("RXUI inside your wgpu app").text_role(TextRole::Title))
             .child(label(
                 "The app renders the texture below before RXUI samples it.",
             ))

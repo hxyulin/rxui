@@ -560,3 +560,85 @@ fn overflow_inherits_updates_text_revision_and_preserves_editing_geometry() {
     );
     assert!(keyed(&ui, "caption").text_revision > revision);
 }
+#[test]
+fn padded_scroll_container_clips_at_padding_box_and_scrolls_through_end_padding() {
+    let handle = ScrollHandle::new();
+    let (_, _, mut ui) = setup(
+        row()
+            .child(scrollbar(handle.clone(), Axis::Vertical).size(12., 100.))
+            .child(
+                column()
+                    .key("viewport")
+                    .size(200., 100.)
+                    .padding(24.)
+                    .border(2., [0.; 4])
+                    .scroll_y()
+                    .scroll_handle(handle)
+                    .children(
+                        (0..10)
+                            .map(|i| column().key(format!("row{i}")).height(20.).focusable(true)),
+                    ),
+            ),
+    );
+    let viewport = keyed(&ui, "viewport");
+    // Like a CSS scroll container, the end padding is reachable: 200 of rows plus
+    // both paddings and borders, less the 100-unit box.
+    assert_eq!(viewport.scroll_range[1], 200. + 48. + 4. - 100.);
+    let scrollport = Bounds {
+        x: 14.,
+        y: 2.,
+        width: 196.,
+        height: 96.,
+    };
+    // Rows pass under the padding instead of vanishing at the content edge.
+    assert_eq!(keyed(&ui, "row0").clip_bounds, scrollport);
+    // The thumb spans the scrollport's share of the rows and both paddings.
+    let bar = ui
+        .elements()
+        .find(|e| e.kind == ElementType::Scrollbar)
+        .unwrap();
+    let thumb = bar.range.unwrap().thumb_bounds.unwrap();
+    assert!((thumb.height - 96. * 96. / 248.).abs() < 0.01, "{thumb:?}");
+    assert!(ui.scroll([100., 50.], [0., 30.]).unwrap());
+    let row = keyed(&ui, "row3");
+    assert_eq!(row.bounds.y, 2. + 24. + 60. - 30.);
+    assert_eq!(row.clip_bounds, scrollport);
+    // Focus reveal keeps the padding between a revealed row and the edge.
+    assert!(ui.focus_next(true));
+    let last = keyed(&ui, "row9");
+    assert_eq!(ui.focused_element(), Some(last.id));
+    assert_eq!(last.bounds.y + last.bounds.height, 100. - 2. - 24.);
+    for _ in 0..9 {
+        assert!(ui.focus_next(true));
+    }
+    let first = keyed(&ui, "row0");
+    assert_eq!(ui.focused_element(), Some(first.id));
+    assert_eq!(first.bounds.y, 2. + 24.);
+}
+#[test]
+fn clipping_elements_clip_descendants_but_not_their_own_shadow_or_ring() {
+    let (_, _, ui) = setup(
+        column().padding(40.).child(
+            column()
+                .key("surface")
+                .size(100., 60.)
+                .padding(8.)
+                .clip()
+                .shadow(BoxShadow::new([0., 0., 0., 0.5]).offset(0., 8.).blur(24.))
+                .child(column().key("child").size(200., 200.)),
+        ),
+    );
+    let surface = keyed(&ui, "surface");
+    // The surface's own painting is clipped only by its ancestors, so the shadow
+    // outside its box stays visible.
+    let viewport = Bounds {
+        x: 0.,
+        y: 0.,
+        width: 800.,
+        height: 600.,
+    };
+    assert_eq!(surface.clip_bounds, viewport);
+    let shadow = surface.paint.shadow.unwrap().extent(surface.bounds);
+    assert_eq!(shadow.intersection(surface.clip_bounds), shadow);
+    assert_eq!(keyed(&ui, "child").clip_bounds, surface.content_bounds);
+}
