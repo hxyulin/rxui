@@ -160,7 +160,9 @@ a row of controls one Tab stop with arrow keys between its items, sliders captur
 arrow/Page/Home/End keys, and selects open a list box with keyboard highlight and
 type-ahead. `progress_bar` and `spinner` show determinate or indeterminate
 progress, animated from the frame clock. `tooltip(cx, target, text)` adds a
-delayed hover popover that never takes focus or blocks input. Each control
+delayed hover popover that never takes focus or blocks input. `separator()` draws
+a Divider line between groups, `badge` a small toned label, and `kbd` a
+shortcut as key caps. Each control
 publishes its role, state and assistive actions. The
 [controls contract](controls.md) documents keys, semantics, theming and current
 limits; the gallery shows them all:

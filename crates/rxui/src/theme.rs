@@ -1,3 +1,4 @@
+use crate::appearance::luminance;
 use crate::{Color, UiError};
 use std::sync::{Arc, OnceLock};
 
@@ -7,15 +8,47 @@ pub fn rgb8(r: u8, g: u8, b: u8) -> Color {
 }
 /// Converts sRGB byte channels and a linear alpha byte to linear RGBA.
 pub fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Color {
-    fn channel(v: u8) -> f32 {
-        let v = f32::from(v) / 255.;
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    }
+    let channel = |v: u8| decode(f32::from(v) / 255.);
     [channel(r), channel(g), channel(b), f32::from(a) / 255.]
+}
+fn decode(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+fn encode(v: f32) -> f32 {
+    if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1. / 2.4) - 0.055
+    }
+}
+/// CSS-equivalent alpha of the dark presets' subtle status and accent tints.
+pub(crate) const SUBTLE_DARK: f32 = 0.14;
+/// CSS-equivalent alpha of the light presets' subtle status and accent tints.
+pub(crate) const SUBTLE_LIGHT: f32 = 0.08;
+/// `color` at the linear alpha whose composite over the opaque `backdrop` has
+/// the relative luminance CSS shows for `color` at `css_alpha`.
+///
+/// RXUI blends in linear light and browsers blend in sRGB. At the same alpha, a
+/// light color over a dark surface looks much stronger in linear light, and a
+/// dark color over a light surface looks weaker.
+pub(crate) fn css_alpha(color: Color, backdrop: Color, css_alpha: f32) -> Color {
+    let shown = [0, 1, 2].map(|i| {
+        let under = encode(backdrop[i]);
+        decode(under + css_alpha * (encode(color[i]) - under))
+    });
+    let (top, under) = (luminance(color), luminance(backdrop));
+    let shown = luminance([shown[0], shown[1], shown[2], 1.]);
+    let mut out = color;
+    out[3] = if (top - under).abs() < 1e-4 {
+        css_alpha
+    } else {
+        ((shown - under) / (top - under)).clamp(0., 1.)
+    };
+    out
 }
 /// Semantic color binding resolved in the element's nearest theme scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -457,13 +490,8 @@ impl ThemeShadows {
     /// same alpha blended in sRGB by browsers. Each alpha is therefore raised to
     /// the linear alpha that darkens a white surface as much as the CSS one does.
     pub fn light() -> Self {
-        let shadow = |y, blur, css_alpha: f32| {
-            let mut color = rgb8(16, 24, 40);
-            // The sRGB green channel CSS shows over white, converted to linear;
-            // green dominates luminance.
-            let shown = 1. - css_alpha * (1. - 24. / 255.);
-            let shown = ((shown + 0.055) / 1.055).powf(2.4);
-            color[3] = (1. - shown) / (1. - color[1]);
+        let shadow = |y, blur, alpha| {
+            let color = css_alpha(rgb8(16, 24, 40), rgb8(255, 255, 255), alpha);
             Some(BoxShadow::new(color).offset(0., y).blur(blur))
         };
         Self {
@@ -565,8 +593,9 @@ impl Theme {
     }
     fn preset(preset: Preset) -> Self {
         let hex = |v: u32| rgb8((v >> 16) as u8, (v >> 8) as u8, v as u8);
-        // A status color at `alpha` (linear, out of 255) for subtle tinted fills.
-        let tint = |v: u32, alpha: u8| rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, alpha);
+        // Translucent tokens are specified as CSS alphas over the surface and
+        // stored as the linear alphas that look the same; see `css_alpha`.
+        let tint = |v: u32, surface: u32, alpha: f32| css_alpha(hex(v), hex(surface), alpha);
         let mut metrics = ThemeMetrics::default();
         let (colors, shadows) = match preset {
             Preset::Light => (
@@ -596,7 +625,7 @@ impl Theme {
                     selection_text: hex(0x1A1B1E),
                     caret: hex(0x1A1B1E),
                     preedit: hex(0x1A1B1E),
-                    row_hover: rgba8(0, 0, 0, 10),
+                    row_hover: tint(0x000000, 0xFFFFFF, 10. / 255.),
                     row_selected: hex(0xE3ECFF),
                     row_selected_inactive: hex(0xEDEEF0),
                     // Status text reaches 4.5:1 on the surfaces and on the tints,
@@ -604,10 +633,10 @@ impl Theme {
                     danger: hex(0xCC202B),
                     warning: hex(0x965D00),
                     success: hex(0x0F784E),
-                    accent_subtle: tint(0x2F6BEB, 31),
-                    danger_subtle: tint(0xD93036, 31),
-                    warning_subtle: tint(0xC27C0E, 31),
-                    success_subtle: tint(0x218358, 31),
+                    accent_subtle: tint(0x2F6BEB, 0xFFFFFF, SUBTLE_LIGHT),
+                    danger_subtle: tint(0xD93036, 0xFFFFFF, SUBTLE_LIGHT),
+                    warning_subtle: tint(0xC27C0E, 0xFFFFFF, SUBTLE_LIGHT),
+                    success_subtle: tint(0x218358, 0xFFFFFF, SUBTLE_LIGHT),
                 },
                 ThemeShadows::light(),
             ),
@@ -639,7 +668,7 @@ impl Theme {
                     selection_text: hex(0xFFFFFF),
                     caret: hex(0xE6E7EA),
                     preedit: hex(0xE6E7EA),
-                    row_hover: rgba8(255, 255, 255, 12),
+                    row_hover: tint(0xFFFFFF, 0x17181B, 12. / 255.),
                     row_selected: hex(0x22314F),
                     row_selected_inactive: hex(0x26282D),
                     // Status text reaches 4.5:1 on the surfaces and on the tints,
@@ -647,10 +676,10 @@ impl Theme {
                     danger: hex(0xFF8481),
                     warning: hex(0xFFBB5E),
                     success: hex(0x57C68B),
-                    accent_subtle: tint(0x3A6FE5, 41),
-                    danger_subtle: tint(0xE5484D, 41),
-                    warning_subtle: tint(0xF5A524, 41),
-                    success_subtle: tint(0x30A46C, 41),
+                    accent_subtle: tint(0x3A6FE5, 0x17181B, SUBTLE_DARK),
+                    danger_subtle: tint(0xE5484D, 0x17181B, SUBTLE_DARK),
+                    warning_subtle: tint(0xF5A524, 0x17181B, SUBTLE_DARK),
+                    success_subtle: tint(0x30A46C, 0x17181B, SUBTLE_DARK),
                 },
                 ThemeShadows::dark(),
             ),

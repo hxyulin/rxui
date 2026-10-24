@@ -40,9 +40,11 @@ fn callouts_paint_their_tone_and_choose_icon_and_role() {
         let id = h.id("callout");
         let paint = h.paint(id);
         assert_eq!(paint.background, Some(theme.color(tone.background())));
-        let mut edge = theme.color(tone.foreground());
-        edge[3] *= 0.5;
+        // The edge is the tone at 30% CSS-equivalent alpha over its fill.
+        let fill = crate::appearance::over(theme.color(tone.background()), theme.palette().surface);
+        let edge = crate::theme::css_alpha(theme.color(tone.foreground()), fill, 0.3);
         assert_eq!(paint.border_color, Some(edge));
+        assert!(edge[3] < 0.3, "{tone:?}: {edge:?}");
         assert_eq!(paint.radii, [theme.sizes().radius; 4]);
         let info = h.ui.element(id).unwrap();
         assert_eq!(info.bounds.width, 800. - 20.);

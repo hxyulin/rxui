@@ -546,6 +546,55 @@ fn tone_foregrounds_read_on_their_subtle_backgrounds_in_presets_and_generated_th
     }
 }
 #[test]
+fn translucent_tokens_look_like_their_css_alphas_over_the_surface() {
+    // The tints and row hover are specified as CSS alphas, which browsers blend
+    // in sRGB. RXUI blends in linear light, where a light color over a dark
+    // surface at the same alpha lands far brighter.
+    let decode = |v: f32| {
+        if v <= 0.040_45 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let encode = |v: f32| {
+        if v <= 0.003_130_8 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1. / 2.4) - 0.055
+        }
+    };
+    let css_over = |top: Color, under: Color, alpha: f32| {
+        let mix = |i: usize| decode(encode(under[i]) * (1. - alpha) + encode(top[i]) * alpha);
+        [mix(0), mix(1), mix(2), 1.]
+    };
+    let lightness = |c: Color| crate::theme_seed::oklch(c)[0];
+    let presets = [Theme::dark(), Theme::light()];
+    for (i, theme) in presets.iter().chain(&generated()).enumerate() {
+        let c = theme.palette();
+        let dark = ColorScheme::of(theme) == ColorScheme::Dark;
+        let (tint, hover) = if dark {
+            (0.14, 12. / 255.)
+        } else {
+            (0.08, 10. / 255.)
+        };
+        for (name, token, alpha) in [
+            ("accent", c.accent_subtle, tint),
+            ("danger", c.danger_subtle, tint),
+            ("warning", c.warning_subtle, tint),
+            ("success", c.success_subtle, tint),
+            ("row hover", c.row_hover, hover),
+        ] {
+            let shown = lightness(over(token, c.surface));
+            let intended = lightness(css_over(token, c.surface, alpha));
+            assert!(
+                (shown - intended).abs() < 0.01,
+                "theme {i}: {name} shows L {shown:.3}, CSS intends {intended:.3}"
+            );
+        }
+    }
+}
+#[test]
 fn generated_themes_derive_states_shadows_and_reject_invalid_seeds() {
     let dark = Theme::generate(ThemeSeed::new(ColorScheme::Dark, rgb8(58, 111, 229)));
     let light = Theme::generate(ThemeSeed::new(ColorScheme::Light, rgb8(58, 111, 229)));
@@ -557,7 +606,6 @@ fn generated_themes_derive_states_shadows_and_reject_invalid_seeds() {
         assert_eq!(c.accent_text, [1.; 4]);
         assert!(c.row_hover[3] < 1. && c.danger_subtle[3] < 1.);
         assert_eq!(&c.accent_subtle[..3], &c.accent[..3]);
-        assert_eq!(c.accent_subtle[3], c.danger_subtle[3]);
         assert_eq!(theme.sizes(), &ThemeMetrics::balanced());
     }
     assert_eq!(dark.elevations(), &ThemeShadows::dark());
@@ -596,14 +644,13 @@ fn new_semantic_tokens_resolve_in_every_preset() {
         Theme::dark().color(ThemeColor::Danger),
         rgb8(0xFF, 0x84, 0x81)
     );
-    assert_eq!(
-        Theme::light().color(ThemeColor::RowHover),
-        rgba8(0, 0, 0, 10)
-    );
-    assert_eq!(
-        Theme::dark().color(ThemeColor::SuccessSubtle),
-        rgba8(0x30, 0xA4, 0x6C, 41)
-    );
+    // Translucent tokens keep their color and store a linear alpha.
+    let hover = Theme::light().color(ThemeColor::RowHover);
+    assert_eq!(hover[..3], [0.; 3]);
+    assert!((hover[3] - 0.087).abs() < 0.001, "{hover:?}");
+    let success = Theme::dark().color(ThemeColor::SuccessSubtle);
+    assert_eq!(success[..3], rgb8(0x30, 0xA4, 0x6C)[..3]);
+    assert!((success[3] - 0.045).abs() < 0.001, "{success:?}");
     let (mut runtime, _, mut ui) = mount(
         column()
             .key("row")

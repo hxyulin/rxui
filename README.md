@@ -75,23 +75,19 @@ fn main() -> Result<(), ApplicationError> {
       <a href="crates/rxui/examples/gallery.rs"><picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery-dark.png">
         <source media="(prefers-color-scheme: light)" srcset="docs/images/gallery-light.png">
-        <img src="docs/images/gallery-light.png" alt="The component gallery: buttons in default, primary, quiet and danger variants, text inputs, check boxes, switches, radios, a slider, progress bars, a select, tabs, a virtual list and a split pane." width="420">
+        <img src="docs/images/gallery-light.png" alt="The component gallery: buttons with icons, icon buttons, a toolbar with toggle buttons and segmented controls, text inputs, check boxes, switches, radios, a slider, progress bars, a select, a combobox, tabs, form fields with a number field and a validation error, a disclosure and callouts." width="420">
       </picture></a>
       <br><sub><a href="crates/rxui/examples/gallery.rs">Component gallery</a>: every built-in control, with live theme and density switching</sub>
     </td>
     <td width="50%" valign="top">
-      <a href="crates/rxui/examples/docking_window.rs"><img src="docs/images/docking-workspace.png" alt="An IDE-like docking layout with Files, Editor, Preview and Output panels in tab groups, a toolbar above and a status bar below." width="420"></a>
+      <a href="crates/rxui/examples/docking_window.rs"><img src="docs/images/docking-workspace.png" alt="An IDE-like docking layout with Files, Editor, Preview and Output panels in tab groups, a toolbar with a toggle button above and a status bar below." width="420"></a>
       <br><sub><a href="crates/rxui/examples/docking_window.rs">Docking</a>: draggable tab groups over an application-owned layout tree</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/controls.md"><picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/images/controls-dark-validation.png">
-        <source media="(prefers-color-scheme: light)" srcset="docs/images/controls-light-validation.png">
-        <img src="docs/images/controls-light-validation.png" alt="Standard controls: check boxes, switches and radios in each state, sliders, progress bars, a spinner and a select." width="420">
-      </picture></a>
-      <br><sub><a href="docs/controls.md">Standard controls</a> in each state, rendered by the GPU tests</sub>
+      <a href="crates/rxui/examples/command_palette.rs"><img src="docs/images/command-palette.png" alt="A command palette with the query file: six matching commands with the matched letters in the accent color and each shortcut in a key cap." width="420"></a>
+      <br><sub><a href="crates/rxui/examples/command_palette.rs">Command palette</a>: fuzzy matching over commands, with their shortcuts</sub>
     </td>
     <td width="50%" valign="top">
       <a href="crates/rxui/examples/tree_panel_window.rs"><img src="docs/images/virtual-tree.png" alt="A virtual tree of 100,100 nodes: an expanded folder with its records as indented rows, and a slim scrollbar." width="300"></a>
@@ -181,7 +177,8 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
 | [Animation](docs/animation.md) | Transitions, overlay motion, smooth scrolling, animated values and reduce motion |
 | [Custom elements](docs/custom-elements.md) | Leaves that measure, hit-test and paint themselves, and text input clients for custom editors |
-| [Standard controls](docs/controls.md) | Check boxes, switches, toggle buttons, radio groups, segmented controls, toolbars, sliders, progress, selects and tooltips |
+| [Standard controls](docs/controls.md) | Check boxes, switches, toggle buttons, radio groups, segmented controls, toolbars, sliders, progress, selects, tooltips, separators, badges and key caps |
+| [Icons](docs/icons.md) | Built-in Lucide icons, application icons from SVG path data, and icon buttons |
 | [Overlays and commands](docs/overlays-and-commands.md) and [docking](docs/docking.md) | Menus, dialogs, shortcuts and dock layouts |
 | [Native menus](docs/native-menus.md), [services](docs/native-services.md), [window state](docs/window-state-and-files.md) and [native feel](docs/native-feel.md) | Desktop integration |
 

@@ -9,8 +9,7 @@ It has **no RXUI, Astrelis, GPU, renderer, executor or application-host dependen
 It does not create your event loop or windows. The examples are small standalone
 applications, not a required host framework.
 
-The crate is not yet published on crates.io. Until publication, use a Git or path
-dependency. Its version and future releases are independent of RXUI.
+Its version and releases are independent of RXUI.
 
 ## Install
 
@@ -18,13 +17,12 @@ Select the backend your application uses:
 
 ```toml
 [dependencies]
-draglet = { git = "https://github.com/hxyulin/rxui", default-features = false, features = ["wayland"] }
+draglet = { version = "0.1", default-features = false, features = ["wayland"] }
 winit = "0.30.13"
 ```
 
-For a local checkout, replace `git` with `path = "../rxui/crates/draglet"`.
-After publication, `version = "0.1"` can replace the Git/path source. Rust 1.98.1
-or newer is required. Draglet has no workspace-inherited package fields and can
+For a local checkout, use `path = "../rxui/crates/draglet"` instead of `version`.
+Rust 1.98.1 or newer is required. Draglet has no workspace-inherited package fields and can
 also be built from a copy of its crate directory alone.
 
 | Feature | API | Use it for |

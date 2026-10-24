@@ -130,7 +130,7 @@ parent's width.
 | `Success` | `CIRCLE_CHECK` | Status |
 
 The fill is the tone's subtle background, with a 1-unit border in the tone's
-foreground at half alpha and the theme's `radius`. The icon uses the tone's
+foreground at 30% CSS-equivalent alpha and the theme's `radius`. The icon uses the tone's
 foreground.
 
 ## Toasts

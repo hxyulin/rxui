@@ -80,7 +80,7 @@ pub struct Callout {
 /// description, and optional actions and close button at its end.
 ///
 /// It is drawn on the tone's subtle fill inside a 1-unit border of the tone's
-/// foreground at half alpha, with the theme's `radius`. The icon is
+/// foreground at 30% CSS-equivalent alpha, with the theme's `radius`. The icon is
 /// [`Icon::INFO`] for [`Tone::Neutral`] and [`Tone::Accent`],
 /// [`Icon::CIRCLE_ALERT`] for danger, [`Icon::TRIANGLE_ALERT`] for warnings and
 /// [`Icon::CIRCLE_CHECK`] for success. Danger and warning callouts have the

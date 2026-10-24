@@ -765,9 +765,11 @@ fn default_paint(
         Surface::Part(part) => {
             paint.radii = [part.radius(m); 4];
             if let crate::standard::Part::Banner(tone) = part {
-                paint.background = Some(theme.color(tone.background()));
-                let mut edge = theme.color(tone.foreground());
-                edge[3] *= 0.5;
+                let fill = theme.color(tone.background());
+                paint.background = Some(fill);
+                // A quiet edge: the tone at 30% CSS-equivalent alpha over its fill.
+                let under = crate::appearance::over(fill, c.surface);
+                let edge = crate::theme::css_alpha(theme.color(tone.foreground()), under, 0.3);
                 paint.border_color = Some(edge);
             }
         }

@@ -247,7 +247,7 @@ pub(crate) enum Part {
     /// A number field's text input, with room for its stepper at the end.
     NumberInput,
     /// A callout: the tone's subtle fill inside a 1-unit border of the tone's
-    /// foreground at half alpha, rounded with `radius`.
+    /// foreground at 30% CSS-equivalent alpha, rounded with `radius`.
     Banner(Tone),
 }
 impl Part {

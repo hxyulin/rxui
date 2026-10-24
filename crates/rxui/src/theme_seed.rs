@@ -3,7 +3,8 @@
 //! Lightness steps are chosen in OKLCH, where equal lightness looks equally light
 //! across hues, so one ramp serves every accent and neutral tint.
 use crate::appearance::{contrast, luminance, over};
-use crate::{Color, ColorScheme, Theme, ThemeColors, ThemeMetrics, ThemeShadows, rgba8};
+use crate::theme::{SUBTLE_DARK, SUBTLE_LIGHT, css_alpha};
+use crate::{Color, ColorScheme, Theme, ThemeColors, ThemeMetrics, ThemeShadows};
 
 /// Inputs of [`Theme::generate`].
 ///
@@ -80,7 +81,9 @@ impl Theme {
         let input = n(pick(0.155, 1.));
         let raised = n(pick(0.235, 1.));
         let text = t(pick(0.93, 0.22));
-        let subtle = |c: Color| [c[0], c[1], c[2], if dark { 41. } else { 31. } / 255.];
+        // Tints and row hover are CSS alphas over the surface, stored as the
+        // linear alphas that look the same.
+        let subtle = |c: Color| css_alpha(c, surface, pick(SUBTLE_DARK, SUBTLE_LIGHT));
         // Text in a tone's color reads at 4.5:1 on the window surfaces and on its
         // tint over them: from the tint's lightness it moves away from the
         // surfaces (lighter when dark) until it gets there.
@@ -130,11 +133,11 @@ impl Theme {
             selection_text: text,
             caret: text,
             preedit: text,
-            row_hover: if dark {
-                rgba8(255, 255, 255, 12)
-            } else {
-                rgba8(0, 0, 0, 10)
-            },
+            row_hover: css_alpha(
+                if dark { WHITE } else { BLACK },
+                surface,
+                pick(12., 10.) / 255.,
+            ),
             row_selected: from_oklch(pick(0.32, 0.94), ac.min(pick(0.07, 0.04)), ah),
             row_selected_inactive: n(pick(0.27, 0.945)),
             danger,

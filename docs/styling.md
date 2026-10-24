@@ -274,9 +274,18 @@ levels; dark uses black at 50% and 60% for popovers (`0 8px 24px`) and modals
 is half the blur), but RXUI blends in linear light, where a dark translucent
 shadow over a light surface looks about half as strong as the same CSS alpha.
 `ThemeShadows::light` therefore stores the linear alpha that darkens white as
-much as the CSS value does (about 0.13, 0.36 and 0.43). Over dark surfaces the
+much as the CSS value does (about 0.12, 0.34 and 0.40). Over dark surfaces the
 two blends nearly agree, so the dark alphas are unconverted. Custom
 `BoxShadow`s are taken literally.
+
+The subtle tints and Row hover are specified the same way, as CSS alphas over
+the surface. A light color over a dark surface shows the opposite error: at
+the same alpha, linear blending lands far brighter than CSS. The presets and
+generated themes store the linear alpha whose result over the surface has the
+relative luminance of the CSS blend. Dark tints use 14%, light tints 8%, and
+Row hover white at 12/255 (dark) or black at 10/255 (light). For example, the
+dark accent tint stores 0.052 and shows #1A2340 on the surface, where CSS
+shows #1C2437.
 
 | Token (sRGB) | Dark | Light | High contrast |
 | --- | --- | --- | --- |
@@ -296,11 +305,11 @@ two blends nearly agree, so the dark alphas are unconverted. Custom
 | Accent text | #FFFFFF | #FFFFFF | #000000 |
 | Focus | #77A2FF | #2560DF | #FFD400 |
 | Selection / selected text | #2B4580 / #FFFFFF | #CFDDFB / #1A1B1E | #00E5FF / #000000 |
-| Row hover | white at 12/255 | black at 10/255 | #1F1F1F |
+| Row hover | White at 12/255 CSS alpha | Black at 10/255 CSS alpha | #1F1F1F |
 | Row selected / inactive | #22314F / #26282D | #E3ECFF / #EDEEF0 | #0050FF / #3A3A3A |
 | Danger / warning / success | #FF8481 / #FFBB5E / #57C68B | #CC202B / #965D00 / #0F784E | #FF4040 / #FF9900 / #00E060 |
-| Accent subtle | The accent at 41/255 | The accent at 31/255 | #403500 |
-| Danger, warning and success subtle | #E5484D / #F5A524 / #30A46C at 41/255 | #D93036 / #C27C0E / #218358 at 31/255 | #400000 / #402600 / #003818 |
+| Accent subtle | The accent at 14% CSS alpha | The accent at 8% CSS alpha | #403500 |
+| Danger, warning and success subtle | #E5484D / #F5A524 / #30A46C at 14% CSS alpha | #D93036 / #C27C0E / #218358 at 8% CSS alpha | #400000 / #402600 / #003818 |
 
 The status colors and Focus are text colors: badges, and later callouts and
 field errors, draw text in them. Their tints keep the deeper (dark) or brighter
@@ -349,7 +358,7 @@ lightness and chroma and take the accent's hue. Their chroma is scaled down when
 the accent is less colorful than the theme's own, so graphite gives neutral
 selections. Each then moves away from its text (`selection_text`, or `text`
 for rows) until that reads at 4.5:1. `accent_subtle` takes the new accent at
-the theme's own translucency. An accent equal to the theme's reproduces
+the theme's own CSS-equivalent alpha over the surface. An accent equal to the theme's reproduces
 its tokens. Other tokens, including status colors, keep their theme values.
 
 These are design targets informed by [W3C text contrast guidance](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum),

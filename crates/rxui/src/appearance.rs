@@ -3,6 +3,7 @@
 //! These types are portable data: the native host detects them, while headless
 //! hosts and tests construct them directly. [`ThemeSet::resolve`] turns a mode and
 //! a preference snapshot into the theme a following window uses.
+use crate::theme::css_alpha;
 use crate::theme_seed::{
     AccentFill, HOVER_STEP, PRESSED_STEP, away_from, from_oklch, oklch, reach,
 };
@@ -188,8 +189,9 @@ fn with_accent(theme: &Theme, accent: Color) -> Theme {
         p.accent_hover = fill.step(HOVER_STEP);
         p.accent_pressed = fill.step(PRESSED_STEP);
         p.accent_text = fill.text;
-        // The tint keeps the theme's own translucency.
-        p.accent_subtle = [p.accent[0], p.accent[1], p.accent[2], p.accent_subtle[3]];
+        // The tint keeps the theme's own CSS-equivalent strength over the surface.
+        let strength = css_strength(p.accent_subtle, p.surface);
+        p.accent_subtle = css_alpha(p.accent, p.surface, strength);
         // The focus color is also accent-toned text.
         let mut fills = vec![
             p.background,
@@ -210,6 +212,21 @@ fn with_accent(theme: &Theme, accent: Color) -> Theme {
         p.row_selected = retint(p.row_selected, p.text);
         p.row_selected_inactive = retint(p.row_selected_inactive, p.text);
     })
+}
+
+/// The CSS alpha that [`css_alpha`] turns into `tint`'s linear alpha over
+/// `backdrop`.
+fn css_strength(tint: Color, backdrop: Color) -> f32 {
+    let (mut lo, mut hi) = (0., 1.);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.;
+        if css_alpha(tint, backdrop, mid)[3] < tint[3] {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.
 }
 
 #[cfg(test)]
@@ -298,10 +315,13 @@ mod tests {
                     assert!(contrast(c.focus, tinted) >= 4.5, "{case}");
                 }
                 assert!(contrast(c.selection_text, c.selection) >= 4.5, "{case}");
-                // The accent tint follows the accent at the preset's translucency.
+                // The accent tint follows the accent at the preset's CSS-equivalent
+                // strength.
                 let tint = c.accent_subtle;
                 assert_eq!(&tint[..3], &c.accent[..3], "{case}");
-                assert_eq!(tint[3], preset.palette().accent_subtle[3], "{case}");
+                let preset_strength = css_strength(preset.palette().accent_subtle, c.surface);
+                let strength = css_strength(tint, c.surface);
+                assert!((strength - preset_strength).abs() < 1e-3, "{case}");
                 for row in [c.row_selected, c.row_selected_inactive] {
                     assert!(contrast(c.text, row) >= 4.5, "{case}");
                 }
