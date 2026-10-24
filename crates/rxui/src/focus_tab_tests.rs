@@ -800,3 +800,29 @@ fn tab_headers_only_border_their_indicator_side() {
         assert_eq!(info.border, [0., 0., 0., 2.], "{name}");
     }
 }
+#[test]
+fn close_marks_are_smaller_than_icons_and_muted_until_their_tab_is_selected() {
+    let (mut r, _, mut ui) = setup(TabContentPolicy::KeepMounted);
+    for (theme, side) in [(Theme::dark(), 12.), (Theme::dark().compact(), 10.)] {
+        ui.set_theme(theme.clone()).unwrap();
+        prepare(&mut r, &mut ui);
+        let c = theme.palette();
+        let closes: Vec<_> = ui
+            .elements()
+            .filter(|e| e.key == Some(&Key::from("close")))
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(closes.len(), 3);
+        for (index, close) in closes.into_iter().enumerate() {
+            let button = ui.element(close).unwrap();
+            assert!(button.bounds.width >= 20. && button.bounds.height >= 20.);
+            let mark = ui.elements().find(|e| e.parent == Some(close)).unwrap().id;
+            let mark = ui.element(mark).unwrap();
+            let content = mark.content_bounds;
+            assert_eq!([content.width, content.height], [side; 2]);
+            // Doc 0 is selected.
+            let color = if index == 0 { c.text } else { c.text_muted };
+            assert_eq!(mark.color, color, "tab {index}");
+        }
+    }
+}

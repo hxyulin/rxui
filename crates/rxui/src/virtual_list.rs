@@ -66,9 +66,20 @@ where
     F: FnMut(usize) -> E,
     E: IntoElement,
 {
+    virtual_list_in(count, row_height, handle, handle.state(cx), render)
+}
+/// Like [`virtual_list`], with scroll metrics a builder read earlier from its
+/// view context.
+pub(crate) fn virtual_list_in<F>(
+    count: usize,
+    row_height: f32,
+    handle: &ScrollHandle,
+    state: Option<ScrollState>,
+    render: F,
+) -> VirtualList<F> {
     VirtualList {
         area: scroll_area(column()).handle(handle.clone()),
-        state: handle.state(cx),
+        state,
         count,
         row_height,
         overscan: 2,

@@ -384,8 +384,18 @@ impl IntoElement for Tabs {
             );
             let mut group = row().key(entry.key.clone()).flex_shrink(0.).child(header);
             if let Some(listener) = close {
+                // A 2-unit inset draws the mark 4 units below the icon size, so it
+                // reads lighter than the title. The quiet button mutes it at rest;
+                // the selected tab's close mark keeps the title's text color.
+                let mut close = crate::icon_button(crate::Icon::X);
+                if let Some(mark) = close.children.pop() {
+                    close.children.push(mark.padding(2.));
+                }
+                if selected {
+                    close = close.color(ThemeColor::Text);
+                }
                 group = group.child(metadata(
-                    crate::icon_button(crate::Icon::X)
+                    close
                         .key("close")
                         .tab_stop(false)
                         .accessibility_label(format!("Close {}", entry.title))

@@ -5,6 +5,60 @@ use rxui::taffy::{AlignItems, FlexWrap};
 
 const ROWS: usize = 1_000;
 
+/// About 2,000 workspace-like files for the quick-open combobox.
+fn workspace_files() -> Vec<(String, String)> {
+    let dirs = [
+        "crates/rxui/src",
+        "crates/rxui/src/standard",
+        "crates/rxui/examples",
+        "crates/rxui-draw/src",
+        "crates/rxui-host/src",
+        "docs",
+        "tests/fixtures",
+        "tools/icons",
+    ];
+    let stems = [
+        "theme",
+        "layout",
+        "editor",
+        "buffer",
+        "cursor",
+        "selection",
+        "tree",
+        "list_view",
+        "combobox",
+        "matcher",
+        "scroll",
+        "focus",
+        "overlay",
+        "tabs",
+        "dock",
+        "commands",
+        "icons",
+        "text",
+        "input",
+        "paint",
+        "shaper",
+        "glyph",
+        "image",
+        "window",
+        "menu",
+    ];
+    let suffixes = ["", "_tests", "_view", "_state", "_dispatch"];
+    let mut files = Vec::new();
+    for dir in dirs {
+        let ext = if dir == "docs" { "md" } else { "rs" };
+        for stem in stems {
+            for suffix in suffixes {
+                for n in ["", "_2"] {
+                    files.push((format!("{stem}{suffix}{n}.{ext}"), dir.to_string()));
+                }
+            }
+        }
+    }
+    files
+}
+
 struct NewWindow;
 impl Command for NewWindow {}
 struct OpenFile;
@@ -45,8 +99,9 @@ struct Gallery {
     tabs_open: Vec<&'static str>,
     menu_anchor: AnchorHandle,
     menu_open: bool,
-    list: ScrollHandle,
-    selected: usize,
+    query: String,
+    files: Vec<(String, String)>,
+    rows: ListSelection,
     split: SplitPosition,
     dialog: bool,
     status: String,
@@ -370,8 +425,29 @@ impl View for Gallery {
         }
         let menu_section = section("Menu", menu_row);
 
+        let quick_open = section(
+            "Combobox",
+            combobox(cx)
+                .fill_width()
+                .list_width(480.)
+                .accessibility_label("Go to file")
+                .placeholder("Go to file")
+                .query(&self.query)
+                .on_query(cx.listener(|s, e: &QueryEvent, _| s.query = e.text.clone()))
+                .items(self.files.len(), |i| {
+                    let (name, dir) = &self.files[i];
+                    ComboItem::new(name).icon(Icon::FILE).detail(dir)
+                })
+                .matcher(FuzzyMatcher)
+                .on_choose(cx.listener(|s, e: &ChooseEvent, _| {
+                    let (name, dir) = &s.files[e.index];
+                    s.status = format!("Opened {dir}/{name}");
+                    s.query.clear();
+                })),
+        );
+
         let list = section(
-            "Virtual list",
+            "List view",
             column()
                 .fill_width()
                 .height(220.)
@@ -379,21 +455,17 @@ impl View for Gallery {
                 .radius(6.)
                 .clip()
                 .child(
-                    virtual_list(
-                        ROWS,
-                        self.theme().sizes().row_height,
-                        &self.list,
-                        cx,
-                        |index| {
-                            button(format!("file_{index:04}.rs"))
-                                .key(index)
-                                .fill_width()
-                                .list_row(self.selected == index)
-                                .on_click(cx.listener(move |s, _, _| s.selected = index))
-                        },
-                    )
-                    .fill_width()
-                    .fill_height(),
+                    list_view(cx)
+                        .fill_width()
+                        .fill_height()
+                        .accessibility_label("Files")
+                        .selection(&self.rows)
+                        .items(ROWS, |i| {
+                            ListItem::new(i, format!("file_{i:04}.rs")).icon(Icon::FILE)
+                        })
+                        .on_change(cx.listener(|s, e: &ListSelectionEvent, _| {
+                            s.rows = e.selection.clone();
+                        })),
                 ),
         );
 
@@ -629,6 +701,7 @@ impl View for Gallery {
                     .flex_basis(0.)
                     .min_width(0.)
                     .gap(24.)
+                    .child(quick_open)
                     .child(tabs_section)
                     .child(icons)
                     .child(list)
@@ -703,8 +776,9 @@ fn main() -> Result<(), ApplicationError> {
             tabs_open: vec!["Overview", "Layout", "Logs"],
             menu_anchor: AnchorHandle::new(),
             menu_open: false,
-            list: ScrollHandle::new(),
-            selected: 2,
+            query: String::new(),
+            files: workspace_files(),
+            rows: ListSelection::new(SelectionMode::Multiple),
             split: SplitPosition::default(),
             dialog: false,
             status: "Click anything; Primary+N/O/W run the menu commands.".into(),

@@ -100,6 +100,10 @@ name = "gallery"
 required-features = ["native"]
 
 [[example]]
+name = "command_palette"
+required-features = ["native"]
+
+[[example]]
 name = "counter_custom_host"
 required-features = ["native"]
 
@@ -247,6 +251,11 @@ required-features = ["native"]
 
 [[bench]]
 name = "docking"
+harness = false
+required-features = ["layout"]
+
+[[bench]]
+name = "combobox"
 harness = false
 required-features = ["layout"]
 

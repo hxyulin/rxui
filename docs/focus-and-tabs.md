@@ -92,6 +92,11 @@ Ui preparation. The framework does not silently replace application selection.
 owner state. Pointer activation uses the ordinary button path. Keyboard focus
 moves independently from selection, allowing the listener to ignore a proposal.
 
+A closable tab's close button is a quiet icon button, `input_height` square, after
+the header. Its X is 4 units smaller than `icon_size` (12 balanced, 10 compact),
+so it reads lighter than the title. It is `TextMuted` at rest and `Text` on hover
+or when its tab is selected.
+
 `TabCloseEvent { key, next_selection }` never removes a tab itself. The callback
 owns removal, unsaved-document confirmation, cancellation and selection. The
 suggested selection remains unchanged for a background tab. Closing the selected

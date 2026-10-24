@@ -19,7 +19,7 @@ fn data() -> TreeData {
     .unwrap()
 }
 fn state() -> TreeState {
-    let mut s = TreeState::new(data(), TreeSelectionMode::Multiple);
+    let mut s = TreeState::new(data(), SelectionMode::Multiple);
     s.set_expanded([0.into(), 2.into()]);
     s
 }
@@ -84,7 +84,7 @@ fn modifier_selection_activity_ranges_and_single_mode() {
         s.selected(),
         &std::collections::HashSet::from([1.into(), 2.into(), 3.into()])
     );
-    let mut single = TreeState::new(data(), TreeSelectionMode::Single);
+    let mut single = TreeState::new(data(), SelectionMode::Single);
     select(&mut single, 0, Modifiers::default());
     select(
         &mut single,
@@ -179,7 +179,7 @@ fn rejected_and_stale_proposals_cannot_mutate_reordered_or_newer_state() {
 }
 #[test]
 fn hierarchy_navigation_pages_and_browser_safe_typeahead() {
-    let mut s = TreeState::new(data(), TreeSelectionMode::Multiple);
+    let mut s = TreeState::new(data(), SelectionMode::Multiple);
     apply(
         &mut s,
         TreeCommand::Key(KeyboardKey::ArrowRight),
@@ -269,8 +269,7 @@ fn setup(count: usize) -> (Runtime, Entity<Demo>, Ui<Demo>) {
             let nodes = (0..count)
                 .map(|i| node(i, (i > 0).then_some(0), i == 0, &format!("Node {i}")))
                 .collect();
-            let mut state =
-                TreeState::new(TreeData::new(nodes).unwrap(), TreeSelectionMode::Multiple);
+            let mut state = TreeState::new(TreeData::new(nodes).unwrap(), SelectionMode::Multiple);
             state.set_expanded([0.into()]);
             Demo {
                 state,
@@ -476,8 +475,8 @@ fn accesskit_tree_has_valid_bounded_updates_and_collection_actions() {
 #[test]
 fn shared_domain_independent_states_and_controlled_selection_normalization() {
     let shared = data();
-    let mut a = TreeState::new(shared.clone(), TreeSelectionMode::Multiple);
-    let b = TreeState::new(shared, TreeSelectionMode::Multiple);
+    let mut a = TreeState::new(shared.clone(), SelectionMode::Multiple);
+    let b = TreeState::new(shared, SelectionMode::Multiple);
     a.set_expanded([0.into(), 2.into(), 4.into(), 999.into()]);
     a.set_selection([3.into(), 999.into()], Some(3.into()), Some(3.into()));
     assert_eq!(a.active(), Some(&3.into()));
@@ -727,7 +726,7 @@ fn widget_typeahead_expires_while_frame_clock_is_idle() {
                     node(2, None, false, "Beta"),
                 ])
                 .unwrap(),
-                TreeSelectionMode::Single,
+                SelectionMode::Single,
             );
         })
     });

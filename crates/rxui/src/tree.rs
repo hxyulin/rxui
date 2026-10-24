@@ -1,4 +1,5 @@
 //! Controlled, fixed-height trees. Domain data and accepted state belong to the app.
+use crate::selection::{Selection, SelectionMode, SelectionRows, TypeAhead};
 use crate::{
     AccessibilityHandle, AppContext, Element, IntoElement, Key, KeyboardKey, Listener, Modifiers,
     ReadContext, ScrollError, ScrollHandle, SemanticAction, SemanticRole, column, virtual_list,
@@ -88,14 +89,6 @@ impl TreeData {
         self.0.indices.get(key).map(|&i| &self.0.nodes[i])
     }
 }
-/// Selection policy. Logical activity is independent of selection in both modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TreeSelectionMode {
-    /// At most one selected key.
-    Single,
-    /// Primary-click toggles; Shift selects the inclusive visible range.
-    Multiple,
-}
 /// One row in the cached visible preorder projection.
 #[derive(Clone, Debug)]
 pub struct TreeRow {
@@ -111,14 +104,10 @@ pub struct TreeRow {
 struct State {
     data: TreeData,
     expanded: HashSet<Key>,
-    selected: HashSet<Key>,
-    active: Option<Key>,
-    anchor: Option<Key>,
-    mode: TreeSelectionMode,
+    selection: Selection,
     rows: Rc<Vec<TreeRow>>,
     visible: Rc<HashMap<Key, usize>>,
-    search: String,
-    search_at: Duration,
+    typeahead: TypeAhead,
     input_origin: Instant,
 }
 /// Accepted application-owned tree state. Cloning is O(1), including its projection.
@@ -127,18 +116,14 @@ struct State {
 pub struct TreeState(Rc<State>);
 impl TreeState {
     /// Starts with collapsed branches, no selection, and the first root active.
-    pub fn new(data: TreeData, mode: TreeSelectionMode) -> Self {
+    pub fn new(data: TreeData, mode: SelectionMode) -> Self {
         let mut state = State {
             data,
             expanded: HashSet::new(),
-            selected: HashSet::new(),
-            active: None,
-            anchor: None,
-            mode,
+            selection: Selection::new(mode),
             rows: Rc::new(Vec::new()),
             visible: Rc::new(HashMap::new()),
-            search: String::new(),
-            search_at: Duration::ZERO,
+            typeahead: TypeAhead::default(),
             input_origin: Instant::now(),
         };
         state.project();
@@ -158,15 +143,15 @@ impl TreeState {
     }
     /// Accepted logical active key, always visible when nonempty.
     pub fn active(&self) -> Option<&Key> {
-        self.0.active.as_ref()
+        self.0.selection.active.as_ref()
     }
     /// Accepted selected keys, including collapsed descendants.
     pub fn selected(&self) -> &HashSet<Key> {
-        &self.0.selected
+        &self.0.selection.selected
     }
     /// Range anchor. Hidden anchors survive collapse; deleted anchors are cleared.
     pub fn anchor(&self) -> Option<&Key> {
-        self.0.anchor.as_ref()
+        self.0.selection.anchor.as_ref()
     }
     /// Whether a branch is expanded.
     pub fn expanded(&self, key: &Key) -> bool {
@@ -199,30 +184,31 @@ impl TreeState {
         anchor: Option<Key>,
     ) {
         let mut next = (*self.0).clone();
-        next.selected = selected
+        let selection = &mut next.selection;
+        selection.selected = selected
             .into_iter()
             .filter(|k| next.data.contains(k))
-            .take(if next.mode == TreeSelectionMode::Single {
+            .take(if selection.mode == SelectionMode::Single {
                 1
             } else {
                 usize::MAX
             })
             .collect();
-        next.active = active;
-        while let Some(key) = &next.active {
+        selection.active = active;
+        while let Some(key) = &selection.active {
             if next.visible.contains_key(key) {
                 break;
             }
-            next.active = next.data.node(key).and_then(|n| n.parent.clone());
+            selection.active = next.data.node(key).and_then(|n| n.parent.clone());
         }
-        if next.active.is_none() {
-            next.active = next
+        if selection.active.is_none() {
+            selection.active = next
                 .rows
                 .first()
                 .map(|r| next.data.0.nodes[r.node_index].key.clone());
         }
-        next.anchor = anchor.filter(|k| next.data.contains(k));
-        next.search.clear();
+        selection.anchor = anchor.filter(|k| next.data.contains(k));
+        next.typeahead.clear();
         self.0 = Rc::new(next);
     }
     /// Accepts a proposal only if it was made against this exact accepted snapshot.
@@ -282,7 +268,7 @@ impl TreeState {
         );
         let mut next = (*self.0).clone();
         if !matches!(&command, TreeCommand::Key(KeyboardKey::Character(_))) {
-            next.search.clear();
+            next.typeahead.clear();
         }
         let index = self.active().and_then(|k| self.0.visible.get(k)).copied()?;
         let mut destination = None;
@@ -348,79 +334,18 @@ impl TreeState {
                         && !text.chars().any(char::is_control)
                         && !text.is_empty() =>
                 {
-                    if time.saturating_sub(next.search_at) > Duration::from_millis(700)
-                        || time < next.search_at
-                    {
-                        next.search.clear();
-                    }
-                    let text = text.to_lowercase();
-                    // Repeated single letters cycle; extending a prefix keeps the
-                    // current match before searching subsequent rows.
-                    let repeated = next.search == text && text.chars().count() == 1;
-                    let extending = !next.search.is_empty() && !repeated;
-                    if !repeated {
-                        next.search.push_str(&text);
-                    }
-                    next.search_at = time;
-                    let start = usize::from(!extending);
-                    destination = (start..next.rows.len() + start)
-                        .map(|step| (index + step) % next.rows.len())
-                        .find(|&i| self.node(i).label.to_lowercase().starts_with(&next.search));
-                    if destination.is_none() && extending {
-                        next.search = text;
-                        destination = (1..=next.rows.len())
-                            .map(|step| (index + step) % next.rows.len())
-                            .find(|&i| self.node(i).label.to_lowercase().starts_with(&next.search));
-                    }
+                    destination = next.typeahead.find(&*self.0, index, &text, time);
                 }
                 _ => return None,
             },
         }
         if let Some(i) = destination {
-            let key = self.node(i).key.clone();
-            next.active = Some(key.clone());
-            if next.mode == TreeSelectionMode::Multiple && modifiers.shift && !character_search {
-                // A collapsed anchor is retained, but cannot define a visible range.
-                // Fall back to the previous active row without overwriting the anchor.
-                if next.anchor.is_none() {
-                    next.anchor = self.0.active.clone();
-                }
-                let anchor = next
-                    .anchor
-                    .as_ref()
-                    .and_then(|a| self.0.visible.get(a))
-                    .copied()
-                    .unwrap_or(index);
-                if !modifiers.primary() {
-                    next.selected.clear();
-                }
-                for i in anchor.min(i)..=anchor.max(i) {
-                    next.selected.insert(self.node(i).key.clone());
-                }
-            } else {
-                // Primary navigation moves activity only; primary Select/Space toggles.
-                if modifiers.primary() {
-                    if activate {
-                        if next.mode == TreeSelectionMode::Single {
-                            next.selected.clear();
-                        }
-                        if !next.selected.remove(&key) {
-                            next.selected.insert(key.clone());
-                        }
-                        next.anchor = Some(key.clone());
-                    }
-                } else {
-                    next.selected.clear();
-                    next.selected.insert(key.clone());
-                }
-                if !modifiers.primary() {
-                    next.anchor = Some(key.clone());
-                }
-            }
+            next.selection
+                .move_to(&*self.0, index, i, modifiers, activate, !character_search);
         }
         Some(TreeProposal {
             base: self.clone(),
-            reveal: reveal || self.0.active != next.active,
+            reveal: reveal || self.0.selection.active != next.selection.active,
             next: Self(Rc::new(next)),
         })
     }
@@ -429,9 +354,14 @@ impl State {
     fn project(&mut self) {
         self.expanded
             .retain(|key| self.data.node(key).is_some_and(|n| n.branch));
-        self.selected.retain(|key| self.data.contains(key));
-        if self.anchor.as_ref().is_some_and(|k| !self.data.contains(k)) {
-            self.anchor = None;
+        let selection = &mut self.selection;
+        selection.selected.retain(|key| self.data.contains(key));
+        if selection
+            .anchor
+            .as_ref()
+            .is_some_and(|k| !self.data.contains(k))
+        {
+            selection.anchor = None;
         }
         let mut rows = Vec::new();
         let mut visible = HashMap::new();
@@ -452,20 +382,34 @@ impl State {
                 }
             }
         }
-        let mut active = self.active.clone();
+        let mut active = self.selection.active.clone();
         while let Some(key) = &active {
             if visible.contains_key(key) {
                 break;
             }
             active = self.data.node(key).and_then(|n| n.parent.clone());
         }
-        self.active = active.or_else(|| {
+        self.selection.active = active.or_else(|| {
             rows.first()
                 .map(|r| self.data.0.nodes[r.node_index].key.clone())
         });
         self.rows = Rc::new(rows);
         self.visible = Rc::new(visible);
-        self.search.clear();
+        self.typeahead.clear();
+    }
+}
+impl SelectionRows for State {
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+    fn key(&self, index: usize) -> &Key {
+        &self.data.0.nodes[self.rows[index].node_index].key
+    }
+    fn index(&self, key: &Key) -> Option<usize> {
+        self.visible.get(key).copied()
+    }
+    fn label(&self, index: usize) -> &str {
+        &self.data.0.nodes[self.rows[index].node_index].label
     }
 }
 /// Application intent, interpreted against a particular accepted projection.
@@ -671,16 +615,7 @@ where
     .fill_width()
     .fill_height()
     .into_element();
-    // The tree handles keyboard scrolling. Keep the built-in bars out of Tab
-    // traversal and group focus restoration, while preserving pointer/range input.
-    fn unfocus_bars(element: &mut Element) {
-        if matches!(element.kind, crate::element::ElementKind::Scrollbar(_)) {
-            element.input.get_or_insert_with(Default::default).focusable = Some(false);
-        }
-        for child in &mut element.children {
-            unfocus_bars(child);
-        }
-    }
+    // The tree handles keyboard scrolling.
     unfocus_bars(&mut rows);
     let focus = root_focus.clone();
     let root_pointer = Listener::from_callback(move |_: &crate::PointerInput, cx| {
@@ -697,6 +632,17 @@ where
         .child(rows);
     root.semantics
         .get_or_insert_with(Default::default)
-        .multiselectable = state.0.mode == TreeSelectionMode::Multiple;
+        .multiselectable = state.0.selection.mode == SelectionMode::Multiple;
     root
+}
+/// Keeps a list's built-in scrollbars out of Tab traversal and group focus
+/// restoration, while preserving pointer and range input, for lists whose root
+/// handles keyboard scrolling.
+pub(crate) fn unfocus_bars(element: &mut Element) {
+    if matches!(element.kind, crate::element::ElementKind::Scrollbar(_)) {
+        element.input.get_or_insert_with(Default::default).focusable = Some(false);
+    }
+    for child in &mut element.children {
+        unfocus_bars(child);
+    }
 }

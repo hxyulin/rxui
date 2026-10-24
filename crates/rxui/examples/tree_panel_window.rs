@@ -69,7 +69,7 @@ fn main() -> Result<(), ApplicationError> {
                 });
             }
         }
-        let mut state = TreeState::new(TreeData::new(nodes).unwrap(), TreeSelectionMode::Multiple);
+        let mut state = TreeState::new(TreeData::new(nodes).unwrap(), SelectionMode::Multiple);
         state.set_expanded((0..100usize).map(|folder| (folder * 1001).into()));
         let root = cx.new(|_| Tree {
             scroll: ScrollHandle::new(),

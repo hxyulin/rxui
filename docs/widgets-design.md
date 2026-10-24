@@ -1,9 +1,10 @@
 # Standard widgets: design
 
-Status: agreed design. Batches 1 and 2 are implemented: icons in
+Status: agreed design. Batches 1 to 3 are implemented: icons in
 [icons.md](icons.md), small parts, toolbars and choices in
-[controls.md](controls.md), and menu items in
-[overlays-and-commands.md](overlays-and-commands.md). Widgets land in four batches; this document
+[controls.md](controls.md), menu items in
+[overlays-and-commands.md](overlays-and-commands.md), and comboboxes and list
+views in [search-and-lists.md](search-and-lists.md). Widgets land in four batches; this document
 records the intended API and behavior so each batch builds on the same contract. Once a
 widget is implemented, its contract moves to the matching per-area document
 (usually [controls.md](controls.md)); this file then keeps only open items.
@@ -48,34 +49,14 @@ so a toolbar around it receives them.
 
 ## Batch 3: search and lists
 
-```rust
-combobox(cx)
-    .query(&self.query)
-    .on_query(cx.listener(|s, e: &QueryEvent, _| s.query = e.text.clone()))
-    .items(self.files.len(), |i| ComboItem::new(&self.files[i].name)
-        .icon(Icon::FILE).detail(&self.files[i].dir))
-    .matcher(Matcher::fuzzy())
-    .on_choose(cx.listener(|s, e: &ChooseEvent, _| s.open(e.index)))
-```
-
-- `combobox` is a text input with a results list in a popover, or inline
-  (`.inline()`) for palette-style dialogs. Focus stays in the input. Up/Down,
-  PageUp/PageDown, Home/End move the highlight, Enter chooses and Escape closes.
-  It uses the `ComboBox` and `ListBox` roles with an active-descendant
-  highlight.
-- Results are virtualized (`virtual_list`), so large item sets stay cheap.
-- `Matcher` is a trait: `fn score(&self, query: &str, candidate: &str) ->
-  Option<Match>`, where `Match` carries a score and matched character ranges.
-  `Matcher::fuzzy()` is a built-in subsequence matcher that ranks word starts,
-  consecutive runs and case. `Matcher::substring()` and `Matcher::none()` (the
-  application filters) are also provided. Matched ranges are highlighted with
-  rich-text spans in `Accent`. Matching runs on the UI thread; applications
-  with huge sets filter themselves and use `Matcher::none()`.
-- `list_view(cx)` is a selectable, virtualized list with `Single` or
-  `Multiple` selection, built on `list_row`. Keyboard: arrows,
-  Home/End/PageUp/PageDown, Shift-extend, Primary-toggle, type-ahead. The
-  selection model (anchor, focus, extend, toggle) moves out of `virtual_tree`
-  into a shared type used by both.
+Implemented. The contracts are in [search-and-lists.md](search-and-lists.md)
+(`combobox`, matchers and `list_view`), and `SelectionMode` is shared with
+[virtual trees](virtual-trees.md). Three choices differ from the agreed sketch.
+The built-in matchers are unit structs, `FuzzyMatcher`, `SubstringMatcher` and
+`PassthroughMatcher`, because `Matcher` is a trait and cannot carry
+constructors. Matched text uses `Focus` rather than `Accent`, which is not
+readable as text. The highlight follows an item's index, since items have no
+keys.
 
 ## Batch 4: forms and feedback
 

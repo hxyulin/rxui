@@ -32,7 +32,10 @@
 //! ```
 use crate::{AccessError, AppContext, Dispatch, Element, Key, Listener, ThemeColor, ViewContext};
 
+mod combobox;
 mod glyph;
+mod list_view;
+mod matcher;
 mod progress;
 mod radio;
 mod segmented;
@@ -43,6 +46,11 @@ mod toggle;
 mod toolbar;
 mod tooltip;
 
+pub use combobox::{ChooseEvent, ComboItem, Combobox, QueryEvent, combobox, combobox_keyed};
+pub use list_view::{
+    ListItem, ListSelection, ListSelectionEvent, ListView, list_view, list_view_keyed,
+};
+pub use matcher::{FuzzyMatcher, Match, Matcher, PassthroughMatcher, SubstringMatcher};
 pub use progress::{ProgressBar, progress_bar, spinner};
 pub use radio::{RadioGroup, radio_group};
 pub use segmented::{Segmented, segmented};
@@ -53,8 +61,14 @@ pub use toggle::{Toggle, checkbox, switch};
 pub use toolbar::{ToggleButton, ToggleContent, Toolbar, toggle_button, toolbar};
 pub use tooltip::{TOOLTIP_DELAY, tooltip};
 
+#[cfg(test)]
+mod combobox_tests;
 #[cfg(all(test, feature = "rendering"))]
 mod gpu_tests;
+#[cfg(test)]
+mod list_view_tests;
+#[cfg(test)]
+mod matcher_tests;
 #[cfg(test)]
 mod small_tests;
 #[cfg(test)]
@@ -118,6 +132,19 @@ pub(crate) fn callback<E: 'static>(
     f: impl Fn(&E, &mut AppContext<'_>) -> Result<Dispatch, AccessError> + 'static,
 ) -> Listener<E> {
     Listener::from_callback(f)
+}
+
+/// Runs `f` in `mount`'s placement. Internal listeners carry none, and a
+/// [`crate::ScrollHandle`] resolves its viewport through it.
+pub(crate) fn in_placement<R>(
+    cx: &mut AppContext<'_>,
+    mount: Option<crate::MountId>,
+    f: impl FnOnce(&mut AppContext<'_>) -> R,
+) -> R {
+    let outer = std::mem::replace(&mut cx.dispatch_mount, mount);
+    let result = f(cx);
+    cx.dispatch_mount = outer;
+    result
 }
 
 /// Dispatches an optional application listener, reporting Unchanged without one.

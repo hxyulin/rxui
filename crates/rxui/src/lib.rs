@@ -167,6 +167,8 @@ mod runtime;
 #[cfg(feature = "layout")]
 mod scrolling;
 #[cfg(feature = "layout")]
+mod selection;
+#[cfg(feature = "layout")]
 mod semantics;
 #[cfg(feature = "layout")]
 mod standard;
@@ -283,6 +285,8 @@ pub use rxui_host::CloseResponse;
 #[cfg(feature = "layout")]
 pub use scrolling::{ScrollBehavior, ScrollError, ScrollHandle, ScrollPlacement, ScrollState};
 #[cfg(feature = "layout")]
+pub use selection::SelectionMode;
+#[cfg(feature = "layout")]
 pub use semantics::{
     AccessibilityHandle, Checked, LivePoliteness, NumericValue, SemanticAction, SemanticLink,
     SemanticNode, SemanticRole,
@@ -293,6 +297,15 @@ pub use standard::{
     SliderEvent, SliderPhase, TOOLTIP_DELAY, Toggle, ToggleButton, ToggleContent, ToggleEvent,
     Tone, Toolbar, badge, checkbox, choice, kbd, progress_bar, radio_group, segmented, select,
     select_keyed, separator, slider, spinner, switch, toggle_button, toolbar, tooltip,
+};
+#[cfg(feature = "layout")]
+pub use standard::{
+    ChooseEvent, ComboItem, Combobox, FuzzyMatcher, Match, Matcher, PassthroughMatcher, QueryEvent,
+    SubstringMatcher, combobox, combobox_keyed,
+};
+#[cfg(feature = "layout")]
+pub use standard::{
+    ListItem, ListSelection, ListSelectionEvent, ListView, list_view, list_view_keyed,
 };
 #[cfg(feature = "layout")]
 pub use tabs::{
@@ -316,8 +329,7 @@ pub use theme::{
 pub use theme_seed::ThemeSeed;
 #[cfg(feature = "layout")]
 pub use tree::{
-    TreeCommand, TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow, TreeSelectionMode,
-    TreeState, virtual_tree,
+    TreeCommand, TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow, TreeState, virtual_tree,
 };
 #[cfg(feature = "layout")]
 pub use typography::{FontFace, LinkEvent, ResolvedSpan, TextSpan, link, span};
@@ -380,16 +392,20 @@ pub mod prelude {
     };
     pub use crate::{
         Axis, RangeInfo, ResizeEvent, ResizePhase, ScrollArea, ScrollAxes, ScrollBehavior,
-        ScrollError, ScrollHandle, ScrollPlacement, ScrollState, Split, SplitPosition, TreeCommand,
-        TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow, TreeSelectionMode, TreeState,
-        VariableList, VirtualList, VirtualRows, scroll_area, scrollbar, split_column, split_row,
-        variable_list, virtual_list, virtual_tree,
+        ScrollError, ScrollHandle, ScrollPlacement, ScrollState, SelectionMode, Split,
+        SplitPosition, TreeCommand, TreeData, TreeDataError, TreeNode, TreeProposal, TreeRow,
+        TreeState, VariableList, VirtualList, VirtualRows, scroll_area, scrollbar, split_column,
+        split_row, variable_list, virtual_list, virtual_tree,
     };
     pub use crate::{
         Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Segmented, Select, Separator, Slider,
         SliderEvent, SliderPhase, Toggle, ToggleButton, ToggleContent, ToggleEvent, Tone, Toolbar,
         badge, checkbox, choice, kbd, progress_bar, radio_group, segmented, select, select_keyed,
         separator, slider, spinner, switch, toggle_button, toolbar, tooltip,
+    };
+    pub use crate::{
+        ChooseEvent, ComboItem, Combobox, FuzzyMatcher, Match, Matcher, PassthroughMatcher,
+        QueryEvent, SubstringMatcher, combobox, combobox_keyed,
     };
     pub use crate::{
         ColorScheme, DialogButtonOrder, DialogButtonRole, FocusRingPolicy, ScrollbarStyle,
@@ -416,6 +432,9 @@ pub mod prelude {
         FontFace, LinkEvent, SubmitShortcut, TextSpan, link, rich_text, span, text_area,
     };
     pub use crate::{ImeCancelReason, ImeEvent, ImeInput, TextInsertInput, TextInsertSource};
+    pub use crate::{
+        ListItem, ListSelection, ListSelectionEvent, ListView, list_view, list_view_keyed,
+    };
     #[cfg(feature = "tasks")]
     pub use crate::{LocalTask, Task, TaskError, TaskResult};
     #[cfg(feature = "native-menus")]

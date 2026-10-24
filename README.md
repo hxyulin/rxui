@@ -159,6 +159,7 @@ cargo run -p rxui --example text_input_window --features native # controlled edi
 cargo run -p rxui --example text_area_window --features native  # multiline editing
 cargo run -p rxui --example docking_window --features native    # tabs, splits and drag-to-dock
 cargo run -p rxui --example docking_surfaces_window --features native # regions, detach and reattach
+cargo run -p rxui --example command_palette --features native   # Primary+Shift+P opens a command palette
 cargo run -p rxui --example counter_state                       # the state runtime in a terminal
 ```
 
@@ -174,6 +175,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Application](docs/application.md) and [async](docs/async.md) | Windows, close policy, custom hosts and tasks |
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |
 | [Virtual lists](docs/virtual-lists.md) and [trees](docs/virtual-trees.md) | Bounded row construction, hierarchical navigation and controlled selection |
+| [Search and lists](docs/search-and-lists.md) | Comboboxes, fuzzy matching and selectable list views |
 | [Text input](docs/text-input.md), [fonts](docs/fonts.md) and [semantics](docs/semantics.md) | Editing, IME, font registration and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
 | [Animation](docs/animation.md) | Transitions, overlay motion, smooth scrolling, animated values and reduce motion |

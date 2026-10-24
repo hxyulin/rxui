@@ -49,7 +49,8 @@ child; Left collapses a branch, then moves to its parent. Plain navigation selec
 its destination. Primary-modifier navigation changes activity only. Space or
 pointer selection with the platform primary modifier toggles in multiple mode;
 Shift selects the inclusive visible anchor range, and Primary+Shift adds it.
-Single mode always keeps at most one selected key. Shifted uppercase type-ahead
+Single mode always keeps at most one selected key. [`list_view`](search-and-lists.md#list-views)
+shares this selection model and its `SelectionMode`. Shifted uppercase type-ahead
 behaves like lowercase input, without range extension. Alt/Option and the
 non-primary Control/Command modifier leave keyboard shortcuts unhandled for the
 application. Unicode lowercase prefix

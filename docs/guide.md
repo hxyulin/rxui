@@ -169,6 +169,10 @@ limits; the gallery shows them all:
 cargo run -p rxui --example gallery --features native --locked
 ```
 
+`combobox` filters and ranks items as the user types, for quick open and command
+palettes, and `list_view` is a selectable, virtualized list; see
+[search and lists](search-and-lists.md).
+
 ## Icons
 
 ```rust
