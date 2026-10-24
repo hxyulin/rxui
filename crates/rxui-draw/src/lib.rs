@@ -11,9 +11,6 @@
 //! - Paths are built with [`Path::builder`] and tessellated once with
 //!   [`Painter::prepare_path`].
 //! - [`wgpu`] is re-exported so applications use the same version.
-//!
-//! Drawing algorithms are ported from Astrelis revision
-//! 4e360d5a3ad5dbe8bff11baf3eaa512a9241db21; `PORTING.md` records the provenance.
 
 // Browser wgpu handles are !Send/!Sync. Keep the same shared ownership types
 // as native builds; Arc does not imply crossing threads on this target.

@@ -34,12 +34,10 @@ and run `cargo fmt`. On push, they run clippy with warnings denied.
 `crates/rxui-draw` owns GPU drawing, shaders, shaping and resource preparation.
 `crates/rxui-host` supplies the optional native lifecycle integration. The renderer
 accepts application-owned wgpu handles; see [embedding](docs/wgpu-embedding.md).
-Drawing algorithms were ported from Astrelis; provenance is recorded in
-`crates/rxui-draw/PORTING.md`. Changes here do not require a sibling checkout.
 The optional native drag service is the independently versioned local `draglet`
 workspace package. It depends on winit and platform bindings, without a renderer
-or RXUI dependency. It has its own `0.1.0` version and `appkit`, `win32`, `x11`,
-and `wayland` backend features. No Astrelis checkout or Git dependency is required.
+or RXUI dependency. It has its own version and `appkit`, `win32`, `x11` and `wayland`
+backend features.
 
 ## Find the right source
 

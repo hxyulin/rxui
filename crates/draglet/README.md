@@ -4,12 +4,10 @@ Native drag mechanics for [winit](https://github.com/rust-windowing/winit) appli
 track a primary-button gesture, identify registered destination windows, and
 observe release or cancellation. Bring your own UI, renderer and application data.
 
-Draglet is an independently versioned Rust library (`0.1.0`) in the RXUI repository.
-It has **no RXUI, Astrelis, GPU, renderer, executor or application-host dependency**.
-It does not create your event loop or windows. The examples are small standalone
-applications, not a required host framework.
-
-Its version and releases are independent of RXUI.
+Draglet lives in the RXUI repository and is versioned independently of RXUI.
+It has no RXUI, GPU, renderer, executor or application-host dependency. It does
+not create your event loop or windows; the examples are small standalone
+applications.
 
 ## Install
 
@@ -96,11 +94,11 @@ in your UI. Draglet supplies native mechanics, not a widget or payload registry.
 Create an adapter and register your existing windows:
 
 ```rust,no_run
-# fn setup(window: &std::sync::Arc<winit::window::Window>) -> Result<(), draglet::Error> {
-let mut adapter = draglet::Adapter::new()?;
-adapter.register(window)?;
-# Ok(())
-# }
+fn setup(window: &std::sync::Arc<winit::window::Window>) -> Result<(), draglet::Error> {
+    let mut adapter = draglet::Adapter::new()?;
+    adapter.register(window)?;
+    Ok(())
+}
 ```
 
 Keep that adapter for the lifetime of the registrations. After a real primary
@@ -218,9 +216,7 @@ xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' sh -c \
 The Windows interactive capture test requires a real desktop; run it separately
 on Windows. Do not enable all ignored tests indiscriminately on a user's desktop.
 
-## Provenance and license
+## License
 
-MIT OR Apache-2.0. AppKit/Win32 implementations and X11 algorithms originated in
-`hxyulin/astrelis` revision `4e360d5a3ad5dbe8bff11baf3eaa512a9241db21` under the same
-licenses. They are maintained here without an Astrelis dependency. Unsafe native
-interop is isolated in the platform modules; X11 uses the safe x11rb protocol API.
+MIT OR Apache-2.0. Unsafe native interop is isolated in the platform modules;
+X11 uses the safe x11rb protocol API.

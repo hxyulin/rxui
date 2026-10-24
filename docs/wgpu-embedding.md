@@ -91,6 +91,5 @@ application renderers without forcing them into RXUI's drawing helpers.
 `native` supplies RXUI's desktop `Application`. Managed drawing conveniences remain
 available under `rxui::drawing`, and lifecycle helpers under `rxui::host`. Their
 frames, contexts and framebuffer types are optional conveniences, not prerequisites
-for embedding. The external Astrelis renderer and window runner are no longer
-dependencies. The optional experimental native-drag service also lives in this
-workspace as `draglet`; no Astrelis repository dependency remains.
+for embedding. The optional experimental native-drag service lives in this
+workspace as `draglet`.

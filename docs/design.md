@@ -534,7 +534,7 @@ examples and headless tests before growing the framework.
 
 ## References and existing evidence
 
-- [Application hosting contract](application.md) and [drawing port provenance](../crates/rxui-draw/PORTING.md).
+- [Application hosting contract](application.md).
 - [Text input](text-input.md) and [text performance evidence](performance/text.md).
 - [Taffy](https://docs.rs/taffy/latest/taffy/): selected layout infrastructure.
 - [GPUI Entity](https://docs.rs/gpui/latest/gpui/struct.Entity.html): reference for

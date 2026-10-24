@@ -1,8 +1,6 @@
 # Production native-host follow-ups
 
 RXUI owns its drawing and native lifecycle code in `rxui-draw` and `rxui-host`.
-There is no Astrelis Git dependency or revision pin. The initial port's provenance
-is recorded in [PORTING.md](../crates/rxui-draw/PORTING.md).
 
 ## Implemented contracts
 

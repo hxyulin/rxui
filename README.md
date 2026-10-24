@@ -146,20 +146,8 @@ rxui = { version = "0.1", features = ["native"] }
 
 With `--no-default-features`, only the state runtime remains.
 
-Each example is one standalone file:
-
-```shell
-cargo run -p rxui --example gallery --features native                 # every built-in component
-cargo run -p rxui --example counter_window --features native          # the program above, plus a background task
-cargo run -p rxui --example text_input_window --features native       # controlled editing
-cargo run -p rxui --example text_area_window --features native        # multiline editing
-cargo run -p rxui --example docking_window --features native          # tabs, splits and drag-to-dock
-cargo run -p rxui --example docking_surfaces_window --features native # regions, detach and reattach
-cargo run -p rxui --example command_palette --features native         # Primary+Shift+P opens a command palette
-cargo run -p rxui --example counter_state                             # the state runtime in a terminal
-```
-
-The full set is in [`crates/rxui/examples`](crates/rxui/examples).
+Run any of the [examples](crates/rxui/examples) with
+`cargo run -p rxui --example <name> --features native`, starting with `gallery`.
 
 ## Documentation
 

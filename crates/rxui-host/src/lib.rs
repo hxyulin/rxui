@@ -8,9 +8,6 @@
 //!   scheduling and surface-loss retry policy.
 //! - [`winit`] and [`drawing`] (rxui-draw) are re-exported so applications use
 //!   the same versions.
-//!
-//! Parts of this crate are ported from Astrelis revision
-//! 4e360d5a3ad5dbe8bff11baf3eaa512a9241db21.
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 pub mod drag;
