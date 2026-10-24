@@ -108,7 +108,7 @@ rxui = { git = "https://github.com/hxyulin/rxui", features = ["native"] }
 | --- | --- |
 | `layout` (default) | Elements, layout and input, headless with host-supplied text measurement |
 | `rendering` | `UiPainter` on your own wgpu device, encoder and render targets |
-| `gles` | Opt-in wgpu GLES backend; native runner supplies the display handle. See [backend selection](docs/application.md#native-backends-and-surface-latency) and [Linux verification](docs/astrelis-followups.md) |
+| `gles` | Opt-in wgpu GLES backend; native runner supplies the display handle. See [backend selection](docs/application.md#native-backends-and-surface-latency) and [Linux verification](docs/native-host-followups.md) |
 | `native` | The desktop `Application` host, AccessKit, clipboard and background tasks |
 | `native-docking` | Opt-in experimental cross-window dock dragging on macOS/Windows; see [docking](docs/docking.md#experimental-native-cross-window-dragging) |
 | `native-menus` | Menu bars and Close/Quit handling on macOS and Windows |

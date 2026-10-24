@@ -220,7 +220,7 @@ Controls live in `crates/rxui/src/standard/`. Their internal listeners run outsi
 any component scope; the one core addition is a crate-private
 `FocusHandle::focus_bound`, which queues focus for a handle's single live binding
 so radio arrow keys can move focus without a source mount. Check, dash, chevron and
-spinner marks are a crate-private `CustomElement` painted with Astrelis lines in the
+spinner marks are a crate-private `CustomElement` painted with rxui-draw lines in the
 element's resolved text color, so they need no font coverage.
 
 ## Limitations and follow-ups

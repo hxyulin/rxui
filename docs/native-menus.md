@@ -1,8 +1,8 @@
 # Native menus and desktop requests
 
 RXUI owns the portable menu description, command resolution and Muda adapter.
-Astrelis stays independent of UI commands. The host uses astrelis-winit's existing
-caller-provided event loop and proxy; no Astrelis changes or pin update are needed.
+The host uses rxui-host's caller-provided event loop and proxy. Menu commands
+and platform integration belong to RXUI; the drawing layer stays independent.
 
 Enable `native-menus` to add native hosting and Muda. The existing `native`
 feature has no menu dependency. macOS uses an application menu bar; Windows uses

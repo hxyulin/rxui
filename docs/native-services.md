@@ -3,8 +3,8 @@
 Status: implemented as optional desktop features. `native-dialogs` adds RFD file
 and message dialogs; `desktop-services` adds default-application launch and
 file-manager reveal through Opener. Both imply `native`. Clipboard text access is
-available with `native` alone. Astrelis remains responsible for graphics and window
-hosting; these application services belong to RXUI.
+available with `native` alone. `rxui-draw` provides graphics and `rxui-host` supplies
+window hosting; these application services belong to RXUI.
 
 ## Requests and completions
 

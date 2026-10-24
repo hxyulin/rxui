@@ -8,7 +8,8 @@ existing retained, message-driven API.
 
 ## Implemented state contracts
 
-The workspace contains one `rxui` crate. `Runtime`, `Entity<T>`,
+The workspace contains `rxui`, `rxui-draw`, `rxui-host` and the independently
+versioned `draglet` crate. `Runtime`, `Entity<T>`,
 `WeakEntity<T>`, `Mount<T>`, `AppContext`, `Context<T>`, `ViewContext<T>`,
 `Listener<E>` and `Subscription` provide the headless foundation. The standalone
 [console example](../crates/rxui/examples/counter_state.rs) uses actual APIs.
@@ -37,8 +38,8 @@ The workspace contains one `rxui` crate. `Runtime`, `Entity<T>`,
 The declarative core now implements View/IntoElement, row/column/label/button
 builders, keyed reconciliation, entity-backed child mounts, Taffy flex layout,
 measurement invalidation, retained button focus/capture and semantic activation.
-The optional UiPainter integrates retained Astrelis text/painting caches. The
-convenient native Application host runs over astrelis-winit and demonstrates two
+The optional UiPainter integrates retained rxui-draw text/painting caches. The
+convenient native Application host runs over rxui-host and demonstrates two
 windows sharing one entity while retaining independent interaction state. Scoped
 tasks support custom execution adapters, weak live-state completions and cancellation.
 Scrolling/clipping, focus reveal and controlled single-line and multiline
@@ -71,7 +72,7 @@ state, with context-and-closure updates. Taffy is the selected layout engine.
 - Model reads during view evaluation establish entity-level dependencies.
 - Persistent widget state is scoped by mount and element identity.
 - RXUI supplies a convenient application host and an embeddable UI runtime.
-- Astrelis supplies rendering/text; astrelis-winit supplies native presentation
+- rxui-draw supplies rendering/text; rxui-host supplies native presentation
   lifecycle. RXUI owns UI semantics and application conventions.
 - The initial implementation starts with one RXUI crate and clear internal
   modules. Native integration can be feature-gated.
@@ -80,14 +81,14 @@ state, with context-and-closure updates. Taffy is the selected layout engine.
 
 | Layer | Owns |
 | --- | --- |
-| Astrelis | GPU resources, renderers, frames, passes, text shaping and glyph preparation |
-| astrelis-winit | Native windows/surfaces, metrics, acquisition, resize, suspension, presentation and redraw scheduling |
+| rxui-draw | GPU resources, renderers, frames, passes, text shaping and glyph preparation |
+| rxui-host | Native windows/surfaces, metrics, acquisition, resize, suspension, presentation and redraw scheduling |
 | RXUI runtime | Entities, transactions, dependencies, reconciliation, Taffy layout, interaction state, focus, UI preparation, painting and semantic output |
-| RXUI native host | Connects the runtime to astrelis-winit, native input, AccessKit, clipboard, IME, cursor state and application lifecycle |
+| RXUI native host | Connects the runtime to rxui-host, native input, AccessKit, clipboard, IME, cursor state and application lifecycle |
 | Application | Domain data, component composition, commands, service policy and custom rendering resources |
 
 `Application::new().run(...)` is the normal entry point. The host uses the
-astrelis-winit runner rather than duplicating surface recovery and scheduling.
+rxui-host runner rather than duplicating surface recovery and scheduling.
 Application initialization runs once on the initial active lifecycle. Repeated
 native resume restores presentation; it does not recreate models or windows that
 remain registered.
@@ -97,16 +98,16 @@ window. RXUI installs its AccessKit adapter before that hook by default;
 `.accessibility(false)` allows a custom host hook to own that integration. Portable
 semantics and lazy native publication are implemented. Model state survives surface replacement,
 MSAA changes and presentation suspension. Initial GPU setup may synchronously
-wait through astrelis-winit's desktop convenience path; this is startup behavior,
+wait through rxui-host's desktop convenience path; this is startup behavior,
 not a per-frame completion wait.
 
 The embeddable runtime must allow the application to supply input, prepare against
-its viewport and attachment format, and paint into an existing Astrelis pass.
+its viewport and attachment format, and paint into an application-owned wgpu encoder and render target.
 Neither entity updates nor headless component tests require owning a native
 event loop. Embedded hosts apply platform output explicitly through an adapter.
-Exact embedding method signatures are still to be designed.
+See [wgpu embedding](wgpu-embedding.md) for the implemented API and resource lifetimes.
 
-The first native host targets the desktop platforms supported by astrelis-winit.
+The first native host targets the desktop platforms supported by rxui-host.
 A browser/mobile host needs its own initialization and lifecycle design; the
 current RXUI release's web support is not a claim about this rewrite.
 
@@ -396,7 +397,7 @@ provides node ownership, dirty propagation and text/custom-element measurement.
 Changes to available constraints can affect descendants and ancestors; component
 boundaries do not prevent necessary layout propagation.
 
-Text measurement uses Astrelis's CPU shaping/layout. Cache keys must account for
+Text measurement uses rxui-draw's CPU shaping/layout. Cache keys must account for
 content, fonts/style, relevant constraints and wrap behavior. Raster density and
 attachment compatibility are preparation inputs, with GPU caches scoped to the
 appropriate device. Ordinary style/placement changes must not reload fonts,
@@ -412,9 +413,9 @@ reshape unchanged text, regenerate glyphs or recreate pipelines.
 | Chart samples | Custom resource update/painting; no unrelated text work |
 
 Preparation is completed before managed surface acquisition. Pipeline variants
-are selected using Astrelis's current RenderFormat, including samples and
+are selected using rxui-draw's current RenderFormat, including samples and
 depth/stencil. A convenient host opens a theme-configured UI pass; the embedded
-API accepts an existing pass. Custom element preparation/painting must support
+API records into a caller-owned encoder and render target. Custom element preparation/painting must support
 charts and 2D/3D content, with explicit bounds, transforms, clipping and ordering.
 Custom element trait signatures are a follow-up design task.
 
@@ -458,7 +459,7 @@ retained and processed when useful; a hidden surface must not cause a retry loop
 
 OnDemand is the default. Timed visual work, such as caret blink and animation,
 uses deadlines; continuous redraw is explicit. The host delegates native redraw
-coalescing, retry pacing and surface recovery to astrelis-winit.
+coalescing, retry pacing and surface recovery to rxui-host.
 
 The normal pipeline is native input -> routed event/update -> coalesced
 invalidation -> dirty view evaluation/reconciliation -> affected layout and
@@ -483,7 +484,7 @@ snapshots; preparation and presentation are not rollback transactions.
    Initial portable semantics and AccessKit publication/actions are implemented.
    Bounded field undo/redo and styled rich text spans and links are implemented;
    see [rich text](rich-text.md). Inline elements and editable rich text remain.
-4. **Native host (initial slice implemented):** lifecycle over astrelis-winit,
+4. **Native host (initial slice implemented):** lifecycle over rxui-host,
    default fonts, close/exit hooks, button input and custom-loop embedding. Theme
    inheritance and live application/window theme switching are implemented. Lazy
    AccessKit adapters are implemented, including
@@ -551,8 +552,8 @@ the new declarative/state API.
 
 ## References and existing evidence
 
-- [Astrelis window/runner contract](https://github.com/hxyulin/astrelis/blob/1f773d4a13057db8e15adc768c1d59cf979e65ed/docs/winit.md).
-- [Astrelis text interaction and performance](https://github.com/hxyulin/astrelis/blob/1f773d4a13057db8e15adc768c1d59cf979e65ed/docs/performance/text-interaction.md).
+- [Application hosting contract](application.md) and [drawing port provenance](../crates/rxui-draw/PORTING.md).
+- [Text input](text-input.md) and [text performance evidence](performance/text.md).
 - Existing isolated RXUI prototype: preserved in the local legacy export described
   above; it is not part of the new workspace.
 - [Taffy](https://docs.rs/taffy/latest/taffy/): selected layout infrastructure.

@@ -96,7 +96,7 @@ line height. Shaping chooses fonts per run of text:
 Fallback only considers loaded faces. An application that disables system discovery
 and bundles a single Latin font shows boxes for scripts and emoji that font lacks;
 bundle fallback fonts too, or keep `.system_fonts(true)`. The platform lists come
-from the pinned cosmic-text version through Astrelis, and the locale is `en-US`.
+from the pinned cosmic-text version through rxui-draw, and the locale is `en-US`.
 
 ## Limits
 
@@ -108,11 +108,11 @@ from the pinned cosmic-text version through Astrelis, and the locale is `en-US`.
 
 ## Coverage text placement
 
-The Astrelis adapter prepares built-in labels, rich text, placeholders and text
+The RXUI drawing adapter prepares built-in labels, rich text, placeholders and text
 inputs for their final physical origin using `TextRasterOptions::physical_origin`.
 The origin includes input horizontal scrolling and, for wrapped paragraph chunks,
 each chunk's vertical offset. Font layout, advances, selection and hit testing
-remain fractional and unchanged. Outline masks use Astrelis's quarter-pixel phase
+remain fractional and unchanged. Outline masks use rxui-draw's quarter-pixel phase
 bins; ink can move by at most 1/8 physical pixel per axis relative to the ideal
 position. Color/bitmap artwork and MTSDF retain their existing behavior.
 
@@ -137,6 +137,6 @@ Custom elements opt in through
 `CustomPrepare::text_raster_options(final_logical_origin)`. Include all custom
 line offsets, scrolling and text insets in that origin, and retain/reprepare by
 fractional physical origin and raster density. Additional custom rotation,
-nonuniform scale or transforms require explicit Astrelis options for that draw;
+nonuniform scale or transforms require explicit rxui-draw options for that draw;
 the default filtered preparation remains available. See
 [custom-elements.md](custom-elements.md) for the preparation and paint contract.

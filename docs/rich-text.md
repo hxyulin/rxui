@@ -47,7 +47,7 @@ activatable and published as a Link node.
   with the node's theme. Text measurement receives them in `TextRequest::spans`.
   Custom `TextMeasure` adapters may ignore them; sizes and families then come from
   the element style only.
-- `UiPainter` passes the spans to Astrelis `TextBuffer::set_rich_text`. Span colors
+- `UiPainter` passes the spans to rxui-draw's `TextBuffer::set_rich_text`. Span colors
   replace the element color for their glyphs and decorations in the same draw; the
   selection foreground is redrawn with span colors disabled so selected text takes
   one color. Long rich text is chunked like plain text, with spans clipped to each
@@ -99,7 +99,7 @@ link span keeps its index but is never hit, focused or published.
   input through to ancestors like a label.
 - Hit testing uses each link's shaped selection rectangles, one per visual line
   fragment, from `TextMeasure::text_range_rects`. `UiPainter` answers from the
-  Astrelis text layout. Rectangles are cached per element during preparation and
+  rxui-draw text layout. Rectangles are cached per element during preparation and
   requested again only when its text, spans, content width or font generation
   change (`UiStats::link_measurements`), so pointer motion does no text work.
   Both `Ui::pointer` and `Ui::pointer_with_text` route links. The design proposed
@@ -201,10 +201,10 @@ cargo test -p rxui --features rendering --test rich_text_links -- --ignored
 
 ## Design: inline elements
 
-Icons or badges inside a paragraph need Astrelis support for inline boxes
+Icons or badges inside a paragraph need rxui-draw support for inline boxes
 (reserved advances with a baseline) in `TextBuffer`. RXUI would then measure the
 inline child, pass its size as a placeholder span, and position the child from the
-reserved box after layout. Until Astrelis supports inline boxes, compose rows of
+reserved box after layout. Until rxui-draw supports inline boxes, compose rows of
 labels and images; they do not wrap together.
 
 ## Design: editable rich text

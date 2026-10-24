@@ -1,5 +1,9 @@
 # Scrolling through the rendering and accessibility paths
 
+Historical report: these measurements predate the drawing/host port into RXUI.
+Astrelis references describe the measured revision, not a current dependency.
+See [wgpu embedding](../wgpu-embedding.md) for the current integration.
+
 Measured on 2026-10-07, Apple M3 Pro/macOS 27.0.1, Rust 1.98.1. The baseline is
 `a37a1f9`; the candidate adds conservative own-ink paint culling and parent-relative
 AccessKit transforms. [Metadata](scrolling/metadata.json) records source hashes,

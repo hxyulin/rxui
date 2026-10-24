@@ -1,6 +1,6 @@
 # Controlled text input and text areas
 
-Status: implemented with the default layout feature, Astrelis geometry through
+Status: implemented with the default layout feature, rxui-draw geometry through
 `rendering`, and native keyboard/clipboard/IME wiring through `native`. This covers
 single-line inputs, multiline text areas, placeholders, password masking and
 selectable labels. [Fonts](fonts.md) covers font registration and fallback, and
@@ -154,7 +154,7 @@ line and carry no character geometry yet.
 
 Long wrapped text (16 or more paragraphs, in text areas and labels alike) is laid
 out, prepared and drawn in chunks of about eight paragraphs, each with its own
-Astrelis buffer. An edit re-chunks and re-lays out only the paragraphs it touched,
+rxui-draw buffer. An edit re-chunks and re-lays out only the paragraphs it touched,
 and painting records only chunks inside the clip. Caret movement does no text work.
 Measured per keystroke with a frame, typing takes 0.03–0.1 ms at 100–1,000 lines and
 0.14–0.18 ms at 5,000 lines of 61 bytes (0.24–0.28 ms with accessibility active);
@@ -201,7 +201,7 @@ TextSelection retains directional anchor/focus and TextPosition includes affinit
 at bidirectional boundaries and soft wraps. Emoji sequences and combining accents
 are not split by ordinary deletion. Grapheme and word boundaries are found by local
 segmentation around the offset (words within its paragraph), so their cost does not
-grow with the length of the value. Astrelis's shaped TextLayout supplies pointer hit
+grow with the length of the value. rxui-draw's shaped TextLayout supplies pointer hit
 tests, visual neighbors, caret geometry and selection rectangles; vertical movement
 hit-tests the goal X one line or page away. The same snapshot is used for drawing;
 mixed bidi selections can produce multiple highlight rectangles.
@@ -213,7 +213,7 @@ changes do not reshape text or upload glyph resources. On the warm path, interac
 queries use retained revision/width/font metadata and the cached interaction index
 instead of copying the value or walking all text bytes.
 
-The native host schedules a 500 ms caret blink through astrelis-winit redraw
+The native host schedules a 500 ms caret blink through rxui-host redraw
 deadlines only while an active input is focused. Input resets the blink. It uses
 no background task or periodic application polling for this purpose. Known surface
 unavailability is still handled by the runner's deadline/availability policy.

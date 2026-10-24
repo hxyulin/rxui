@@ -130,7 +130,7 @@ hook, even if it returns Continue. `Application::run` returns
 rebuild is not provided: restarting requires a fresh GraphicsContext, surfaces,
 UiPainter/renderers/atlases, prepared geometry and all application GPU resources.
 CPU models, layouts and font data may be retained for reconstruction. See
-[remaining production follow-ups](astrelis-followups.md).
+[remaining production follow-ups](native-host-followups.md).
 
 Atlas pressure is separate from a failed frame. RXUI drawing prepares the glyphs that
 fit and omits new glyphs while pages are leased. RXUI keeps that partial text

@@ -1,6 +1,6 @@
 # Window geometry and native file drops
 
-These APIs are part of `native`. They need no new dependencies or Astrelis changes.
+These APIs are part of `native`. They require no additional feature flags.
 The application owns persistence, window keys and document/import decisions.
 
 ## Persistable window geometry

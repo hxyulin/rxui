@@ -1,5 +1,9 @@
 # Text area editing measurements
 
+Historical report: these measurements predate the drawing/host port into RXUI.
+Astrelis references describe the measured revision, not a current dependency.
+See [wgpu embedding](../wgpu-embedding.md) for the current integration.
+
 Recorded 2026-10-10 on Apple M3 Pro/macOS 27.0.1, Metal, Rust 1.99.0, optimized
 Cargo bench profile, on the `feat/text` branch. [Metadata and source
 fingerprints](text/metadata.json) record the inputs; raw CSVs accompany the report.

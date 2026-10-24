@@ -1,5 +1,9 @@
 # Measurement equality and view deadlines
 
+Historical report: these measurements predate the drawing/host port into RXUI.
+Astrelis references describe the measured revision, not a current dependency.
+See [wgpu embedding](../wgpu-embedding.md) for the current integration.
+
 The unchanged architecture probe from `ae08bf2` was rerun after adding
 `CustomElement::measure_eq` and view deadline wakeups on the same heavily loaded
 Apple M5 Max host. The imported probe is kept in its own commit. Reproduce with:

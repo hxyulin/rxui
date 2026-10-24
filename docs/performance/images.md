@@ -1,5 +1,9 @@
 # Image and composed-control preparation measurements
 
+Historical report: these measurements predate the drawing/host port into RXUI.
+Astrelis references describe the measured revision, not a current dependency.
+See [wgpu embedding](../wgpu-embedding.md) for the current integration.
+
 Recorded on 2026-10-07, Apple M3 Pro/macOS 27.0.1, Rust 1.98.1, optimized bench
 profile. Three runs enable rendering; CPU text measurement remains a deterministic
 mock (8 units per UTF-8 byte, 20-unit height). Exact source fingerprints and raw
