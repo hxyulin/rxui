@@ -1,8 +1,9 @@
 # Standard form controls
 
-Status: check boxes, switches, radio groups, sliders, progress bars, spinners,
-selects, hover/keyboard-focus tooltips, separators, badges and key caps are
-implemented with the default layout feature.
+Status: check boxes, switches, radio groups, segmented controls, toggle buttons,
+toolbars, sliders, progress bars, spinners, selects, hover/keyboard-focus
+tooltips, separators, badges and key caps are implemented with the default
+layout feature.
 `rendering` paints their vector marks; `accessibility` publishes them through
 AccessKit. Every control is composed from existing primitives, so focus, input
 routing, theming and semantics follow the same contracts as buttons and popovers.
@@ -39,20 +40,22 @@ impl View for Settings {
 ```
 
 Values are controlled. The application owns each value and receives a typed
-proposal: `ToggleEvent { checked }` from check boxes and switches,
-`ChoiceEvent { key }` from radio groups and selects, and
+proposal: `ToggleEvent { checked }` from check boxes, switches and toggle
+buttons, `ChoiceEvent { key }` from radio groups, segmented controls and selects, and
 `SliderEvent { value, phase }` from sliders. Storing the proposal accepts it;
 ignoring or replacing it rejects or normalizes it. A control without a listener
 still focuses and publishes its state but cannot change.
 
-The builders return `Toggle`, `RadioGroup`, `Slider`, `ProgressBar` and `Select`.
+The builders return `Toggle`, `ToggleButton`, `RadioGroup`, `Segmented`,
+`Toolbar`, `Slider`, `ProgressBar` and `Select`.
 Each accepts `.key(...)`, `.accessibility_label(...)`,
 `.accessibility_description(...)`, `.width(...)`, `.fill_width()`, `.flex_grow(...)`,
 `.min_width(...)` and `.layout(...)` for its root, plus `.disabled(true)` where
 input applies. Call `.into_element()` for any other element builder. `spinner(cx)`
 and `tooltip(cx, ...)` return an ordinary `Element`.
 
-Options are `choice(key, caption)`, optionally `.disabled(true)`. Keys are unique
+Options are `choice(key, caption)`, optionally `.disabled(true)` and
+`.icon(Icon)`. Only segmented controls show the icon. Keys are unique
 within one group or select; duplicates fail preparation with
 `UiError::DuplicateKey`. A selected key that names no option leaves a radio group
 unchecked and shows a select's placeholder. Slider and progress ranges must be
@@ -78,11 +81,88 @@ options, and propose it immediately, like the platform radio group. Space, Enter
 clicks and assistive Click propose the activated option. Arrow keys with any
 modifier are left to other handlers. Each option publishes the RadioButton role,
 its checked state, its zero-based position and the group size; the group is a named
-Group.
+RadioGroup.
 
 Focus moves through a fresh `FocusHandle` per option, queued during the key event
 and applied at the next preparation, so the new option is focused even when the
 application rejects the proposal.
+
+## Segmented controls
+
+```rust
+segmented().selected(self.view.clone()).accessibility_label("Diff view")
+    .option(choice("split", "Split"))
+    .option(choice("unified", "Unified"))
+    .option(choice("raw", "Raw"))
+    .on_change(cx.listener(|s, e: &ChoiceEvent, _| s.view = e.key.clone()))
+```
+
+`segmented()` is a radio group drawn as one control. The options sit in an
+inset track as tall as a text input: the Input fill, a 1-unit InputBorder
+outline with the control radius, and 1 unit of padding. Segments are 4 units
+shorter than the track, with a radius 2 units smaller. The selected segment is
+raised like a default button: the Control fill, a Border outline, the control
+shadow and Text. The others are quiet, with TextMuted and a RowHover fill while
+hovered. `choice(..).icon(Icon::LIST)` shows only the icon in a square segment,
+and the caption becomes its accessible name.
+
+Segments share the width equally by default: in a content-sized track each is
+as wide as the widest, and a stretched track divides its width. The track is a
+grid of equal fractions. `.equal_width(false)` sizes each segment to its
+content. Compact density shrinks the track and segments with `input_height`.
+
+Semantics and keys follow radio groups: a RadioGroup of RadioButtons with their
+checked state, position and set size, and one Tab stop. Arrow keys move to the
+previous or next enabled segment and propose it. Unlike a radio group, they
+stop at the ends instead of wrapping; there the key is not handled, so a
+segmented control inside a toolbar passes it to the toolbar. Disabled options
+are skipped. `segmented()` takes no view context: like `radio_group()`, it holds
+no placement-local state.
+
+## Toggle buttons
+
+```rust
+toggle_button(self.wrap, Icon::TEXT_WRAP).accessibility_label("Wrap lines")
+    .on_change(cx.listener(|s, e: &ToggleEvent, _| s.wrap = e.checked))
+```
+
+`toggle_button(pressed, content)` is a quiet button that stays pressed. Content
+is `impl Into<ToggleContent>`: a `&str` or `String` caption, an `Icon`, or any
+`Element`, such as `label("Wrap").leading_icon(Icon::TEXT_WRAP)`. An icon
+toggle is an icon button, `input_height` square, and needs an accessible name;
+preparation fails with `UiError::MissingAccessibleName` without one.
+
+Unpressed, it looks like a Quiet button. Pressed, it has the RowSelected fill
+with Text content, and keeps the fill while disabled. AccessKit has no toggle
+button role, so it publishes the Button role with a check state. Clicks,
+Enter, Space and assistive Click propose `ToggleEvent { checked: !pressed }`.
+
+## Toolbars
+
+```rust
+toolbar().accessibility_label("Editor")
+    .child(icon_button(Icon::PLUS).accessibility_label("New file"))
+    .child(separator())
+    .child(toggle_button(self.wrap, Icon::TEXT_WRAP).accessibility_label("Wrap lines")
+        .on_change(cx.listener(|s, e: &ToggleEvent, _| s.wrap = e.checked)))
+    .child(button("Run").leading_icon(Icon::PLAY).variant(ButtonVariant::Primary))
+```
+
+`toolbar()` is a row with the Toolbar role and a horizontal orientation. Its
+items are buttons, icon buttons, toggle buttons, selects, segmented controls and
+separators, vertically centered with a 4-unit gap. The toolbar is at least
+`input_height` tall. `.vertical()` stacks the items in a column at least
+`input_height` wide, with a vertical orientation.
+
+The toolbar is one Tab stop. Tab enters at the item focused last, by keyboard or
+pointer. Without one it enters at the first item, or the last with Shift-Tab.
+The next Tab leaves the toolbar from any item. Left and Right (Up and Down when
+vertical) move focus to the previous or next item and wrap. Home and End move it
+to the first and last item. Separators and disabled items are skipped, and the
+keys need no modifiers. An item that handles an arrow key itself keeps it: a
+select uses Up and Down, and a segmented control moves between its segments
+until it reaches an end. Arrow keys in a text input, or in a popover opened from
+an item, never move toolbar focus.
 
 ## Sliders
 
@@ -226,9 +306,10 @@ colors; the default is `Tone::Neutral`.
 
 Neutral uses the hovered control fill because the resting Control fill equals
 the light theme's surface, which would hide the pill. Accent uses the Focus
-color as its foreground: it is the accent's hue adjusted to 3:1 against the
-window surfaces, which the accent fill does not reach for yellow accents in
-light themes.
+color as its foreground: it is the accent's hue adjusted to 4.5:1 against the
+window surfaces and the accent tint, which the accent fill does not reach.
+Every tone's text reaches 4.5:1 on the background, surface and raised fills,
+bare and under its tint.
 
 A badge is a label, so a button or tab containing it includes its text in its
 accessible name: a tab captioned "Problems" with a badge "3" is named
@@ -265,6 +346,8 @@ the button foreground, including the disabled text color.
 | Progress track | Input fill, TextMuted outline | Accent fill | (not interactive) |
 | Select list | Raised popover with a Divider outline and popover shadow | RowHover for the highlight, a check for the selection | TextDisabled options |
 | Tooltip | Raised popover, Caption text | | |
+| Segmented track | Input fill, InputBorder outline; TextMuted segments | Control fill, Border outline, control shadow, Text | TextDisabled segments |
+| Toggle button | Quiet: no fill, TextMuted | RowSelected fill, Text | TextDisabled, keeping the pressed fill |
 
 Rails and tracks are outlined rather than filled with the border color so the
 accent fill stays distinct in high contrast, where Border is white and the accent
@@ -293,9 +376,13 @@ compact thumb stops just short of them. See
 ## Shared files and internals
 
 Controls live in `crates/rxui/src/standard/`. Their internal listeners run outside
-any component scope; the one core addition is a crate-private
-`FocusHandle::focus_bound`, which queues focus for a handle's single live binding
-so radio arrow keys can move focus without a source mount. The check box tick,
+any component scope. Two core additions support them. A crate-private
+`FocusHandle::focus_bound` queues focus for a handle's single live binding, so
+radio and segment arrow keys can move focus without a source mount. A
+crate-private roving focus group, set on a toolbar's root, builds on
+`FocusScope::Group` memory: Tab traversal skips the group's other Tab stops while
+focus is inside it, and `Ui::key` moves focus between them as a default after
+listeners, like tab headers. The check box tick,
 mixed dash and spinner are a crate-private `CustomElement` painted with rxui-draw
 lines in the element's resolved text color, so they need no font coverage. The
 select chevron and the selected option's check are [icons](icons.md).
@@ -327,7 +414,14 @@ controls relationships, timed multi-character type-ahead in both states,
 Enter/Escape/Tab, hover and click choice, disabled options and consumed outside
 presses; tooltip delay by frame clock, focus preservation, pointer transparency,
 press/Escape/leave hiding and description publication; tooltip layout adoption;
-and preset contrast. Separator tests cover orientation in rows and columns at
+and preset contrast. Toolbar tests cover arrow keys, Home and End, wrapping,
+skipped separators and disabled items, the hand-off from a segmented control,
+Tab entering once and remembering the last item from keys and clicks, the
+vertical orientation, layout and semantics. Toggle button tests cover the
+pressed and unpressed paint in light and dark, the pressed state, proposals and
+the name requirement for icon toggles. Segmented tests cover the track and
+segment paint, arrow keys that select and stop at the ends, disabled segments,
+semantics, equal and content widths, icon segments and compact sizing. Separator tests cover orientation in rows and columns at
 both densities, the fixed orientations with margins, the role and Tab exclusion.
 Badge tests cover each tone's tokens in every preset, the caption pill and the
 parent name. Shortcut tests cover modifier order, named keys, function keys and
@@ -335,7 +429,8 @@ both platform styles; key cap tests cover the paint. A theme test checks each
 tone's contrast in every preset and generated theme. An AccessKit test checks roles, toggled state, numeric step
 and actions, expanded state, and Increment/Click round trips. An opt-in GPU test
 reads back indicator, tick, switch knob, slider and progress pixels in all three
-presets.
+presets; another reads back the segmented track, the raised segment and a pressed
+toggle's fill.
 
 ```sh
 cargo test -p rxui --all-features standard:: --locked

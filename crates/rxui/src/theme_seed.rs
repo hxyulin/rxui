@@ -2,7 +2,7 @@
 //!
 //! Lightness steps are chosen in OKLCH, where equal lightness looks equally light
 //! across hues, so one ramp serves every accent and neutral tint.
-use crate::appearance::{contrast, luminance};
+use crate::appearance::{contrast, luminance, over};
 use crate::{Color, ColorScheme, Theme, ThemeColors, ThemeMetrics, ThemeShadows, rgba8};
 
 /// Inputs of [`Theme::generate`].
@@ -58,8 +58,10 @@ impl Theme {
     /// hue and as much chroma as the gamut allows, until they reach 4.5:1; hover
     /// and pressed step further away. When that would cost the accent more than
     /// 0.25 of lightness, as for yellow or lime, the text turns black instead.
-    /// The fill stays short of pure white or black. The focus ring keeps 3:1
-    /// against the surfaces, and status colors use fixed hues. The result does not reproduce the presets
+    /// The fill stays short of pure white or black. Status tints use fixed
+    /// hues. The focus color and the status colors double as text, so they move
+    /// away from the surfaces in lightness until they read at 4.5:1 on the
+    /// surfaces and on their tints. The result does not reproduce the presets
     /// exactly, and a non-finite seed yields a theme that fails [`Theme::validate`].
     pub fn generate(seed: ThemeSeed) -> Self {
         let dark = seed.scheme == ColorScheme::Dark;
@@ -76,33 +78,37 @@ impl Theme {
         let surface = n(pick(0.205, 1.));
         let control = n(pick(0.255, 1.));
         let input = n(pick(0.155, 1.));
-        let focus_l = reach(
-            al,
-            ac,
-            ah,
-            if dark { 0.01 } else { -0.01 },
-            &[background, surface, control, input],
-            3.,
-        );
+        let raised = n(pick(0.235, 1.));
         let text = t(pick(0.93, 0.22));
-        // Status colors at fixed OKLCH lightness, chroma and hue per scheme.
+        let subtle = |c: Color| [c[0], c[1], c[2], if dark { 41. } else { 31. } / 255.];
+        // Text in a tone's color reads at 4.5:1 on the window surfaces and on its
+        // tint over them: from the tint's lightness it moves away from the
+        // surfaces (lighter when dark) until it gets there.
+        let away = if dark { 0.01 } else { -0.01 };
+        let readable = |[l, c, h]: [f32; 3], tint: Color| {
+            let mut against = vec![background, surface, raised, control, input];
+            against.extend([background, surface, raised].map(|under| over(tint, under)));
+            from_oklch(reach(l, c, h, away, &against, 4.5), c, h)
+        };
+        // Status tints at fixed OKLCH lightness, chroma and hue per scheme.
         let status = |dark: [f32; 3], light: [f32; 3]| {
-            let [l, c, h] = if seed.scheme == ColorScheme::Dark {
+            let lch = if seed.scheme == ColorScheme::Dark {
                 dark
             } else {
                 light
             };
-            from_oklch(l, c, h)
+            let tint = subtle(from_oklch(lch[0], lch[1], lch[2]));
+            (readable(lch, tint), tint)
         };
-        let subtle = |c: Color| [c[0], c[1], c[2], if dark { 41. } else { 31. } / 255.];
-        let danger = status([0.64, 0.2, 23.], [0.58, 0.2, 25.]);
-        let warning = status([0.79, 0.16, 72.], [0.64, 0.14, 70.]);
-        let success = status([0.65, 0.14, 157.], [0.54, 0.12, 160.]);
+        let (danger, danger_subtle) = status([0.64, 0.2, 23.], [0.58, 0.2, 25.]);
+        let (warning, warning_subtle) = status([0.79, 0.16, 72.], [0.64, 0.14, 70.]);
+        let (success, success_subtle) = status([0.65, 0.14, 157.], [0.54, 0.12, 160.]);
         let accent_fill = accent.step(0.);
+        let accent_subtle = subtle(accent_fill);
         let colors = ThemeColors {
             background,
             surface,
-            raised: n(pick(0.235, 1.)),
+            raised,
             control,
             control_hover: n(pick(0.285, 0.965)),
             control_pressed: n(pick(0.31, 0.94)),
@@ -119,7 +125,7 @@ impl Theme {
             accent_hover: accent.step(HOVER_STEP),
             accent_pressed: accent.step(PRESSED_STEP),
             accent_text: accent.text,
-            focus: from_oklch(focus_l, ac, ah),
+            focus: readable([al, ac, ah], accent_subtle),
             selection: from_oklch(pick(0.42, 0.88), ac.min(pick(0.12, 0.07)), ah),
             selection_text: text,
             caret: text,
@@ -134,10 +140,10 @@ impl Theme {
             danger,
             warning,
             success,
-            accent_subtle: subtle(accent_fill),
-            danger_subtle: subtle(danger),
-            warning_subtle: subtle(warning),
-            success_subtle: subtle(success),
+            accent_subtle,
+            danger_subtle,
+            warning_subtle,
+            success_subtle,
         };
         let shadows = if dark {
             ThemeShadows::dark()

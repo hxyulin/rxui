@@ -52,7 +52,8 @@ pub enum SemanticRole {
     Image,
     /// Static text.
     Label,
-    /// Activatable button.
+    /// Activatable button. A toggle button pairs it with `accessibility_checked`
+    /// for its pressed state.
     Button,
     /// Single-line text control.
     TextInput,
@@ -77,6 +78,11 @@ pub enum SemanticRole {
     CheckBox,
     /// One choice in a group; pair with `accessibility_checked`.
     RadioButton,
+    /// Group of radio buttons with one choice selected, such as a
+    /// [`crate::radio_group`] or [`crate::segmented`] control.
+    RadioGroup,
+    /// Row or column of controls with one Tab stop, such as a [`crate::toolbar`].
+    Toolbar,
     /// On/off toggle; pair with `accessibility_checked`.
     Switch,
     /// Adjustable numeric value; pair with `accessibility_numeric_value`.
@@ -103,7 +109,7 @@ pub enum SemanticRole {
     /// Header cell labelling a table column.
     ColumnHeader,
 }
-/// Check state of a check box, radio button or switch.
+/// Check state of a check box, radio button, switch or toggle button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Checked {
     /// Not checked.
@@ -172,7 +178,7 @@ pub struct SemanticNode<'a> {
     pub selected: Option<bool>,
     /// Whether this collection accepts multiple selected items.
     pub multiselectable: bool,
-    /// Check state of a check box, radio button or switch.
+    /// Check state of a check box, radio button, switch or toggle button.
     pub checked: Option<Checked>,
     /// Whether a combo box, tree item or other disclosure is expanded.
     pub expanded: Option<bool>,

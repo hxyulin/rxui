@@ -289,9 +289,10 @@ pub use semantics::{
 };
 #[cfg(feature = "layout")]
 pub use standard::{
-    Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Separator, Slider, SliderEvent,
-    SliderPhase, TOOLTIP_DELAY, Toggle, ToggleEvent, Tone, badge, checkbox, choice, kbd,
-    progress_bar, radio_group, select, select_keyed, separator, slider, spinner, switch, tooltip,
+    Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Segmented, Select, Separator, Slider,
+    SliderEvent, SliderPhase, TOOLTIP_DELAY, Toggle, ToggleButton, ToggleContent, ToggleEvent,
+    Tone, Toolbar, badge, checkbox, choice, kbd, progress_bar, radio_group, segmented, select,
+    select_keyed, separator, slider, spinner, switch, toggle_button, toolbar, tooltip,
 };
 #[cfg(feature = "layout")]
 pub use tabs::{
@@ -385,10 +386,10 @@ pub mod prelude {
         variable_list, virtual_list, virtual_tree,
     };
     pub use crate::{
-        Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Separator, Slider,
-        SliderEvent, SliderPhase, Toggle, ToggleEvent, Tone, badge, checkbox, choice, kbd,
-        progress_bar, radio_group, select, select_keyed, separator, slider, spinner, switch,
-        tooltip,
+        Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Segmented, Select, Separator, Slider,
+        SliderEvent, SliderPhase, Toggle, ToggleButton, ToggleContent, ToggleEvent, Tone, Toolbar,
+        badge, checkbox, choice, kbd, progress_bar, radio_group, segmented, select, select_keyed,
+        separator, slider, spinner, switch, toggle_button, toolbar, tooltip,
     };
     pub use crate::{
         ColorScheme, DialogButtonOrder, DialogButtonRole, FocusRingPolicy, ScrollbarStyle,

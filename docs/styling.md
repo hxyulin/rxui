@@ -221,7 +221,10 @@ balanced metrics (11/12/14/16/20 compact), with the heading roles semibold.
 `Theme::generate(ThemeSeed::new(scheme, accent))` builds a complete theme from a
 scheme and accent, with `.neutral(hue, chroma)` choosing the tint of its neutrals;
 it uses the balanced metrics and the preset shadows of its scheme. Its accent
-text follows the same rule as the system accent below.
+text follows the same rule as the system accent below. Its status tints use fixed
+OKLCH hues per scheme. Its focus and status colors start at their tint's
+lightness and move away from the surfaces until they read at 4.5:1 on the
+surfaces and on their tints.
 
 Check boxes and radios are `ThemeMetrics::indicator_size` square (14 balanced,
 12 compact) and switches `switch_width` × `switch_height` (26×16 and 22×13). The
@@ -291,21 +294,27 @@ two blends nearly agree, so the dark alphas are unconverted. Custom
 | Divider | #26282C | #E4E5E8 | #FFFFFF |
 | Accent / hover / pressed | #3A6FE5 / #2F63DB / #335FC8 | #2F6BEB / #245FDD / #1F52C2 | #FFD400 / #FFE34D / #E6BF00 |
 | Accent text | #FFFFFF | #FFFFFF | #000000 |
-| Focus | #4A7CEF | #2F6BEB | #FFD400 |
+| Focus | #77A2FF | #2560DF | #FFD400 |
 | Selection / selected text | #2B4580 / #FFFFFF | #CFDDFB / #1A1B1E | #00E5FF / #000000 |
 | Row hover | white at 12/255 | black at 10/255 | #1F1F1F |
 | Row selected / inactive | #22314F / #26282D | #E3ECFF / #EDEEF0 | #0050FF / #3A3A3A |
-| Danger / warning / success | #E5484D / #F5A524 / #30A46C | #D93036 / #C27C0E / #218358 | #FF4040 / #FF9900 / #00E060 |
-| Accent, danger, warning and success subtle | Their colors at 41/255 | Their colors at 31/255 | #403500 / #400000 / #402600 / #003818 |
+| Danger / warning / success | #FF8481 / #FFBB5E / #57C68B | #CC202B / #965D00 / #0F784E | #FF4040 / #FF9900 / #00E060 |
+| Accent subtle | The accent at 41/255 | The accent at 31/255 | #403500 |
+| Danger, warning and success subtle | #E5484D / #F5A524 / #30A46C at 41/255 | #D93036 / #C27C0E / #218358 at 31/255 | #400000 / #402600 / #003818 |
+
+The status colors and Focus are text colors: badges, and later callouts and
+field errors, draw text in them. Their tints keep the deeper (dark) or brighter
+(light) fill hues, so the text reads on its own tint. Danger buttons, danger
+menu items and status icons use the same text colors.
 
 Tests verify, for every preset and for generated themes, main text at least 4.5:1
 against background, surface, raised, control, hover, pressed and row fills;
-secondary text at least 4.5:1 against background and surface; focus at least 3:1
+secondary text at least 4.5:1 against background and surface; focus at least 4.5:1
 against background, surface, control and input fills; accent text at least 4.5:1
 on the accent, its hover and pressed states; selected text at least 4.5:1; and
-status colors at least 3:1 against the surface. [Tone](controls.md#badges)
-foregrounds keep at least 2.4:1 on their subtle fills over the background,
-surface and raised fills, and neutral text 4.5:1. Button and input borders,
+status colors at least 4.5:1 against the background and surface. Every
+[tone](controls.md#badges) foreground reaches 4.5:1 on the background, surface
+and raised fills, bare and under its subtle fill. Button and input borders,
 dividers and disabled text are deliberately softer in light and dark, so
 check boxes, radios, switches and rails outline themselves with Secondary text
 instead; use `Theme::high_contrast()` when every boundary must stand out.
@@ -332,8 +341,9 @@ example, #0072EE for blue, #B85C00 for orange and #2F8700 for green. Yellow
 (#FFC600) would need 0.29 and takes black text on its own color, with lighter
 hover and pressed states. A white accent also takes black text.
 
-The focus ring starts at the system color and lightens (dark) or darkens (light)
-until it has 3:1 against the background, surface, control and input fills.
+The focus color starts at the system color and lightens (dark) or darkens (light)
+until it has 4.5:1 against the background, surface, raised, control and input
+fills and against the new accent tint over them, as it also colors accent badges.
 `selection`, `row_selected` and `row_selected_inactive` keep the theme's OKLCH
 lightness and chroma and take the accent's hue. Their chroma is scaled down when
 the accent is less colorful than the theme's own, so graphite gives neutral

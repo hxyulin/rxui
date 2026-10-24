@@ -106,3 +106,92 @@ fn standard_controls_paint_theme_indicator_marks_rails_and_fills_in_each_preset_
         assert!(close(at(progress.x + 100., mid), bytes(c.input)));
     }
 }
+
+struct Choices;
+impl View for Choices {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        column()
+            .padding(8.)
+            .gap(8.)
+            .align_items(taffy::AlignItems::START)
+            .background(ThemeColor::Surface)
+            .child(
+                segmented()
+                    .key("view")
+                    .selected("split")
+                    .accessibility_label("View")
+                    .option(choice("split", "Split"))
+                    .option(choice("raw", "Raw")),
+            )
+            .child(
+                toolbar()
+                    .child(
+                        toggle_button(true, Icon::TEXT_WRAP)
+                            .key("on")
+                            .accessibility_label("On"),
+                    )
+                    .child(
+                        toggle_button(false, Icon::TEXT_WRAP)
+                            .key("off")
+                            .accessibility_label("Off"),
+                    ),
+            )
+    }
+}
+
+#[test]
+#[ignore = "requires a native GPU; run with --features rendering -- --ignored"]
+fn segmented_tracks_raise_the_selected_segment_and_pressed_toggles_fill_in_each_preset() {
+    let graphics = pollster::block_on(GraphicsContext::headless()).unwrap();
+    for theme in [Theme::dark(), Theme::light(), Theme::high_contrast()] {
+        let mut test = TestUi::new(&graphics, [200, 120], Choices).unwrap();
+        let painter = test.painter_mut();
+        painter
+            .fonts_mut()
+            .load_font(include_bytes!("../../tests/fonts/SourceSans3-Regular.otf"))
+            .unwrap();
+        painter.set_sans_serif_family(Some(std::sync::Arc::from("Source Sans 3")));
+        test.parts().1.set_theme(theme.clone()).unwrap();
+        let pixels = test.render().unwrap();
+        let bounds =
+            |test: &mut TestUi<Choices>, key: &str| test.element(key).unwrap().unwrap().bounds;
+        let at = |x: f32, y: f32| {
+            let i = (y as usize * 200 + x as usize) * 4;
+            &pixels[i..i + 4]
+        };
+        let c = theme.palette();
+        // The selected segment's control fill sits inside its border; the
+        // unselected one shows the track's input fill.
+        let split = bounds(&mut test, "split");
+        let mid = split.y + split.height / 2.;
+        assert!(
+            close(at(split.x + 4., mid), bytes(c.control)),
+            "{:?}",
+            at(split.x + 4., mid)
+        );
+        let raw = bounds(&mut test, "raw");
+        assert!(
+            close(at(raw.x + 4., mid), bytes(c.input)),
+            "{:?}",
+            at(raw.x + 4., mid)
+        );
+        // The track's border shows between its edge and the segments.
+        let track = bounds(&mut test, "view");
+        assert!(close(
+            at(track.x + track.width / 2., track.y + 0.5),
+            bytes(c.input_border)
+        ));
+        // A pressed toggle fills with the selected-row color; an unpressed one
+        // shows the surface.
+        let on = bounds(&mut test, "on");
+        assert!(close(
+            at(on.x + 3., on.y + on.height / 2.),
+            bytes(c.row_selected)
+        ));
+        let off = bounds(&mut test, "off");
+        assert!(close(
+            at(off.x + 3., off.y + off.height / 2.),
+            bytes(c.surface)
+        ));
+    }
+}

@@ -479,8 +479,9 @@ fn preset_and_generated_contrast_pairs_and_srgb_conversion_are_verified() {
             4.5,
             "selection_text/selection",
         );
+        // The focus color is also accent-toned text.
         for fill in [c.background, c.surface, c.control, c.input] {
-            check(c.focus, fill, 3., "focus");
+            check(c.focus, fill, 4.5, "focus");
         }
         for fill in [c.control, c.control_hover, c.control_pressed] {
             check(c.text, fill, 4.5, "text/control");
@@ -494,7 +495,8 @@ fn preset_and_generated_contrast_pairs_and_srgb_conversion_are_verified() {
             check(c.text, row, 4.5, "text/row");
         }
         for status in [c.danger, c.warning, c.success] {
-            check(status, c.surface, 3., "status/surface");
+            check(status, c.surface, 4.5, "status/surface");
+            check(status, c.background, 4.5, "status/background");
         }
         // Text disabled is intentionally dimmer but still distinct.
         assert!(contrast(c.text_disabled, c.surface) < contrast(c.text_muted, c.surface));
@@ -530,19 +532,13 @@ fn tone_foregrounds_read_on_their_subtle_backgrounds_in_presets_and_generated_th
         ] {
             let fg = theme.color(tone.foreground());
             let bg = theme.color(tone.background());
-            // Status and accent foregrounds reach 3:1 on the bare surface, like
-            // icons. Their tint costs up to about a fifth of that on panels,
-            // popovers and the window canvas. Neutral text stays at 4.5:1.
-            let (bare, tinted) = if tone == Tone::Neutral {
-                (4.5, 4.5)
-            } else {
-                (3., 2.4)
-            };
-            let ratio = contrast(fg, c.surface);
-            assert!(ratio >= bare, "theme {i}: bare {tone:?} is {ratio:.2}:1");
+            // Badges, callouts and field errors show text in these colors, on
+            // the bare window surfaces and on the tone's tint over them.
             for under in [c.background, c.surface, c.raised] {
+                let ratio = contrast(fg, under);
+                assert!(ratio >= 4.5, "theme {i}: bare {tone:?} is {ratio:.2}:1");
                 let ratio = contrast(fg, over(bg, under));
-                assert!(ratio >= tinted, "theme {i}: {tone:?} is {ratio:.2}:1");
+                assert!(ratio >= 4.5, "theme {i}: {tone:?} is {ratio:.2}:1");
             }
             // The fill is visible against the surface it sits on.
             assert_ne!(over(bg, c.surface), c.surface, "theme {i}: {tone:?}");
@@ -598,7 +594,7 @@ fn new_semantic_tokens_resolve_in_every_preset() {
     }
     assert_eq!(
         Theme::dark().color(ThemeColor::Danger),
-        rgb8(0xE5, 0x48, 0x4D)
+        rgb8(0xFF, 0x84, 0x81)
     );
     assert_eq!(
         Theme::light().color(ThemeColor::RowHover),

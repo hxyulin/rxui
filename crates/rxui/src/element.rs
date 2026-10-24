@@ -344,6 +344,17 @@ impl Element {
             .scope = Some(scope);
         self
     }
+    /// Makes this container a roving focus group: one Tab stop that remembers
+    /// its last focused item, with arrow keys along `axis`, Home and End moving
+    /// between the Tab stops inside it.
+    pub(crate) fn roving_focus(mut self, axis: crate::Axis) -> Self {
+        self.input
+            .get_or_insert_with(Default::default)
+            .focus
+            .get_or_insert_with(Default::default)
+            .roving = Some(axis);
+        self.focus_scope(crate::FocusScope::Group)
+    }
     /// Exposes selected state for semantic tabs/options, without changing control
     /// behavior or appearance. The stock tabs builder sets this automatically.
     pub fn accessibility_selected(mut self, selected: bool) -> Self {

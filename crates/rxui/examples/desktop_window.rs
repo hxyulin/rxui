@@ -92,22 +92,24 @@ impl View for Desktop {
             })
             .label("Restore layout")
             .shortcut(Shortcut::primary("r").shift());
-        let mut tools = row()
-            .gap(8.)
-            .padding(12.)
-            .child(new.button())
-            .child(close.button())
-            .child(restore.button())
-            .child(
-                button("Actions…")
-                    .anchor_handle(self.anchor.clone())
-                    .on_click(cx.listener(|s, _, _| {
-                        s.menu = Some(MenuRequest {
-                            anchor: s.anchor.clone().into(),
-                            panel: None,
-                        });
-                    })),
-            );
+        let mut tools = row().padding(12.).child(
+            toolbar()
+                .accessibility_label("Panels")
+                .child(new.button())
+                .child(close.button())
+                .child(restore.button())
+                .child(separator())
+                .child(
+                    button("Actions…")
+                        .anchor_handle(self.anchor.clone())
+                        .on_click(cx.listener(|s, _, _| {
+                            s.menu = Some(MenuRequest {
+                                anchor: s.anchor.clone().into(),
+                                panel: None,
+                            });
+                        })),
+                ),
+        );
         if let Some(request) = &self.menu {
             tools = tools.child(
                 popover(
@@ -124,8 +126,8 @@ impl View for Desktop {
                 .on_dismiss(cx.listener(|s, _: &DismissEvent, _| s.menu = None)),
             );
         }
-        // The popover is logically inside this clipped toolbar, yet paints against
-        // the viewport. The toolbar itself keeps ordinary layout/scroll behavior.
+        // The popover is logically inside this clipped bar, yet paints against
+        // the viewport. The bar itself keeps ordinary layout/scroll behavior.
         let tools = column().height(52.).fill_width().clip().child(tools);
         let content = dock(&self.layout, |key| {
             let edit_key = key.clone();

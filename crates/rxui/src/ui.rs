@@ -768,7 +768,9 @@ fn default_paint(
     if !button && !input {
         return (paint, element.states.is_some().then_some([paint; 3]));
     }
-    paint.radii = [m.radius; 4];
+    if !matches!(element.surface, Surface::Part(_)) {
+        paint.radii = [m.radius; 4];
+    }
     if input {
         paint.background = Some(c.input);
         paint.border_color = Some(c.input_border);
@@ -2041,9 +2043,6 @@ impl<T: View> Ui<T> {
             || ((control || part.is_some() || list_row) && metrics != node.resolved_theme.sizes())
         {
             let mut layout = element.style.clone();
-            if let Some(part) = part {
-                part.layout(metrics, &mut layout, element.layout_overrides);
-            }
             if control {
                 use taffy::geometry::Rect;
                 let all = |x, y| Rect {
@@ -2075,6 +2074,10 @@ impl<T: View> Ui<T> {
                         layout.size.height = length(metrics.input_height);
                     }
                 }
+            }
+            // A part's sizes win over the control defaults, as a segment's do.
+            if let Some(part) = part {
+                part.layout(metrics, &mut layout, element.layout_overrides);
             }
             if list_row {
                 // Rows are denser than controls: no vertical padding, and a minimum
@@ -4209,7 +4212,7 @@ impl<T: View> Ui<T> {
                 .or_else(|| self.tab_relations(id).1),
             orientation: match self.tab_properties(id) {
                 Some(crate::tabs::Properties::List { axis, .. }) => Some(*axis),
-                _ => None,
+                _ => self.roving_axis(id),
             },
             range: self.range_info(id),
             links: self.semantic_link_count(id),

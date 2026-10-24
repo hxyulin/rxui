@@ -114,7 +114,7 @@ impl ThemeSet {
     /// and moves the accent's OKLCH lightness, keeping its hue and chroma, until
     /// the text reaches 4.5:1; hover and pressed step further away. Only when that
     /// would cost the accent more than 0.25 of lightness, as for the macOS yellow,
-    /// does the text flip to black. The focus ring keeps 3:1 against the surfaces,
+    /// does the text flip to black. The focus color keeps 4.5:1 against the surfaces,
     /// and the selection and selected rows take the accent's hue at the theme's
     /// lightness with their text kept at 4.5:1.
     pub fn resolve(&self, mode: ThemeMode, preferences: &SystemPreferences) -> Theme {
@@ -151,14 +151,20 @@ pub(crate) fn contrast(a: Color, b: Color) -> f32 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
+/// Composites a possibly translucent color over an opaque one, in linear light.
+pub(crate) fn over(top: Color, under: Color) -> Color {
+    let a = top[3];
+    let mix = |i: usize| top[i] * a + under[i] * (1. - a);
+    [mix(0), mix(1), mix(2), 1.]
+}
 /// The theme with its accent-derived tokens rebuilt from the system `accent`.
 ///
 /// The fill keeps the accent's OKLCH hue and as much chroma as the gamut allows,
 /// moving only in lightness until the theme's own accent text reaches 4.5:1; see
 /// [`AccentFill`] for when the text flips to black or white instead. Hover and
-/// pressed step further from the text. The focus ring starts at the accent and
-/// lightens (dark) or darkens (light) until it has 3:1 against the surfaces and
-/// controls. Selection and selected rows keep the theme's OKLCH lightness and
+/// pressed step further from the text. The focus color starts at the accent and
+/// lightens (dark) or darkens (light) until it has 4.5:1 against the surfaces,
+/// the controls and the accent tint, as it also colors accent-toned text. Selection and selected rows keep the theme's OKLCH lightness and
 /// chroma and take the accent's hue, with the chroma scaled down for accents less
 /// colorful than the theme's (graphite gives neutral rows), then move away from
 /// their text until it reads at 4.5:1.
@@ -178,25 +184,28 @@ fn with_accent(theme: &Theme, accent: Color) -> Theme {
         color
     };
     theme.clone().colors(|p| {
-        let fills = [
-            p.background,
-            p.surface,
-            p.control,
-            p.control_hover,
-            p.control_pressed,
-            p.input,
-        ];
-        p.focus = from_oklch(
-            reach(l, c, h, if dark { 0.01 } else { -0.01 }, &fills, 3.),
-            c,
-            h,
-        );
         p.accent = fill.step(0.);
         p.accent_hover = fill.step(HOVER_STEP);
         p.accent_pressed = fill.step(PRESSED_STEP);
         p.accent_text = fill.text;
         // The tint keeps the theme's own translucency.
         p.accent_subtle = [p.accent[0], p.accent[1], p.accent[2], p.accent_subtle[3]];
+        // The focus color is also accent-toned text.
+        let mut fills = vec![
+            p.background,
+            p.surface,
+            p.raised,
+            p.control,
+            p.control_hover,
+            p.control_pressed,
+            p.input,
+        ];
+        fills.extend([p.background, p.surface, p.raised].map(|under| over(p.accent_subtle, under)));
+        p.focus = from_oklch(
+            reach(l, c, h, if dark { 0.01 } else { -0.01 }, &fills, 4.5),
+            c,
+            h,
+        );
         p.selection = retint(p.selection, p.selection_text);
         p.row_selected = retint(p.row_selected, p.text);
         p.row_selected_inactive = retint(p.row_selected_inactive, p.text);
@@ -281,7 +290,12 @@ mod tests {
                 assert!(away(c.accent_hover) > away(c.accent), "{case}");
                 assert!(away(c.accent_pressed) > away(c.accent_hover), "{case}");
                 for fill in [c.background, c.surface, c.control, c.input] {
-                    assert!(contrast(c.focus, fill) >= 3., "{case}");
+                    assert!(contrast(c.focus, fill) >= 4.5, "{case}");
+                }
+                // Accent badges show focus-colored text on the accent tint.
+                for under in [c.background, c.surface, c.raised] {
+                    let tinted = over(c.accent_subtle, under);
+                    assert!(contrast(c.focus, tinted) >= 4.5, "{case}");
                 }
                 assert!(contrast(c.selection_text, c.selection) >= 4.5, "{case}");
                 // The accent tint follows the accent at the preset's translucency.

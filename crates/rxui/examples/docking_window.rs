@@ -118,8 +118,9 @@ impl View for Workspace {
             }
             Err(error) => s.status = error.to_string(),
         }));
-        let tools=row().gap(8.).padding(12.).min_width(0.).scroll_x()
+        let tools=toolbar().accessibility_label("Layout")
             .child(button("New tab").on_click(cx.listener(|s,_,cx|s.add(cx))))
+            .child(separator())
             .child(button("Reorder active").on_click(cx.listener(|s,_,_| {
                 let group=s.layout.group_for(&Key::from("editor")).unwrap_or_else(||first_group(s.layout.root()));
                 let tabs=s.layout.node(group).unwrap().tabs().unwrap();
@@ -146,8 +147,10 @@ impl View for Workspace {
                 }
             })))
             .child(button("Restore layout").on_click(cx.listener(|s,_,_|s.reset())))
-            .child(button(if self.policy==TabContentPolicy::KeepMounted {"Retain panels"} else {"Mount selected"})
-                .on_click(cx.listener(|s,_,_|s.policy=if s.policy==TabContentPolicy::KeepMounted {TabContentPolicy::MountSelected} else {TabContentPolicy::KeepMounted})))
+            .child(separator())
+            // Pressed keeps every tab's panel mounted; released mounts the selected one.
+            .child(toggle_button(self.policy==TabContentPolicy::KeepMounted,"Retain panels")
+                .on_change(cx.listener(|s,e: &ToggleEvent,_|s.policy=if e.checked {TabContentPolicy::KeepMounted} else {TabContentPolicy::MountSelected})))
             .child(button("Shared window").on_click(cx.listener(|_,_,cx| {
                 let workspace=cx.entity().upgrade().expect("live workspace");
                 cx.open_window(WindowOptions::new().title("RXUI — shared dock").size(1000.,740.),workspace).unwrap();
@@ -157,7 +160,7 @@ impl View for Workspace {
             .fill_height()
             .min_width(0.)
             .min_height(0.)
-            .child(tools)
+            .child(row().padding(12.).min_width(0.).scroll_x().child(tools))
             .child(content)
             .child(
                 // Status bar: a hint and the latest result.

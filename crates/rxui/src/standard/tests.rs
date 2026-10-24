@@ -327,7 +327,7 @@ fn radio_groups_rove_one_tab_stop_and_arrow_keys_skip_disabled_options_and_wrap(
     assert!(h.ui.semantic_node(medium).unwrap().disabled);
     assert_eq!(
         h.ui.semantic_node(h.id("size")).unwrap().role,
-        SemanticRole::Group
+        SemanticRole::RadioGroup
     );
 
     // Tab from the switch reaches the selected option only.

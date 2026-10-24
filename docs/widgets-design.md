@@ -1,7 +1,8 @@
 # Standard widgets: design
 
-Status: agreed design. Batch 1 is implemented: icons in [icons.md](icons.md),
-small parts in [controls.md](controls.md) and menu items in
+Status: agreed design. Batches 1 and 2 are implemented: icons in
+[icons.md](icons.md), small parts, toolbars and choices in
+[controls.md](controls.md), and menu items in
 [overlays-and-commands.md](overlays-and-commands.md). Widgets land in four batches; this document
 records the intended API and behavior so each batch builds on the same contract. Once a
 widget is implemented, its contract moves to the matching per-area document
@@ -38,29 +39,12 @@ and icon buttons), [controls.md](controls.md#separators) (`Tone`, `separator`,
 
 ## Batch 2: toolbar and choices
 
-```rust
-toolbar()
-    .child(icon_button(Icon::PLUS).accessibility_label("New"))
-    .child(separator())
-    .child(toggle_button(self.wrap, Icon::TEXT_WRAP).accessibility_label("Wrap")
-        .on_change(cx.listener(|s, e: &ToggleEvent, _| s.wrap = e.checked)))
-
-segmented(cx).selected(self.view.clone()).accessibility_label("Diff view")
-    .option(choice("split", "Split"))
-    .option(choice("unified", "Unified"))
-    .on_change(cx.listener(|s, e: &ChoiceEvent, _| s.view = e.key.clone()))
-```
-
-- `toolbar` has the `Toolbar` role and a single Tab stop. Left/Right (or
-  Up/Down when vertical) and Home/End move focus between its items; focus is
-  remembered when Tab re-enters. It is built on the existing focus groups.
-- `toggle_button(pressed, content)` is a Quiet button with the `ToggleButton`
-  role (pressed state). Pressed shows the `RowSelected` fill. Content is text,
-  an `Icon`, or any element.
-- `segmented` reuses `Choice` and `ChoiceEvent`. It is a radio group visually
-  joined into one control: an inset track with the selected segment raised.
-  Arrow keys move and select, like radio groups. Segments take text or icons
-  (`choice(..).icon(Icon::LIST)`).
+Implemented. The contracts are in [controls.md](controls.md#segmented-controls)
+(`segmented` and `Choice::icon`), [controls.md](controls.md#toggle-buttons)
+(`toggle_button`) and [controls.md](controls.md#toolbars) (`toolbar`). Two
+choices differ from the agreed sketch: `segmented()` takes no view context,
+because it holds no placement-local state, and its arrow keys stop at the ends
+so a toolbar around it receives them.
 
 ## Batch 3: search and lists
 

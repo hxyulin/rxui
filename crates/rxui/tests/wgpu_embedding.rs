@@ -1,5 +1,5 @@
-#![cfg(feature = "rendering")]
 //! External integration regression: deliberately uses no managed drawing/host types.
+#![cfg(feature = "rendering")]
 use rxui::{
     CustomElement, CustomPrepare, ExternalTexture, ImageAlpha, UiPainter, UiRenderTarget,
     prelude::*, wgpu,

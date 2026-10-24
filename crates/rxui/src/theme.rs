@@ -58,7 +58,8 @@ pub enum ThemeColor {
     AccentPressed,
     /// Text painted over Accent.
     AccentText,
-    /// Keyboard focus outline.
+    /// Keyboard focus outline, also the text color of [`crate::Tone::Accent`].
+    /// Readable at 4.5:1 on the window surfaces and on AccentSubtle.
     Focus,
     /// Text selection background.
     Selection,
@@ -74,11 +75,14 @@ pub enum ThemeColor {
     RowSelected,
     /// Selected row fill while its list is unfocused.
     RowSelectedInactive,
-    /// Error foreground, also used for borders and icons.
+    /// Error text, also used for borders and icons. Readable at 4.5:1 on the
+    /// window surfaces and on DangerSubtle.
     Danger,
-    /// Warning foreground, also used for borders and icons.
+    /// Warning text, also used for borders and icons. Readable at 4.5:1 on the
+    /// window surfaces and on WarningSubtle.
     Warning,
-    /// Success foreground, also used for borders and icons.
+    /// Success text, also used for borders and icons. Readable at 4.5:1 on the
+    /// window surfaces and on SuccessSubtle.
     Success,
     /// Tinted, possibly translucent, accent background for accent badges and
     /// banners.
@@ -174,7 +178,7 @@ pub struct ThemeColors {
     pub accent_pressed: Color,
     /// Text over accent fills.
     pub accent_text: Color,
-    /// Focus outline.
+    /// Focus outline and accent-toned text.
     pub focus: Color,
     /// Selection background, paired with selection_text.
     pub selection: Color,
@@ -190,11 +194,11 @@ pub struct ThemeColors {
     pub row_selected: Color,
     /// Selected row fill while its list is unfocused.
     pub row_selected_inactive: Color,
-    /// Error foreground.
+    /// Error text, borders and icons.
     pub danger: Color,
-    /// Warning foreground.
+    /// Warning text, borders and icons.
     pub warning: Color,
-    /// Success foreground.
+    /// Success text, borders and icons.
     pub success: Color,
     /// Tinted accent background; may be translucent.
     pub accent_subtle: Color,
@@ -586,7 +590,8 @@ impl Theme {
                     accent_hover: hex(0x245FDD),
                     accent_pressed: hex(0x1F52C2),
                     accent_text: hex(0xFFFFFF),
-                    focus: hex(0x2F6BEB),
+                    // Darker than the accent: Tone::Accent text reads at 4.5:1.
+                    focus: hex(0x2560DF),
                     selection: hex(0xCFDDFB),
                     selection_text: hex(0x1A1B1E),
                     caret: hex(0x1A1B1E),
@@ -594,9 +599,11 @@ impl Theme {
                     row_hover: rgba8(0, 0, 0, 10),
                     row_selected: hex(0xE3ECFF),
                     row_selected_inactive: hex(0xEDEEF0),
-                    danger: hex(0xD93036),
-                    warning: hex(0xC27C0E),
-                    success: hex(0x218358),
+                    // Status text reaches 4.5:1 on the surfaces and on the tints,
+                    // which keep the brighter fill hues.
+                    danger: hex(0xCC202B),
+                    warning: hex(0x965D00),
+                    success: hex(0x0F784E),
                     accent_subtle: tint(0x2F6BEB, 31),
                     danger_subtle: tint(0xD93036, 31),
                     warning_subtle: tint(0xC27C0E, 31),
@@ -626,7 +633,8 @@ impl Theme {
                     accent_hover: hex(0x2F63DB),
                     accent_pressed: hex(0x335FC8),
                     accent_text: hex(0xFFFFFF),
-                    focus: hex(0x4A7CEF),
+                    // Lighter than the accent: Tone::Accent text reads at 4.5:1.
+                    focus: hex(0x77A2FF),
                     selection: hex(0x2B4580),
                     selection_text: hex(0xFFFFFF),
                     caret: hex(0xE6E7EA),
@@ -634,9 +642,11 @@ impl Theme {
                     row_hover: rgba8(255, 255, 255, 12),
                     row_selected: hex(0x22314F),
                     row_selected_inactive: hex(0x26282D),
-                    danger: hex(0xE5484D),
-                    warning: hex(0xF5A524),
-                    success: hex(0x30A46C),
+                    // Status text reaches 4.5:1 on the surfaces and on the tints,
+                    // which keep the deeper fill hues.
+                    danger: hex(0xFF8481),
+                    warning: hex(0xFFBB5E),
+                    success: hex(0x57C68B),
                     accent_subtle: tint(0x3A6FE5, 41),
                     danger_subtle: tint(0xE5484D, 41),
                     warning_subtle: tint(0xF5A524, 41),

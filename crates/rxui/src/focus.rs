@@ -22,6 +22,9 @@ pub(crate) struct Properties {
     pub handle: Option<FocusHandle>,
     pub scope: Option<FocusScope>,
     pub tab_stop: Option<bool>,
+    /// A roving group, such as a toolbar: Tab enters it once and arrow keys
+    /// along this axis, Home and End move between its Tab stops.
+    pub roving: Option<crate::Axis>,
 }
 /// Failure to resolve or use a weak focus placement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -405,8 +408,16 @@ impl<T: View> Ui<T> {
             }
             current = self.nodes.get(&id).and_then(|n| n.parent);
         }
-        let eligible =
-            |id: &ElementId| self.tab_stop(*id) && cycle.is_none_or(|root| self.within(*id, root));
+        // Tab leaves a roving group from its focused item in one step.
+        let roving = self
+            .focused
+            .and_then(|id| self.roving_root(id))
+            .map(|(root, _)| root);
+        let eligible = |id: &ElementId| {
+            self.tab_stop(*id)
+                && cycle.is_none_or(|root| self.within(*id, root))
+                && roving.is_none_or(|root| Some(*id) == self.focused || !self.within(*id, root))
+        };
         let candidates: Vec<_> = self
             .order
             .iter()
@@ -450,6 +461,74 @@ impl<T: View> Ui<T> {
             return self.enter_links(reverse) | changed;
         }
         changed | next.is_some_and(|id| self.reveal(id))
+    }
+    /// The nearest roving group containing `id`, and its arrow-key axis. A
+    /// popover's content belongs to no group outside the popover.
+    fn roving_root(&self, mut id: ElementId) -> Option<(ElementId, crate::Axis)> {
+        loop {
+            if let Some(axis) = self.focus_properties(id).and_then(|p| p.roving) {
+                return Some((id, axis));
+            }
+            if self.is_overlay(id) {
+                return None;
+            }
+            id = self.nodes.get(&id)?.parent?;
+        }
+    }
+    /// Arrow-key orientation published for a roving group's root.
+    pub(super) fn roving_axis(&self, id: ElementId) -> Option<crate::Axis> {
+        self.focus_properties(id).and_then(|p| p.roving)
+    }
+    /// Moves focus between the Tab stops of the roving group around `target`:
+    /// the previous or next one along its axis, wrapping, or the first or last
+    /// with Home and End. Text inputs keep their arrow keys.
+    pub(super) fn roving_key(
+        &mut self,
+        target: ElementId,
+        event: &crate::KeyEvent,
+    ) -> Option<bool> {
+        use crate::KeyboardKey;
+        if event.modifiers != crate::Modifiers::default()
+            || matches!(
+                self.nodes[&target].element.kind,
+                ElementKind::TextInput { .. }
+            )
+        {
+            return None;
+        }
+        let (root, axis) = self.roving_root(target)?;
+        let horizontal = axis == crate::Axis::Horizontal;
+        let forward = match event.key {
+            KeyboardKey::Home => None,
+            KeyboardKey::End => Some(None),
+            KeyboardKey::ArrowLeft if horizontal => Some(Some(false)),
+            KeyboardKey::ArrowRight if horizontal => Some(Some(true)),
+            KeyboardKey::ArrowUp if !horizontal => Some(Some(false)),
+            KeyboardKey::ArrowDown if !horizontal => Some(Some(true)),
+            _ => return None,
+        };
+        let stops: Vec<_> = self
+            .order
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| **id != root && self.within(**id, root) && self.tab_stop(**id))
+            .map(|(index, id)| (index, *id))
+            .collect();
+        let (first, last) = (stops.first()?.1, stops.last()?.1);
+        let at = self.order.iter().position(|id| *id == target)?;
+        let next = match forward {
+            None => first,
+            Some(None) => last,
+            Some(Some(true)) => stops.iter().find(|(i, _)| *i > at).map_or(first, |s| s.1),
+            Some(Some(false)) => stops
+                .iter()
+                .rev()
+                .find(|(i, _)| *i < at)
+                .map_or(last, |s| s.1),
+        };
+        let changed = self.focused != Some(next);
+        self.change_focus(Some(next));
+        Some(changed | self.reveal(next))
     }
     pub(super) fn publish_focus(&mut self) -> Result<(), UiError> {
         let Some(state) = &self.focus_state else {

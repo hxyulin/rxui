@@ -35,18 +35,22 @@ use crate::{AccessError, AppContext, Dispatch, Element, Key, Listener, ThemeColo
 mod glyph;
 mod progress;
 mod radio;
+mod segmented;
 mod select;
 mod slider;
 mod small;
 mod toggle;
+mod toolbar;
 mod tooltip;
 
 pub use progress::{ProgressBar, progress_bar, spinner};
 pub use radio::{RadioGroup, radio_group};
+pub use segmented::{Segmented, segmented};
 pub use select::{Select, select, select_keyed};
 pub use slider::{Slider, SliderEvent, SliderPhase, slider};
 pub use small::{Badge, Separator, Tone, badge, kbd, separator};
 pub use toggle::{Toggle, checkbox, switch};
+pub use toolbar::{ToggleButton, ToggleContent, Toolbar, toggle_button, toolbar};
 pub use tooltip::{TOOLTIP_DELAY, tooltip};
 
 #[cfg(all(test, feature = "rendering"))]
@@ -55,8 +59,10 @@ mod gpu_tests;
 mod small_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod toolbar_tests;
 
-/// Proposed check state from a check box or switch. A mixed check box proposes
+/// Proposed check state from a check box, switch or toggle button. A mixed check box proposes
 /// `true`, matching the platform convention; store the value to accept it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToggleEvent {
@@ -64,21 +70,23 @@ pub struct ToggleEvent {
     pub checked: bool,
 }
 
-/// Proposed selection from a radio group or select. Store the key to accept it.
+/// Proposed selection from a radio group, segmented control or select. Store
+/// the key to accept it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChoiceEvent {
     /// Key of the chosen option.
     pub key: Key,
 }
 
-/// One option of a [`RadioGroup`] or [`Select`]: a stable application key and the
-/// caption shown to users and assistive technology.
-#[must_use = "add the choice to a radio group or select"]
+/// One option of a [`RadioGroup`], [`Segmented`] control or [`Select`]: a stable
+/// application key and the caption shown to users and assistive technology.
+#[must_use = "add the choice to a radio group, segmented control or select"]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Choice {
     pub(crate) key: Key,
     pub(crate) label: String,
     pub(crate) disabled: bool,
+    pub(crate) icon: Option<crate::Icon>,
 }
 /// Creates an enabled option. Keys must be unique within one group or select;
 /// duplicates fail preparation with [`crate::UiError::DuplicateKey`].
@@ -87,9 +95,16 @@ pub fn choice(key: impl Into<Key>, label: impl Into<String>) -> Choice {
         key: key.into(),
         label: label.into(),
         disabled: false,
+        icon: None,
     }
 }
 impl Choice {
+    /// Shows `icon` in a [`Segmented`] control's segment instead of the caption,
+    /// which stays its accessible name. Radio groups and selects ignore it.
+    pub fn icon(mut self, icon: crate::Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
     /// Disabled options are shown but cannot be chosen, focused or reached with
     /// arrow keys or type-ahead.
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -177,6 +192,17 @@ pub(crate) enum Part {
     Separator,
     /// A key cap, rounded with `radius_small`.
     KeyCap,
+    /// A toolbar, at least `input_height` across its axis.
+    Toolbar {
+        /// Whether the toolbar is a column.
+        vertical: bool,
+    },
+    /// A segmented control's inset track, `input_height` tall.
+    Track,
+    /// A text segment, as tall as the track's content box.
+    Segment,
+    /// An icon segment, as tall and wide as the track's content box.
+    IconSegment,
 }
 impl Part {
     /// Switch knob side: five eighths of the track height.
@@ -191,14 +217,23 @@ impl Part {
     fn progress(m: &crate::ThemeMetrics) -> f32 {
         (m.switch_height / 2.).floor()
     }
+    /// Side of a segment: the track's height minus its 1-unit border and
+    /// 1-unit padding on each side.
+    fn segment(m: &crate::ThemeMetrics) -> f32 {
+        (m.input_height - 2. * TRACK_INSET).max(0.)
+    }
     /// Uniform corner radius; rounded parts are fully round.
     pub(crate) fn radius(self, m: &crate::ThemeMetrics) -> f32 {
         let s = m.indicator_size;
         match self {
             Self::CheckBox => s * 3. / 14.,
-            Self::Mark | Self::SliderBody | Self::Icon | Self::Separator => 0.,
+            Self::Mark | Self::SliderBody | Self::Icon | Self::Separator | Self::Toolbar { .. } => {
+                0.
+            }
             Self::KeyCap => m.radius_small,
-            Self::IconButton => m.radius,
+            Self::IconButton | Self::Track => m.radius,
+            // Concentric with the track.
+            Self::Segment | Self::IconSegment => (m.radius - TRACK_INSET).max(0.),
             Self::Radio => s / 2.,
             Self::RadioDot => s * 3. / 14.,
             Self::Switch | Self::Thumb => m.switch_height / 2.,
@@ -226,7 +261,10 @@ impl Part {
             Self::Icon => [Some(m.icon_size); 2],
             Self::IconButton => [Some(m.input_height); 2],
             Self::Separator => [None, Some(m.icon_size)],
-            Self::KeyCap => [None; 2],
+            Self::KeyCap | Self::Toolbar { .. } => [None; 2],
+            Self::Track => [None, Some(m.input_height)],
+            Self::Segment => [None, Some(Self::segment(m))],
+            Self::IconSegment => [Some(Self::segment(m)); 2],
         };
         if let Some(width) = width
             && overrides & 2 == 0
@@ -254,10 +292,44 @@ impl Part {
                 style.inset.bottom = auto();
             }
             Self::Thumb => style.margin.left = length(-h / 2.),
+            Self::Toolbar { vertical } => {
+                if vertical {
+                    style.min_size.width = length(m.input_height);
+                } else {
+                    style.min_size.height = length(m.input_height);
+                }
+            }
+            Self::Track if overrides & 1 == 0 => {
+                let pad = length(TRACK_INSET - 1.);
+                style.padding = taffy::Rect {
+                    left: pad,
+                    right: pad,
+                    top: pad,
+                    bottom: pad,
+                };
+            }
+            Self::Segment | Self::IconSegment if overrides & 1 == 0 => {
+                let x = length(if self == Self::Segment {
+                    m.button_padding_x
+                } else {
+                    0.
+                });
+                let y = length(0.);
+                style.padding = taffy::Rect {
+                    left: x,
+                    right: x,
+                    top: y,
+                    bottom: y,
+                };
+            }
             _ => {}
         }
     }
 }
+
+/// Space between a segmented control's track edge and its segments: the
+/// track's 1-unit border and 1-unit padding.
+pub(crate) const TRACK_INSET: f32 = 2.;
 
 /// Marks `element` as a theme-sized [`Part`].
 pub(crate) fn part(mut element: Element, part: Part) -> Element {

@@ -774,6 +774,8 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::Splitter | SemanticRole::Separator => Role::Splitter,
         SemanticRole::CheckBox => Role::CheckBox,
         SemanticRole::RadioButton => Role::RadioButton,
+        SemanticRole::RadioGroup => Role::RadioGroup,
+        SemanticRole::Toolbar => Role::Toolbar,
         SemanticRole::Switch => Role::Switch,
         SemanticRole::Slider => Role::Slider,
         SemanticRole::ProgressIndicator => Role::ProgressIndicator,

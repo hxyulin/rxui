@@ -28,6 +28,12 @@ impl Palette {
         (Self::Light, "Light"),
         (Self::HighContrast, "High contrast"),
     ];
+    fn from_key(key: &Key) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|(_, name)| Key::from(*name) == *key)
+            .map_or(Self::Dark, |(palette, _)| palette)
+    }
 }
 
 struct Gallery {
@@ -51,6 +57,8 @@ struct Gallery {
     endings: Key,
     zoom: f32,
     language: Key,
+    layout: Key,
+    diff: Key,
 }
 impl Gallery {
     fn theme(&self) -> Theme {
@@ -87,46 +95,41 @@ fn panel(body: impl IntoElement) -> Element {
 
 impl View for Gallery {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
-        // Toolbar: segmented theme and density pickers.
-        let mut themes = row().gap(4.);
-        for (palette, name) in Palette::ALL {
-            themes = themes.child(
-                button(name)
-                    .variant(if self.palette == palette {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Quiet
-                    })
-                    .on_click(cx.listener(move |s, _, cx| {
-                        s.palette = palette;
-                        cx.set_theme(s.theme()).unwrap();
-                    })),
-            );
-        }
-        let mut densities = row().gap(4.);
-        for (compact, name) in [(false, "Balanced"), (true, "Compact")] {
-            densities = densities.child(
-                button(name)
-                    .variant(if self.compact == compact {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Quiet
-                    })
-                    .on_click(cx.listener(move |s, _, cx| {
-                        s.compact = compact;
-                        cx.set_theme(s.theme()).unwrap();
-                    })),
-            );
-        }
-        let toolbar = row()
+        // Window toolbar: theme and density pickers.
+        let palette = Palette::ALL
+            .into_iter()
+            .find(|(palette, _)| *palette == self.palette)
+            .map_or("Dark", |(_, name)| name);
+        let themes = segmented()
+            .equal_width(false)
+            .selected(palette)
+            .accessibility_label("Theme")
+            .options(Palette::ALL.map(|(_, name)| choice(name, name)))
+            .on_change(cx.listener(|s, e: &ChoiceEvent, cx| {
+                s.palette = Palette::from_key(&e.key);
+                cx.set_theme(s.theme()).unwrap();
+            }));
+        let densities = segmented()
+            .selected(if self.compact { "compact" } else { "balanced" })
+            .accessibility_label("Density")
+            .option(choice("balanced", "Balanced"))
+            .option(choice("compact", "Compact"))
+            .on_change(cx.listener(|s, e: &ChoiceEvent, cx| {
+                s.compact = e.key == Key::from("compact");
+                cx.set_theme(s.theme()).unwrap();
+            }));
+        let window_toolbar = toolbar()
+            .accessibility_label("Appearance")
+            .child(themes)
+            .child(separator().margin_x(8.))
+            .child(densities);
+        let top = row()
             .fill_width()
-            .gap(24.)
             .padding(12.)
             .background(ThemeColor::Surface)
             .border_bottom(1.)
             .border_color(ThemeColor::Divider)
-            .child(themes)
-            .child(densities);
+            .child(window_toolbar);
 
         // Commands shared by the menu items and keyboard shortcuts.
         let new = cx
@@ -208,6 +211,61 @@ impl View for Gallery {
                         .child(button("Export").leading_icon(Icon::DOWNLOAD).disabled(true)),
                 )
                 .child(icon_buttons),
+        );
+
+        // One Tab stop: arrow keys move between the items, skipping separators.
+        let tools = section(
+            "Toolbar",
+            column()
+                .gap(12.)
+                .child(
+                    toolbar()
+                        .accessibility_label("Editor")
+                        .child(
+                            icon_button(Icon::PLUS)
+                                .accessibility_label("New file")
+                                .on_click(cx.listener(|s, _, _| s.status = "New file".into())),
+                        )
+                        .child(
+                            icon_button(Icon::SEARCH)
+                                .accessibility_label("Search")
+                                .on_click(cx.listener(|s, _, _| s.status = "Search".into())),
+                        )
+                        .child(separator())
+                        .child(
+                            toggle_button(self.wrap, Icon::TEXT_WRAP)
+                                .accessibility_label("Wrap lines")
+                                .on_change(cx.listener(|s, e: &ToggleEvent, _| s.wrap = e.checked)),
+                        )
+                        .child(
+                            segmented()
+                                .selected(self.layout.clone())
+                                .accessibility_label("Layout")
+                                .option(choice("list", "List").icon(Icon::LIST))
+                                .option(choice("grid", "Grid").icon(Icon::LAYOUT_GRID))
+                                .on_change(
+                                    cx.listener(|s, e: &ChoiceEvent, _| s.layout = e.key.clone()),
+                                ),
+                        )
+                        .child(separator())
+                        .child(
+                            button("Run")
+                                .leading_icon(Icon::PLAY)
+                                .variant(ButtonVariant::Primary)
+                                .on_click(cx.listener(|s, _, _| s.status = "Running".into())),
+                        ),
+                )
+                .child(
+                    row().child(
+                        segmented()
+                            .selected(self.diff.clone())
+                            .accessibility_label("Diff view")
+                            .option(choice("split", "Split"))
+                            .option(choice("unified", "Unified"))
+                            .option(choice("raw", "Raw"))
+                            .on_change(cx.listener(|s, e: &ChoiceEvent, _| s.diff = e.key.clone())),
+                    ),
+                ),
         );
 
         let inputs = section(
@@ -558,6 +616,7 @@ impl View for Gallery {
                     .min_width(0.)
                     .gap(24.)
                     .child(buttons)
+                    .child(tools)
                     .child(inputs)
                     .child(controls)
                     .child(parts)
@@ -584,7 +643,7 @@ impl View for Gallery {
             .on_command(save)
             .on_command(close)
             .on_command(delete)
-            .child(toolbar)
+            .child(top)
             .child(
                 column()
                     .fill_width()
@@ -656,6 +715,8 @@ fn main() -> Result<(), ApplicationError> {
             endings: Key::from("lf"),
             zoom: 100.,
             language: Key::from("rust"),
+            layout: Key::from("list"),
+            diff: Key::from("split"),
         });
         cx.open_window(
             WindowOptions::new()

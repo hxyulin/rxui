@@ -43,7 +43,9 @@ pub struct RadioGroup {
 /// Creates an empty vertical radio group with no selection.
 pub fn radio_group() -> RadioGroup {
     RadioGroup {
-        root: column().gap(2.).accessibility_role(SemanticRole::Group),
+        root: column()
+            .gap(2.)
+            .accessibility_role(SemanticRole::RadioGroup),
         selected: None,
         options: Vec::new(),
         change: None,

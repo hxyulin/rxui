@@ -150,11 +150,13 @@ checkbox(self.wrap, "Wrap lines")
     .on_change(cx.listener(|this, e: &ToggleEvent, _| this.wrap = e.checked))
 ```
 
-`checkbox`, `switch`, `radio_group`, `slider` and `select` are controlled like
+`checkbox`, `switch`, `toggle_button`, `radio_group`, `segmented`, `slider` and
+`select` are controlled like
 text inputs: the application owns the value and accepts typed `ToggleEvent`,
 `ChoiceEvent` or `SliderEvent` proposals. They are built from buttons and popovers,
 so focus, Tab stops, Enter/Space, disabled state and theming behave the same way;
-radio groups add arrow-key roving focus, sliders capture drags and take
+radio groups and segmented controls add arrow-key roving focus, `toolbar` makes
+a row of controls one Tab stop with arrow keys between its items, sliders capture drags and take
 arrow/Page/Home/End keys, and selects open a list box with keyboard highlight and
 type-ahead. `progress_bar` and `spinner` show determinate or indeterminate
 progress, animated from the frame clock. `tooltip(cx, target, text)` adds a
