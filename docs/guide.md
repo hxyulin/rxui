@@ -3,7 +3,7 @@
 This guide tours RXUI feature by feature. RXUI is a declarative desktop UI
 framework with an embeddable wgpu renderer, with builder-based composition, persistent typed state,
 and context/closure updates. Taffy is the layout engine. The architecture is recorded in
-[the design document](next-design.md).
+[the design document](design.md).
 The [declarative core contract](declarative-core.md) describes the implemented
 hosting sequence, identity, resource reuse, input and current limitations.
 

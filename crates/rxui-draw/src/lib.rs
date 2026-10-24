@@ -1,5 +1,19 @@
-//! RXUI-owned wgpu drawing implementation.
-//! Drawing algorithms ported from Astrelis revision 4e360d5a3ad5dbe8bff11baf3eaa512a9241db21.
+#![doc = include_str!("../README.md")]
+//!
+//! ## Entry points
+//!
+//! - [`GraphicsContext::from_device_queue`] wraps the application's wgpu device
+//!   and queue.
+//! - [`Painter`] owns the shape, line, path, image and text renderers.
+//!   [`Painter::begin`] opens a [`PaintSession`] on one [`RenderPass`].
+//! - Text is prepared before painting: [`Painter::prepare_text`] turns a
+//!   [`TextLayout`] into a retained [`PreparedText`] that sessions draw.
+//! - Paths are built with [`Path::builder`] and tessellated once with
+//!   [`Painter::prepare_path`].
+//! - [`wgpu`] is re-exported so applications use the same version.
+//!
+//! Drawing algorithms are ported from Astrelis revision
+//! 4e360d5a3ad5dbe8bff11baf3eaa512a9241db21; `PORTING.md` records the provenance.
 
 // Browser wgpu handles are !Send/!Sync. Keep the same shared ownership types
 // as native builds; Arc does not imply crossing threads on this target.

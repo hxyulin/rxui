@@ -7,7 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-publish = false
+readme = "README.md"
+keywords = ["gui", "ui", "wgpu", "declarative", "desktop"]
+categories = ["gui", "graphics"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = ["layout"]
@@ -63,7 +68,7 @@ optional = true
 
 # XDG desktop portal Settings over the session bus.
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
-zbus = { version = "6.0.0", default-features = false, features = ["default-rt", "proxy"], optional = true }
+zbus = { version = "6.1.0", default-features = false, features = ["default-rt", "proxy"], optional = true }
 
 [dev-dependencies]
 winit.workspace = true

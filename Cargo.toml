@@ -4,7 +4,7 @@ members = ["crates/rxui", "crates/rxui-draw", "crates/rxui-host", "crates/dragle
 default-members = ["crates/rxui"]
 
 [workspace.package]
-version = "0.2.0-dev.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT OR Apache-2.0"
@@ -14,8 +14,8 @@ repository = "https://github.com/hxyulin/rxui"
 [workspace.dependencies]
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "dx12", "webgpu"] }
 winit = "0.30.13"
-rxui-draw = { path = "crates/rxui-draw" }
-rxui-host = { path = "crates/rxui-host" }
+rxui-draw = { path = "crates/rxui-draw", version = "0.1.0" }
+rxui-host = { path = "crates/rxui-host", version = "0.1.0" }
 draglet = { path = "crates/draglet", version = "0.1.0", default-features = false }
 taffy = { version = "0.15.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 profiling = { version = "1.0.18", default-features = false }

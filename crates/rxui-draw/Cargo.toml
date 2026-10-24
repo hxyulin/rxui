@@ -1,10 +1,18 @@
 [package]
 name = "rxui-draw"
+description = "GPU 2D drawing, paths and text rendering on wgpu, used by RXUI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
+authors.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["wgpu", "2d", "rendering", "text", "vector"]
+categories = ["graphics", "rendering"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 gles = ["wgpu/gles"]

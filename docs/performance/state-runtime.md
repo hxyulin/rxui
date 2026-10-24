@@ -51,7 +51,7 @@ This gives a useful initial regression baseline for the implemented state layer.
 It does not measure keyed reconciliation, Taffy layout, large domain models,
 description/listener construction, text shaping, rasterization, GPU preparation,
 painting, native event processing, presentation or end-to-end input latency.
-There is no measured comparison with the previous RXUI implementation. The next
+The next
 milestone should add consumer workloads that measure those costs separately,
 particularly shared models, unchanged descriptions and keyed list updates.
 

@@ -1,10 +1,18 @@
 [package]
 name = "rxui-host"
+description = "Native window and presentation lifecycle for RXUI on winit and wgpu"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
+authors.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["winit", "wgpu", "windowing", "desktop", "gui"]
+categories = ["gui"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 gles = ["rxui-draw/gles"]
@@ -13,12 +21,12 @@ desktop-drag = ["dep:draglet"]
 
 [dependencies]
 log = "0.4.34"
-rxui-draw = { path = "../rxui-draw" }
+rxui-draw = { workspace = true }
 profiling.workspace = true
 winit.workspace = true
 draglet = { workspace = true, optional = true, features = ["appkit", "win32"] }
 pollster = "1.0.1"
-x11rb = { version = "0.13.2", optional = true, features = ["shape", "xtest"] }
+x11rb = { version = "0.14.0", optional = true, features = ["shape", "xtest"] }
 
 [dev-dependencies]
 pollster = "1.0.1"

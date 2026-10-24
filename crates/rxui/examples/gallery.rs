@@ -207,7 +207,7 @@ impl View for Gallery {
                         .gap(8.)
                         .fill_width()
                         .child(
-                            text_input("0.2.0-dev.0")
+                            text_input(env!("CARGO_PKG_VERSION"))
                                 .flex_grow(1.)
                                 .min_width(0.)
                                 .read_only(true)

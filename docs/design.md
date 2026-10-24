@@ -1,10 +1,8 @@
-# RXUI next: architecture and application API
+# RXUI architecture and application API
 
-Status: agreed architectural direction; the headless state and initial declarative milestones are implemented
-on the new `main`, alongside the native host, scoped tasks and scrolling/clipping.
-Examples of advanced controls/platform services below remain design targets. Element/view signatures are implemented and exercised by consumers. They do not describe the previous RXUI
-release or preserved prototype. No compatibility layer is required for the
-existing retained, message-driven API.
+Status: agreed architectural direction. The headless state runtime, the declarative core, the
+native host, scoped tasks and scrolling/clipping are implemented.
+Examples of advanced controls/platform services below remain design targets. Element/view signatures are implemented and exercised by consumers.
 
 ## Implemented state contracts
 
@@ -108,8 +106,7 @@ event loop. Embedded hosts apply platform output explicitly through an adapter.
 See [wgpu embedding](wgpu-embedding.md) for the implemented API and resource lifetimes.
 
 The first native host targets the desktop platforms supported by rxui-host.
-A browser/mobile host needs its own initialization and lifecycle design; the
-current RXUI release's web support is not a claim about this rewrite.
+A browser or mobile host needs its own initialization and lifecycle design.
 
 ## Application-facing example
 
@@ -535,27 +532,10 @@ are later work. They must build on the same state/identity/access contracts.
 These refine the agreed model; they should be resolved through small consumer
 examples and headless tests before growing the framework.
 
-## Repository transition
-
-The rewrite now runs on a fresh orphan `main`. The previous tracked history at
-`ae5af66c8b202fbed42fd7fc566422c01df0065d` is preserved under `legacy/main`.
-The former source, working documentation, ignored lockfile and untracked
-prototype were also preserved in the local sibling export
-`rxui-legacy-20261006-100735`, with a `PRESERVATION.json` inventory. The prototype
-was moved there rather than imported into the new workspace. Remote `main`
-remains untouched. The initial new history should include this design and minimal
-workspace; importing old code is selective, with no compatibility obligation.
-
-The prototype supplies evidence for control editing, retained text, virtualization
-and accessibility. Its message/action API and explicit rectangles do not define
-the new declarative/state API.
-
 ## References and existing evidence
 
 - [Application hosting contract](application.md) and [drawing port provenance](../crates/rxui-draw/PORTING.md).
 - [Text input](text-input.md) and [text performance evidence](performance/text.md).
-- Existing isolated RXUI prototype: preserved in the local legacy export described
-  above; it is not part of the new workspace.
 - [Taffy](https://docs.rs/taffy/latest/taffy/): selected layout infrastructure.
 - [GPUI Entity](https://docs.rs/gpui/latest/gpui/struct.Entity.html): reference for
   typed persistent handles and context/closure access. RXUI's automatic

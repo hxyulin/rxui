@@ -102,11 +102,9 @@ fn main() -> Result<(), ApplicationError> {
 
 ## Status
 
-RXUI is a rewrite, released as `0.2.0`. See the [changelog](CHANGELOG.md).
-The API is not yet stable: expect breaking changes between minor versions while
-RXUI is below 1.0. The previous implementation is tagged
-[`v0.1`](https://github.com/hxyulin/rxui/tree/v0.1) and kept on the
-`legacy-v0.1` branch; there is no compatibility layer with its API.
+The current release is `0.1.0`; see the [changelog](CHANGELOG.md). The API is
+not yet stable: expect breaking changes between minor versions while RXUI is
+below 1.0.
 
 The native host runs on macOS, Windows and Linux. Native menus are macOS and
 Windows only.
@@ -130,12 +128,11 @@ cargo run -p rxui --example wgpu_app --no-default-features --features rendering
 
 ## Getting started
 
-RXUI requires Rust 1.98.1 or newer. RXUI is not on crates.io yet; depend on a
-release tag and enable the features you need:
+RXUI requires Rust 1.98.1 or newer. Add it with the features you need:
 
 ```toml
 [dependencies]
-rxui = { git = "https://github.com/hxyulin/rxui", tag = "v0.2.0", features = ["native"] }
+rxui = { version = "0.1", features = ["native"] }
 ```
 
 | Feature | Adds |
@@ -172,7 +169,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | Read | For |
 | --- | --- |
 | [Guide](docs/guide.md) | A tour of every feature area, with code |
-| [Design](docs/next-design.md) | The architecture of the rewrite and why it is shaped this way |
+| [Design](docs/design.md) | The architecture and why it is shaped this way |
 | [Declarative core](docs/declarative-core.md) | Hosting sequence, identity, reuse and input |
 | [Application](docs/application.md) and [async](docs/async.md) | Windows, close policy, custom hosts and tasks |
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |

@@ -1,7 +1,7 @@
 # Contributing to RXUI
 
 RXUI is a declarative desktop UI framework with an RXUI-owned wgpu renderer. Read the
-[guide](docs/guide.md) and the [design document](docs/next-design.md) first, then
+[guide](docs/guide.md) and the [design document](docs/design.md) first, then
 the contract for the area you are changing. Small fixes, new examples and clear
 bug reports are all useful contributions.
 
