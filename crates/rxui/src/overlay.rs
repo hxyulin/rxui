@@ -17,6 +17,7 @@
 //!     }
 //! }
 //! ```
+use crate::element::ElementKind;
 use crate::*;
 use std::{fmt, rc::Rc};
 
@@ -245,17 +246,144 @@ impl Element {
 }
 /// Builds a menu container. Up/Down/Home/End navigate eligible MenuItem descendants;
 /// Enter/Space use ordinary activation. Put it inside a popover for dismissal/focus.
+///
+/// When any [`menu_item`] child has an icon, every item child reserves the icon
+/// column, so captions align. Only direct children take part.
 pub fn menu() -> Element {
     let mut element = column().gap(1.).accessibility_role(SemanticRole::Menu);
     element.input.get_or_insert_with(Default::default).menu = true;
     element
 }
+/// A horizontal [`separator`] between groups of menu items, with 4 units of
+/// space above and below.
+///
+/// ```
+/// use rxui::prelude::*;
+/// # struct Cut; impl Command for Cut {}
+/// # struct Paste; impl Command for Paste {}
+/// # fn items(cut: &CommandAction<Cut>, paste: &CommandAction<Paste>) -> rxui::Element {
+/// menu().child(menu_item(cut)).child(menu_separator()).child(menu_item(paste))
+/// # }
+/// ```
+pub fn menu_separator() -> crate::Separator {
+    separator().horizontal().margin_y(4.)
+}
 /// Builds an item for a specific typed command, sharing caption/enabled state and
 /// callback with command buttons. Close the controlled menu in the command callback.
-pub fn menu_item<C: Command>(action: &CommandAction<C>) -> Element {
-    action
-        .button()
-        .accessibility_role(SemanticRole::MenuItem)
-        .list_row(false)
-        .fill_width()
+///
+/// The item is a menu row: an optional icon column ([`MenuItem::icon`]), the
+/// caption filling the remaining width, and the command's first shortcut as a
+/// trailing [`kbd`]. The shortcut is published as the item's keyboard shortcut
+/// rather than as part of its name.
+///
+/// ```
+/// use rxui::prelude::*;
+/// struct Save;
+/// impl Command for Save {}
+/// struct Editor { menu: bool }
+/// impl View for Editor {
+///     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+///         let save = cx.command(Save, |s, _, _| s.menu = false)
+///             .label("Save").shortcut(Shortcut::primary("s"));
+///         menu().child(menu_item(&save).icon(Icon::SAVE))
+///     }
+/// }
+/// ```
+pub fn menu_item<C: Command>(action: &CommandAction<C>) -> MenuItem {
+    MenuItem {
+        root: action
+            .button()
+            .accessibility_role(SemanticRole::MenuItem)
+            .list_row(false)
+            .fill_width(),
+        icon: None,
+        shortcut: action.action.shortcuts.first().cloned(),
+        enabled: action.is_enabled(),
+    }
+}
+/// One command row of a [`menu`]; see [`menu_item`].
+#[must_use = "add the item to a menu"]
+pub struct MenuItem {
+    root: Element,
+    icon: Option<crate::Icon>,
+    shortcut: Option<Shortcut>,
+    enabled: bool,
+}
+crate::standard::root_builders!(MenuItem);
+impl MenuItem {
+    /// Shows `icon` before the caption, in the caption's color.
+    pub fn icon(mut self, icon: crate::Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    /// [`ButtonVariant::Danger`] paints the caption and icon in
+    /// [`ThemeColor::Danger`], keeping the row's hover fill, for destructive
+    /// commands. Other variants paint an ordinary menu row.
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.root = self.root.variant(variant);
+        self
+    }
+}
+impl IntoElement for MenuItem {
+    fn into_element(self) -> Element {
+        let mut root = self.root;
+        if let ElementKind::Button { text, .. } = &mut root.kind
+            && let Some(text) = text.take()
+        {
+            root.children.push(label(text).flex_grow(1.));
+        }
+        if let Some(icon) = self.icon {
+            root.children.insert(0, crate::icon(icon));
+        }
+        if let Some(shortcut) = self.shortcut {
+            root = root.accessibility_shortcut(shortcut.label());
+            let mut cap = kbd(shortcut)
+                .accessibility_hidden(true)
+                // With the 6-unit gap, 24 units separate caption and shortcut.
+                .layout(|s| s.margin.left = taffy::prelude::length(18.));
+            if !self.enabled {
+                cap = cap.color(ThemeColor::TextDisabled);
+            }
+            root.children.push(cap);
+        }
+        root.style.flex_direction = taffy::FlexDirection::Row;
+        root.input.get_or_insert_with(Default::default).menu_item = true;
+        root.align_items(taffy::AlignItems::CENTER)
+            .gap(crate::icons::ICON_GAP)
+    }
+}
+impl Element {
+    /// Appends a child of a [`menu`]. The first item with an icon makes the
+    /// earlier items reserve the icon column, and later items without one
+    /// reserve it as they are added.
+    pub(crate) fn push_menu_child(&mut self, mut child: Element) {
+        let input = self.input.as_mut().expect("menu input properties");
+        match icon_column(&child) {
+            Some(true) if !input.menu_icons => {
+                input.menu_icons = true;
+                for item in &mut self.children {
+                    if icon_column(item) == Some(false) {
+                        item.children.insert(0, crate::icons::icon_space());
+                    }
+                }
+            }
+            Some(false) if input.menu_icons => {
+                child.children.insert(0, crate::icons::icon_space());
+            }
+            _ => {}
+        }
+        self.children.push(child);
+    }
+}
+/// Whether a [`menu_item`] has an icon column; None for other elements.
+fn icon_column(element: &Element) -> Option<bool> {
+    element
+        .input
+        .as_ref()
+        .is_some_and(|i| i.menu_item)
+        .then(|| {
+            element.children.first().is_some_and(|c| {
+                c.surface == crate::element::Surface::Part(crate::standard::Part::Icon)
+            })
+        })
 }

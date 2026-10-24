@@ -13,6 +13,8 @@ struct SaveFile;
 impl Command for SaveFile {}
 struct CloseWindow;
 impl Command for CloseWindow {}
+struct DeleteFile;
+impl Command for DeleteFile {}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Palette {
@@ -156,6 +158,12 @@ impl View for Gallery {
             })
             .label("Close window")
             .shortcut(Shortcut::primary("w"));
+        let delete = cx
+            .command(DeleteFile, |s, _, _| {
+                s.status = "Delete file".into();
+                s.menu_open = false;
+            })
+            .label("Delete file");
 
         // Icon buttons need an accessible name; their tooltip shows it too.
         let mut icon_buttons = row().gap(4.).align_items(AlignItems::CENTER);
@@ -286,10 +294,16 @@ impl View for Gallery {
                 popover(
                     self.menu_anchor.clone(),
                     menu()
-                        .child(menu_item(&new))
-                        .child(menu_item(&open))
-                        .child(menu_item(&save))
-                        .child(menu_item(&close)),
+                        .child(menu_item(&new).icon(Icon::PLUS))
+                        .child(menu_item(&open).icon(Icon::FOLDER_OPEN))
+                        .child(menu_item(&save).icon(Icon::SAVE))
+                        .child(menu_separator())
+                        .child(menu_item(&close))
+                        .child(
+                            menu_item(&delete)
+                                .icon(Icon::TRASH)
+                                .variant(ButtonVariant::Danger),
+                        ),
                 )
                 .key("file-menu")
                 .width(240.)
@@ -471,6 +485,63 @@ impl View for Gallery {
                 ),
         );
 
+        // Badges in every tone, key caps for shortcuts, and separators that
+        // follow their parent's direction.
+        let quiet = |icon: Icon, name: &'static str| {
+            icon_button(icon)
+                .accessibility_label(name)
+                .on_click(cx.listener(move |s, _, _| s.status = name.into()))
+        };
+        let parts = section(
+            "Badges, key caps and separators",
+            column()
+                .gap(12.)
+                .fill_width()
+                .child(
+                    row()
+                        .gap(6.)
+                        .align_items(AlignItems::CENTER)
+                        .child(badge("Draft"))
+                        .child(badge("Beta").tone(Tone::Accent))
+                        .child(badge("3 errors").tone(Tone::Danger))
+                        .child(badge("2 warnings").tone(Tone::Warning))
+                        .child(badge("Passing").tone(Tone::Success)),
+                )
+                .child(
+                    row()
+                        .gap(8.)
+                        .align_items(AlignItems::CENTER)
+                        .child(label("Command palette").color(ThemeColor::TextMuted))
+                        .child(kbd(Shortcut::primary("p").shift()))
+                        .child(separator())
+                        .child(label("Rename").color(ThemeColor::TextMuted))
+                        .child(kbd(Shortcut::new(
+                            KeyboardKey::Function(2),
+                            Modifiers::default(),
+                        )))
+                        .child(separator())
+                        .child(label("Back").color(ThemeColor::TextMuted))
+                        .child(kbd(Shortcut::new(
+                            KeyboardKey::ArrowLeft,
+                            Modifiers {
+                                alt: true,
+                                ..Default::default()
+                            },
+                        ))),
+                )
+                .child(separator())
+                .child(
+                    row()
+                        .gap(2.)
+                        .align_items(AlignItems::CENTER)
+                        .child(quiet(Icon::COPY, "Copy"))
+                        .child(quiet(Icon::CLIPBOARD, "Paste"))
+                        .child(separator().margin_x(4.))
+                        .child(quiet(Icon::SEARCH, "Find"))
+                        .child(quiet(Icon::TEXT_WRAP, "Wrap")),
+                ),
+        );
+
         let dialog = section(
             "Dialog",
             row()
@@ -489,6 +560,7 @@ impl View for Gallery {
                     .child(buttons)
                     .child(inputs)
                     .child(controls)
+                    .child(parts)
                     .child(menu_section)
                     .child(dialog),
             )
@@ -511,6 +583,7 @@ impl View for Gallery {
             .on_command(open)
             .on_command(save)
             .on_command(close)
+            .on_command(delete)
             .child(toolbar)
             .child(
                 column()

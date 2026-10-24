@@ -271,8 +271,8 @@ pub use native::{FileDropEvent, WindowGeometry, WindowInput, WindowInputResult};
 pub use native_menus::{NativeMenu, NativeMenuBar, NativeMenuRole};
 #[cfg(feature = "layout")]
 pub use overlay::{
-    AnchorHandle, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement, menu,
-    menu_item, modal, popover,
+    AnchorHandle, DismissEvent, DismissReason, MenuItem, Overlay, OverlayAnchor, PopoverPlacement,
+    menu, menu_item, menu_separator, modal, popover,
 };
 #[cfg(feature = "rendering")]
 pub use painting::{ComposedUi, ImageStats, LayerStats, UiPainter};
@@ -289,9 +289,9 @@ pub use semantics::{
 };
 #[cfg(feature = "layout")]
 pub use standard::{
-    Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
-    TOOLTIP_DELAY, Toggle, ToggleEvent, checkbox, choice, progress_bar, radio_group, select,
-    select_keyed, slider, spinner, switch, tooltip,
+    Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Separator, Slider, SliderEvent,
+    SliderPhase, TOOLTIP_DELAY, Toggle, ToggleEvent, Tone, badge, checkbox, choice, kbd,
+    progress_bar, radio_group, select, select_keyed, separator, slider, spinner, switch, tooltip,
 };
 #[cfg(feature = "layout")]
 pub use tabs::{
@@ -367,8 +367,9 @@ pub mod prelude {
     };
     pub use crate::{
         AnchorHandle, Command, CommandAction, CommandId, CommandInfo, CommandRegistration,
-        CommandStatus, DismissEvent, DismissReason, Overlay, OverlayAnchor, PopoverPlacement,
-        Shortcut, menu, menu_item, modal, popover, standard_commands,
+        CommandStatus, DismissEvent, DismissReason, MenuItem, Overlay, OverlayAnchor,
+        PopoverPlacement, Shortcut, menu, menu_item, menu_separator, modal, popover,
+        standard_commands,
     };
     pub use crate::{Animated, Easing, Interpolate, Spring, Transition};
     #[cfg(feature = "native")]
@@ -384,9 +385,10 @@ pub mod prelude {
         variable_list, virtual_list, virtual_tree,
     };
     pub use crate::{
-        Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Slider, SliderEvent, SliderPhase,
-        Toggle, ToggleEvent, checkbox, choice, progress_bar, radio_group, select, select_keyed,
-        slider, spinner, switch, tooltip,
+        Badge, Choice, ChoiceEvent, ProgressBar, RadioGroup, Select, Separator, Slider,
+        SliderEvent, SliderPhase, Toggle, ToggleEvent, Tone, badge, checkbox, choice, kbd,
+        progress_bar, radio_group, select, select_keyed, separator, slider, spinner, switch,
+        tooltip,
     };
     pub use crate::{
         ColorScheme, DialogButtonOrder, DialogButtonRole, FocusRingPolicy, ScrollbarStyle,

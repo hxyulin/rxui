@@ -1,7 +1,8 @@
 # Standard widgets: design
 
-Status: agreed design. Batch 1a (icons, icon placement and icon buttons) is
-implemented; see [icons.md](icons.md). Widgets land in four batches; this document
+Status: agreed design. Batch 1 is implemented: icons in [icons.md](icons.md),
+small parts in [controls.md](controls.md) and menu items in
+[overlays-and-commands.md](overlays-and-commands.md). Widgets land in four batches; this document
 records the intended API and behavior so each batch builds on the same contract. Once a
 widget is implemented, its contract moves to the matching per-area document
 (usually [controls.md](controls.md)); this file then keeps only open items.
@@ -29,31 +30,11 @@ widget is implemented, its contract moves to the matching per-area document
 
 ## Batch 1: foundations
 
-### Icons
-
-Implemented as batch 1a. The contract is in [icons.md](icons.md). Built-in icons
-are associated constants such as `Icon::SEARCH`.
-
-### Small parts
-
-```rust
-separator()                         // orientation follows a row/column parent, or .vertical()
-badge("3 errors").tone(Tone::Danger)
-kbd(Shortcut::primary("P").shift()) // ⌘⇧P on macOS, Ctrl+Shift+P elsewhere
-```
-
-- `Tone { Neutral, Accent, Danger, Warning, Success }` maps to foreground and
-  subtle-background tokens. Badges, callouts, toasts and field errors share it.
-- `separator` uses `Divider`, has the `Separator` role, and is not focusable.
-- `kbd` renders a `Shortcut` with platform conventions: modifier symbols on
-  macOS, `Ctrl+Shift+P` elsewhere. It has caption size, muted text, and a
-  bordered key-cap look.
-
-### Menu items
-
-`menu_item(action)` gains an optional leading icon (`.icon(Icon::FILE)`) and
-shows the command's shortcut automatically as a trailing `kbd`. Items in one menu
-reserve the icon column when any item has an icon, so captions align.
+Implemented. The contracts are in [icons.md](icons.md) (icons, icon placement
+and icon buttons), [controls.md](controls.md#separators) (`Tone`, `separator`,
+`badge` and `kbd`) and
+[overlays-and-commands.md](overlays-and-commands.md#focus-menus-and-modal-boundaries)
+(menu item icons, shortcuts, danger items and `menu_separator`).
 
 ## Batch 2: toolbar and choices
 

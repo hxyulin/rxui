@@ -264,13 +264,24 @@ impl Element {
     }
     /// Appends a child. Leaf elements reject children during preparation.
     pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.children.push(child.into_element());
+        let child = child.into_element();
+        if self.input.as_ref().is_some_and(|i| i.menu) {
+            self.push_menu_child(child);
+        } else {
+            self.children.push(child);
+        }
         self
     }
     /// Appends children in description order; dynamic collections should use stable keys.
     pub fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self {
-        self.children
-            .extend(children.into_iter().map(IntoElement::into_element));
+        let children = children.into_iter().map(IntoElement::into_element);
+        if self.input.as_ref().is_some_and(|i| i.menu) {
+            for child in children {
+                self.push_menu_child(child);
+            }
+        } else {
+            self.children.extend(children);
+        }
         self
     }
     /// Includes/excludes this element in focus navigation. Controls default true;
@@ -1057,7 +1068,8 @@ impl Element {
     /// within the row's list, otherwise [`crate::ThemeColor::RowSelectedInactive`].
     /// The list is the nearest focusable ancestor, or else the nearest scrolling
     /// one. Text keeps its color, the focus ring is drawn inside the row, and a
-    /// button row drops its variant's fill and border. Hover needs a pointer
+    /// button row drops its variant's fill and border; a
+    /// [`ButtonVariant::Danger`] row keeps its danger text. Hover needs a pointer
     /// target, such as a button or an element with a pointer listener.
     ///
     /// Without an explicit height or minimum height, the row is at least
@@ -1286,6 +1298,19 @@ impl Element {
         self.semantics
             .get_or_insert_with(Default::default)
             .description = Some(description.into());
+        self
+    }
+    /// Keyboard shortcut that performs this element's action, published to
+    /// assistive technology separately from the name. Menu items built with
+    /// [`crate::menu_item`] set it from their command's first shortcut.
+    ///
+    /// ```
+    /// use rxui::prelude::*;
+    /// let save = Shortcut::primary("s");
+    /// let item = button("Save").accessibility_shortcut(save.label());
+    /// ```
+    pub fn accessibility_shortcut(mut self, shortcut: impl Into<Arc<str>>) -> Self {
+        self.semantics.get_or_insert_with(Default::default).shortcut = Some(shortcut.into());
         self
     }
     /// Override inferred semantics, for example a heading, form or list container.

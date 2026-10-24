@@ -36,6 +36,10 @@ explicit accessible name; adjacent visual labels are not automatically associate
 An input's `.placeholder` is published as the AccessKit placeholder, separately
 from its name and value.
 `accessibility_description` supplies additional help separately from name/value.
+`accessibility_shortcut` publishes a keyboard shortcut, such as a menu item's,
+as the AccessKit keyboard shortcut rather than part of the name. The Separator
+role, used by `separator()`, publishes as AccessKit's Splitter role without a
+value or actions.
 Containers can be marked Group, Form, List or ListItem. Heading is initially
 published at level one. A role override describes an element; it does not add
 button handlers, editing or focus behavior to an ordinary container.

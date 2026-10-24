@@ -517,6 +517,39 @@ fn preset_and_generated_contrast_pairs_and_srgb_conversion_are_verified() {
     assert!(contrast(hc.palette().row_selected, hc.palette().surface) >= 3.);
 }
 #[test]
+fn tone_foregrounds_read_on_their_subtle_backgrounds_in_presets_and_generated_themes() {
+    let presets = [Theme::dark(), Theme::light(), Theme::high_contrast()];
+    for (i, theme) in presets.iter().chain(&generated()).enumerate() {
+        let c = theme.palette();
+        for tone in [
+            Tone::Neutral,
+            Tone::Accent,
+            Tone::Danger,
+            Tone::Warning,
+            Tone::Success,
+        ] {
+            let fg = theme.color(tone.foreground());
+            let bg = theme.color(tone.background());
+            // Status and accent foregrounds reach 3:1 on the bare surface, like
+            // icons. Their tint costs up to about a fifth of that on panels,
+            // popovers and the window canvas. Neutral text stays at 4.5:1.
+            let (bare, tinted) = if tone == Tone::Neutral {
+                (4.5, 4.5)
+            } else {
+                (3., 2.4)
+            };
+            let ratio = contrast(fg, c.surface);
+            assert!(ratio >= bare, "theme {i}: bare {tone:?} is {ratio:.2}:1");
+            for under in [c.background, c.surface, c.raised] {
+                let ratio = contrast(fg, over(bg, under));
+                assert!(ratio >= tinted, "theme {i}: {tone:?} is {ratio:.2}:1");
+            }
+            // The fill is visible against the surface it sits on.
+            assert_ne!(over(bg, c.surface), c.surface, "theme {i}: {tone:?}");
+        }
+    }
+}
+#[test]
 fn generated_themes_derive_states_shadows_and_reject_invalid_seeds() {
     let dark = Theme::generate(ThemeSeed::new(ColorScheme::Dark, rgb8(58, 111, 229)));
     let light = Theme::generate(ThemeSeed::new(ColorScheme::Light, rgb8(58, 111, 229)));
@@ -527,6 +560,8 @@ fn generated_themes_derive_states_shadows_and_reject_invalid_seeds() {
         assert_ne!(c.accent_hover, c.accent_pressed);
         assert_eq!(c.accent_text, [1.; 4]);
         assert!(c.row_hover[3] < 1. && c.danger_subtle[3] < 1.);
+        assert_eq!(&c.accent_subtle[..3], &c.accent[..3]);
+        assert_eq!(c.accent_subtle[3], c.danger_subtle[3]);
         assert_eq!(theme.sizes(), &ThemeMetrics::balanced());
     }
     assert_eq!(dark.elevations(), &ThemeShadows::dark());
@@ -553,6 +588,7 @@ fn new_semantic_tokens_resolve_in_every_preset() {
             (ThemeColor::Danger, c.danger),
             (ThemeColor::Warning, c.warning),
             (ThemeColor::Success, c.success),
+            (ThemeColor::AccentSubtle, c.accent_subtle),
             (ThemeColor::DangerSubtle, c.danger_subtle),
             (ThemeColor::WarningSubtle, c.warning_subtle),
             (ThemeColor::SuccessSubtle, c.success_subtle),

@@ -70,6 +70,9 @@ pub enum SemanticRole {
     Scrollbar,
     /// Adjustable pane separator.
     Splitter,
+    /// Static line between groups of content, such as a [`crate::separator`]. It is
+    /// neither focusable nor adjustable.
+    Separator,
     /// Two- or three-state check box; pair with `accessibility_checked`.
     CheckBox,
     /// One choice in a group; pair with `accessibility_checked`.
@@ -136,6 +139,7 @@ pub(crate) struct Properties {
     pub live: Option<LivePoliteness>,
     pub label: Option<Arc<str>>,
     pub description: Option<Arc<str>>,
+    pub shortcut: Option<Arc<str>>,
     pub value: Option<Arc<str>>,
     pub role: Option<SemanticRole>,
     pub hidden: bool,
@@ -200,6 +204,9 @@ pub struct SemanticNode<'a> {
     pub label: Option<&'a str>,
     /// Additional help/description, separate from the name and value.
     pub description: Option<&'a str>,
+    /// Keyboard shortcut that performs this element's action, in a human-friendly
+    /// form such as [`crate::Shortcut::label`]; separate from the name.
+    pub keyboard_shortcut: Option<&'a str>,
     /// Input placeholder hint, separate from the name and the (possibly empty) value.
     pub placeholder: Option<&'a str>,
     /// Full logical border bounds, preserving offscreen geometry.

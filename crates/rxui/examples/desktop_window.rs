@@ -114,9 +114,10 @@ impl View for Desktop {
                     request.anchor.clone(),
                     menu()
                         .on_command(close.clone())
-                        .child(menu_item(&new))
-                        .child(menu_item(&close))
-                        .child(menu_item(&restore)),
+                        .child(menu_item(&new).icon(Icon::PLUS))
+                        .child(menu_item(&close).icon(Icon::X))
+                        .child(menu_separator())
+                        .child(menu_item(&restore).icon(Icon::ROTATE_CCW)),
                 )
                 .key("actions-menu")
                 .width(240.)

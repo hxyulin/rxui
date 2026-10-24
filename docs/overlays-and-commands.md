@@ -160,8 +160,38 @@ document entities when menus/dialogs should be independent.
 
 `menu()` adds Menu semantics and arrow navigation. Up/Down wrap through enabled
 MenuItem descendants; Home/End jump to the endpoints. Enter/Space use ordinary
-button activation. `menu_item(&command)` adds a MenuItem role and quiet button
-styling. Command callbacks explicitly close the controlled menu. Submenus,
+button activation. Command callbacks explicitly close the controlled menu.
+
+```rust
+menu()
+    .child(menu_item(&open).icon(Icon::FOLDER_OPEN))
+    .child(menu_item(&save).icon(Icon::SAVE))
+    .child(menu_separator())
+    .child(menu_item(&delete).icon(Icon::TRASH).variant(ButtonVariant::Danger))
+```
+
+`menu_item(&command)` returns a `MenuItem`: a list row with the MenuItem role,
+the command's caption and enabled state. Its content is a row of an optional
+icon column (`.icon(Icon)`), the caption growing to fill the width, and the
+command's first shortcut as a trailing [key cap](controls.md#key-caps), 24 units
+after the caption. A disabled item shows its key cap in TextDisabled. The
+shortcut is published as the item's AccessKit keyboard shortcut, from
+`Element::accessibility_shortcut`; the key cap and icon are hidden, so the
+caption alone names the item.
+
+When any `menu_item` child of a `menu()` has an icon, every `menu_item` child
+reserves an icon-sized column, so captions align. `menu()` does this as children
+are added, including items added before the first one with an icon. Only direct
+children take part, so items nested in another container align among
+themselves only through their own `menu()`.
+
+`.variant(ButtonVariant::Danger)` paints a destructive item's caption and icon in
+Danger while keeping the row's RowHover fill, rather than a bordered danger
+button. A disabled danger item uses TextDisabled like other rows. Other variants
+paint an ordinary row. `menu_separator()` is a horizontal
+[separator](controls.md#separators) with 4 units above and below; arrow keys skip
+it. `MenuItem` also accepts `.key(...)`, `.accessibility_label(...)` and the
+other root builders of the standard controls. Submenus,
 checked/radio items, typeahead, hover-open delays, native OS menu bars and noninteractive
 tooltips remain separate extensions; this is an in-window popup menu foundation.
 
@@ -197,7 +227,10 @@ commands during preparation.
 
 Headless tests cover routing/availability, registration disposal/runtime checks,
 modifier/repeat/prevention, placement/focus/cancellation, nested dialogs, anchor
-scrolling and context requests. An AccessKit consumer validates lifted coordinates
+scrolling and context requests. Menu item tests cover icon column alignment,
+including items added before the first icon, the trailing shortcut, danger paint
+and hover, the published shortcut apart from the name, separators and arrow keys
+across them. An AccessKit consumer validates lifted coordinates
 and modal trees. A native GPU readback checks clipping/z/opacity escape, backdrop
 pixels, 4x MSAA, 2x DPI and caller viewport/scissor preservation. Native macOS
 computer-use checks exercise menus, keyboard activation, context-targeted closing,

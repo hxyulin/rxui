@@ -1,7 +1,8 @@
 # Standard form controls
 
 Status: check boxes, switches, radio groups, sliders, progress bars, spinners,
-selects and hover/keyboard-focus tooltips are implemented with the default layout feature.
+selects, hover/keyboard-focus tooltips, separators, badges and key caps are
+implemented with the default layout feature.
 `rendering` paints their vector marks; `accessibility` publishes them through
 AccessKit. Every control is composed from existing primitives, so focus, input
 routing, theming and semantics follow the same contracts as buttons and popovers.
@@ -182,6 +183,75 @@ in a loop should wrap keyed targets. The delay counts frames from the host clock
 the first fresh frame after the pointer enters starts it, and the owning view is
 evaluated once per frame until the tooltip shows.
 
+## Separators
+
+```rust
+row().gap(4.).child(button("Cut")).child(separator()).child(button("Find"))
+column().child(label("General")).child(separator()).child(label("Advanced"))
+```
+
+`separator()` is a 1-unit Divider line with the `Separator` role. It is not
+focusable. Its orientation follows its flex parent without inspecting it: a
+1-unit flex basis sizes the line along the parent's main axis. In a column it is
+a horizontal line across the content width. In a row it is a vertical line
+`ThemeMetrics::icon_size` tall (16 units balanced, 14 compact), centered.
+
+`.horizontal()` fixes a 1-unit line that stretches across a column, minus its
+margins, so `.horizontal().margin_x(8.)` insets it. `.vertical()` fixes a 1-unit
+wide, icon-tall line; give it a height for a longer one. Use one of them outside
+a flex row or column, such as in a stack. `.margin(...)`, `.margin_x(...)` and
+`.margin_y(...)` add spacing, and the root builders above also apply.
+
+## Badges
+
+```rust
+row().gap(6.)
+    .child(badge("Draft"))
+    .child(badge("3 errors").tone(Tone::Danger))
+```
+
+`badge(text)` is a pill of medium-weight Caption text with 1 unit of vertical and
+7 units of horizontal padding. It is not focusable. `.tone(Tone)` picks its
+colors; the default is `Tone::Neutral`.
+
+`Tone` is shared with the later callouts, toasts and field errors:
+
+| Tone | Foreground | Background |
+| --- | --- | --- |
+| Neutral | TextMuted | ControlHover |
+| Accent | Focus | AccentSubtle |
+| Danger | Danger | DangerSubtle |
+| Warning | Warning | WarningSubtle |
+| Success | Success | SuccessSubtle |
+
+Neutral uses the hovered control fill because the resting Control fill equals
+the light theme's surface, which would hide the pill. Accent uses the Focus
+color as its foreground: it is the accent's hue adjusted to 3:1 against the
+window surfaces, which the accent fill does not reach for yellow accents in
+light themes.
+
+A badge is a label, so a button or tab containing it includes its text in its
+accessible name: a tab captioned "Problems" with a badge "3" is named
+"Problems 3". Hide it with `.accessibility_hidden(true)` when the parent's name
+already says what it shows.
+
+## Key caps
+
+```rust
+row().gap(6.).child(label("Command palette")).child(kbd(Shortcut::primary("p").shift()))
+```
+
+`kbd(shortcut)` shows a `Shortcut` as Caption text in TextMuted on the
+Background fill, inside a 1-unit Border outline with the theme's small radius.
+Its text is `Shortcut::label()`. On macOS that is the modifier symbols in the
+order ⌃⌥⇧⌘ followed by the key, such as `⇧⌘P`. Elsewhere it is
+`Ctrl+Alt+Shift+Super+P` with the modifiers held. Character keys are uppercase.
+Named keys use symbols on macOS (`↩`, `⎋`, `⇥`, `⌫`, `⌦`, arrows) and words
+elsewhere (`Enter`, `Esc`, `Tab`, `Backspace`, `Del`, `Left`). Function keys are
+`F1`, `F2` and so on in both styles. Assistive technology reads the text of a standalone key
+cap. [Menu items](overlays-and-commands.md) show their command's shortcut with a
+key cap and publish it as a keyboard shortcut instead.
+
 ## Theming
 
 Controls use semantic tokens only, so they follow `Theme::dark()`,
@@ -257,7 +327,12 @@ controls relationships, timed multi-character type-ahead in both states,
 Enter/Escape/Tab, hover and click choice, disabled options and consumed outside
 presses; tooltip delay by frame clock, focus preservation, pointer transparency,
 press/Escape/leave hiding and description publication; tooltip layout adoption;
-and preset contrast. An AccessKit test checks roles, toggled state, numeric step
+and preset contrast. Separator tests cover orientation in rows and columns at
+both densities, the fixed orientations with margins, the role and Tab exclusion.
+Badge tests cover each tone's tokens in every preset, the caption pill and the
+parent name. Shortcut tests cover modifier order, named keys, function keys and
+both platform styles; key cap tests cover the paint. A theme test checks each
+tone's contrast in every preset and generated theme. An AccessKit test checks roles, toggled state, numeric step
 and actions, expanded state, and Increment/Click round trips. An opt-in GPU test
 reads back indicator, tick, switch knob, slider and progress pixels in all three
 presets.

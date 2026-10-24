@@ -5,6 +5,13 @@
 use rxui::prelude::*;
 use std::time::Duration;
 
+struct Rename;
+impl Command for Rename {}
+struct Duplicate;
+impl Command for Duplicate {}
+struct Delete;
+impl Command for Delete {}
+
 struct Demo {
     anchor: AnchorHandle,
     menu: bool,
@@ -121,10 +128,26 @@ impl View for Demo {
                 label("Layout never animates implicitly; the drawer and meter use cx.animate.")
                     .color(ThemeColor::TextMuted),
             );
+        // The menu's commands; their shortcuts work while the window has focus.
+        let rename = cx
+            .command(Rename, |s, _, _| s.menu = false)
+            .label("Rename")
+            .shortcut(Shortcut::new(
+                KeyboardKey::Function(2),
+                Modifiers::default(),
+            ));
+        let duplicate = cx
+            .command(Duplicate, |s, _, _| s.menu = false)
+            .label("Duplicate")
+            .shortcut(Shortcut::primary("d"));
+        let delete = cx.command(Delete, |s, _, _| s.menu = false).label("Delete");
         let mut root = row()
             .fill_width()
             .fill_height()
             .background(ThemeColor::Background)
+            .on_command(rename.clone())
+            .on_command(duplicate.clone())
+            .on_command(delete.clone())
             .child(
                 column()
                     .width(drawer)
@@ -137,23 +160,21 @@ impl View for Demo {
             )
             .child(column().padding(24.).gap(16.).child(controls));
         if self.menu {
-            let close = |label: &'static str| {
-                button(label)
-                    .list_row(false)
-                    .fill_width()
-                    .accessibility_role(SemanticRole::MenuItem)
-                    .on_click(cx.listener(|s, _, _| s.menu = false))
-            };
             root = root.child(
                 popover(
                     self.anchor.clone(),
                     menu()
-                        .child(close("Rename"))
-                        .child(close("Duplicate"))
-                        .child(close("Delete")),
+                        .child(menu_item(&rename).icon(Icon::PENCIL))
+                        .child(menu_item(&duplicate).icon(Icon::COPY))
+                        .child(menu_separator())
+                        .child(
+                            menu_item(&delete)
+                                .icon(Icon::TRASH)
+                                .variant(ButtonVariant::Danger),
+                        ),
                 )
                 .key("menu")
-                .width(180.)
+                .width(200.)
                 .accessibility_label("Actions")
                 .on_dismiss(cx.listener(|s, _: &DismissEvent, _| s.menu = false)),
             );

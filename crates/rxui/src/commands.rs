@@ -113,6 +113,94 @@ impl Shortcut {
     pub(crate) fn matches(&self, event: &KeyEvent) -> bool {
         self.modifiers == event.modifiers && same_key(&self.key, &event.key)
     }
+    /// The chord as this platform's menus show it: modifier symbols in the order
+    /// ⌃⌥⇧⌘ followed by the key on macOS (`⌘⇧P`), and `Ctrl+Alt+Shift+Super+P`
+    /// elsewhere. Character keys are uppercase and named keys use their usual
+    /// labels, such as `↩` or `Enter` and `F2`.
+    ///
+    /// ```
+    /// use rxui::prelude::*;
+    /// let palette = Shortcut::primary("p").shift();
+    /// let expected = if cfg!(target_os = "macos") { "⇧⌘P" } else { "Ctrl+Shift+P" };
+    /// assert_eq!(palette.label(), expected);
+    /// ```
+    pub fn label(&self) -> String {
+        self.format(cfg!(target_os = "macos"))
+    }
+    /// [`Self::label`] with macOS conventions or the Windows and Linux ones.
+    pub(crate) fn format(&self, mac: bool) -> String {
+        use KeyboardKey as K;
+        let m = self.modifiers;
+        let key: std::borrow::Cow<'_, str> = match &self.key {
+            K::Character(c) if c == " " => "Space".into(),
+            K::Character(c) => c.to_uppercase().into(),
+            K::Function(n) => format!("F{n}").into(),
+            K::Other(name) => name.as_str().into(),
+            key => {
+                let (symbol, word) = match key {
+                    K::Escape => ("⎋", "Esc"),
+                    K::Enter => ("↩", "Enter"),
+                    K::Space => ("Space", "Space"),
+                    K::Tab => ("⇥", "Tab"),
+                    K::ArrowLeft => ("←", "Left"),
+                    K::ArrowRight => ("→", "Right"),
+                    K::ArrowUp => ("↑", "Up"),
+                    K::ArrowDown => ("↓", "Down"),
+                    K::Home => ("↖", "Home"),
+                    K::End => ("↘", "End"),
+                    K::PageUp => ("⇞", "PgUp"),
+                    K::PageDown => ("⇟", "PgDn"),
+                    K::Backspace => ("⌫", "Backspace"),
+                    K::Delete => ("⌦", "Del"),
+                    K::Insert => ("Insert", "Ins"),
+                    K::Shift => ("⇧", "Shift"),
+                    K::Control => ("⌃", "Ctrl"),
+                    K::Alt => ("⌥", "Alt"),
+                    K::Super | K::Meta => ("⌘", "Super"),
+                    K::CapsLock => ("⇪", "Caps Lock"),
+                    K::ContextMenu => ("Menu", "Menu"),
+                    K::Pause => ("Pause", "Pause"),
+                    K::PrintScreen => ("Print Screen", "PrtSc"),
+                    K::AltGraph => ("AltGr", "AltGr"),
+                    K::Fn => ("fn", "Fn"),
+                    K::FnLock => ("Fn Lock", "Fn Lock"),
+                    K::Hyper => ("Hyper", "Hyper"),
+                    K::Symbol => ("Symbol", "Symbol"),
+                    K::SymbolLock => ("Symbol Lock", "Symbol Lock"),
+                    K::NumLock => ("Num Lock", "Num Lock"),
+                    K::ScrollLock => ("Scroll Lock", "Scroll Lock"),
+                    K::Character(_) | K::Function(_) | K::Other(_) => unreachable!(),
+                };
+                if mac { symbol } else { word }.into()
+            }
+        };
+        if mac {
+            let mut text = String::new();
+            for (held, symbol) in [
+                (m.control, "⌃"),
+                (m.alt, "⌥"),
+                (m.shift, "⇧"),
+                (m.meta, "⌘"),
+            ] {
+                if held {
+                    text.push_str(symbol);
+                }
+            }
+            text + &key
+        } else {
+            let mut parts: Vec<&str> = [
+                (m.control, "Ctrl"),
+                (m.alt, "Alt"),
+                (m.shift, "Shift"),
+                (m.meta, "Super"),
+            ]
+            .into_iter()
+            .filter_map(|(held, name)| held.then_some(name))
+            .collect();
+            parts.push(&key);
+            parts.join("+")
+        }
+    }
 }
 fn same_key(a: &KeyboardKey, b: &KeyboardKey) -> bool {
     match (a, b) {

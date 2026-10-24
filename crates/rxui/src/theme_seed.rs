@@ -98,6 +98,7 @@ impl Theme {
         let danger = status([0.64, 0.2, 23.], [0.58, 0.2, 25.]);
         let warning = status([0.79, 0.16, 72.], [0.64, 0.14, 70.]);
         let success = status([0.65, 0.14, 157.], [0.54, 0.12, 160.]);
+        let accent_fill = accent.step(0.);
         let colors = ThemeColors {
             background,
             surface,
@@ -114,7 +115,7 @@ impl Theme {
             input,
             input_border: n(pick(0.33, 0.855)),
             divider: n(pick(0.27, 0.925)),
-            accent: accent.step(0.),
+            accent: accent_fill,
             accent_hover: accent.step(HOVER_STEP),
             accent_pressed: accent.step(PRESSED_STEP),
             accent_text: accent.text,
@@ -133,6 +134,7 @@ impl Theme {
             danger,
             warning,
             success,
+            accent_subtle: subtle(accent_fill),
             danger_subtle: subtle(danger),
             warning_subtle: subtle(warning),
             success_subtle: subtle(success),

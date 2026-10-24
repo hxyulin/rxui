@@ -80,6 +80,9 @@ pub enum ThemeColor {
     Warning,
     /// Success foreground, also used for borders and icons.
     Success,
+    /// Tinted, possibly translucent, accent background for accent badges and
+    /// banners.
+    AccentSubtle,
     /// Tinted, possibly translucent, danger background for badges, banners and the
     /// hovered danger button.
     DangerSubtle,
@@ -193,6 +196,8 @@ pub struct ThemeColors {
     pub warning: Color,
     /// Success foreground.
     pub success: Color,
+    /// Tinted accent background; may be translucent.
+    pub accent_subtle: Color,
     /// Tinted danger background; may be translucent.
     pub danger_subtle: Color,
     /// Tinted warning background; may be translucent.
@@ -201,7 +206,7 @@ pub struct ThemeColors {
     pub success_subtle: Color,
 }
 impl ThemeColors {
-    fn values(&self) -> [Color; 33] {
+    fn values(&self) -> [Color; 34] {
         [
             self.background,
             self.surface,
@@ -233,6 +238,7 @@ impl ThemeColors {
             self.danger,
             self.warning,
             self.success,
+            self.accent_subtle,
             self.danger_subtle,
             self.warning_subtle,
             self.success_subtle,
@@ -591,6 +597,7 @@ impl Theme {
                     danger: hex(0xD93036),
                     warning: hex(0xC27C0E),
                     success: hex(0x218358),
+                    accent_subtle: tint(0x2F6BEB, 31),
                     danger_subtle: tint(0xD93036, 31),
                     warning_subtle: tint(0xC27C0E, 31),
                     success_subtle: tint(0x218358, 31),
@@ -630,6 +637,7 @@ impl Theme {
                     danger: hex(0xE5484D),
                     warning: hex(0xF5A524),
                     success: hex(0x30A46C),
+                    accent_subtle: tint(0x3A6FE5, 41),
                     danger_subtle: tint(0xE5484D, 41),
                     warning_subtle: tint(0xF5A524, 41),
                     success_subtle: tint(0x30A46C, 41),
@@ -672,6 +680,7 @@ impl Theme {
                         danger: hex(0xFF4040),
                         warning: hex(0xFF9900),
                         success: hex(0x00E060),
+                        accent_subtle: hex(0x403500),
                         danger_subtle: hex(0x400000),
                         warning_subtle: hex(0x402600),
                         success_subtle: hex(0x003818),
@@ -815,6 +824,7 @@ impl Theme {
             ThemeColor::Danger => c.danger,
             ThemeColor::Warning => c.warning,
             ThemeColor::Success => c.success,
+            ThemeColor::AccentSubtle => c.accent_subtle,
             ThemeColor::DangerSubtle => c.danger_subtle,
             ThemeColor::WarningSubtle => c.warning_subtle,
             ThemeColor::SuccessSubtle => c.success_subtle,

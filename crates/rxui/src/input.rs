@@ -680,6 +680,10 @@ pub(crate) struct InputProperties {
     pub measured_row: Option<crate::virtual_rows::MeasuredRow>,
     pub overlay: Option<Box<crate::overlay::Properties>>,
     pub menu: bool,
+    /// A menu with an item that has an icon, so every item reserves the column.
+    pub menu_icons: bool,
+    /// A row built by `menu_item`, which can reserve an icon column.
+    pub menu_item: bool,
     pub raw_keyboard: bool,
     pub commands: Vec<crate::commands::Action>,
     pub dock: Option<Box<crate::dock_view::Metadata>>,

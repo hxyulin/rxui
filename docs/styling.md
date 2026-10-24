@@ -261,7 +261,8 @@ RowSelectedInactive while focus is outside their list. Tabs are unboxed: muted
 captions, with the selected tab in the text color over a two-unit accent
 indicator, on a strip separated from its panels by a Divider line. Scrollbars
 have no track fill and a slim, translucent TextMuted thumb that strengthens while
-hovered or dragged; split and dock dividers are a one-unit Divider line.
+hovered or dragged; split and dock dividers are a one-unit Divider line, as are
+[separators](controls.md#separators).
 
 Light shadows match CSS `0 1px 2px`, `0 6px 20px` and `0 16px 40px` in
 `rgba(16, 24, 40, a)` at 6%, 18% and 22% for the control, popover and modal
@@ -295,13 +296,16 @@ two blends nearly agree, so the dark alphas are unconverted. Custom
 | Row hover | white at 12/255 | black at 10/255 | #1F1F1F |
 | Row selected / inactive | #22314F / #26282D | #E3ECFF / #EDEEF0 | #0050FF / #3A3A3A |
 | Danger / warning / success | #E5484D / #F5A524 / #30A46C | #D93036 / #C27C0E / #218358 | #FF4040 / #FF9900 / #00E060 |
+| Accent, danger, warning and success subtle | Their colors at 41/255 | Their colors at 31/255 | #403500 / #400000 / #402600 / #003818 |
 
 Tests verify, for every preset and for generated themes, main text at least 4.5:1
 against background, surface, raised, control, hover, pressed and row fills;
 secondary text at least 4.5:1 against background and surface; focus at least 3:1
 against background, surface, control and input fills; accent text at least 4.5:1
 on the accent, its hover and pressed states; selected text at least 4.5:1; and
-status colors at least 3:1 against the surface. Button and input borders,
+status colors at least 3:1 against the surface. [Tone](controls.md#badges)
+foregrounds keep at least 2.4:1 on their subtle fills over the background,
+surface and raised fills, and neutral text 4.5:1. Button and input borders,
 dividers and disabled text are deliberately softer in light and dark, so
 check boxes, radios, switches and rails outline themselves with Secondary text
 instead; use `Theme::high_contrast()` when every boundary must stand out.
@@ -334,7 +338,8 @@ until it has 3:1 against the background, surface, control and input fills.
 lightness and chroma and take the accent's hue. Their chroma is scaled down when
 the accent is less colorful than the theme's own, so graphite gives neutral
 selections. Each then moves away from its text (`selection_text`, or `text`
-for rows) until that reads at 4.5:1. An accent equal to the theme's reproduces
+for rows) until that reads at 4.5:1. `accent_subtle` takes the new accent at
+the theme's own translucency. An accent equal to the theme's reproduces
 its tokens. Other tokens, including status colors, keep their theme values.
 
 These are design targets informed by [W3C text contrast guidance](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum),

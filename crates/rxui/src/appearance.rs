@@ -195,6 +195,8 @@ fn with_accent(theme: &Theme, accent: Color) -> Theme {
         p.accent_hover = fill.step(HOVER_STEP);
         p.accent_pressed = fill.step(PRESSED_STEP);
         p.accent_text = fill.text;
+        // The tint keeps the theme's own translucency.
+        p.accent_subtle = [p.accent[0], p.accent[1], p.accent[2], p.accent_subtle[3]];
         p.selection = retint(p.selection, p.selection_text);
         p.row_selected = retint(p.row_selected, p.text);
         p.row_selected_inactive = retint(p.row_selected_inactive, p.text);
@@ -282,6 +284,10 @@ mod tests {
                     assert!(contrast(c.focus, fill) >= 3., "{case}");
                 }
                 assert!(contrast(c.selection_text, c.selection) >= 4.5, "{case}");
+                // The accent tint follows the accent at the preset's translucency.
+                let tint = c.accent_subtle;
+                assert_eq!(&tint[..3], &c.accent[..3], "{case}");
+                assert_eq!(tint[3], preset.palette().accent_subtle[3], "{case}");
                 for row in [c.row_selected, c.row_selected_inactive] {
                     assert!(contrast(c.text, row) >= 4.5, "{case}");
                 }
@@ -309,6 +315,7 @@ mod tests {
                 (a.accent, b.accent),
                 (a.selection, b.selection),
                 (a.row_selected, b.row_selected),
+                (a.accent_subtle, b.accent_subtle),
             ] {
                 assert!(
                     x.iter().zip(y).all(|(x, y)| (x - y).abs() < 0.01),

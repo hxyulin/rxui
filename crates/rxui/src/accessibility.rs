@@ -362,6 +362,9 @@ impl AccessKitTree {
             if let Some(description) = semantic.description {
                 node.set_description(description);
             }
+            if let Some(shortcut) = semantic.keyboard_shortcut {
+                node.set_keyboard_shortcut(shortcut);
+            }
             if let Some(level) = semantic.level {
                 node.set_level(level);
             } else if semantic.role == SemanticRole::Heading {
@@ -766,7 +769,9 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::MultilineTextInput => Role::MultilineTextInput,
         SemanticRole::PasswordInput => Role::PasswordInput,
         SemanticRole::Scrollbar => Role::ScrollBar,
-        SemanticRole::Splitter => Role::Splitter,
+        // AccessKit, like ARIA's separator, uses one role for both; only the
+        // adjustable splitter publishes a value and actions.
+        SemanticRole::Splitter | SemanticRole::Separator => Role::Splitter,
         SemanticRole::CheckBox => Role::CheckBox,
         SemanticRole::RadioButton => Role::RadioButton,
         SemanticRole::Switch => Role::Switch,

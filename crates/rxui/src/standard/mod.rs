@@ -1,5 +1,6 @@
 //! Standard form controls: check boxes, switches, radio groups, sliders, progress
-//! indicators, selects and tooltips.
+//! indicators, selects and tooltips, and the small parts they share: separators,
+//! badges and key caps.
 //!
 //! Every control is controlled. The application owns the value and receives typed
 //! proposals through a [`Listener`], exactly like `text_input` or `tabs`. Controls are
@@ -36,6 +37,7 @@ mod progress;
 mod radio;
 mod select;
 mod slider;
+mod small;
 mod toggle;
 mod tooltip;
 
@@ -43,11 +45,14 @@ pub use progress::{ProgressBar, progress_bar, spinner};
 pub use radio::{RadioGroup, radio_group};
 pub use select::{Select, select, select_keyed};
 pub use slider::{Slider, SliderEvent, SliderPhase, slider};
+pub use small::{Badge, Separator, Tone, badge, kbd, separator};
 pub use toggle::{Toggle, checkbox, switch};
 pub use tooltip::{TOOLTIP_DELAY, tooltip};
 
 #[cfg(all(test, feature = "rendering"))]
 mod gpu_tests;
+#[cfg(test)]
+mod small_tests;
 #[cfg(test)]
 mod tests;
 
@@ -140,7 +145,8 @@ pub(crate) fn indicator_colors(on: bool, disabled: bool) -> [ThemeColor; 3] {
 /// A part of a standard control sized from [`crate::ThemeMetrics`] while its
 /// theme resolves, so density switches resize it the way they resize buttons.
 /// Check boxes and radios follow `indicator_size`; switches, slider thumbs and
-/// rails and progress bars follow the switch metrics; icons follow `icon_size`.
+/// rails and progress bars follow the switch metrics; icons and separators in a
+/// row follow `icon_size`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
     /// Check box square.
@@ -167,6 +173,10 @@ pub(crate) enum Part {
     Icon,
     /// A square icon button, `input_height` on each side.
     IconButton,
+    /// A separator, `icon_size` tall when it runs across a row.
+    Separator,
+    /// A key cap, rounded with `radius_small`.
+    KeyCap,
 }
 impl Part {
     /// Switch knob side: five eighths of the track height.
@@ -186,7 +196,8 @@ impl Part {
         let s = m.indicator_size;
         match self {
             Self::CheckBox => s * 3. / 14.,
-            Self::Mark | Self::SliderBody | Self::Icon => 0.,
+            Self::Mark | Self::SliderBody | Self::Icon | Self::Separator => 0.,
+            Self::KeyCap => m.radius_small,
             Self::IconButton => m.radius,
             Self::Radio => s / 2.,
             Self::RadioDot => s * 3. / 14.,
@@ -214,6 +225,8 @@ impl Part {
             Self::Progress => [None, Some(Self::progress(m))],
             Self::Icon => [Some(m.icon_size); 2],
             Self::IconButton => [Some(m.input_height); 2],
+            Self::Separator => [None, Some(m.icon_size)],
+            Self::KeyCap => [None; 2],
         };
         if let Some(width) = width
             && overrides & 2 == 0

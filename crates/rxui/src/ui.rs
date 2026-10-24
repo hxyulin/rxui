@@ -744,6 +744,10 @@ fn default_paint(
         }
         Surface::Row { selected } => {
             paint.background = selected.then_some(c.row_selected);
+            // A danger row, such as a destructive menu item, keeps the row fills.
+            if button && element.button_variant == crate::ButtonVariant::Danger {
+                paint.color = c.danger;
+            }
             paint.radii = [m.radius_small; 4];
             // Rows abut their list's clip, so the ring stays inside them.
             paint.focus_offset = -paint.focus_width;
@@ -4161,6 +4165,7 @@ impl<T: View> Ui<T> {
             role,
             label,
             description: properties.and_then(|p| p.description.as_deref()),
+            keyboard_shortcut: properties.and_then(|p| p.shortcut.as_deref()),
             placeholder: node.input_options().and_then(|o| o.placeholder.as_deref()),
             bounds: node.bounds,
             content_bounds: node.content_bounds,

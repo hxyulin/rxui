@@ -1,7 +1,7 @@
 //! A file tree with variable row heights: folders expand and collapse in place,
 //! and changes above the viewport keep the visible rows still. Mouse-wheel steps
 //! and reveals scroll smoothly until a button turns that off.
-use rxui::prelude::*;
+use rxui::{prelude::*, taffy::prelude::JustifyContent};
 const FOLDERS: usize = 2_000;
 const FOLDER_HEIGHT: f32 = 34.;
 const FILE_HEIGHT: f32 = 24.;
@@ -120,12 +120,15 @@ impl View for Tree {
             .child(
                 variable_list(&self.rows, &self.scroll, cx, |index| {
                     match self.items[index] {
-                        Item::Folder(f) => button(format!(
-                            "{} src{f}",
-                            if self.expanded[f] { "▾" } else { "▸" }
-                        ))
-                        .list_row(false)
-                        .on_click(cx.listener(move |s, _, _| s.toggle(f))),
+                        Item::Folder(f) => button(format!("src{f}"))
+                            .leading_icon(if self.expanded[f] {
+                                Icon::CHEVRON_DOWN
+                            } else {
+                                Icon::CHEVRON_RIGHT
+                            })
+                            .justify_content(JustifyContent::START)
+                            .list_row(false)
+                            .on_click(cx.listener(move |s, _, _| s.toggle(f))),
                         Item::File(f, i) => {
                             let name = label(format!("file{i}.rs"));
                             let content = if has_diagnostic(f, i) {
@@ -137,8 +140,10 @@ impl View for Tree {
                             } else {
                                 column().child(name)
                             };
-                            // Indented past the folder's disclosure triangle.
-                            content.padding_y(4.).padding_left(28.).padding_right(8.)
+                            // Indented past the folder's disclosure chevron, so file
+                            // names line up with folder names: the row padding, the
+                            // icon and the 6-unit gap.
+                            content.padding_y(4.).padding_left(30.).padding_right(8.)
                         }
                     }
                 })
