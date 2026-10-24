@@ -85,9 +85,11 @@ and tests isolated RXUI layout, accessibility, tasks, image-decoding and renderi
 feature subsets on Linux. Feature jobs select only `-p rxui` so they do not repeat
 unrelated workspace packages. The Linux workspace job also runs draglet and host
 X11 protocol tests on an isolated Xvfb display and verifies draglet's standalone
-package. Windows uses bundled LLD, no test debug information and two build jobs
-to bound linking memory without dropping test coverage. The GPU workflow selects
-only `rxui` and `rxui-draw`; it never runs ignored native drag tests.
+package. CI omits test debug information to keep test artifacts small. Windows
+also uses bundled LLD and two build jobs to bound linking memory without dropping
+test coverage. The GPU workflow runs
+`rxui`, `rxui-draw` and the host's GPU device-loss test; it never runs ignored
+native drag tests.
 Windowed/native interaction still needs a
 manual check on the affected platform; report those checks in the pull request.
 

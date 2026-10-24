@@ -908,6 +908,7 @@ impl<H: Handler> ApplicationHandler<H::Message> for Driver<'_, H> {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "requires a GPU; run with -- --ignored"]
     fn deferred_loss_is_drained_before_classifying_acquisition_but_never_masks_handler_errors() {
         let graphics = pollster::block_on(GraphicsContext::headless()).unwrap();
         let (send, receive) = std::sync::mpsc::channel();

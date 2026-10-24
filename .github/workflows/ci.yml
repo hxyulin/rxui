@@ -17,6 +17,8 @@ env:
   # Full all-features debug info can exceed 32-bit DWARF offsets on Linux.
   # Keep debug artifacts bounded for the desktop and feature matrices too.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # CI does not publish debugger artifacts. Avoid large test DWARF/PDB outputs.
+  CARGO_PROFILE_TEST_DEBUG: '0'
 
 jobs:
   hooks:
@@ -38,14 +40,14 @@ jobs:
       - name: Install isolated X11 test server
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --all-features --locked
+      - run: cargo test --workspace --all-features --locked --no-fail-fast
       - name: Draglet and host X11 protocol tests
         run: |
           # DISPLAY must expand in xvfb-run's child shell, after it selects a display.
           # shellcheck disable=SC2016
           xvfb-run -a -s '-screen 0 1280x800x24 -nolisten tcp' sh -c \
             'DRAGLET_X11_TEST_DISPLAY="$DISPLAY" cargo test -p draglet -p rxui-host --all-features --locked x11::tests -- --ignored --test-threads=1'
-      - run: cargo test --workspace --no-default-features --locked
+      - run: cargo test --workspace --no-default-features --locked --no-fail-fast
       - run: cargo doc --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
@@ -67,12 +69,11 @@ jobs:
         shell: pwsh
         run: |
           # The large generic test harness exhausted link.exe's memory (LNK1102).
-          # Use Rust's bundled LLD and omit test PDBs; keep every test enabled.
+          # Use Rust's bundled LLD and bounded concurrency; keep every test enabled.
           "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
-          "CARGO_PROFILE_TEST_DEBUG=0" >> $env:GITHUB_ENV
           "CARGO_BUILD_JOBS=2" >> $env:GITHUB_ENV
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features --locked
+      - run: cargo test --workspace --all-features --locked --no-fail-fast
       - run: cargo check --workspace --all-targets --all-features --locked
 
   features:

@@ -24,3 +24,5 @@ jobs:
       - name: Run opt-in tests on the configured native adapter
         # Native drag tests need their own desktop/Xvfb fixtures and are not GPU tests.
         run: cargo test -p rxui -p rxui-draw --all-features --locked -- --ignored
+      - name: Run GPU-dependent host device-loss test
+        run: cargo test -p rxui-host --all-features --locked runner::tests::deferred_loss_is_drained_before_classifying_acquisition_but_never_masks_handler_errors -- --ignored
