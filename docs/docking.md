@@ -348,8 +348,6 @@ workspace or closes an empty window on its own.
 
 ```sh
 mbx run -p rxui --example docking_surfaces_window --features native-docking --locked -- --two-windows
-# Bounded creation/registration/shutdown check, without a gesture:
-mbx run -p rxui --example docking_surfaces_window --features native-docking --locked -- --smoke
 ```
 
 The example closes an emptied detached source only after an accepted transfer.

@@ -124,8 +124,7 @@ impl View for Tree {
                             "{} src{f}",
                             if self.expanded[f] { "▾" } else { "▸" }
                         ))
-                        .variant(ButtonVariant::Quiet)
-                        .padding(6.)
+                        .list_row(false)
                         .on_click(cx.listener(move |s, _, _| s.toggle(f))),
                         Item::File(f, i) => {
                             let name = label(format!("file{i}.rs"));
@@ -138,7 +137,8 @@ impl View for Tree {
                             } else {
                                 column().child(name)
                             };
-                            content.padding_y(3.).padding_x(28.)
+                            // Indented past the folder's disclosure triangle.
+                            content.padding_y(4.).padding_left(28.).padding_right(8.)
                         }
                     }
                 })

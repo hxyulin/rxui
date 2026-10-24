@@ -25,11 +25,7 @@ fn cards(alpha: f32, nested: bool, per_child: bool, icon: &Image) -> Element {
                     .child(image(icon.clone()).size(20., 20.))
                     .child(label(name).color([1.; 4])),
             )
-            .child(
-                label("Text fades with its card")
-                    .font_size(14.)
-                    .color([1.; 4]),
-            )
+            .child(label("Text fades with its card").color([1.; 4]))
     };
     stack()
         .size(320., 220.)
@@ -66,18 +62,19 @@ impl View for Demo {
         column().fill_width().fill_height().padding(24.).gap(16.)
             .child(label("True group opacity").text_role(TextRole::Title).accessibility_role(SemanticRole::Heading))
             .child(label("The left subtree is flattened, then faded once. The right cards fade separately; their overlap blends differently."))
-            .child(row().gap(12.)
+            .child(row().gap(8.)
                 .child(button(format!("Opacity: {:.0}% — cycle",self.alpha*100.))
                     .on_click(cx.listener(|s,_,_|s.alpha = if s.alpha < 1. {s.alpha+0.25} else {0.})))
                 .child(button(if self.nested {"Nested 50%: on"} else {"Nested 50%: off"})
                     .on_click(cx.listener(|s,_,_|s.nested = !s.nested))))
             .child(row().gap(24.)
-                .child(column().gap(8.).child(label("One group"))
+                .child(column().gap(8.).child(label("One group").color(ThemeColor::TextMuted))
                     .child(cards(self.alpha,self.nested,false,&self.icon)))
-                .child(column().gap(8.).child(label("Separate card groups"))
+                .child(column().gap(8.).child(label("Separate card groups").color(ThemeColor::TextMuted))
                     .child(cards(self.alpha,false,true,&self.icon))))
             .child(label("Opacity affects painting only. Use inert or pointer policy separately when fading out interactive content."))
-            .child(column().padding(12.).background(ThemeColor::Surface).opacity(self.alpha)
+            .child(column().padding(12.).gap(8.).background(ThemeColor::Surface)
+                .border(1., ThemeColor::Divider).radius(8.).opacity(self.alpha)
                 .child(label("Controls, focus rings and editing content share the layer"))
                 .child(text_input(self.input.clone()).width(360.).accessibility_label("Faded text input").on_change(cx.listener(|s, edit: &TextChangeEvent, _| s.input = edit.value.clone()))))
     }
@@ -94,7 +91,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — group opacity")
-                .size(760., 680.),
+                .size(760., 560.),
             root,
         )?;
         Ok(())

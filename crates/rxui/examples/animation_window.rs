@@ -139,7 +139,7 @@ impl View for Demo {
         if self.menu {
             let close = |label: &'static str| {
                 button(label)
-                    .variant(ButtonVariant::Quiet)
+                    .list_row(false)
                     .fill_width()
                     .accessibility_role(SemanticRole::MenuItem)
                     .on_click(cx.listener(|s, _, _| s.menu = false))
@@ -164,9 +164,10 @@ impl View for Demo {
                     column()
                         .gap(12.)
                         .child(label("Discard changes?").text_role(TextRole::Subheading))
-                        .child(label(
-                            "The dialog fades out after closing; focus returns at once.",
-                        ))
+                        .child(
+                            label("The dialog fades out after closing; focus returns at once.")
+                                .color(ThemeColor::TextMuted),
+                        )
                         .child(
                             row()
                                 .gap(8.)
@@ -176,14 +177,14 @@ impl View for Demo {
                                 )
                                 .child(
                                     button("Discard")
-                                        .variant(ButtonVariant::Primary)
+                                        .variant(ButtonVariant::Danger)
                                         .on_click(cx.listener(|s, _, _| s.dialog = false)),
                                 ),
                         ),
                 )
                 .key("dialog")
                 .width(360.)
-                .padding(20.)
+                .padding(16.)
                 .accessibility_label("Discard changes")
                 .on_dismiss(cx.listener(|s, _: &DismissEvent, _| s.dialog = false)),
             );
@@ -204,7 +205,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — animation")
-                .size(900., 560.),
+                .size(860., 420.),
             root,
         )?;
         Ok(())

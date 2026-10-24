@@ -55,7 +55,7 @@ impl View for Counter {
         column()
             .fill_width()
             .padding(24.)
-            .gap(16.)
+            .gap(12.)
             .child(label("RXUI declarative core").text_role(TextRole::Title))
             .child(
                 label("Click a button, or use Tab and Enter. Resize to exercise Taffy layout.")
@@ -64,7 +64,7 @@ impl View for Counter {
             .child(label(format!("Counter: {}", self.count)).text_role(TextRole::Heading))
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
                     .child(
                         button("Decrease")
                             .key("decrease")
@@ -78,7 +78,7 @@ impl View for Counter {
             )
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
                     .child(
                         button("Reverse items")
                             .key("reverse")
@@ -103,19 +103,29 @@ impl View for Counter {
                             })),
                     ),
             )
-            .child(row().gap(12.).children(self.items.iter().map(|item| {
-                let id = *item;
-                button(format!("Item {id}"))
-                    .key(id)
-                    .list_row(self.selected == Some(id))
-                    .on_click(cx.listener(move |this, _, _| this.selected = Some(id)))
-            })))
-            .child(label(
-                "Keys preserve focus when items reorder; removed items lose capture.",
-            ))
+            .child(
+                // A small selectable list; rows keep their keys as items reorder.
+                column()
+                    .width(280.)
+                    .padding(4.)
+                    .background(ThemeColor::Surface)
+                    .border(1., ThemeColor::Divider)
+                    .radius(6.)
+                    .children(self.items.iter().map(|item| {
+                        let id = *item;
+                        button(format!("Item {id}"))
+                            .key(id)
+                            .list_row(self.selected == Some(id))
+                            .on_click(cx.listener(move |this, _, _| this.selected = Some(id)))
+                    })),
+            )
+            .child(
+                label("Keys preserve focus when items reorder; removed items lose capture.")
+                    .color(ThemeColor::TextMuted),
+            )
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
                     .child(
                         button("Start background job")
                             .key("load")
@@ -178,7 +188,7 @@ impl Handler for App {
                 cx.create_window(
                     Window::default_attributes()
                         .with_title("RXUI — builders, keys and background completion")
-                        .with_inner_size(LogicalSize::new(820., 600.)),
+                        .with_inner_size(LogicalSize::new(720., 520.)),
                     SurfaceSettings::new(),
                 )?,
             );
@@ -288,19 +298,17 @@ impl Handler for App {
         window: WindowInfo<'_>,
         frame: &mut Frame<'_, 'static>,
     ) -> Result<(), Self::Error> {
+        let ui = self.ui.as_ref().unwrap();
+        // Clear to the theme's background, as Application does; colors are linear.
+        let [r, g, b, a] = ui.theme().color(ThemeColor::Background).map(f64::from);
         self.painter.as_mut().unwrap().compose(
-            self.ui.as_ref().unwrap(),
+            ui,
             frame,
             window.metrics().scale_factor() as f32,
             |frame, ui| {
                 let mut pass = frame
                     .render_pass()
-                    .clear_color(wgpu::Color {
-                        r: 0.025,
-                        g: 0.035,
-                        b: 0.055,
-                        a: 1.,
-                    })
+                    .clear_color(wgpu::Color { r, g, b, a })
                     .begin()?;
                 ui.paint(&mut pass)
             },

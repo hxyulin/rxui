@@ -107,7 +107,7 @@ to its original native bounds on Escape. This checks native action/input integra
 not full VoiceOver announcement/navigation usability.
 
 - [Initial workspace capture](../images/workspace-controls-initial.png)
-- [After resizing/scrolling and card Escape](../images/workspace-controls-dragged.png)
+- [After dragging the card within its pane](../images/workspace-controls-dragged.png)
 
 The portable feature check also exposed a pre-existing Cargo boundary: native
 async-io timers were included on wasm despite the code being native-only. The timer

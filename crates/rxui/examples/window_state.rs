@@ -47,30 +47,40 @@ impl View for Workspace {
             .fill_width()
             .fill_height()
             .into_element()
-            .background(if self.hovered.is_empty() {
-                ThemeColor::Surface
-            } else {
-                ThemeColor::ControlHover
-            });
+            .padding(12.)
+            .radius(6.)
+            .background(ThemeColor::Surface)
+            .border(
+                1.,
+                if self.hovered.is_empty() {
+                    ThemeColor::Divider
+                } else {
+                    ThemeColor::Focus
+                },
+            );
         column()
             .fill_width()
             .fill_height()
             .padding(24.)
-            .gap(14.)
+            .gap(12.)
             .child(label("Window placement and file drops").text_role(TextRole::Title))
             .child(label(placement))
-            .child(label(format!(
-                "Placement is saved on exit to {}",
-                self.storage.display()
-            )))
-            .child(label(
-                "Move/resize this window, close it, then rerun to restore placement.",
-            ))
+            .child(
+                label(format!(
+                    "Placement is saved on exit to {}",
+                    self.storage.display()
+                ))
+                .color(ThemeColor::TextMuted),
+            )
+            .child(
+                label("Move/resize this window, close it, then rerun to restore placement.")
+                    .color(ThemeColor::TextMuted),
+            )
             .child(label(hover))
             .child(area)
             .child(
                 row()
-                    .gap(10.)
+                    .gap(8.)
                     .child(button("Clear paths").on_click(cx.listener(|this, _, _| {
                         this.dropped.clear();
                         this.status = "Cleared accepted paths.".into();

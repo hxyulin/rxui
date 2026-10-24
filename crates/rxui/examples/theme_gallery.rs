@@ -12,7 +12,7 @@ fn preview(theme: Theme, title: &str, value: &str, cx: &mut ViewContext<'_, Gall
     column()
         .theme(theme)
         .width(360.)
-        .padding(20.)
+        .padding(16.)
         .gap(12.)
         .background(ThemeColor::Surface)
         .border(1., ThemeColor::Border)
@@ -68,7 +68,7 @@ impl View for Gallery {
             .child(label("RXUI theme gallery").text_role(TextRole::Title).accessibility_role(SemanticRole::Heading))
             .child(label("Hover, press, use Tab, and select text. Focus stays visible over pointer states.")
                 .color(ThemeColor::TextMuted))
-            .child(row().gap(12.)
+            .child(row().gap(8.)
                 .child(button("Toggle application theme").on_click(cx.listener(|_, _, cx| {
                     let next = next_theme(&cx.theme().unwrap());
                     cx.set_theme(next).unwrap();
@@ -90,7 +90,7 @@ impl View for Gallery {
                 .child(preview(Theme::light().compact(), "Light compact", &self.name, cx))
                 .child(preview(Theme::high_contrast().compact(), "High contrast compact", &self.name, cx)))
             .child(label("Local overrides").text_role(TextRole::Heading))
-            .child(row().gap(12.)
+            .child(row().gap(8.)
                 .child(button("Custom interaction paints")
                     .background(ThemeColor::Control)
                     .hover_style(PaintStyle::new().background(ThemeColor::ControlHover)
@@ -105,7 +105,7 @@ impl View for Gallery {
             .child(text_input(self.name.clone()).key("name").fill_width().read_only(self.read_only)
                 .accessibility_label("Shared name")
                 .on_change(cx.listener(|this, edit: &TextChangeEvent, _| this.name = edit.value.clone())))
-            .child(row().gap(12.)
+            .child(row().gap(8.)
                 .child(button("Toggle read-only").on_click(cx.listener(|this, _, _| this.read_only = !this.read_only)))
                 .child(button("Open shared light window").on_click(cx.listener(|_, _, cx| {
                     let root = cx.entity().upgrade().unwrap();

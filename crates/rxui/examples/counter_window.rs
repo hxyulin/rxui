@@ -60,7 +60,7 @@ impl View for Counter {
             .child(label(format!("Counter: {}", self.count)).text_role(TextRole::Heading))
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
                     .child(
                         button("Decrease")
                             .key("decrease")
@@ -79,7 +79,7 @@ impl View for Counter {
                                 cx.open_window(
                                     WindowOptions::new()
                                         .title("RXUI — shared Counter")
-                                        .size(820., 760.),
+                                        .size(760., 600.),
                                     root,
                                 )
                                 .unwrap();
@@ -97,7 +97,7 @@ impl View for Counter {
             )
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
                     .child(
                         button("Reverse items")
                             .key("reverse")
@@ -128,8 +128,10 @@ impl View for Counter {
                     .fill_width()
                     .scroll_y()
                     .key("items-viewport")
-                    .padding(6.)
+                    .padding(4.)
                     .background(ThemeColor::Surface)
+                    .border(1., ThemeColor::Divider)
+                    .radius(6.)
                     .children(self.items.iter().map(|item| {
                         let id = *item;
                         button(format!("Item {id}"))
@@ -138,12 +140,13 @@ impl View for Counter {
                             .on_click(cx.listener(move |this, _, _| this.selected = Some(id)))
                     })),
             )
-            .child(label(
-                "Scroll and focus belong to the placement; task/model state is shared.",
-            ))
+            .child(
+                label("Scroll and focus belong to the placement; task/model state is shared.")
+                    .color(ThemeColor::TextMuted),
+            )
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
                     .child(
                         button("Start async job")
                             .key("load")
@@ -179,7 +182,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — application, scrolling and async tasks")
-                .size(820., 760.),
+                .size(760., 600.),
             counter,
         )?;
         Ok(())

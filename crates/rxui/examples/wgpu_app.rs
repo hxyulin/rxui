@@ -21,9 +21,10 @@ impl View for Panel {
             .padding(24.)
             .gap(16.)
             .child(label("RXUI inside your wgpu app").text_role(TextRole::Title))
-            .child(label(
-                "The app renders the texture below before RXUI samples it.",
-            ))
+            .child(
+                label("The app renders the texture below before RXUI samples it.")
+                    .color(ThemeColor::TextMuted),
+            )
             .child(
                 image(self.preview.clone())
                     .width(320.)
@@ -186,12 +187,9 @@ impl State {
         }
         let mut destination =
             UiRenderTarget::new(&output, self.config.format, [size.width, size.height]);
-        destination.load = wgpu::LoadOp::Clear(wgpu::Color {
-            r: 0.025,
-            g: 0.03,
-            b: 0.045,
-            a: 1.,
-        });
+        // Clear to the UI theme's background; theme colors are linear.
+        let [r, g, b, a] = self.ui.theme().color(ThemeColor::Background).map(f64::from);
+        destination.load = wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a });
         let resources = self
             .painter
             .record(&self.ui, &mut encoder, &destination, scale)?;

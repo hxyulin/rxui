@@ -94,7 +94,7 @@ impl View for Desktop {
             .shortcut(Shortcut::primary("r").shift());
         let mut tools = row()
             .gap(8.)
-            .padding(10.)
+            .padding(12.)
             .child(new.button())
             .child(close.button())
             .child(restore.button())
@@ -125,7 +125,7 @@ impl View for Desktop {
         }
         // The popover is logically inside this clipped toolbar, yet paints against
         // the viewport. The toolbar itself keeps ordinary layout/scroll behavior.
-        let tools = column().height(64.).fill_width().clip().child(tools);
+        let tools = column().height(52.).fill_width().clip().child(tools);
         let content = dock(&self.layout, |key| {
             let edit_key = key.clone();
             dock_panel(
@@ -133,7 +133,10 @@ impl View for Desktop {
                 column()
                     .padding(16.)
                     .gap(12.)
-                    .child(label("Right-click a tab header for commands."))
+                    .child(
+                        label("Right-click a tab header for commands.")
+                            .color(ThemeColor::TextMuted),
+                    )
                     .child(
                         text_input(self.notes.get(key).cloned().unwrap_or_default())
                             .fill_width()
@@ -159,8 +162,11 @@ impl View for Desktop {
         }));
         let mut root=column().fill_width().fill_height().on_command(new).on_command(close).on_command(restore)
             .child(tools).child(content)
-            .child(label("Primary+N: new · Primary+W: close · Primary+Shift+R: restore · Primary+Shift+I: app help").padding(8.))
-            .child(label(self.status.clone()).padding(8.).color(ThemeColor::TextMuted));
+            .child(row().fill_width().padding_x(12.).padding_y(8.).gap(16.)
+                .border_top(1.).border_color(ThemeColor::Divider)
+                .child(label("Primary+N: new · Primary+W: close · Primary+Shift+R: restore · Primary+Shift+I: app help")
+                    .color(ThemeColor::TextMuted).flex_grow(1.))
+                .child(label(self.status.clone()).color(ThemeColor::TextMuted)));
         if self.confirm {
             let confirm = cx
                 .command(ConfirmRestore, |s, _, _| {
@@ -176,13 +182,23 @@ impl View for Desktop {
                 modal(
                     column()
                         .gap(12.)
-                        .child(label("Restore the workspace layout?").text_role(TextRole::Heading))
-                        .child(label("Document edits remain in application state."))
-                        .child(row().gap(8.).child(confirm.button()).child(cancel.button())),
+                        .child(
+                            label("Restore the workspace layout?").text_role(TextRole::Subheading),
+                        )
+                        .child(
+                            label("Document edits remain in application state.")
+                                .color(ThemeColor::TextMuted),
+                        )
+                        .child(
+                            row()
+                                .gap(8.)
+                                .child(cancel.button())
+                                .child(confirm.button().variant(ButtonVariant::Primary)),
+                        ),
                 )
                 .key("restore-dialog")
                 .width(420.)
-                .padding(20.)
+                .padding(16.)
                 .accessibility_label("Restore workspace layout")
                 .on_dismiss(cx.listener(|s, _: &DismissEvent, _| s.confirm = false)),
             );
@@ -220,7 +236,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — desktop interactions")
-                .size(1100., 760.),
+                .size(1000., 640.),
             desktop,
         )?;
         Ok(())

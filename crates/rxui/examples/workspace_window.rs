@@ -50,9 +50,7 @@ impl Workspace {
                     .size(200., 104.)
                     .padding(16.)
                     .gap(8.)
-                    .radius(8.)
-                    .background(ThemeColor::Control)
-                    .border(1., ThemeColor::Border)
+                    .raised(Elevation::Popover)
                     .focusable(true)
                     .cursor(if self.dragging {
                         Cursor::Grabbing
@@ -96,6 +94,15 @@ impl Workspace {
             )
     }
 }
+/// A pane title bar whose text lines up with the pane's rows.
+fn pane_header(content: impl IntoElement) -> Element {
+    row()
+        .fill_width()
+        .height(36.)
+        .padding_x(12.)
+        .align_items(AlignItems::CENTER)
+        .child(content)
+}
 impl View for Workspace {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         // Virtual list slots match the theme's list row height.
@@ -106,25 +113,20 @@ impl View for Workspace {
             .min_width(0.)
             .min_height(0.)
             .background(ThemeColor::Surface)
-            .child(label("Files").text_role(TextRole::Heading).padding(12.))
-            .child(
-                // Rows sit 6 units in from the pane edges, as in desktop sidebars.
-                column()
-                    .fill_width()
-                    .flex_grow(1.)
-                    .flex_basis(0.)
-                    .min_height(0.)
-                    .padding_x(6.)
-                    .child(virtual_list(160, row_height, &self.files, cx, |i| {
-                        button(format!("File {i:03}"))
-                            .key(i)
-                            .list_row(self.selected == i)
-                            .on_click(cx.listener(move |s, _, _| s.selected = i))
-                    })),
-            )
+            .child(pane_header(label("Files").text_role(TextRole::Subheading)))
+            .child(virtual_list(160, row_height, &self.files, cx, |i| {
+                // Each slot insets its row from the pane edges, as in desktop
+                // sidebars, while the scrollbar stays at the pane's edge.
+                column().padding_x(4.).child(
+                    button(format!("File {i:03}"))
+                        .key(i)
+                        .list_row(self.selected == i)
+                        .on_click(cx.listener(move |s, _, _| s.selected = i)),
+                )
+            }))
             .child(
                 row()
-                    .padding(8.)
+                    .padding(12.)
                     .gap(8.)
                     .child(button("Top").on_click(cx.listener(|s, _, cx| {
                         s.files
@@ -145,24 +147,33 @@ impl View for Workspace {
             .min_width(0.)
             .min_height(0.)
             .background(ThemeColor::Surface)
-            .child(
+            .child(pane_header(
                 row()
-                    .padding(8.)
-                    .gap(12.)
-                    .child(label("Output").text_role(TextRole::Heading))
-                    .child(button("Clear scroll").on_click(cx.listener(|s, _, cx| {
-                        s.output
-                            .scroll_to(cx, [0.; 2])
-                            .expect("live output viewport");
-                    }))),
-            )
+                    .fill_width()
+                    .align_items(AlignItems::CENTER)
+                    .child(
+                        label("Output")
+                            .text_role(TextRole::Subheading)
+                            .flex_grow(1.),
+                    )
+                    .child(
+                        button("Clear scroll")
+                            .variant(ButtonVariant::Quiet)
+                            .on_click(cx.listener(|s, _, cx| {
+                                s.output
+                                    .scroll_to(cx, [0.; 2])
+                                    .expect("live output viewport");
+                            })),
+                    ),
+            ))
             .child(virtual_list(120, row_height, &self.output, cx, |i| {
-                label(format!(
-                    "{i:03}  Virtual output line — only nearby rows are mounted."
-                ))
-                .key(i)
-                .padding_x(8.)
-                .padding_y(3.)
+                row()
+                    .key(i)
+                    .padding_x(12.)
+                    .align_items(AlignItems::CENTER)
+                    .child(label(format!(
+                        "{i:03}  Virtual output line — only nearby rows are mounted."
+                    )))
             }));
         column()
             .fill_width()

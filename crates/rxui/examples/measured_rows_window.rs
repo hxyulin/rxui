@@ -11,8 +11,8 @@ struct Results {
 impl View for Results {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         let scope = cx.task_scope();
-        column().fill_width().fill_height().padding(12.).gap(8.)
-            .child(tooltip(cx, button("Load (takes three seconds)").on_click(cx.listener(move |_, _, cx| {
+        column().fill_width().fill_height().padding(16.).gap(8.)
+            .child(row().child(tooltip(cx, button("Load (takes three seconds)").on_click(cx.listener(move |_, _, cx| {
                 let owner = cx.entity();
                 scope.spawn(cx, async {
                     rxui::sleep(Duration::from_secs(3)).await;
@@ -21,11 +21,11 @@ impl View for Results {
                         let _ = owner.update(cx, |s, _| s.completed += 1);
                     }
                 }).unwrap().detach();
-            })), "Closing this window cancels its load completion"))
-            .child(label(format!("Completed loads: {}", self.completed)))
+            })), "Closing this window cancels its load completion")))
+            .child(label(format!("Completed loads: {}", self.completed)).color(ThemeColor::TextMuted))
             .child(variable_list(&self.rows, &self.scroll, cx, |index| {
-                column().padding(8.).gap(4.)
-                    .child(label(format!("Result {index}")))
+                column().padding_y(8.).gap(4.)
+                    .child(label(format!("Result {index}")).text_role(TextRole::Subheading))
                     .child(label("A wrapped description measured at the width of this window. Resize the window to see row heights and the scroll extent adjust. ".repeat(index % 4 + 1)))
             }).measured().fill_width().fill_height())
     }

@@ -22,8 +22,8 @@ impl View for Document {
             .min_width(0.)
             .min_height(0.)
             .padding(12.)
-            .gap(10.)
-            .child(label(self.title.clone()).text_role(TextRole::Heading))
+            .gap(8.)
+            .child(label(self.title.clone()).text_role(TextRole::Subheading))
             .child(note)
             .child(scroll_area(rows).handle(self.scroll.clone()))
     }
@@ -118,7 +118,7 @@ impl View for Workspace {
             }
             Err(error) => s.status = error.to_string(),
         }));
-        let tools=row().gap(8.).padding(10.).min_width(0.).scroll_x()
+        let tools=row().gap(8.).padding(12.).min_width(0.).scroll_x()
             .child(button("New tab").on_click(cx.listener(|s,_,cx|s.add(cx))))
             .child(button("Reorder active").on_click(cx.listener(|s,_,_| {
                 let group=s.layout.group_for(&Key::from("editor")).unwrap_or_else(||first_group(s.layout.root()));
@@ -160,16 +160,21 @@ impl View for Workspace {
             .child(tools)
             .child(content)
             .child(
-                label(
-                    "Drag tabs: header to reorder, center to join, edge to split. Escape cancels.",
-                )
-                .padding(6.)
-                .color(ThemeColor::TextMuted),
-            )
-            .child(
-                label(self.status.clone())
-                    .padding(10.)
-                    .color(ThemeColor::TextMuted),
+                // Status bar: a hint and the latest result.
+                row()
+                    .fill_width()
+                    .padding_x(12.)
+                    .padding_y(8.)
+                    .gap(16.)
+                    .border_top(1.)
+                    .border_color(ThemeColor::Divider)
+                    .child(
+                        label(
+                            "Drag tabs: header to reorder, center to join, edge to split. Escape cancels.",
+                        )
+                        .color(ThemeColor::TextMuted),
+                    )
+                    .child(label(self.status.clone()).color(ThemeColor::TextMuted)),
             )
     }
 }

@@ -2,35 +2,38 @@
 //! Arrow keys navigate; Right/Left expand/collapse; Shift extends selection;
 //! Command/Control-click toggles selection. All rows keep focus on the tree root.
 use rxui::prelude::*;
-/// The balanced theme's list row height, so slots match `list_row` rows.
-const HEIGHT: f32 = 24.;
 struct Tree {
     scroll: ScrollHandle,
     state: TreeState,
 }
 impl View for Tree {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
-        let change = cx.listener(|s, proposal: &TreeProposal, cx| {
+        // Slots match the theme's `list_row` height, following density switches.
+        let height = cx.theme().sizes().row_height;
+        let change = cx.listener(move |s, proposal: &TreeProposal, cx| {
             // Applications may reject a proposal by leaving accepted state unchanged.
             proposal
-                .accept(&mut s.state, &s.scroll, HEIGHT, cx)
+                .accept(&mut s.state, &s.scroll, height, cx)
                 .unwrap();
         });
         column()
             .fill_width()
             .fill_height()
-            .padding(8.)
+            .padding(16.)
             .gap(8.)
-            .child(label("Files — arrows navigate, Right/Left expand/collapse"))
-            .child(label(format!(
-                "{} visible, {} selected",
-                self.state.rows().len(),
-                self.state.selected().len()
-            )))
+            .child(label("Files").text_role(TextRole::Heading))
+            .child(
+                label(format!(
+                    "{} visible, {} selected · arrows navigate, Right/Left expand/collapse",
+                    self.state.rows().len(),
+                    self.state.selected().len()
+                ))
+                .color(ThemeColor::TextMuted),
+            )
             .child(
                 virtual_tree(
                     &self.state,
-                    HEIGHT,
+                    height,
                     &self.scroll,
                     cx,
                     change,

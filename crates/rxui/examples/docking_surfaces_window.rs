@@ -5,12 +5,18 @@
 use rxui::{host::CloseResponse, prelude::*};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-struct Document(String);
+struct Document {
+    title: &'static str,
+    text: String,
+}
 impl View for Document {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
-        text_input(self.0.clone())
-            .fill_width()
-            .on_change(cx.listener(|s, e: &TextChangeEvent, _| s.0 = e.value.clone()))
+        column().fill_width().padding(12.).child(
+            text_input(self.text.clone())
+                .fill_width()
+                .accessibility_label(self.title)
+                .on_change(cx.listener(|s, e: &TextChangeEvent, _| s.text = e.value.clone())),
+        )
     }
 }
 struct Workspace {
@@ -121,7 +127,8 @@ impl View for WindowView {
         let workspace = self.workspace.read(cx);
         let mut regions = row()
             .fill_width()
-            .fill_height()
+            .flex_grow(1.)
+            .flex_basis(0.)
             .min_width(0.)
             .min_height(0.)
             .gap(8.);
@@ -139,7 +146,8 @@ impl View for WindowView {
                 .cloned();
             let content = dock(tree, |key| {
                 let document = workspace.documents[key].clone();
-                dock_panel_lazy(format!("{key:?}"), move || document).closable(true)
+                let title = document.read(cx).title;
+                dock_panel_lazy(title, move || document).closable(true)
             })
             .surface(surface)
             .transfer_scope("example-workspace")
@@ -161,7 +169,6 @@ impl View for WindowView {
                         e.target,
                     ) {
                         Ok(change) => {
-                            eprintln!("docking transfer accepted: panel={:?}, source={:?}, target={:?}, source_empty={}", e.panel, e.source_surface, e.target_surface, change.source_empty);
                             w.status =
                                 "Panel transferred; application accepted the checked proposal."
                                     .into();
@@ -182,54 +189,62 @@ impl View for WindowView {
                 s.detach(e.source_surface, e.source_group, &e.panel, cx);
             }));
             let tools = if self.detached {
-                row().child(
-                    button("Reattach all").on_click(cx.listener(move |s, _, cx| {
-                        let window = s.workspace.read(cx).windows.get(&surface).cloned();
-                        let result = s.workspace.update(cx, |w, _| w.reattach(surface));
-                        match result {
-                            Ok(()) => {
-                                if let Some(window) = window {
-                                    cx.close_window(&window).unwrap();
+                row()
+                    .padding(8.)
+                    .child(
+                        button("Reattach all").on_click(cx.listener(move |s, _, cx| {
+                            let window = s.workspace.read(cx).windows.get(&surface).cloned();
+                            let result = s.workspace.update(cx, |w, _| w.reattach(surface));
+                            match result {
+                                Ok(()) => {
+                                    if let Some(window) = window {
+                                        cx.close_window(&window).unwrap();
+                                    }
+                                }
+                                Err(error) => {
+                                    s.workspace.update(cx, |w, _| w.status = error.to_string())
                                 }
                             }
-                            Err(error) => {
-                                s.workspace.update(cx, |w, _| w.status = error.to_string())
-                            }
-                        }
-                    })),
-                )
+                        })),
+                    )
             } else {
-                row().child(
-                    button("Detach active").on_click(cx.listener(move |s, _, cx| {
-                        if let Some(panel) = &selected {
-                            s.detach(surface, group, panel, cx);
-                        }
-                    })),
-                )
+                row()
+                    .padding(8.)
+                    .child(
+                        button("Detach active").on_click(cx.listener(move |s, _, cx| {
+                            if let Some(panel) = &selected {
+                                s.detach(surface, group, panel, cx);
+                            }
+                        })),
+                    )
             };
+            // Regions share the width equally.
             regions = regions.child(
                 column()
-                    .fill_width()
                     .fill_height()
                     .flex_grow(1.)
+                    .flex_basis(0.)
                     .min_width(0.)
                     .min_height(0.)
+                    .border(1., ThemeColor::Divider)
+                    .radius(6.)
+                    .clip()
                     .child(tools)
                     .child(content),
             );
         }
-        column().fill_width().fill_height().padding(10.).gap(10.)
+        column().fill_width().fill_height().padding(16.).gap(12.)
             .child(label("Drag tabs between regions or windows with native-docking enabled. Close a detached window to reattach."))
-            .child(label("Document text follows the panel. Caret, scroll and focus are placement-local."))
+            .child(label("Document text follows the panel. Caret, scroll and focus are placement-local.")
+                .color(ThemeColor::TextMuted))
             .child(regions)
-            .child(label(workspace.status.clone()))
+            .child(label(workspace.status.clone()).color(ThemeColor::TextMuted))
     }
 }
 fn main() -> Result<(), ApplicationError> {
     let state: Rc<RefCell<Option<Entity<Workspace>>>> = Rc::new(RefCell::new(None));
     let close_state = state.clone();
-    let two_windows = std::env::args().any(|arg| arg == "--two-windows" || arg == "--smoke");
-    let smoke = std::env::args().any(|arg| arg == "--smoke");
+    let two_windows = std::env::args().any(|arg| arg == "--two-windows");
     let app = Application::new();
     #[cfg(all(feature = "native-docking", not(target_arch = "wasm32")))]
     let app = app.multi_viewport_docking(true);
@@ -242,7 +257,6 @@ fn main() -> Result<(), ApplicationError> {
             };
             native.set_outer_position(rxui::host::winit::dpi::LogicalPosition::new(x, 100.));
         }
-        eprintln!("docking window created: {:?}", window.id());
     })
     .close_requested(move |window, cx| {
         if let Some(workspace) = close_state.borrow().as_ref() {
@@ -285,15 +299,22 @@ fn main() -> Result<(), ApplicationError> {
         let side = layout
             .create_surface(DockTree::from_panels(["output"]).unwrap())
             .unwrap();
-        let documents = ["editor", "preview", "output"]
-            .into_iter()
-            .map(|name| {
-                (
-                    Key::from(name),
-                    cx.new(|_| Document(format!("Edit {name}; this text follows its entity."))),
-                )
-            })
-            .collect();
+        let documents = [
+            ("editor", "Editor"),
+            ("preview", "Preview"),
+            ("output", "Output"),
+        ]
+        .into_iter()
+        .map(|(key, title)| {
+            (
+                Key::from(key),
+                cx.new(|_| Document {
+                    title,
+                    text: format!("Edit {key}; this text follows its entity."),
+                }),
+            )
+        })
+        .collect();
         let workspace = cx.new(|_| Workspace {
             layout,
             documents,
@@ -334,18 +355,6 @@ fn main() -> Result<(), ApplicationError> {
             workspace.update(cx, |w, _| {
                 w.windows.insert(side, window);
             });
-        }
-        if smoke {
-            cx.spawn(
-                async {
-                    async_io::Timer::after(std::time::Duration::from_secs(3)).await;
-                },
-                |_, cx| {
-                    eprintln!("docking smoke: native creation completed; gestures not tested");
-                    cx.exit().unwrap();
-                },
-            )
-            .detach();
         }
         Ok(())
     })

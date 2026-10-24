@@ -525,3 +525,35 @@ fn dock_invalid_configuration_fails_before_mounting_and_can_retry() {
 
 #[path = "dock_drag_tests.rs"]
 mod drag_tests;
+
+struct Sized {
+    tree: DockTree,
+}
+impl View for Sized {
+    fn view(&self, _: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        let panel = |key: &Key| dock_panel(format!("{key:?}"), label("Body"));
+        // Content-sized flex parents, where each size is on the parent's main axis.
+        column()
+            .child(dock(&self.tree, panel).key("tall").height(200.))
+            .child(row().child(dock(&self.tree, panel).key("wide").width(300.)))
+    }
+}
+#[test]
+fn dock_explicit_height_and_width_hold_on_the_flex_main_axis() {
+    let mut r = Runtime::new();
+    let e = r.update(|cx| {
+        cx.new(|_| Sized {
+            tree: DockTree::from_panels(["editor"]).unwrap(),
+        })
+    });
+    let mut ui = Ui::new(&mut r, e).unwrap();
+    ui.prepare(&mut r, [800., 600.], &mut Measure).unwrap();
+    let bounds = |name: &str| {
+        ui.elements()
+            .find(|n| n.key == Some(&key(name)))
+            .unwrap()
+            .bounds
+    };
+    assert_eq!(bounds("tall").height, 200.);
+    assert_eq!(bounds("wide").width, 300.);
+}

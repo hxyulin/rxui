@@ -76,7 +76,7 @@ fn panel(body: impl IntoElement) -> Element {
         .fill_width()
         .fill_height()
         .padding(12.)
-        .gap(6.)
+        .gap(8.)
         .background(ThemeColor::Surface)
         .border(1., ThemeColor::Divider)
         .radius(6.)
@@ -121,7 +121,8 @@ impl View for Gallery {
             .gap(24.)
             .padding(12.)
             .background(ThemeColor::Surface)
-            .border(1., ThemeColor::Divider)
+            .border_bottom(1.)
+            .border_color(ThemeColor::Divider)
             .child(themes)
             .child(densities);
 
@@ -237,7 +238,7 @@ impl View for Gallery {
         for name in &self.tabs_open {
             let body = panel(
                 column()
-                    .gap(6.)
+                    .gap(8.)
                     .child(label(format!("{name} panel")))
                     .child(label("Arrow keys move between tabs.").color(ThemeColor::TextMuted)),
             );
@@ -334,7 +335,7 @@ impl View for Gallery {
         let controls = section(
             "Form controls",
             column()
-                .gap(10.)
+                .gap(12.)
                 .fill_width()
                 .child(
                     checkbox(notifications, "All notifications").on_change(cx.listener(
@@ -435,7 +436,7 @@ impl View for Gallery {
                     .flex_grow(1.)
                     .flex_basis(0.)
                     .min_width(0.)
-                    .gap(28.)
+                    .gap(24.)
                     .child(buttons)
                     .child(inputs)
                     .child(controls)
@@ -447,7 +448,7 @@ impl View for Gallery {
                     .flex_grow(1.)
                     .flex_basis(0.)
                     .min_width(0.)
-                    .gap(28.)
+                    .gap(24.)
                     .child(tabs_section)
                     .child(list)
                     .child(split),
@@ -466,7 +467,7 @@ impl View for Gallery {
                     .fill_width()
                     .flex_grow(1.)
                     .min_height(0.)
-                    .padding(28.)
+                    .padding(24.)
                     .gap(16.)
                     .scroll_y()
                     .child(label("Component gallery").text_role(TextRole::Heading))
@@ -500,7 +501,7 @@ impl View for Gallery {
                 )
                 .key("discard-dialog")
                 .width(420.)
-                .padding(20.)
+                .padding(16.)
                 .accessibility_label("Discard unsaved changes")
                 .on_dismiss(cx.listener(|s, _: &DismissEvent, _| s.dialog = false)),
             );

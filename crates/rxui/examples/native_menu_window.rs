@@ -42,15 +42,19 @@ impl View for Editor {
             .fill_width()
             .fill_height()
             .padding(24.)
-            .gap(16.)
+            .gap(12.)
             .on_command(save.clone())
             .child(label("Native menus and scoped commands").text_role(TextRole::Title))
-            .child(label(
-                "Use File → New Window to test independent documents and focused-window routing.",
-            ))
-            .child(label(
-                "Edit → Cut / Copy / Paste / Select All uses this RXUI input.",
-            ))
+            .child(
+                label(
+                    "Use File → New Window to test independent documents and focused-window routing.",
+                )
+                .color(ThemeColor::TextMuted),
+            )
+            .child(
+                label("Edit → Cut / Copy / Paste / Select All uses this RXUI input.")
+                    .color(ThemeColor::TextMuted),
+            )
             .child(
                 text_input(self.text.clone())
                     .key("document")
@@ -62,8 +66,8 @@ impl View for Editor {
             )
             .child(
                 row()
-                    .gap(12.)
-                    .child(save.button())
+                    .gap(8.)
+                    .child(save.button().variant(ButtonVariant::Primary))
                     .child(button("Request Close").on_click(cx.listener(|_, _, cx| {
                         if let Some(window) = cx.window() {
                             cx.request_close(&window).unwrap();
@@ -75,7 +79,7 @@ impl View for Editor {
             } else {
                 "Saved — Close and Quit are allowed."
             }))
-            .child(label(self.status.clone()))
+            .child(label(self.status.clone()).color(ThemeColor::TextMuted))
     }
 }
 fn open_editor(editors: &Editors, cx: &mut rxui::AppContext<'_>) -> Result<(), ApplicationError> {
@@ -89,7 +93,7 @@ fn open_editor(editors: &Editors, cx: &mut rxui::AppContext<'_>) -> Result<(), A
     let window = cx.open_window(
         WindowOptions::new()
             .title("RXUI — native menu document")
-            .size(760., 390.),
+            .size(720., 320.),
         editor,
     )?;
     editors.borrow_mut().retain(|_, e| e.upgrade().is_some());

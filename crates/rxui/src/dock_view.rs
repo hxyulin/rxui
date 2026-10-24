@@ -306,21 +306,28 @@ impl Dock {
     }
     /// Fixed logical dimensions for a standalone dock placement.
     pub fn size(mut self, width: f32, height: f32) -> Self {
-        self.root = self
-            .root
-            .size(width, height)
-            .flex_grow(0.)
-            .layout(|s| s.flex_basis = taffy::Dimension::AUTO);
-        self
+        self.root = self.root.size(width, height);
+        self.fixed()
     }
-    /// Root width constraint.
+    /// Fixed root width. The dock stops growing, so the width also holds when it is
+    /// on its flex parent's main axis.
     pub fn width(mut self, width: f32) -> Self {
         self.root = self.root.width(width);
-        self
+        self.fixed()
     }
-    /// Root height constraint.
+    /// Fixed root height. The dock stops growing, so the height also holds when it
+    /// is on its flex parent's main axis.
     pub fn height(mut self, height: f32) -> Self {
         self.root = self.root.height(height);
+        self.fixed()
+    }
+    /// Replaces the default zero flex basis, which would override an explicit size
+    /// on the main axis, with the root's own size.
+    fn fixed(mut self) -> Self {
+        self.root = self
+            .root
+            .flex_grow(0.)
+            .layout(|s| s.flex_basis = taffy::Dimension::AUTO);
         self
     }
     /// Fills parent width.

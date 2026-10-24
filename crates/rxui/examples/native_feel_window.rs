@@ -73,7 +73,7 @@ impl View for Showcase {
         let p = &self.preferences;
         let flag = |on: bool| if on { "on" } else { "off" };
         let facts = column()
-            .gap(6.)
+            .gap(8.)
             .child(label(format!(
                 "System appearance: {}",
                 p.color_scheme
@@ -150,7 +150,8 @@ impl View for Showcase {
                     .key(name)
                     .cursor(cursor)
                     .width(112.)
-                    .padding(10.)
+                    .padding_x(12.)
+                    .padding_y(8.)
                     .radius(6.)
                     .background(ThemeColor::Control)
                     .border(1., ThemeColor::Border)
@@ -179,9 +180,10 @@ impl View for Showcase {
             .child(tiles)
             .child(label("Dialog button order for this platform").text_role(TextRole::Subheading))
             .child(row().gap(8.).children(actions))
-            .child(label(
-                "Tab moves focus with a visible ring; clicking a button hides it again.",
-            ));
+            .child(
+                label("Tab moves focus with a visible ring; clicking a button hides it again.")
+                    .color(ThemeColor::TextMuted),
+            );
         column()
             .fill_width()
             .fill_height()

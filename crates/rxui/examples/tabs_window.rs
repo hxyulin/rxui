@@ -49,10 +49,10 @@ impl View for Document {
             } else {
                 FocusScope::Group
             })
-            .child(label(format!("Document {}", self.id)).text_role(TextRole::Title))
+            .child(label(format!("Document {}", self.id)).text_role(TextRole::Heading))
             .child(name)
             .child(note)
-            .child(cycle)
+            .child(row().child(cycle))
             .child(hint)
             .child(scroll_area(rows).handle(self.scroll.clone()));
         if self.cycle {

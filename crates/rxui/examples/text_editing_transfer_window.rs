@@ -26,7 +26,7 @@ impl View for Editor {
         if let Some(ticket) = &self.ticket {
             field = field.restore_text_editing(ticket.clone());
         }
-        column().padding(20.).gap(12.)
+        column().fill_width().fill_height().padding(24.).gap(12.)
             .child(label("Type, select text, then split or merge. Undo history and selection transfer."))
             .child(row().gap(8.)
                 .child(button("Split / merge editor").on_click(cx.listener(|s, _, _| {
@@ -53,11 +53,13 @@ impl View for Editor {
                         None => "No transfer requested".into(),
                     };
                 }))))
-            .child(label(self.status.clone()))
-            .child(dock(&self.tree, |key| dock_panel(
-                format!("{key:?}"),
-                if *key == "editor".into() { field.clone() } else { label("Independent placement; layout rebuilt normally") },
-            )).height(200.))
+            .child(label(self.status.clone()).color(ThemeColor::TextMuted))
+            // The dock fills the rest of the window.
+            .child(dock(&self.tree, |key| if *key == "editor".into() {
+                dock_panel("Editor", column().fill_width().padding(12.).child(field.clone()))
+            } else {
+                dock_panel("Other", label("Independent placement; layout rebuilt normally").padding(12.))
+            }))
     }
 }
 fn main() -> Result<(), ApplicationError> {
@@ -69,7 +71,7 @@ fn main() -> Result<(), ApplicationError> {
             handle: TextEditingHandle::new(), ticket: None,
             focus: FocusHandle::new(), status: String::new(),
         });
-        cx.open_window(WindowOptions::new().title("RXUI — explicit editing transfer").size(900., 500.), root)?;
+        cx.open_window(WindowOptions::new().title("RXUI — explicit editing transfer").size(860., 480.), root)?;
         Ok(())
     })
 }

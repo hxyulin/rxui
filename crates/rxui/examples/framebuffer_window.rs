@@ -42,11 +42,12 @@ impl View for Chart {
                     .accessibility_label(format!("Sine chart, dataset {}", self.revision)),
             );
         }
-        content.child(row().gap(12.)
+        content.child(row().gap(8.)
             .child(button("Next dataset").variant(ButtonVariant::Primary).on_click(cx.listener(|s, _, _| s.revision += 1)))
             .child(button(if self.msaa { "Disable MSAA" } else { "Enable MSAA if supported" })
                 .on_click(cx.listener(|s, _, _| s.msaa = !s.msaa))))
-            .child(label("Resize the window or move it between displays; the chart backing follows DPI without changing its logical size."))
+            .child(label("Resize the window or move it between displays; the chart backing follows DPI without changing its logical size.")
+                .color(ThemeColor::TextMuted))
     }
 }
 struct GpuChart {
@@ -160,7 +161,7 @@ fn main() -> Result<(), ApplicationError> {
             cx.open_window(
                 WindowOptions::new()
                     .title("RXUI — framebuffer chart")
-                    .size(700., 560.),
+                    .size(700., 500.),
                 root,
             )?;
             Ok(())

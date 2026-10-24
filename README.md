@@ -67,6 +67,39 @@ fn main() -> Result<(), ApplicationError> {
 | Desktop | Multiple windows, native menus, file dialogs, clipboard, file drop and saved window geometry |
 | Async | Scoped local and background futures, plus blocking jobs that finish into live state |
 
+## Gallery
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="crates/rxui/examples/gallery.rs"><picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/gallery-dark.png">
+        <source media="(prefers-color-scheme: light)" srcset="docs/images/gallery-light.png">
+        <img src="docs/images/gallery-light.png" alt="The component gallery: buttons in default, primary, quiet and danger variants, text inputs, check boxes, switches, radios, a slider, progress bars, a select, tabs, a virtual list and a split pane." width="420">
+      </picture></a>
+      <br><sub><a href="crates/rxui/examples/gallery.rs">Component gallery</a>: every built-in control, with live theme and density switching</sub>
+    </td>
+    <td width="50%" valign="top">
+      <a href="crates/rxui/examples/docking_window.rs"><img src="docs/images/docking-workspace.png" alt="An IDE-like docking layout with Files, Editor, Preview and Output panels in tab groups, a toolbar above and a status bar below." width="420"></a>
+      <br><sub><a href="crates/rxui/examples/docking_window.rs">Docking</a>: draggable tab groups over an application-owned layout tree</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/controls.md"><picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/controls-dark-validation.png">
+        <source media="(prefers-color-scheme: light)" srcset="docs/images/controls-light-validation.png">
+        <img src="docs/images/controls-light-validation.png" alt="Standard controls: check boxes, switches and radios in each state, sliders, progress bars, a spinner and a select." width="420">
+      </picture></a>
+      <br><sub><a href="docs/controls.md">Standard controls</a> in each state, rendered by the GPU tests</sub>
+    </td>
+    <td width="50%" valign="top">
+      <a href="crates/rxui/examples/tree_panel_window.rs"><img src="docs/images/virtual-tree.png" alt="A virtual tree of 100,100 nodes: an expanded folder with its records as indented rows, and a slim scrollbar." width="300"></a>
+      <br><sub><a href="crates/rxui/examples/tree_panel_window.rs">Virtual tree</a>: 100,100 nodes with keyboard navigation and multiple selection</sub>
+    </td>
+  </tr>
+</table>
+
 ## Status
 
 RXUI is a rewrite. The workspace is at `0.2.0-dev` and nothing from it has been

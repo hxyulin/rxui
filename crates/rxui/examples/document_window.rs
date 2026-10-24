@@ -228,17 +228,18 @@ impl View for Document {
             .fill_width()
             .fill_height()
             .padding(24.)
-            .gap(14.)
+            .gap(12.)
             .on_command(open.clone())
             .on_command(save.clone())
             .on_command(save_as.clone())
             .child(label("Native document workflow").text_role(TextRole::Title))
-            .child(label(
-                "Single-line text documents. Open and Save use native dialogs.",
-            ))
+            .child(
+                label("Single-line text documents. Open and Save use native dialogs.")
+                    .color(ThemeColor::TextMuted),
+            )
             .child(
                 row()
-                    .gap(10.)
+                    .gap(8.)
                     .child(open.button())
                     .child(save.button())
                     .child(save_as.button())
@@ -272,7 +273,7 @@ impl View for Document {
             }))
             .child(
                 row()
-                    .gap(10.)
+                    .gap(8.)
                     .child(button("Copy Text").on_click(cx.listener(|s, _, cx| {
                         s.status = match cx.write_clipboard_text(s.text.clone()) {
                             Ok(()) => "Copied document text.".into(),
@@ -307,7 +308,7 @@ impl View for Document {
                             })),
                     ),
             )
-            .child(label(self.status.clone()))
+            .child(label(self.status.clone()).color(ThemeColor::TextMuted))
     }
 }
 fn main() -> Result<(), Box<dyn Error>> {

@@ -25,7 +25,7 @@ impl View for Notes {
             .child(label("Enter inserts a line break; Up/Down keep the column, Home/End stay on the visual line, \
                 Page Up/Down move by the visible height. The caret stays visible in the scrolling column.")
                 .selectable(true))
-            .child(row().gap(12.)
+            .child(row().gap(8.).align_items(rxui::taffy::AlignItems::CENTER)
                 .child(rich_text([span(lines.to_string()).bold(), span(" lines, "), span(words.to_string()).bold(), span(" words")])
                     .color(ThemeColor::TextMuted).selectable(true))
                 .child(button(if self.monospace { "Proportional" } else { "Monospace" })
@@ -85,7 +85,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — text areas")
-                .size(900., 760.),
+                .size(860., 600.),
             notes,
         )?;
         Ok(())

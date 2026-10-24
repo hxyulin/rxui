@@ -105,7 +105,7 @@ impl View for Workspace {
                 };
             });
             rich_text([
-                span("error").bold().color(rgb8(0xe5, 0x48, 0x4d)),
+                span("error").bold().color(ThemeColor::Danger),
                 span(": "),
                 span(d.message),
                 span("\n  --> "),
@@ -135,10 +135,8 @@ impl View for Workspace {
             .child(
                 column()
                     .fill_width()
-                    .padding(14.)
-                    .radius(8.)
-                    .background(ThemeColor::Raised)
-                    .border(1., ThemeColor::Border)
+                    .padding(12.)
+                    .raised(Elevation::Popover)
                     .child(rich_text(docs).key("docs").fill_width()),
             )
             .child(
@@ -146,7 +144,7 @@ impl View for Workspace {
                     .text_role(TextRole::Heading)
                     .accessibility_role(SemanticRole::Heading),
             )
-            .child(column().fill_width().gap(10.).children(diagnostics))
+            .child(column().fill_width().gap(8.).children(diagnostics))
             .child(label(self.status.clone()).color(ThemeColor::TextMuted))
     }
 }
@@ -160,7 +158,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — rich text links")
-                .size(720., 520.),
+                .size(720., 380.),
             workspace,
         )?;
         Ok(())

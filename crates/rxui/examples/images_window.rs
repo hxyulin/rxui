@@ -1,6 +1,6 @@
 //! Standalone image fitting and composed-button example. Each placement shares one
 //! Image handle; tint/fit/filter changes reuse its uploaded pixels. No external assets.
-use rxui::{prelude::*, taffy::prelude::AlignItems};
+use rxui::{StyleColor, prelude::*, taffy::prelude::AlignItems};
 
 struct Gallery {
     image: Image,
@@ -15,10 +15,11 @@ impl View for Gallery {
         } else {
             ImageFilter::Linear
         };
-        let tint = if self.tinted {
-            rgb8(150, 200, 255)
+        // White leaves the pixels unchanged; a theme token follows theme switches.
+        let tint: StyleColor = if self.tinted {
+            ThemeColor::Accent.into()
         } else {
-            [1.; 4]
+            [1.; 4].into()
         };
         column()
             .padding(24.)
@@ -61,7 +62,8 @@ impl View for Gallery {
             )
             .child(
                 row()
-                    .gap(12.)
+                    .gap(8.)
+                    .align_items(AlignItems::CENTER)
                     .child(
                         button(
                             row()
@@ -69,8 +71,8 @@ impl View for Gallery {
                                 .align_items(AlignItems::CENTER)
                                 .child(
                                     image(self.image.clone())
-                                        .width(24.)
-                                        .height(24.)
+                                        .width(16.)
+                                        .height(16.)
                                         .accessibility_hidden(true),
                                 )
                                 .child(label("Primary action")),
@@ -86,39 +88,41 @@ impl View for Gallery {
                         button("Toggle tint")
                             .variant(ButtonVariant::Quiet)
                             .on_click(cx.listener(|s, _, _| s.tinted = !s.tinted)),
-                    ),
-            )
-            .child(
-                button(
-                    row()
-                        .gap(8.)
-                        .align_items(AlignItems::CENTER)
-                        .child(
-                            image(self.image.clone())
-                                .width(24.)
-                                .height(24.)
-                                .accessibility_hidden(true),
+                    )
+                    .child(
+                        button(
+                            row()
+                                .gap(8.)
+                                .align_items(AlignItems::CENTER)
+                                .child(
+                                    image(self.image.clone())
+                                        .width(16.)
+                                        .height(16.)
+                                        .accessibility_hidden(true),
+                                )
+                                .child(label("Disabled composed action")),
                         )
-                        .child(label("Disabled composed action")),
-                )
-                .disabled(true),
+                        .disabled(true),
+                    ),
             )
             .child(label(format!(
                 "Clicks: {} · Filter: {:?} · Tint: {}",
                 self.clicks, filter, self.tinted
             )))
             .child(
-                button("Open another placement").on_click(cx.listener(|_, _, cx| {
-                    let root = cx.entity().upgrade().unwrap();
-                    cx.open_window(
-                        WindowOptions::new()
-                            .title("RXUI — shared images")
-                            .size(780., 540.)
-                            .theme(Theme::light()),
-                        root,
-                    )
-                    .unwrap();
-                })),
+                row().child(
+                    button("Open another placement").on_click(cx.listener(|_, _, cx| {
+                        let root = cx.entity().upgrade().unwrap();
+                        cx.open_window(
+                            WindowOptions::new()
+                                .title("RXUI — shared images")
+                                .size(780., 540.)
+                                .theme(Theme::light()),
+                            root,
+                        )
+                        .unwrap();
+                    })),
+                ),
             )
     }
 }

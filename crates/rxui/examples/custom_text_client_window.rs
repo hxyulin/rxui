@@ -163,8 +163,12 @@ impl View for Scratch {
                         .font_size(FONT_SIZE),
                     ),
             )
+            .child(
+                text_input(String::new())
+                    .placeholder("Next field")
+                    .accessibility_label("Next field"),
+            )
             .child(label(self.notes.clone()).color(ThemeColor::TextMuted))
-            .child(text_input(String::new()).accessibility_label("Next field"))
     }
 }
 
@@ -180,7 +184,7 @@ fn main() -> Result<(), ApplicationError> {
         cx.open_window(
             WindowOptions::new()
                 .title("RXUI — custom text input client")
-                .size(720., 480.),
+                .size(720., 400.),
             scratch,
         )?;
         Ok(())

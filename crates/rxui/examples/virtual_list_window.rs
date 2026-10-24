@@ -1,8 +1,6 @@
 //! A hundred thousand fixed-height rows, with independent scrolling in shared windows.
 use rxui::prelude::*;
 const ROWS: usize = 100_000;
-/// The balanced theme's list row height, so slots match `list_row` rows.
-const HEIGHT: f32 = 24.;
 struct Files {
     scroll: ScrollHandle,
     selected: usize,
@@ -10,6 +8,8 @@ struct Files {
 }
 impl View for Files {
     fn view(&self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+        // Slots match the theme's `list_row` height, following density switches.
+        let height = cx.theme().sizes().row_height;
         column()
             .fill_width()
             .fill_height()
@@ -30,10 +30,10 @@ impl View for Files {
                                 cx.listener(|s, e: &TextChangeEvent, _| s.jump = e.value.clone()),
                             ),
                     )
-                    .child(button("Reveal row").on_click(cx.listener(|s, _, cx| {
+                    .child(button("Reveal row").on_click(cx.listener(move |s, _, cx| {
                         if let Ok(index) = s.jump.parse::<usize>() {
                             s.scroll
-                                .reveal_row(cx, index.min(ROWS - 1), HEIGHT)
+                                .reveal_row(cx, index.min(ROWS - 1), height)
                                 .expect("live list");
                         }
                     })))
@@ -49,7 +49,7 @@ impl View for Files {
                     }))),
             )
             .child(
-                virtual_list(ROWS, HEIGHT, &self.scroll, cx, |index| {
+                virtual_list(ROWS, height, &self.scroll, cx, |index| {
                     button(format!("File {index:05}.rs"))
                         .key(index)
                         .list_row(self.selected == index)
