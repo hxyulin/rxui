@@ -87,6 +87,13 @@ pub enum SemanticRole {
     Switch,
     /// Adjustable numeric value; pair with `accessibility_numeric_value`.
     Slider,
+    /// Numeric text input with increment and decrement, such as a
+    /// [`crate::number_field`]; pair with `accessibility_numeric_value`.
+    SpinButton,
+    /// Advisory message, such as a neutral or success [`crate::callout`].
+    Status,
+    /// Important message, such as a warning or danger [`crate::callout`].
+    Alert,
     /// Read-only progress; pair with `accessibility_numeric_value`.
     ProgressIndicator,
     /// Collapsed choice with a popup list; pair with `accessibility_expanded` and
@@ -150,6 +157,7 @@ pub(crate) struct Properties {
     pub role: Option<SemanticRole>,
     pub hidden: bool,
     pub disabled: bool,
+    pub invalid: bool,
     pub selected: Option<bool>,
     pub multiselectable: bool,
     pub checked: Option<Checked>,
@@ -233,6 +241,8 @@ pub struct SemanticNode<'a> {
     pub selection: Option<TextSelection>,
     /// Whether interaction is disabled.
     pub disabled: bool,
+    /// Whether the control's value is invalid, such as a [`crate::field`] with an error.
+    pub invalid: bool,
     /// Whether this input accepts no committed changes.
     pub read_only: bool,
     /// Whether Focus is supported by the underlying control.

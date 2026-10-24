@@ -3,7 +3,7 @@ use super::{Part, part, root_builders};
 use crate::{Element, FontWeight, SemanticRole, Shortcut, TextRole, ThemeColor};
 use taffy::prelude::{auto, length, percent};
 
-/// Semantic color of a status element, shared by badges and later by callouts,
+/// Semantic color of a status element, shared by badges, callouts,
 /// toasts and field errors. Each tone has a foreground and a subtle background
 /// token.
 ///

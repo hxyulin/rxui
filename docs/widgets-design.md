@@ -1,13 +1,12 @@
 # Standard widgets: design
 
-Status: agreed design. Batches 1 to 3 are implemented: icons in
-[icons.md](icons.md), small parts, toolbars and choices in
-[controls.md](controls.md), menu items in
-[overlays-and-commands.md](overlays-and-commands.md), and comboboxes and list
-views in [search-and-lists.md](search-and-lists.md). Widgets land in four batches; this document
-records the intended API and behavior so each batch builds on the same contract. Once a
-widget is implemented, its contract moves to the matching per-area document
-(usually [controls.md](controls.md)); this file then keeps only open items.
+Status: implemented. Icons are in [icons.md](icons.md), small parts, toolbars
+and choices in [controls.md](controls.md), menu items in
+[overlays-and-commands.md](overlays-and-commands.md), comboboxes and list views
+in [search-and-lists.md](search-and-lists.md), and forms and feedback in
+[forms-and-feedback.md](forms-and-feedback.md).
+This file keeps the choices that differ from the agreed sketch, the open items
+and the widgets planned for later.
 
 ## Principles
 
@@ -60,32 +59,21 @@ keys.
 
 ## Batch 4: forms and feedback
 
-```rust
-field("Tab width", number_field(self.tab).range(1., 16.).step(1.)
-        .on_change(cx.listener(|s, e: &NumberEvent, _| s.tab = e.value)))
-    .help("Spaces per indent level.")
-field("Font family", text_input(&self.font)).error(self.font_error.as_deref())
-disclosure(cx, "Advanced", content)
-callout(Tone::Warning, "rust-analyzer is out of date")
-    .description("Some features may not work until it is updated.")
-    .action(button("Update"))
-toasts(&self.toasts).on_dismiss(cx.listener(|s, e: &ToastDismiss, _| s.remove(e.id)))
-```
+Implemented. The contracts are in [forms-and-feedback.md](forms-and-feedback.md)
+(`field`, `number_field`, `disclosure`, `callout` and `toasts`), and
+`accessibility_invalid` is in [semantics.md](semantics.md). Four choices differ
+from the agreed sketch. `number_field` and `toasts` take the view context,
+because the draft text, stepper repeats and toast clocks are placement-local.
+Number fields propose a `NumberPhase` of their own rather than `SliderPhase`,
+whose drag phases do not apply. A toast's action is a caption reported through
+`Toasts::on_action`, so the application's list holds data rather than elements.
+Callouts take `Listener<ClickEvent>` for `on_dismiss`.
 
-- `field` stacks a label, the control, and help or error text. It wires
-  `accessibility_labelled_by` and the description automatically. An error
-  switches the control's border to `Danger` and announces the message.
-- `number_field` is a text input with a stepper: range, step, precision,
-  Up/Down and PageUp/PageDown keys, and commit on Enter or blur. Invalid text
-  reverts. It proposes `NumberEvent { value, phase }` like the slider.
-- `disclosure` is a header button with a chevron icon and `expanded` state, and
-  an animated content reveal that respects reduce-motion.
-- `callout` is an inline banner with tone, icon, title, optional description
-  and actions.
-- `toasts` render an application-owned list (`Toast { id, tone, title,
-  description, action, timeout }`) as a corner stack overlay with
-  enter/exit motion. Timers pause on hover and keyboard focus. The polite live
-  region announces new toasts.
+Open items:
+
+- A field shows its error as the control's description; AccessKit's
+  `error_message` relation is not published.
+- A toast card is 360 units wide even in a narrower window.
 
 ## Later
 

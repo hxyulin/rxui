@@ -606,26 +606,21 @@ impl<'a, T> ViewContext<'a, T> {
             .or_insert_with(|| Box::new(crate::Animated::new(target.clone())))
             .downcast_mut::<crate::Animated<V>>()
             .expect("animation slot type");
-        if animates {
-            // Between frames the frame time is stale: a new move waits for the next one.
-            if clock.fresh() {
-                animated.resume(now);
-            }
-            let retarget = *animated.target() != target;
-            animated.set(target, transition, now);
-            if retarget && !clock.fresh() {
-                animated.defer();
-            }
-        } else if animated.is_animating(now) || *animated.target() != target {
-            animated.jump_to(target);
-        }
-        let value = animated.value(now);
-        let moving = animated.is_animating(now);
+        let (value, moving) = step_animation(animated, target, transition, clock, now);
         drop(state);
         if moving {
             self.request_animation_frame();
         }
         value
+    }
+    /// A handle that drives an [`crate::Animated`] value for this placement after
+    /// the builder that captured it has returned, for builders such as
+    /// `disclosure` whose target is set by a later builder call.
+    pub(crate) fn frame_clock(&self) -> FrameClock {
+        FrameClock {
+            runtime: self.runtime.clone(),
+            mount: self.id,
+        }
     }
     /// Theme of this placement, including subtree overrides from `Element::theme`.
     /// A view that reads it is evaluated again when its theme changes. Outside a
@@ -664,5 +659,61 @@ impl<T> Drop for ViewContext<'_, T> {
                 record.scratch = scratch;
             }
         }
+    }
+}
+
+/// Moves `animated` toward `target` at frame time `now`, as
+/// [`ViewContext::animate`] does, returning its value and whether it still moves.
+fn step_animation<V: crate::Interpolate>(
+    animated: &mut crate::Animated<V>,
+    target: V,
+    transition: crate::Transition,
+    clock: crate::animation::Clock,
+    now: std::time::Duration,
+) -> (V, bool) {
+    if clock.animates() {
+        // Between frames the frame time is stale: a new move waits for the next one.
+        if clock.fresh() {
+            animated.resume(now);
+        }
+        let retarget = *animated.target() != target;
+        animated.set(target, transition, now);
+        if retarget && !clock.fresh() {
+            animated.defer();
+        }
+    } else if animated.is_animating(now) || *animated.target() != target {
+        animated.jump_to(target);
+    }
+    (animated.value(now), animated.is_animating(now))
+}
+
+/// The frame clock of one placement, captured from its view context; see
+/// [`ViewContext::frame_clock`].
+pub(crate) struct FrameClock {
+    runtime: Rc<RuntimeInner>,
+    mount: MountId,
+}
+impl FrameClock {
+    /// Moves `animated` toward `target` and returns its value, requesting a
+    /// frame for the placement while it moves. Motion completes immediately
+    /// when reduced or when no host drives frames.
+    pub(crate) fn drive<V: crate::Interpolate>(
+        &self,
+        animated: &mut crate::Animated<V>,
+        target: V,
+        transition: crate::Transition,
+    ) -> V {
+        let clock = self.runtime.motion.get();
+        let now = self.runtime.frames.borrow().1;
+        let (value, moving) = step_animation(animated, target, transition, clock, now);
+        if moving {
+            self.runtime.frames.borrow_mut().0.insert(self.mount);
+        }
+        value
+    }
+    /// Queues `f` for the runtime's next flush, for proposals a view decides
+    /// on while it is evaluated, such as an expired timeout.
+    pub(crate) fn defer(&self, f: impl FnOnce(&mut AppContext<'_>) + 'static) {
+        self.runtime.defer(f);
     }
 }

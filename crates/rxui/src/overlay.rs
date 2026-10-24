@@ -101,6 +101,9 @@ pub(crate) struct Properties {
     pub modal: bool,
     pub autofocus: bool,
     pub dismiss: Option<Listener<DismissEvent>>,
+    /// A passive corner overlay, such as a toast: it stacks in its viewport
+    /// corner, never takes focus, and leaves outside presses and Escape alone.
+    pub corner: Option<crate::ToastPosition>,
 }
 /// Owned overlay builder. Attach conditionally while open, with a stable key.
 /// Surface content retains its logical parent for state/theme/event routing while
@@ -152,6 +155,25 @@ impl Overlay {
                 modal,
                 autofocus: true,
                 dismiss: None,
+                corner: None,
+            },
+            transition: None,
+        }
+    }
+    /// A passive overlay showing `surface` in a viewport corner. Corner overlays
+    /// of one position stack in description order, the last nearest the corner.
+    pub(crate) fn corner(position: crate::ToastPosition, surface: Element) -> Self {
+        Self {
+            surface,
+            props: Properties {
+                anchor: None,
+                placement: Default::default(),
+                gap: 8.,
+                margin: 16.,
+                modal: false,
+                autofocus: false,
+                dismiss: None,
+                corner: Some(position),
             },
             transition: None,
         }
@@ -221,10 +243,11 @@ impl Overlay {
 impl IntoElement for Overlay {
     fn into_element(mut self) -> Element {
         let key = self.surface.key.take();
-        let mut root = stack()
-            .fill_width()
-            .fill_height()
-            .pointer_events(PointerEvents::Block);
+        let mut root = stack().fill_width().fill_height();
+        // A corner overlay lets the window behind it receive input.
+        if self.props.corner.is_none() {
+            root = root.pointer_events(PointerEvents::Block);
+        }
         if self.props.modal {
             root = root.background([0., 0., 0., 0.4]);
         }

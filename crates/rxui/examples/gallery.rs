@@ -114,6 +114,14 @@ struct Gallery {
     language: Key,
     layout: Key,
     diff: Key,
+    tab_width: f64,
+    font: String,
+    indent: Key,
+    trim: bool,
+    final_newline: bool,
+    callout: bool,
+    toasts: Vec<Toast>,
+    next_toast: u64,
 }
 impl Gallery {
     fn theme(&self) -> Theme {
@@ -672,6 +680,104 @@ impl View for Gallery {
                 ),
         );
 
+        // Labelled fields with help and error text, and a disclosure.
+        let font_error = (!self.font.contains("Mono")).then_some("Not a monospaced family.");
+        let forms = section(
+            "Forms",
+            column()
+                .gap(12.)
+                .fill_width()
+                .child(
+                    field(
+                        "Tab width",
+                        number_field(cx, self.tab_width)
+                            .range(1., 16.)
+                            .on_change(cx.listener(|s, e: &NumberEvent, _| s.tab_width = e.value)),
+                    )
+                    .help("Spaces per indent level."),
+                )
+                .child(
+                    field(
+                        "Font family",
+                        text_input(&self.font).width(240.).on_change(
+                            cx.listener(|s, e: &TextChangeEvent, _| s.font = e.value.clone()),
+                        ),
+                    )
+                    .error(font_error),
+                )
+                .child(field(
+                    "Indentation",
+                    select(cx)
+                        .selected(self.indent.clone())
+                        .option(choice("spaces", "Spaces"))
+                        .option(choice("tabs", "Tabs"))
+                        .on_change(cx.listener(|s, e: &ChoiceEvent, _| s.indent = e.key.clone())),
+                ))
+                .child(disclosure(
+                    cx,
+                    "Advanced",
+                    column()
+                        .gap(8.)
+                        .padding_x(24.)
+                        .padding_y(4.)
+                        .child(
+                            checkbox(self.trim, "Trim trailing whitespace")
+                                .on_change(cx.listener(|s, e: &ToggleEvent, _| s.trim = e.checked)),
+                        )
+                        .child(
+                            checkbox(self.final_newline, "Insert final newline").on_change(
+                                cx.listener(|s, e: &ToggleEvent, _| s.final_newline = e.checked),
+                            ),
+                        ),
+                )),
+        );
+
+        // Callouts in each tone, and buttons that push toasts.
+        let mut callouts = column()
+            .gap(8.)
+            .fill_width()
+            .child(callout(Tone::Neutral, "Indexing 1,204 files"))
+            .child(
+                callout(Tone::Accent, "A new version is available")
+                    .description("0.2.0 adds docking presets."),
+            )
+            .child(
+                callout(Tone::Warning, "rust-analyzer is out of date")
+                    .description("Some features may not work until it is updated.")
+                    .action(
+                        button("Update")
+                            .on_click(cx.listener(|s, _, _| s.status = "Updating".into())),
+                    ),
+            )
+            .child(callout(Tone::Success, "All tests passed"));
+        if self.callout {
+            callouts = callouts.child(
+                callout(Tone::Danger, "Build failed")
+                    .description("error[E0308]: mismatched types in src/main.rs.")
+                    .on_dismiss(cx.listener(|s, _: &ClickEvent, _| s.callout = false)),
+            );
+        }
+        let mut toast_buttons = row().gap(8.);
+        for (tone, name, title) in [
+            (Tone::Neutral, "Info", "Copied to clipboard"),
+            (Tone::Success, "Success", "Saved 3 files"),
+            (Tone::Warning, "Warning", "Low disk space"),
+            (Tone::Danger, "Error", "Push rejected"),
+        ] {
+            toast_buttons =
+                toast_buttons.child(button(name).on_click(cx.listener(move |s, _, _| {
+                    s.next_toast += 1;
+                    let mut toast = Toast::new(s.next_toast, title).tone(tone);
+                    if tone == Tone::Danger {
+                        toast = toast
+                            .description("The remote contains work you do not have.")
+                            .action("Pull");
+                    }
+                    s.toasts.push(toast);
+                })));
+        }
+        let feedback = section("Feedback", callouts.child(toast_buttons));
+
         let dialog = section(
             "Dialog",
             row()
@@ -703,6 +809,8 @@ impl View for Gallery {
                     .gap(24.)
                     .child(quick_open)
                     .child(tabs_section)
+                    .child(forms)
+                    .child(feedback)
                     .child(icons)
                     .child(list)
                     .child(split),
@@ -728,6 +836,13 @@ impl View for Gallery {
                     .child(label("Component gallery").text_role(TextRole::Heading))
                     .child(label(self.status.clone()).color(ThemeColor::TextMuted))
                     .child(columns),
+            )
+            .child(
+                toasts(cx, &self.toasts)
+                    .on_dismiss(cx.listener(|s, e: &ToastDismiss, _| {
+                        s.toasts.retain(|t| t.id != e.id);
+                    }))
+                    .on_action(cx.listener(|s, _: &ToastAction, _| s.status = "Pulling".into())),
             );
         if self.dialog {
             root = root.child(
@@ -791,6 +906,14 @@ fn main() -> Result<(), ApplicationError> {
             language: Key::from("rust"),
             layout: Key::from("list"),
             diff: Key::from("split"),
+            tab_width: 4.,
+            font: "Comic Code".into(),
+            indent: Key::from("spaces"),
+            trim: true,
+            final_newline: false,
+            callout: true,
+            toasts: Vec::new(),
+            next_toast: 0,
         });
         cx.open_window(
             WindowOptions::new()

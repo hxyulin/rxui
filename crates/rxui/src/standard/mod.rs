@@ -33,9 +33,13 @@
 use crate::{AccessError, AppContext, Dispatch, Element, Key, Listener, ThemeColor, ViewContext};
 
 mod combobox;
+mod disclosure;
+mod feedback;
+mod field;
 mod glyph;
 mod list_view;
 mod matcher;
+mod number_field;
 mod progress;
 mod radio;
 mod segmented;
@@ -47,10 +51,16 @@ mod toolbar;
 mod tooltip;
 
 pub use combobox::{ChooseEvent, ComboItem, Combobox, QueryEvent, combobox, combobox_keyed};
+pub use disclosure::{Disclosure, disclosure, disclosure_keyed};
+pub use feedback::{
+    Callout, Toast, ToastAction, ToastDismiss, ToastPosition, Toasts, callout, toasts,
+};
+pub use field::{Field, field};
 pub use list_view::{
     ListItem, ListSelection, ListSelectionEvent, ListView, list_view, list_view_keyed,
 };
 pub use matcher::{FuzzyMatcher, Match, Matcher, PassthroughMatcher, SubstringMatcher};
+pub use number_field::{NumberEvent, NumberField, NumberPhase, number_field, number_field_keyed};
 pub use progress::{ProgressBar, progress_bar, spinner};
 pub use radio::{RadioGroup, radio_group};
 pub use segmented::{Segmented, segmented};
@@ -63,6 +73,10 @@ pub use tooltip::{TOOLTIP_DELAY, tooltip};
 
 #[cfg(test)]
 mod combobox_tests;
+#[cfg(test)]
+mod feedback_tests;
+#[cfg(test)]
+mod forms_tests;
 #[cfg(all(test, feature = "rendering"))]
 mod gpu_tests;
 #[cfg(test)]
@@ -230,6 +244,11 @@ pub(crate) enum Part {
     Segment,
     /// An icon segment, as tall and wide as the track's content box.
     IconSegment,
+    /// A number field's text input, with room for its stepper at the end.
+    NumberInput,
+    /// A callout: the tone's subtle fill inside a 1-unit border of the tone's
+    /// foreground at half alpha, rounded with `radius`.
+    Banner(Tone),
 }
 impl Part {
     /// Switch knob side: five eighths of the track height.
@@ -258,7 +277,7 @@ impl Part {
                 0.
             }
             Self::KeyCap => m.radius_small,
-            Self::IconButton | Self::Track => m.radius,
+            Self::IconButton | Self::Track | Self::NumberInput | Self::Banner(_) => m.radius,
             // Concentric with the track.
             Self::Segment | Self::IconSegment => (m.radius - TRACK_INSET).max(0.),
             Self::Radio => s / 2.,
@@ -288,7 +307,7 @@ impl Part {
             Self::Icon => [Some(m.icon_size); 2],
             Self::IconButton => [Some(m.input_height); 2],
             Self::Separator => [None, Some(m.icon_size)],
-            Self::KeyCap | Self::Toolbar { .. } => [None; 2],
+            Self::KeyCap | Self::Toolbar { .. } | Self::NumberInput | Self::Banner(_) => [None; 2],
             Self::Track => [None, Some(m.input_height)],
             Self::Segment => [None, Some(Self::segment(m))],
             Self::IconSegment => [Some(Self::segment(m)); 2],
@@ -319,6 +338,18 @@ impl Part {
                 style.inset.bottom = auto();
             }
             Self::Thumb => style.margin.left = length(-h / 2.),
+            Self::Banner(_) if overrides & 8 == 0 => {
+                let one = length(1.);
+                style.border = taffy::Rect {
+                    left: one,
+                    right: one,
+                    top: one,
+                    bottom: one,
+                };
+            }
+            Self::NumberInput if overrides & 1 == 0 => {
+                style.padding.right = length(m.input_padding_x + number_field::STEPPER_WIDTH);
+            }
             Self::Toolbar { vertical } => {
                 if vertical {
                     style.min_size.width = length(m.input_height);

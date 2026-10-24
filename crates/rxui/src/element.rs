@@ -1369,6 +1369,13 @@ impl Element {
         self.semantics.get_or_insert_with(Default::default).action = Some(listener);
         self
     }
+    /// Marks a control's value as invalid. Assistive technology reads the state,
+    /// and a text input or button draws its border in [`crate::ThemeColor::Danger`]
+    /// unless it is disabled. [`crate::field`] sets it while it shows an error.
+    pub fn accessibility_invalid(mut self, invalid: bool) -> Self {
+        self.semantics.get_or_insert_with(Default::default).invalid = invalid;
+        self
+    }
     /// Excludes this complete subtree from semantics without changing its painting
     /// or ordinary input behavior. Assistive actions cannot target hidden descendants.
     pub fn accessibility_hidden(mut self, hidden: bool) -> Self {

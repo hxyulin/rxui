@@ -300,6 +300,12 @@ pub use standard::{
 };
 #[cfg(feature = "layout")]
 pub use standard::{
+    Callout, Disclosure, Field, NumberEvent, NumberField, NumberPhase, Toast, ToastAction,
+    ToastDismiss, ToastPosition, Toasts, callout, disclosure, disclosure_keyed, field,
+    number_field, number_field_keyed, toasts,
+};
+#[cfg(feature = "layout")]
+pub use standard::{
     ChooseEvent, ComboItem, Combobox, FuzzyMatcher, Match, Matcher, PassthroughMatcher, QueryEvent,
     SubstringMatcher, combobox, combobox_keyed,
 };
@@ -402,6 +408,11 @@ pub mod prelude {
         SliderEvent, SliderPhase, Toggle, ToggleButton, ToggleContent, ToggleEvent, Tone, Toolbar,
         badge, checkbox, choice, kbd, progress_bar, radio_group, segmented, select, select_keyed,
         separator, slider, spinner, switch, toggle_button, toolbar, tooltip,
+    };
+    pub use crate::{
+        Callout, Disclosure, Field, NumberEvent, NumberField, NumberPhase, Toast, ToastAction,
+        ToastDismiss, ToastPosition, Toasts, callout, disclosure, disclosure_keyed, field,
+        number_field, number_field_keyed, toasts,
     };
     pub use crate::{
         ChooseEvent, ComboItem, Combobox, FuzzyMatcher, Match, Matcher, PassthroughMatcher,

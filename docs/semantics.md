@@ -83,13 +83,16 @@ themselves with roles and state builders:
 | Role | State builders |
 | --- | --- |
 | CheckBox, RadioButton, Switch | `accessibility_checked(bool or Checked::Mixed)` |
-| Slider, ProgressIndicator | `accessibility_numeric_value(NumericValue { value, min, max, step })` |
+| Slider, ProgressIndicator, SpinButton | `accessibility_numeric_value(NumericValue { value, min, max, step })` |
+| Status, Alert | none; the role marks an advisory or important message |
 | ComboBox | `accessibility_expanded(open)`, `accessibility_value(current choice)` |
 | ListBox, ListBoxOption | `accessibility_selected(selected)` on options |
 | Tree, TreeItem | `accessibility_level(depth)`, `accessibility_expanded(open)` on items |
 | Table, TableRow, TableCell, ColumnHeader | none |
 
-`accessibility_value(text)` sets the value text of any element other than labels
+`accessibility_invalid(true)` publishes an invalid value on any control, and draws
+a text input's or button's border in `Danger`; [fields](forms-and-feedback.md#fields)
+set it while they show an error. `accessibility_value(text)` sets the value text of any element other than labels
 and text inputs, which expose their own text. `accessibility_level` also overrides a
 heading's default level of one. Numeric values must be finite, with `min <= max` and
 a positive step; invalid ones fail preparation with `UiError::InvalidStyle`.

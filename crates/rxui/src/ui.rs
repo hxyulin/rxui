@@ -762,7 +762,15 @@ fn default_paint(
             states[2].color = c.text_disabled;
             return (paint, Some(states));
         }
-        Surface::Part(part) => paint.radii = [part.radius(m); 4],
+        Surface::Part(part) => {
+            paint.radii = [part.radius(m); 4];
+            if let crate::standard::Part::Banner(tone) = part {
+                paint.background = Some(theme.color(tone.background()));
+                let mut edge = theme.color(tone.foreground());
+                edge[3] *= 0.5;
+                paint.border_color = Some(edge);
+            }
+        }
         Surface::Plain => {}
     }
     if !button && !input {
@@ -792,6 +800,11 @@ fn default_paint(
                 paint.border_color = Some(c.danger);
             }
         }
+    }
+    // An invalid control, such as one in a field with an error, keeps a danger
+    // border in every enabled state.
+    if invalid(element) {
+        paint.border_color = Some(c.danger);
     }
     let mut states = [paint; 3];
     let [hover, pressed, disabled] = &mut states;
@@ -824,6 +837,10 @@ fn default_paint(
         }
     }
     (paint, Some(states))
+}
+/// Whether a control is marked invalid, which its default border shows.
+fn invalid(element: &Element) -> bool {
+    element.semantics.as_ref().is_some_and(|s| s.invalid)
 }
 /// Whether an element retains editing state: every text input, and labels marked
 /// selectable.
@@ -1602,6 +1619,7 @@ impl<T: View> Ui<T> {
                 || node.element.states != element.states
                 || image_properties(&node.element) != image_properties(&element)
                 || node.element.layout_overrides != element.layout_overrides
+                || invalid(&node.element) != invalid(&element)
             {
                 self.style_roots.insert(id);
             }
@@ -2570,7 +2588,15 @@ impl<T: View> Ui<T> {
     /// Whether a visible node's clipped box, and a custom element's own hit test,
     /// contain the point.
     fn node_contains(n: &Node, point: [f32; 2]) -> bool {
-        n.visible
+        // A corner overlay's root fills the viewport but only its surface is a target.
+        let corner = n
+            .element
+            .input
+            .as_ref()
+            .and_then(|p| p.overlay.as_ref())
+            .is_some_and(|p| p.corner.is_some());
+        !corner
+            && n.visible
             && n.bounds.contains(point)
             && n.clip_bounds.contains(point)
             && match &n.element.kind {
@@ -4183,6 +4209,7 @@ impl<T: View> Ui<T> {
             text_revision: node.text_revision,
             selection,
             disabled,
+            invalid: properties.is_some_and(|p| p.invalid),
             read_only,
             focusable,
             activatable,

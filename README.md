@@ -58,7 +58,7 @@ fn main() -> Result<(), ApplicationError> {
 | State | Shared `Entity<T>` state, weak listeners, dependency tracking and explicit flush boundaries |
 | Composition | Element builders, keyed reconciliation, components and per-window placements |
 | Layout | Flex rows and columns, stacks, absolute overlays, scroll areas, split panes and virtual lists |
-| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, rich text with links, tabs, menus, popovers, modals, docking and virtualized trees |
+| Controls | Buttons, controlled text inputs and text areas with IME and undo, password and placeholder support, rich text with links, tabs, menus, popovers, modals, docking and virtualized trees; icons, separators, badges, key caps, toolbars, toggle buttons, segmented controls, comboboxes with fuzzy matching, list views, form fields, number fields, disclosures, callouts and toasts |
 | Input | Pointer and keyboard routing, capture, focus scopes, Tab traversal and typed commands with shortcuts |
 | Styling | Light, dark and high-contrast themes, compact density, inherited text styles and state paints |
 | Animation | Implicit state and theme transitions, overlay enter/exit, springs and animated values, reduce motion |
@@ -176,6 +176,7 @@ The full set is in [`crates/rxui/examples`](crates/rxui/examples).
 | [Layout](docs/layout.md), [interaction](docs/interaction.md) and [focus and tabs](docs/focus-and-tabs.md) | Arranging content and routing input |
 | [Virtual lists](docs/virtual-lists.md) and [trees](docs/virtual-trees.md) | Bounded row construction, hierarchical navigation and controlled selection |
 | [Search and lists](docs/search-and-lists.md) | Comboboxes, fuzzy matching and selectable list views |
+| [Forms and feedback](docs/forms-and-feedback.md) | Labelled fields, number fields, disclosures, callouts and toasts |
 | [Text input](docs/text-input.md), [fonts](docs/fonts.md) and [semantics](docs/semantics.md) | Editing, IME, font registration and accessibility |
 | [Styling](docs/styling.md), [images](docs/images.md) and [compositing](docs/compositing.md) | Themes, pictures and group opacity |
 | [Animation](docs/animation.md) | Transitions, overlay motion, smooth scrolling, animated values and reduce motion |

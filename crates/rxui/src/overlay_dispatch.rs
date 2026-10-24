@@ -195,6 +195,19 @@ impl<T: View> Ui<T> {
             .as_ref()
             .map(|s| s.roots.clone())
             .unwrap_or_default();
+        // Distance already taken from each corner by later corner overlays.
+        let mut stacked = [0f32; 4];
+        let mut offsets = HashMap::new();
+        for &root in roots.iter().rev() {
+            let Some(corner) = self.overlay_properties(root).unwrap().corner else {
+                continue;
+            };
+            offsets.insert(root, stacked[corner as usize]);
+            let surface = self.nodes[&root].children[0];
+            let height = self.taffy.layout(self.nodes[&surface].layout)?.size.height;
+            let gap = self.overlay_properties(root).unwrap().gap;
+            stacked[corner as usize] += height + gap;
+        }
         let clip = Bounds {
             x: 0.,
             y: 0.,
@@ -226,7 +239,16 @@ impl<T: View> Ui<T> {
             self.update_bounds(root, [0., 0.], visible, clip)?;
             let surface = self.nodes[&root].children[0];
             let size = self.nodes[&surface].bounds;
-            let position = place(anchor, [size.width, size.height], viewport, &props);
+            let position = match props.corner {
+                Some(corner) => corner_place(
+                    corner,
+                    offsets[&root],
+                    [size.width, size.height],
+                    viewport,
+                    props.margin,
+                ),
+                None => place(anchor, [size.width, size.height], viewport, &props),
+            };
             let layout = self.taffy.layout(self.nodes[&surface].layout)?;
             self.update_bounds(
                 surface,
@@ -338,6 +360,9 @@ impl<T: View> Ui<T> {
             .find(|id| {
                 self.nodes[id].visible
                     && !self.nodes[id].inert
+                    && self
+                        .overlay_properties(*id)
+                        .is_some_and(|p| p.corner.is_none())
                     && self.modal_allows(*id)
                     && (!pointer || self.pointer_allowed(*id))
             })
@@ -444,6 +469,27 @@ impl<T: View> Ui<T> {
         }
         Ok(Default::default())
     }
+}
+/// Position of a corner overlay `offset` units from its corner, kept inside the
+/// viewport margin.
+fn corner_place(
+    corner: crate::ToastPosition,
+    offset: f32,
+    size: [f32; 2],
+    viewport: [f32; 2],
+    margin: f32,
+) -> [f32; 2] {
+    use crate::ToastPosition::*;
+    let margin = [margin.min(viewport[0] * 0.5), margin.min(viewport[1] * 0.5)];
+    let x = match corner {
+        TopStart | BottomStart => margin[0],
+        TopEnd | BottomEnd => viewport[0] - margin[0] - size[0],
+    };
+    let y = match corner {
+        TopStart | TopEnd => margin[1] + offset,
+        BottomStart | BottomEnd => viewport[1] - margin[1] - size[1] - offset,
+    };
+    [x.max(margin[0]), y]
 }
 fn place(anchor: Option<Bounds>, size: [f32; 2], viewport: [f32; 2], p: &Properties) -> [f32; 2] {
     let margin = [

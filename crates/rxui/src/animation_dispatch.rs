@@ -489,6 +489,14 @@ impl<T: View> Ui<T> {
         else {
             return [0.; 2];
         };
+        // Corner overlays rise from, or drop from, their window edge.
+        match props.corner {
+            Some(crate::ToastPosition::BottomStart | crate::ToastPosition::BottomEnd) => {
+                return [0., distance];
+            }
+            Some(_) => return [0., -distance],
+            None => {}
+        }
         let anchor = match &props.anchor {
             None => return [0.; 2],
             Some(crate::OverlayAnchor::Point(p)) => [p[0], p[1]],

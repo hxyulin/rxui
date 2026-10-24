@@ -408,6 +408,9 @@ impl AccessKitTree {
             if semantic.read_only {
                 node.set_read_only();
             }
+            if semantic.invalid {
+                node.set_invalid(accesskit::Invalid::True);
+            }
             if semantic.clips_children {
                 node.set_clips_children();
             }
@@ -486,6 +489,7 @@ impl AccessKitTree {
                         SemanticRole::TextInput
                             | SemanticRole::MultilineTextInput
                             | SemanticRole::PasswordInput
+                            | SemanticRole::SpinButton
                     )
                 {
                     let stale = self
@@ -778,6 +782,9 @@ fn role(role: SemanticRole) -> Role {
         SemanticRole::Toolbar => Role::Toolbar,
         SemanticRole::Switch => Role::Switch,
         SemanticRole::Slider => Role::Slider,
+        SemanticRole::SpinButton => Role::SpinButton,
+        SemanticRole::Status => Role::Status,
+        SemanticRole::Alert => Role::Alert,
         SemanticRole::ProgressIndicator => Role::ProgressIndicator,
         SemanticRole::ComboBox => Role::ComboBox,
         SemanticRole::ListBox => Role::ListBox,

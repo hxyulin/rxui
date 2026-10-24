@@ -173,6 +173,11 @@ cargo run -p rxui --example gallery --features native --locked
 palettes, and `list_view` is a selectable, virtualized list; see
 [search and lists](search-and-lists.md).
 
+`field` labels a control and shows help or error text, `number_field` edits a
+number with a stepper, and `disclosure` reveals a group of settings. `callout`
+shows an inline status banner and `toasts` stack notifications in a window
+corner; see [forms and feedback](forms-and-feedback.md).
+
 ## Icons
 
 ```rust

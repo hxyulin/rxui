@@ -5,3 +5,7 @@ extend-exclude = [
     "crates/rxui/tests/fonts/*.otf",
     "crates/rxui-draw/tests/fonts/*",
 ]
+
+[default.extend-words]
+# Fuzzy-match query used in tests, benches and docs.
+thm = "thm"
