@@ -1283,7 +1283,7 @@ fn rounded_clips_nest_restore_follow_rotation_and_apply_to_direct_renderers() {
 }
 
 #[test]
-fn layer_formats_composite_nearest_sampled_layers_like_direct_painting() {
+fn layer_formats_preserve_color_precision_and_attachment_rules() {
     use wgpu::TextureFormat as F;
     for (target, layer) in [
         (F::Bgra8UnormSrgb, F::Rgba8UnormSrgb),
@@ -1308,7 +1308,12 @@ fn layer_formats_composite_nearest_sampled_layers_like_direct_painting() {
         ..msaa
     };
     assert!(matches!(none.layer(), Err(Error::ExpectedSingleColor)));
+}
 
+#[test]
+#[ignore = "requires a GPU; run with -- --ignored"]
+fn layer_formats_composite_nearest_sampled_layers_like_direct_painting() {
+    use wgpu::TextureFormat as F;
     pollster::block_on(async {
         let g = GraphicsContext::headless().await.unwrap();
         let scope = g.device().push_error_scope(wgpu::ErrorFilter::Validation);

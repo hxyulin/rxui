@@ -22,4 +22,5 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Run opt-in tests on the configured native adapter
-        run: cargo test --workspace --all-features --locked -- --ignored
+        # Native drag tests need their own desktop/Xvfb fixtures and are not GPU tests.
+        run: cargo test -p rxui -p rxui-draw --all-features --locked -- --ignored

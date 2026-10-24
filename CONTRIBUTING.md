@@ -65,8 +65,9 @@ cargo test --workspace --no-default-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 ```
 
-Public items need documentation (`missing_docs` is on). `unsafe` code is denied.
-The only exception is the Windows menu backend, which needs it for Win32 calls.
+Public items need documentation (`missing_docs` is on). `rxui-draw` and `rxui-host`
+forbid unsafe code. RXUI denies it except in the Windows menu backend; draglet
+isolates native interop in its AppKit, Win32 and Wayland modules.
 When you fix a bug, add a test that fails without the fix.
 
 GPU cache tests are opt-in because hosted CI has no GPU. The manually dispatched
@@ -79,9 +80,15 @@ them on a machine with a native adapter:
 cargo test -p rxui --features rendering painting::tests -- --ignored
 ```
 
-CI tests all features on Linux, macOS and Windows, checks all targets on macOS
-and Windows, and tests isolated layout, accessibility, tasks, image-decoding and
-rendering feature subsets on Linux. Windowed/native interaction still needs a
+CI tests all workspace features on Linux, macOS and Windows, checks all targets,
+and tests isolated RXUI layout, accessibility, tasks, image-decoding and rendering
+feature subsets on Linux. Feature jobs select only `-p rxui` so they do not repeat
+unrelated workspace packages. The Linux workspace job also runs draglet and host
+X11 protocol tests on an isolated Xvfb display and verifies draglet's standalone
+package. Windows uses bundled LLD, no test debug information and two build jobs
+to bound linking memory without dropping test coverage. The GPU workflow selects
+only `rxui` and `rxui-draw`; it never runs ignored native drag tests.
+Windowed/native interaction still needs a
 manual check on the affected platform; report those checks in the pull request.
 
 ## Performance changes
@@ -100,9 +107,10 @@ change is about the measurement itself.
 
 ## Examples and documentation
 
-An example is one file that someone can copy into their own project, with no
+An RXUI example is one file that someone can copy into their own project, with no
 shared support module and no smoke-test mode. Declare its `required-features`
-in `crates/rxui/Cargo.toml`.
+in `crates/rxui/Cargo.toml`. Draglet demos share a small software-rendering helper
+in their own crate; no example rendering code is part of the draglet library.
 
 Update the contract in `docs/` when the behavior it describes changes. The
 README is the entry point. Put detailed material in [docs/guide.md](docs/guide.md)
