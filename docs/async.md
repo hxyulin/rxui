@@ -226,7 +226,7 @@ without retaining an executor ticker/waker leaves an idle host asleep. The runna
 `Rc` future without frame polling, then a completion event triggers UI delivery:
 
 ```sh
-mbx run -p rxui --example local_tasks --no-default-features --features tasks
+cargo run -p rxui --example local_tasks --no-default-features --features tasks
 ```
 
 Local delivery uses its own `Rc`/`RefCell` mailbox and untyped non-Send output;

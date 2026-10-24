@@ -330,7 +330,7 @@ entities, detach buttons/gestures, and reattachment on button or window close.
 The main window stays open while detached windows still need a return destination.
 
 ```sh
-mbx run -p rxui --example docking_surfaces_window --features native --locked
+cargo run -p rxui --example docking_surfaces_window --features native --locked
 ```
 
 Cross-group/surface/window transfers can remount content. Strong document entities
@@ -347,7 +347,7 @@ accepts the proposal with `DockWorkspace::transfer`; RXUI never mutates the
 workspace or closes an empty window on its own.
 
 ```sh
-mbx run -p rxui --example docking_surfaces_window --features native-docking --locked -- --two-windows
+cargo run -p rxui --example docking_surfaces_window --features native-docking --locked -- --two-windows
 ```
 
 The example closes an emptied detached source only after an accepted transfer.
@@ -443,7 +443,7 @@ Pointer locking/confinement is not a substitute for cross-window drag routing.
 
 ## CPU measurements
 
-`mbx bench -p rxui --bench docking` emits CSV batches for description, selection,
+`cargo bench -p rxui --bench docking` emits CSV batches for description, selection,
 resize and preparation using deterministic CPU text measurement. Description
 timing includes construction, conversion and destruction. Local medians for 256
 tabs in one group changed from 541.54 to 371.82 microseconds with `KeepMounted`

@@ -102,9 +102,10 @@ fn main() -> Result<(), ApplicationError> {
 
 ## Status
 
-RXUI is a rewrite. The workspace is at `0.2.0-dev` and nothing from it has been
-released yet. Expect API changes between commits. The previous implementation
-is tagged [`v0.1`](https://github.com/hxyulin/rxui/tree/v0.1) and kept on the
+RXUI is a rewrite, released as `0.2.0`. See the [changelog](CHANGELOG.md).
+The API is not yet stable: expect breaking changes between minor versions while
+RXUI is below 1.0. The previous implementation is tagged
+[`v0.1`](https://github.com/hxyulin/rxui/tree/v0.1) and kept on the
 `legacy-v0.1` branch; there is no compatibility layer with its API.
 
 The native host runs on macOS, Windows and Linux. Native menus are macOS and
@@ -124,17 +125,17 @@ application pipelines and draw through the raw wgpu pass.
 See [the embedding contract](docs/wgpu-embedding.md) and the standalone example:
 
 ```sh
-mbx run -p rxui --example wgpu_app --no-default-features --features rendering
+cargo run -p rxui --example wgpu_app --no-default-features --features rendering
 ```
 
 ## Getting started
 
-RXUI requires Rust 1.98.1 or newer. Until the first release, depend on the
-repository and enable the features you need:
+RXUI requires Rust 1.98.1 or newer. RXUI is not on crates.io yet; depend on a
+release tag and enable the features you need:
 
 ```toml
 [dependencies]
-rxui = { git = "https://github.com/hxyulin/rxui", features = ["native"] }
+rxui = { git = "https://github.com/hxyulin/rxui", tag = "v0.2.0", features = ["native"] }
 ```
 
 | Feature | Adds |
@@ -160,7 +161,7 @@ cargo run -p rxui --example counter_window --features native    # the program ab
 cargo run -p rxui --example text_input_window --features native # controlled editing
 cargo run -p rxui --example text_area_window --features native  # multiline editing
 cargo run -p rxui --example docking_window --features native    # tabs, splits and drag-to-dock
-mbx run -p rxui --example docking_surfaces_window --features native # regions, detach and reattach
+cargo run -p rxui --example docking_surfaces_window --features native # regions, detach and reattach
 cargo run -p rxui --example counter_state                       # the state runtime in a terminal
 ```
 

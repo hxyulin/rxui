@@ -141,7 +141,7 @@ license; the OFL test font is an example.
 GPU regression tests are opt-in, keeping ordinary tests usable without an adapter:
 
 ```sh
-mbx test -p rxui-draw --lib -- --ignored --skip capture_coverage_comparison
-mbx test -p rxui --features rendering --test wgpu_embedding -- --ignored
-mbx test -p rxui --all-features --lib -- --ignored
+cargo test -p rxui-draw --lib -- --ignored --skip capture_coverage_comparison
+cargo test -p rxui --features rendering --test wgpu_embedding -- --ignored
+cargo test -p rxui --all-features --lib -- --ignored
 ```

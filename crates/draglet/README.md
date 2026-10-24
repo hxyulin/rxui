@@ -199,10 +199,10 @@ states, not permission to fall back to rectangle-based targeting.
 Current native testing is a starting point, not a cross-platform compatibility
 promise:
 
-- **Wayland:** live KDE Plasma on Talos, with compositor input via a temporary
+- **Wayland:** a live KDE Plasma session, with compositor input via a temporary
   virtual pointer: both cross-window directions, same-window drop, cancellation
   over an unrelated window/desktop, and a fresh successful gesture after cancellation.
-- **X11:** Ubuntu 24.04 on rm-nuc-01, isolated Xvfb: server stacking, foreign
+- **X11:** Ubuntu 24.04 with an isolated Xvfb display: server stacking, foreign
   occlusion, input shapes, decorations, destination scaling, pointer capture and
   source-unmap cancellation. Full desktop/window-manager interaction remains untested.
 - **AppKit:** native unit tests; this example has not yet received an interactive

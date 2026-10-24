@@ -408,7 +408,7 @@ explicit `FocusHandle::focus`/host request, and never implies native activation.
 Snapshots contain exact text and history, including password values; keep them in
 trusted app memory. They have no serialization or cross-process persistence API.
 
-Run `mbx run -p rxui --example text_editing_transfer_window --features native --locked`
+Run `cargo run -p rxui --example text_editing_transfer_window --features native --locked`
 for an ordinary app-handler example that splits/merges a dock editor and separately
 opts into focus. Automated tests exercise remounts and separate Uis in both orders.
 
@@ -417,7 +417,7 @@ refreshed with descriptions after reconciliation; pending captures and explicit
 retries remain observable without scanning ordinary inputs on every
 `Ui::needs_prepare` call. Binding publication still scans editors during refresh.
 
-The deterministic CPU benchmark `mbx bench -p rxui --bench editing_idle --locked`
+The deterministic CPU benchmark `cargo bench -p rxui --bench editing_idle --locked`
 measures `needs_prepare` and a complete idle `prepare` separately on 16/256/1,000
 ordinary inputs, without editing handles, identities or tickets. On Apple M5 Max,
 macOS 27.0.1, Rust 1.99.1, optimized default-feature builds, the first run's batch

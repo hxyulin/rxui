@@ -1,5 +1,5 @@
 //! A sleeping native host: no frame loop, busy polling, or background task pool.
-//! Run: mbx run -p rxui --example local_tasks --no-default-features --features tasks
+//! Run: cargo run -p rxui --example local_tasks --no-default-features --features tasks
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     use rxui::{LocalFuture, LocalTaskExecutor, Runtime, SpawnError};

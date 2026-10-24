@@ -3,7 +3,7 @@
   "baseline_commit": "d808d8ece62064bce56532637628bb762d3360dc",
   "baseline_changes": "Only added editing_idle benchmark and Cargo registration; production sources unchanged.",
   "after_changes": "Same benchmark and dependencies; restore-node index in Ui and editing_transfer. Source SHA-256 below identifies after production sources; tests added after the benchmark build do not affect bench artifacts.",
-  "command": "mbx bench -p rxui --bench editing_idle --locked",
+  "command": "cargo bench -p rxui --bench editing_idle --locked",
   "repeat_commands": [
     "/tmp/rxui-editing-idle-d808d8e-before > before-repeat.csv",
     "target/release/deps/editing_idle-efe4168ff099cc89 > after-repeat.csv"
@@ -16,15 +16,13 @@
   ],
   "profile": "bench (optimized), default features (layout), no additional flags",
   "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1",
-  "mbx": "mbx 1.26.0",
   "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434",
   "cpu": "Apple M5 Max",
   "environment": {
     "RUSTFLAGS": null,
     "CARGO_ENCODED_RUSTFLAGS": null,
     "CARGO_INCREMENTAL": null,
-    "CARGO_TARGET_DIR": null,
-    "MBX_CACHE_LINKS": null
+    "CARGO_TARGET_DIR": null
   },
   "fixture": "16/256/1000 keyed ordinary text_inputs, no editing identity/handle/ticket; mock len*8 by 20 text sizing; 800x600 viewport; initial prepare excluded; 10000 warmup operations then 20 batches of 10000 for each boundary; stats unchanged checked after timings",
   "boundaries": {

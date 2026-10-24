@@ -102,6 +102,6 @@ provider: unmounted rows have no semantic identity/actions. Native screen-reader
 navigation of the full unmounted hierarchy is not claimed.
 
 Run the standalone hierarchical example with
-`mbx run -p rxui --features native --example tree_panel_window`.
+`cargo run -p rxui --features native --example tree_panel_window`.
 It contains 100 folders and 100,000 leaves. Measured heights, tables, grids,
 2D virtualization and async lazy children are outside this slice.
