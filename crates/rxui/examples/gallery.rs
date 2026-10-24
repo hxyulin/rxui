@@ -1,7 +1,7 @@
 //! Every built-in component on one page, with live theme and density switching.
 use rxui::Element;
 use rxui::prelude::*;
-use rxui::taffy::AlignItems;
+use rxui::taffy::{AlignItems, FlexWrap};
 
 const ROWS: usize = 1_000;
 
@@ -157,21 +157,49 @@ impl View for Gallery {
             .label("Close window")
             .shortcut(Shortcut::primary("w"));
 
+        // Icon buttons need an accessible name; their tooltip shows it too.
+        let mut icon_buttons = row().gap(4.).align_items(AlignItems::CENTER);
+        for (icon, name) in [
+            (Icon::SEARCH, "Search"),
+            (Icon::REFRESH_CW, "Refresh"),
+            (Icon::SETTINGS, "Settings"),
+            (Icon::ELLIPSIS, "More actions"),
+        ] {
+            icon_buttons = icon_buttons.child(tooltip(
+                cx,
+                icon_button(icon)
+                    .key(name)
+                    .accessibility_label(name)
+                    .on_click(cx.listener(move |s, _, _| s.status = name.into())),
+                name,
+            ));
+        }
         let buttons = section(
             "Buttons",
-            row()
+            column()
                 .gap(8.)
                 .child(
-                    button("Save changes")
-                        .variant(ButtonVariant::Primary)
-                        .on_click(cx.listener(|s, _, _| s.status = "Saved".into())),
+                    row()
+                        .gap(8.)
+                        .child(
+                            button("Save changes")
+                                .leading_icon(Icon::SAVE)
+                                .variant(ButtonVariant::Primary)
+                                .on_click(cx.listener(|s, _, _| s.status = "Saved".into())),
+                        )
+                        .child(
+                            button("Cancel")
+                                .on_click(cx.listener(|s, _, _| s.status = "Cancelled".into())),
+                        )
+                        .child(button("Reset").variant(ButtonVariant::Quiet))
+                        .child(
+                            button("Delete")
+                                .leading_icon(Icon::TRASH)
+                                .variant(ButtonVariant::Danger),
+                        )
+                        .child(button("Export").leading_icon(Icon::DOWNLOAD).disabled(true)),
                 )
-                .child(
-                    button("Cancel").on_click(cx.listener(|s, _, _| s.status = "Cancelled".into())),
-                )
-                .child(button("Reset").variant(ButtonVariant::Quiet))
-                .child(button("Delete").variant(ButtonVariant::Danger))
-                .child(button("Export").disabled(true)),
+                .child(icon_buttons),
         );
 
         let inputs = section(
@@ -200,7 +228,7 @@ impl View for Gallery {
                                     s.filter = e.value.clone()
                                 })),
                         )
-                        .child(button("Filter")),
+                        .child(button("Filter").leading_icon(Icon::FUNNEL)),
                 )
                 .child(
                     row()
@@ -248,7 +276,8 @@ impl View for Gallery {
         let tabs_section = section("Tabs", tab_set);
 
         let mut menu_row = row().gap(8.).child(
-            button("File ▾")
+            button("File")
+                .trailing_icon(Icon::CHEVRON_DOWN)
                 .anchor_handle(self.menu_anchor.clone())
                 .on_click(cx.listener(|s, _, _| s.menu_open = !s.menu_open)),
         );
@@ -309,6 +338,26 @@ impl View for Gallery {
                 .on_resize(cx.listener(|s, e: &ResizeEvent, _| s.split = e.position)),
             ),
         );
+
+        // Every built-in icon, named by its tooltip.
+        let mut grid = row()
+            .gap(4.)
+            .fill_width()
+            .layout(|s| s.flex_wrap = FlexWrap::Wrap);
+        for icon in Icon::built_in() {
+            let name = icon.name().unwrap_or_default();
+            grid = grid.child(tooltip(
+                cx,
+                column()
+                    .key(name)
+                    .size(28., 28.)
+                    .align_items(AlignItems::CENTER)
+                    .justify_content(rxui::taffy::JustifyContent::CENTER)
+                    .child(rxui::icon(icon).accessibility_label(name)),
+                name,
+            ));
+        }
+        let icons = section("Icons", grid);
 
         // Form controls: every value lives in Gallery and changes through a listener.
         let notifications = match (self.email, self.push) {
@@ -450,6 +499,7 @@ impl View for Gallery {
                     .min_width(0.)
                     .gap(24.)
                     .child(tabs_section)
+                    .child(icons)
                     .child(list)
                     .child(split),
             );

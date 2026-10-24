@@ -51,6 +51,8 @@ pub enum UiError {
     NestedControl,
     /// A label/image/input/component/caption-button leaf was given children.
     LeafChildren,
+    /// An [`crate::icon_button`] has no accessible name.
+    MissingAccessibleName,
     /// Viewport or input coordinates are invalid.
     InvalidGeometry,
     /// Application supplied an input value containing control characters (text areas
@@ -129,6 +131,9 @@ impl fmt::Display for UiError {
             Self::LeafChildren => f.write_str(
                 "leaf elements cannot contain children; compose button content with a container",
             ),
+            Self::MissingAccessibleName => {
+                f.write_str("icon buttons need an accessible name; add accessibility_label")
+            }
             Self::InvalidRangeControl => f.write_str("invalid split or scrollbar configuration"),
             Self::InvalidScrollHandle => f.write_str("scroll handle requires a scrolling viewport"),
             Self::DuplicateScrollHandle => {

@@ -1230,8 +1230,12 @@ impl Element {
     }
     /// Accessible name, separate from displayed text/value. Buttons default to
     /// their caption; text inputs should supply a meaningful name explicitly.
+    /// A name makes a decorative [`crate::icon`] visible to assistive technology.
     pub fn accessibility_label(mut self, label: impl Into<Arc<str>>) -> Self {
-        self.semantics.get_or_insert_with(Default::default).label = Some(label.into());
+        let icon = self.is_icon();
+        let semantics = self.semantics.get_or_insert_with(Default::default);
+        semantics.label = Some(label.into());
+        semantics.hidden &= !icon;
         self
     }
     /// Binds a reference for accessible labels or composite highlights. Bind a
@@ -1243,9 +1247,10 @@ impl Element {
     /// Names this control through another semantic element. Missing, hidden,
     /// removed or ambiguous targets omit the relationship.
     pub fn accessibility_labelled_by(mut self, label: crate::AccessibilityHandle) -> Self {
-        self.semantics
-            .get_or_insert_with(Default::default)
-            .labelled_by = Some(label);
+        let icon = self.is_icon();
+        let semantics = self.semantics.get_or_insert_with(Default::default);
+        semantics.labelled_by = Some(label);
+        semantics.hidden &= !icon;
         self
     }
     /// Exposes a composite control's highlighted option while focus stays on the
@@ -1491,6 +1496,14 @@ impl Element {
             )
         {
             return Err(UiError::InvalidStyle);
+        }
+        if self.surface == Surface::Part(crate::standard::Part::IconButton)
+            && !self
+                .semantics
+                .as_ref()
+                .is_some_and(|p| p.label.is_some() || p.labelled_by.is_some() || p.hidden)
+        {
+            return Err(UiError::MissingAccessibleName);
         }
         if matches!(self.kind, ElementKind::Button { .. }) && self.children.iter().any(has_control)
         {

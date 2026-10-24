@@ -167,6 +167,19 @@ limits; the gallery shows them all:
 cargo run -p rxui --example gallery --features native --locked
 ```
 
+## Icons
+
+```rust
+button("Run").leading_icon(Icon::PLAY).variant(ButtonVariant::Primary)
+icon_button(Icon::SEARCH).accessibility_label("Search")
+```
+
+`icon(Icon::SEARCH)` paints a vector icon in the element's text color, sized by
+the theme's `icon_size`. The built-in icons are a Lucide subset;
+`Icon::from_svg_path` adds application icons from SVG path data. Icons are hidden
+from assistive technology until named, and `icon_button` requires a name. The
+[icons contract](icons.md) covers path data, sizing, placement and the icon list.
+
 ## Semantics and accessibility
 
 Buttons infer their accessible name from their caption. Name text inputs explicitly

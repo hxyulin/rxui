@@ -9,8 +9,6 @@ pub(crate) enum Glyph {
     Check,
     /// Mixed-state bar.
     Dash,
-    /// Downward chevron for a select trigger.
-    Chevron,
     /// Twelve spokes; `head` is the brightest one.
     Spinner { head: u8 },
 }
@@ -51,10 +49,6 @@ impl CustomElement for Glyph {
                 paint.draw_line(line(at(0.42, 0.76), at(0.84, 0.28), color))?;
             }
             Self::Dash => paint.draw_line(line(at(0.22, 0.5), at(0.78, 0.5), color))?,
-            Self::Chevron => {
-                paint.draw_line(line(at(0.2, 0.36), at(0.5, 0.66), color))?;
-                paint.draw_line(line(at(0.5, 0.66), at(0.8, 0.36), color))?;
-            }
             Self::Spinner { head } => {
                 for spoke in 0..SPOKES {
                     let angle = std::f32::consts::TAU * f32::from(spoke) / f32::from(SPOKES);

@@ -33,6 +33,9 @@
 //! AccessKit translation for custom hosts. Fixed- and variable-height virtual lists describe only
 //! viewport rows plus overscan; shared windows retain independent scroll offsets.
 //! Variable-height lists keep the first visible row in place when rows above it change.
+//! Vector icons from SVG path data paint in their element's text color. The
+//! built-in `Icon`s are a subset of [Lucide](https://lucide.dev), ISC licensed;
+//! the crate ships the license text as `src/icons/LICENSE-lucide.txt`.
 //!
 //! Declarative components own their descriptions and bind live-state listeners:
 //!
@@ -144,6 +147,8 @@ mod editing;
 mod element;
 mod entity;
 mod error;
+#[cfg(feature = "layout")]
+mod icons;
 mod id;
 #[cfg(feature = "layout")]
 mod image;
@@ -243,6 +248,8 @@ pub use element::{
 };
 pub use entity::{Entity, Read, WeakEntity};
 pub use error::{AccessError, EffectCycle};
+#[cfg(feature = "layout")]
+pub use icons::{Icon, IconError, IconPaint, icon, icon_button};
 pub use id::{EntityId, MountId};
 #[cfg(feature = "layout")]
 pub use image::{Image, ImageAlpha, ImageFilter, ImageFit, ImageId, ImageInfo};
@@ -350,13 +357,13 @@ pub use native::{DesktopError, DesktopResult};
 pub mod prelude {
     pub use crate::{
         AccessibilityHandle, BoxShadow, ButtonVariant, Checked, ClickEvent, Context, Cursor,
-        Elevation, Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Image,
+        Elevation, Entity, FocusEvent, FontFamily, FontStyle, FontWeight, HoverEvent, Icon, Image,
         ImageAlpha, ImageFilter, ImageFit, InputResult, IntoElement, KeyEvent, KeyInput,
         KeyboardKey, Listener, LivePoliteness, Modifiers, PaintStyle, PhysicalKey, PointerButton,
         PointerButtons, PointerCancelReason, PointerEvents, PointerInput, Runtime, SemanticRole,
         TextAlign, TextChangeEvent, TextOverflow, TextRole, TextSubmitEvent, Theme, ThemeColor, Ui,
-        View, ViewContext, WheelInput, WheelSource, button, column, image, label, rgb8, rgba8, row,
-        stack, text_input,
+        View, ViewContext, WheelInput, WheelSource, button, column, icon, icon_button, image,
+        label, rgb8, rgba8, row, stack, text_input,
     };
     pub use crate::{
         AnchorHandle, Command, CommandAction, CommandId, CommandInfo, CommandRegistration,

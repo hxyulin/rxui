@@ -257,7 +257,8 @@ impl ThemeColors {
 /// `indicator_size`, `switch_width` and `switch_height` size the standard check
 /// boxes, radios, switches, sliders and progress bars, so [`ThemeMetrics::compact`]
 /// shrinks them with the text. They stay below the text line, so a captioned
-/// check box or switch is as tall as a button.
+/// check box or switch is as tall as a button. `icon_size` sizes
+/// [`crate::icon`]s (16 balanced, 14 compact).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeMetrics {
     /// Root/inherited body text size; strictly positive.
@@ -312,6 +313,8 @@ pub struct ThemeMetrics {
     /// Height of a switch track. Its knob, the slider thumb, the slider rail and
     /// progress bars scale with it.
     pub switch_height: f32,
+    /// Side of an [`crate::icon`]; icon buttons stay `input_height` square.
+    pub icon_size: f32,
     /// Durations of implicit paint transitions and overlay motion.
     pub motion: crate::ThemeMotion,
 }
@@ -343,6 +346,7 @@ impl ThemeMetrics {
             indicator_size: 14.,
             switch_width: 26.,
             switch_height: 16.,
+            icon_size: 16.,
             motion: Default::default(),
         }
     }
@@ -373,6 +377,7 @@ impl ThemeMetrics {
             indicator_size: 12.,
             switch_width: 22.,
             switch_height: 13.,
+            icon_size: 14.,
             motion: Default::default(),
         }
     }
@@ -857,6 +862,7 @@ impl Theme {
                 m.indicator_size,
                 m.switch_width,
                 m.switch_height,
+                m.icon_size,
             ]
             .iter()
             .any(|v| !v.is_finite() || *v < 0.)

@@ -632,11 +632,16 @@ where
                     // Center text lines in rows taller than them.
                     .align_items(taffy::AlignItems::CENTER)
                     .child({
-                        let disclosure = crate::label(if node.branch {
-                            if expanded { "▾" } else { "▸" }
+                        // The chevron centers in the disclosure region.
+                        let disclosure = if node.branch {
+                            crate::icon(if expanded {
+                                crate::Icon::CHEVRON_DOWN
+                            } else {
+                                crate::Icon::CHEVRON_RIGHT
+                            })
                         } else {
-                            ""
-                        })
+                            crate::row()
+                        }
                         .width(20.);
                         if branch {
                             disclosure.on_pointer_down(pointer(true))

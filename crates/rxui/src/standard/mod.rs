@@ -140,7 +140,7 @@ pub(crate) fn indicator_colors(on: bool, disabled: bool) -> [ThemeColor; 3] {
 /// A part of a standard control sized from [`crate::ThemeMetrics`] while its
 /// theme resolves, so density switches resize it the way they resize buttons.
 /// Check boxes and radios follow `indicator_size`; switches, slider thumbs and
-/// rails and progress bars follow the switch metrics.
+/// rails and progress bars follow the switch metrics; icons follow `icon_size`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
     /// Check box square.
@@ -163,6 +163,10 @@ pub(crate) enum Part {
     Thumb,
     /// Progress bar track.
     Progress,
+    /// An icon, `icon_size` square.
+    Icon,
+    /// A square icon button, `input_height` on each side.
+    IconButton,
 }
 impl Part {
     /// Switch knob side: five eighths of the track height.
@@ -182,7 +186,8 @@ impl Part {
         let s = m.indicator_size;
         match self {
             Self::CheckBox => s * 3. / 14.,
-            Self::Mark | Self::SliderBody => 0.,
+            Self::Mark | Self::SliderBody | Self::Icon => 0.,
+            Self::IconButton => m.radius,
             Self::Radio => s / 2.,
             Self::RadioDot => s * 3. / 14.,
             Self::Switch | Self::Thumb => m.switch_height / 2.,
@@ -207,6 +212,8 @@ impl Part {
             Self::SliderBody => [None, Some(h)],
             Self::Rail => [None, Some(Self::rail(m))],
             Self::Progress => [None, Some(Self::progress(m))],
+            Self::Icon => [Some(m.icon_size); 2],
+            Self::IconButton => [Some(m.input_height); 2],
         };
         if let Some(width) = width
             && overrides & 2 == 0

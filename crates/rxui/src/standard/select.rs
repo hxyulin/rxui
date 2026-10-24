@@ -1,5 +1,4 @@
 //! Controlled selects: a combo box button with a list box popover.
-use super::glyph::{Glyph, glyph};
 use super::{Choice, ChoiceEvent, callback, local, propose, root_builders};
 use crate::{
     AnchorHandle, ClickEvent, DismissEvent, Dispatch, Element, Entity, HoverEvent, IntoElement,
@@ -303,7 +302,7 @@ impl IntoElement for Select {
                 .fill_width()
                 .align_items(AlignItems::CENTER)
                 .child(text)
-                .child(glyph(Glyph::Chevron, 12.).color(ThemeColor::TextMuted)),
+                .child(crate::icon(crate::Icon::CHEVRON_DOWN).color(ThemeColor::TextMuted)),
         )
         .key("button")
         .fill_width()
@@ -414,9 +413,9 @@ impl IntoElement for Select {
             for (index, option) in self.options.iter().enumerate() {
                 let lit = highlight == Some(index) && !option.disabled;
                 let mark = if selected == Some(index) {
-                    glyph(Glyph::Check, 12.)
+                    crate::icon(crate::Icon::CHECK)
                 } else {
-                    row().size(12., 12.)
+                    crate::icons::icon_space()
                 };
                 let mut item = row()
                     .key(option.key.clone())

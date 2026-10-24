@@ -225,9 +225,10 @@ compact thumb stops just short of them. See
 Controls live in `crates/rxui/src/standard/`. Their internal listeners run outside
 any component scope; the one core addition is a crate-private
 `FocusHandle::focus_bound`, which queues focus for a handle's single live binding
-so radio arrow keys can move focus without a source mount. Check, dash, chevron and
-spinner marks are a crate-private `CustomElement` painted with rxui-draw lines in the
-element's resolved text color, so they need no font coverage.
+so radio arrow keys can move focus without a source mount. The check box tick,
+mixed dash and spinner are a crate-private `CustomElement` painted with rxui-draw
+lines in the element's resolved text color, so they need no font coverage. The
+select chevron and the selected option's check are [icons](icons.md).
 
 ## Limitations and follow-ups
 

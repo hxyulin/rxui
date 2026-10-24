@@ -385,9 +385,8 @@ impl IntoElement for Tabs {
             let mut group = row().key(entry.key.clone()).flex_shrink(0.).child(header);
             if let Some(listener) = close {
                 group = group.child(metadata(
-                    button("×")
+                    crate::icon_button(crate::Icon::X)
                         .key("close")
-                        .variant(ButtonVariant::Quiet)
                         .tab_stop(false)
                         .accessibility_label(format!("Close {}", entry.title))
                         .on_click(listener.map_event(move |_: &ClickEvent| close_event.clone())),
